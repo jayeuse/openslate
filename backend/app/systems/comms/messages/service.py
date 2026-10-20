@@ -14,6 +14,7 @@ from app.core.database.organization_scope import session_organization
 from app.core.database.session import AuditSession
 from app.systems.access.users.models import Membership, User
 from app.systems.comms.conversations.models import CommsConversation
+from app.systems.comms.jobs.models import CommsExpiredSend
 from app.systems.comms.messages.interaction_models import (
     CommsMention,
     CommsThread,
@@ -115,6 +116,8 @@ def _find_original(
 
 
 def _replay(message: CommsMessage, fingerprint: str) -> SendMessageResult:
+    if message.retention_erased_at is not None:
+        raise SendConflict("Client key identifies an expired message")
     if message.send_fingerprint != fingerprint:
         raise SendConflict("Client key already identifies a different send")
     return SendMessageResult(message, replayed=True)
@@ -371,12 +374,14 @@ def send_message(
     conversation_id: UUID,
     command: SendMessageCommand,
     authorize: Callable[[bool], None] | None = None,
+    finalize: Callable[[CommsMessage], None] | None = None,
 ) -> SendMessageResult:
     """Own one commit/full rollback, never caller work or a nested transaction.
 
     Production callers supply fresh policy reads via authorize; None is reserved
     for existing preauthorized structural callers. False authorizes a new send;
     True authorizes current replay reads, after any full rollback.
+    A trusted scheduled-work finalizer may stage its result in this same commit; it never commits.
     """
     fingerprint = None
     try:
@@ -403,7 +408,11 @@ def send_message(
             existing = _find_original(db, org_id, author_id, command.client_key)
             if existing is None:
                 raise InvalidSend("Replay no longer available")
-            return _replay(existing, fingerprint)
+            replay = _replay(existing, fingerprint)
+            if finalize is not None:
+                finalize(replay.message)
+                db.commit()
+            return replay
         if counter is None or counter.is_deleted:
             raise InvalidSend("Conversation unavailable")
         root, thread = _lock_context(db, org_id, conversation_id, command)
@@ -411,6 +420,17 @@ def send_message(
         if authorize is not None:
             # File/record/conversation waits must not retain earlier grants or settings.
             authorize(False)
+        if (
+            db.scalar(
+                select(CommsExpiredSend.id).where(
+                    CommsExpiredSend.org_id == org_id,
+                    CommsExpiredSend.author_id == author_id,
+                    CommsExpiredSend.client_key == command.client_key,
+                )
+            )
+            is not None
+        ):
+            raise SendConflict("Client key identifies an expired message")
         if retry_after is not None:
             raise SendRateLimited(retry_after)
         _validate_payload(command)
@@ -439,6 +459,8 @@ def send_message(
         message_event(db, conversation_id, message.seq, "created")
         if root is not None:
             message_event(db, conversation_id, root.seq, "thread")
+        if finalize is not None:
+            finalize(message)
         db.commit()
         db.refresh(message)
         return SendMessageResult(message, replayed=False)
@@ -454,7 +476,11 @@ def send_message(
             winner = _find_original(db, org_id, author_id, command.client_key)
             if winner is None:
                 raise error
-            return _replay(winner, fingerprint)
+            replay = _replay(winner, fingerprint)
+            if finalize is not None:
+                finalize(replay.message)
+                db.commit()
+            return replay
         except BaseException:
             db.rollback()
             raise

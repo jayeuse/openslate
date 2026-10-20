@@ -31,8 +31,20 @@ ORGANIZATION_TABLES = (
         "security_events".split()
     )
     | COMMS_TABLES
-    | {"comms_realtime_grants", "comms_realtime_admissions", "comms_presence", "comms_typing",
-       "comms_reports"}
+    | {
+        "comms_realtime_grants",
+        "comms_realtime_admissions",
+        "comms_presence",
+        "comms_typing",
+        "comms_reports",
+        "comms_exports",
+        "comms_export_sources",
+        "comms_export_entries",
+        "comms_schedules",
+        "comms_retention_policies",
+        "comms_retention_sweeps",
+        "comms_expired_sends",
+    }
 )
 MIXED_TABLES = frozenset({"audit_logs", "files", "security_events", "in_app_notifications"})
 

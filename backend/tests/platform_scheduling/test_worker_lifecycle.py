@@ -250,6 +250,10 @@ def test_stop_timeout_retains_thread_and_prevents_database_disposal(monkeypatch)
 def test_lifespan_joins_report_worker_before_database_disposal(monkeypatch) -> None:
     order: list[str] = []
     app = FastAPI()
+    app.state.comms_publisher = SimpleNamespace(
+        start=lambda: order.append("comms_start"),
+        stop=lambda: order.append("comms_stop") or True,
+    )
     app.state.events_listener = SimpleNamespace(
         start=lambda: order.append("events_start"), stop=lambda: order.append("events_stop")
     )
@@ -281,6 +285,7 @@ def test_lifespan_joins_report_worker_before_database_disposal(monkeypatch) -> N
 
     assert order.index("report_start") < order.index("report_stop")
     assert order.index("report_stop") < order.index("database_dispose")
+    assert order.index("report_stop") < order.index("comms_stop")
 
 
 def test_failed_report_thread_start_still_cleans_up_lifespan(monkeypatch) -> None:
@@ -288,6 +293,7 @@ def test_failed_report_thread_start_still_cleans_up_lifespan(monkeypatch) -> Non
 
     order: list[str] = []
     app = FastAPI()
+    app.state.comms_publisher = SimpleNamespace(start=lambda: None, stop=lambda: True)
     app.state.events_listener = SimpleNamespace(
         start=lambda: None, stop=lambda: order.append("events_stop")
     )
@@ -324,6 +330,8 @@ def test_failed_report_thread_start_still_cleans_up_lifespan(monkeypatch) -> Non
 
 def test_lifespan_does_not_dispose_pool_when_report_worker_remains_alive(monkeypatch) -> None:
     app = FastAPI()
+    publisher_stop = Mock(return_value=True)
+    app.state.comms_publisher = SimpleNamespace(start=lambda: None, stop=publisher_stop)
     app.state.events_listener = SimpleNamespace(start=lambda: None, stop=lambda: None)
     app.state.smtp_outbox_worker = SimpleNamespace(start=lambda: None, stop=lambda: None)
     app.state.trigger_worker = SimpleNamespace(start=lambda: None, stop=lambda: True)
@@ -345,6 +353,7 @@ def test_lifespan_does_not_dispose_pool_when_report_worker_remains_alive(monkeyp
 
     dispose_database.assert_not_called()
     dispose_readiness.assert_not_called()
+    publisher_stop.assert_not_called()
     assert logger.call_args.kwargs["reason_code"] == "report_scheduling_shutdown_incomplete"
 
 

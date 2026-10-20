@@ -186,8 +186,11 @@ def main(arguments=()):
     reset_only = arguments == ("--reset-acceptance-only",)
     realtime_only = arguments == ("--realtime-foundation-only",)
     comms_native = arguments in (
-        ("--comms-realtime-only",), ("--comms-capacity-only",), ("--comms-notifications-only",),
+        ("--comms-realtime-only",),
+        ("--comms-capacity-only",),
+        ("--comms-notifications-only",),
         ("--comms-moderation-only",),
+        ("--comms-jobs-only",),
     )
     if comms_native:
         target = "comms_capacity.py" if arguments == ("--comms-capacity-only",) else "comms_live.py"
@@ -195,6 +198,8 @@ def main(arguments=()):
             target = "comms_notifications_live.py"
         if arguments == ("--comms-moderation-only",):
             target = "comms_moderation_live.py"
+        if arguments == ("--comms-jobs-only",):
+            target = "comms_jobs_live.py"
         batch = {
             "targets": [f"tests/realtime/{target}"],
             "layer": "integration",
@@ -360,6 +365,8 @@ def main(arguments=()):
             api_env["OPENSLATE_TEST_REALTIME_GATEWAY"] = WEB
         if comms_native:
             timed("native Comms API and same-origin gateway")
+            if arguments == ("--comms-jobs-only",):
+                api_env["E2E_BACKGROUND_WORKERS"] = "true"
             api_env["OPENSLATE_COMMS_NATIVE_API"] = API
             api_env["OPENSLATE_COMMS_TELEMETRY"] = str(private / "comms-metrics.jsonl")
             processes.append(

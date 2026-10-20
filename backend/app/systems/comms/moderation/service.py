@@ -53,18 +53,33 @@ def queue_conversations(db: Session, actor: User) -> set[UUID] | None:
 
 
 def report_query() -> Select[tuple[CommsReport]]:
-    return select(CommsReport).join(CommsMessage, (
-        (CommsMessage.org_id == CommsReport.org_id)
-        & (CommsMessage.id == CommsReport.message_id)
-        & (CommsMessage.conversation_id == CommsReport.conversation_id)
-    )).join(CommsConversation, (
-        (CommsConversation.org_id == CommsReport.org_id)
-        & (CommsConversation.id == CommsReport.conversation_id)
-    )).where(
-        CommsReport.org_id == bound_organization_column(), CommsReport.is_deleted.is_(False),
-        CommsReport.deleted_at.is_(None), CommsConversation.is_deleted.is_(False),
-        CommsConversation.deleted_at.is_(None),
-    ).execution_options(populate_existing=True)
+    return (
+        select(CommsReport)
+        .join(
+            CommsMessage,
+            (
+                (CommsMessage.org_id == CommsReport.org_id)
+                & (CommsMessage.id == CommsReport.message_id)
+                & (CommsMessage.conversation_id == CommsReport.conversation_id)
+            ),
+        )
+        .join(
+            CommsConversation,
+            (
+                (CommsConversation.org_id == CommsReport.org_id)
+                & (CommsConversation.id == CommsReport.conversation_id)
+            ),
+        )
+        .where(
+            CommsReport.org_id == bound_organization_column(),
+            CommsReport.is_deleted.is_(False),
+            CommsReport.deleted_at.is_(None),
+            CommsConversation.is_deleted.is_(False),
+            CommsConversation.deleted_at.is_(None),
+            CommsMessage.retention_erased_at.is_(None),
+        )
+        .execution_options(populate_existing=True)
+    )
 
 
 def load_report(
@@ -112,13 +127,25 @@ def match(value: str | None, expected: str) -> None:
 
 
 def tombstone(db: Session, message: CommsMessage, actor: User, *, restore: bool) -> None:
+    if message.retention_erased_at is not None:
+        raise error("comms_not_found", "Message content has expired")
     if message.is_deleted == (not restore):
         return
     if restore:
-        counts = [db.scalar(select(func.count()).select_from(model).where(
-            model.org_id == bound_organization_column(), model.message_id == message.id,
-            model.is_deleted.is_(False), model.deleted_at.is_(None),
-        )) or 0 for model in (CommsMessageAttachment, CommsMessageRecordLink)]
+        counts = [
+            db.scalar(
+                select(func.count())
+                .select_from(model)
+                .where(
+                    model.org_id == bound_organization_column(),
+                    model.message_id == message.id,
+                    model.is_deleted.is_(False),
+                    model.deleted_at.is_(None),
+                )
+            )
+            or 0
+            for model in (CommsMessageAttachment, CommsMessageRecordLink)
+        ]
         reason = message_capacity_error(message.body, counts[0], counts[1])
         if reason is not None:
             raise error("comms_invalid_input", reason, 422)

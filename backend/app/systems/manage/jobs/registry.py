@@ -14,6 +14,7 @@ from app.core.base_model import utc_now
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.post_models import BoardPost
 from app.systems.boards.reminder_models import BoardEventReminder
+from app.systems.comms.jobs.models import CommsExport, CommsSchedule
 from app.systems.manage.backups import service as backups
 from app.systems.manage.backups.models import BackupRun
 from app.systems.manage.backups.schemas import RunState
@@ -240,11 +241,43 @@ def _retry_backup(
 
 
 _WORK_STATES = frozenset(str(state) for state in WorkState)
+
+
+def _comms_schedules(_instance: str) -> Select[Any]:
+    return (
+        select(
+            *_work_columns(
+                "Scheduled Comms message", literal("Scheduled message"), cast(null(), String)
+            )
+        )
+        .join(
+            CommsSchedule,
+            CommsSchedule.id == ScheduledWork.comms_schedule_id,
+        )
+        .where(ScheduledWork.kind == "comms-scheduled-message")
+    )
+
+
+def _comms_exports(_instance: str) -> Select[Any]:
+    return (
+        select(*_work_columns("Comms export", literal("Comms export"), cast(null(), String)))
+        .join(
+            CommsExport,
+            CommsExport.id == ScheduledWork.comms_export_id,
+        )
+        .where(ScheduledWork.kind == "comms-export")
+    )
+
+
 REGISTRY = {
     "report-run": JobKind("Report run", _reports, _subject, _retry_work, _WORK_STATES),
     "post-publish": JobKind("Post publication", _posts, _subject, _retry_work, _WORK_STATES),
     "event-reminder": JobKind("Event reminder", _reminders, _subject, _retry_work, _WORK_STATES),
     "backup": JobKind("Backup", _backups, _subject, _retry_backup, frozenset(get_args(RunState))),
+    "comms-scheduled-message": JobKind(
+        "Scheduled Comms message", _comms_schedules, _subject, None, _WORK_STATES
+    ),
+    "comms-export": JobKind("Comms export", _comms_exports, _subject, None, _WORK_STATES),
 }
 
 

@@ -89,7 +89,7 @@ def execute(conversation_id: UUID, payload: LifecyclePurgeRequest, request: Requ
                              conversation_id, expected, actor.email, payload.password)
         except LifecycleError as exc:
             raise error(str(exc.code), exc.detail, exc.status_code) from exc
-        if current.file_count:
+        if current.file_count or current.export_count:
             with hold_file_worker(request):
                 purge.delete_files(
                     db, actor, conversation_id, expected, payload.confirmation_name, storage,

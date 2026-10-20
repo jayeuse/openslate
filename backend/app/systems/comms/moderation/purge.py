@@ -21,6 +21,14 @@ from app.systems.comms.conversations.models import (
     CommsConversationGroup,
     CommsMember,
 )
+from app.systems.comms.jobs import export_service
+from app.systems.comms.jobs.models import (
+    CommsExpiredSend,
+    CommsExportEntry,
+    CommsExportSource,
+    CommsRetentionPolicy,
+    CommsSchedule,
+)
 from app.systems.comms.messages.interaction_models import (
     CommsMention,
     CommsReaction,
@@ -46,7 +54,7 @@ from app.systems.comms.settings.models import (
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import StorageBackend
 from app.systems.platform.files.purge import purge_confirmed
-from app.systems.platform.scheduling.models import InAppNotification
+from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork
 from app.systems.sandbox.lifecycle.purge_support import PURGE_DISABLED_MESSAGE
 
 BATCH_SIZE = 1000
@@ -60,6 +68,7 @@ class Impact:
     max_seq: int
     digest: str
     name: str
+    export_count: int
 
 
 def impact(db: Session, actor: User, identity: UUID, *, lock: bool = False) -> Impact:
@@ -68,30 +77,67 @@ def impact(db: Session, actor: User, identity: UUID, *, lock: bool = False) -> I
     require_fresh_exact_admin(db, actor.id)
     if lock:
         lock_counter(db, identity)
-        db.scalar(select(CommsConversation).where(
-            CommsConversation.org_id == bound_organization_column(),
-            CommsConversation.id == identity,
-        ).with_for_update().execution_options(populate_existing=True))
+        db.scalar(
+            select(CommsConversation)
+            .where(
+                CommsConversation.org_id == bound_organization_column(),
+                CommsConversation.id == identity,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
     conversation = require_conversation_access(db, actor, identity, "read")
     if conversation.archived_at is None:
         raise error("comms_conflict", "Archive the conversation before purging", 409)
     org = bound_organization_column()
-    count, maximum = db.execute(select(
-        func.count(), func.coalesce(func.max(CommsMessage.seq), 0),
-    ).where(
-        CommsMessage.org_id == org, CommsMessage.conversation_id == identity,
-    )).one()
-    files = db.scalar(select(func.count()).select_from(File).where(
-        File.org_id == org, File.conversation_id == identity,
-    )) or 0
+    count, maximum = db.execute(
+        select(
+            func.count(),
+            func.coalesce(func.max(CommsMessage.seq), 0),
+        ).where(
+            CommsMessage.org_id == org,
+            CommsMessage.conversation_id == identity,
+        )
+    ).one()
+    files = (
+        db.scalar(
+            select(func.count())
+            .select_from(File)
+            .where(
+                File.org_id == org,
+                File.conversation_id == identity,
+            )
+        )
+        or 0
+    )
+    exports = (
+        db.scalar(
+            select(func.count())
+            .select_from(CommsExportSource)
+            .where(
+                CommsExportSource.org_id == org,
+                CommsExportSource.conversation_id == identity,
+            )
+        )
+        or 0
+    )
     name = conversation.name
     name = str(conversation.id) if conversation.kind == "direct" or not name else name
-    state = {"namespace": "comms-purge-v1", "org": conversation.org_id, "actor": actor.id,
-             "conversation": identity, "archived_at": conversation.archived_at,
-             "updated_at": conversation.updated_at, "name": name,
-             "message_count": count, "file_count": files, "max_seq": maximum}
+    state = {
+        "namespace": "comms-purge-v1",
+        "org": conversation.org_id,
+        "actor": actor.id,
+        "conversation": identity,
+        "archived_at": conversation.archived_at,
+        "updated_at": conversation.updated_at,
+        "name": name,
+        "message_count": count,
+        "file_count": files,
+        "export_count": exports,
+        "max_seq": maximum,
+    }
     digest = hashlib.sha256(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()
-    return Impact(conversation, count, files, maximum, digest, name)
+    return Impact(conversation, count, files, maximum, digest, name, exports)
 
 
 def _delete_batches(db: Session, model: type[Any], where: ColumnElement[bool]) -> None:
@@ -117,38 +163,85 @@ def _validate(db: Session, actor: User, identity: UUID, expected: str, name: str
     return current
 
 
-def delete_files(db: Session, actor: User, identity: UUID, expected: str, name: str,
-                 storage: StorageBackend) -> None:
+def delete_files(
+    db: Session, actor: User, identity: UUID, expected: str, name: str, storage: StorageBackend
+) -> None:
     """Each file claim commits only after the original purge scope is revalidated.
 
     Provider calls run without SQL locks. Existing deleting/purged states retain progress on
     failure; a failed request returns no successful purge result and leaves the parent.
     """
     org = bound_organization_column()
-    while file_id := db.scalar(select(File.id).where(
-        File.org_id == org, File.conversation_id == identity, File.state != "purged",
-    ).order_by(File.id).limit(1)):
+    export_ids = list(
+        db.scalars(
+            select(CommsExportSource.export_id)
+            .where(
+                CommsExportSource.org_id == org,
+                CommsExportSource.conversation_id == identity,
+            )
+            .order_by(CommsExportSource.export_id)
+        )
+    )
+    if export_ids:
+        _validate(db, actor, identity, expected, name)
+        export_service.retire(db, export_ids, now=utc_now())
+        db.commit()  # Persist source-bound artifact revocation before external cleanup.
+        for export_id in export_ids:
+            if not export_service.cleanup_artifact(db, export_id, storage):
+                raise error("comms_unavailable", "Export artifact cleanup is not confirmed", 503)
+    while file_id := db.scalar(
+        select(File.id)
+        .where(
+            File.org_id == org,
+            File.conversation_id == identity,
+            File.state != "purged",
+        )
+        .order_by(File.id)
+        .limit(1)
+    ):
+
         def validate_locked() -> None:
             _validate(db, actor, identity, expected, name)
-            file = db.scalar(select(File).where(File.org_id == org, File.id == file_id)
-                             .with_for_update().execution_options(populate_existing=True))
-            if (file is None or file.conversation_id != identity
-                    or file.purpose != "comms_attachment"):
+            file = db.scalar(
+                select(File)
+                .where(File.org_id == org, File.id == file_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if (
+                file is None
+                or file.conversation_id != identity
+                or file.purpose != "comms_attachment"
+            ):
                 raise error("comms_conflict", "File dependency changed", 409)
-            if (file.state == "uploading"
-                    or (file.operation_id is not None and file.state != "deleting")):
+            if file.state == "uploading" or (
+                file.operation_id is not None and file.state != "deleting"
+            ):
                 raise error(
-                    "file_operation_active", "Reconcile the file operation before purging", 409,
+                    "file_operation_active",
+                    "Reconcile the file operation before purging",
+                    409,
                 )
-            if (file.state == "deleting" and file.operation_expires_at is not None
-                    and file.operation_expires_at > utc_now()):
+            if (
+                file.state == "deleting"
+                and file.operation_expires_at is not None
+                and file.operation_expires_at > utc_now()
+            ):
                 raise error("file_operation_active", "Deletion is still active", 409)
-            _delete_batches(db, CommsMessageAttachment, (
-                (CommsMessageAttachment.org_id == org) & (CommsMessageAttachment.file_id == file_id)
-                & CommsMessageAttachment.message_id.in_(select(CommsMessage.id).where(
-                    CommsMessage.org_id == org, CommsMessage.conversation_id == identity,
-                ))
-            ))
+            _delete_batches(
+                db,
+                CommsMessageAttachment,
+                (
+                    (CommsMessageAttachment.org_id == org)
+                    & (CommsMessageAttachment.file_id == file_id)
+                    & CommsMessageAttachment.message_id.in_(
+                        select(CommsMessage.id).where(
+                            CommsMessage.org_id == org,
+                            CommsMessage.conversation_id == identity,
+                        )
+                    )
+                ),
+            )
             file.is_deleted, file.deleted_at = True, file.deleted_at or utc_now()
             db.flush()
 
@@ -158,40 +251,127 @@ def delete_files(db: Session, actor: User, identity: UUID, expected: str, name: 
 def delete_graph(db: Session, actor: User, identity: UUID, expected: str, name: str) -> Impact:
     current = _validate(db, actor, identity, expected, name)
     org = bound_organization_column()
-    if db.scalar(select(File.id).where(
-        File.org_id == org, File.conversation_id == identity, File.state != "purged",
-    ).limit(1)) is not None:
+    if (
+        db.scalar(
+            select(File.id)
+            .where(
+                File.org_id == org,
+                File.conversation_id == identity,
+                File.state != "purged",
+            )
+            .limit(1)
+        )
+        is not None
+    ):
         raise error("file_operation_active", "File deletion is not confirmed", 409)
     recipients = conversation_reader_ids(db, current.conversation)
-    messages = select(CommsMessage.id).where(
-        CommsMessage.org_id == org, CommsMessage.conversation_id == identity,
+    while schedules := list(
+        db.scalars(
+            select(CommsSchedule)
+            .where(
+                CommsSchedule.org_id == org,
+                CommsSchedule.conversation_id == identity,
+            )
+            .order_by(CommsSchedule.id)
+            .limit(BATCH_SIZE)
+            .with_for_update()
+        )
+    ):
+        _delete_batches(
+            db,
+            ScheduledWork,
+            (ScheduledWork.org_id == org)
+            & ScheduledWork.comms_schedule_id.in_([row.id for row in schedules]),
+        )
+        for schedule in schedules:
+            db.delete(schedule)
+        db.flush()
+    export_ids = list(
+        db.scalars(
+            select(CommsExportSource.export_id)
+            .where(
+                CommsExportSource.org_id == org,
+                CommsExportSource.conversation_id == identity,
+            )
+            .order_by(CommsExportSource.export_id)
+        )
     )
-    _delete_batches(db, InAppNotification, (
-        (InAppNotification.org_id == org) & (InAppNotification.comms_conversation_id == identity)
-    ))
+    for export_id in export_ids:
+        export, _ = export_service.load(db, export_id, lock=True)
+        if export.cleanup_pending or export.artifact_key is not None:
+            raise error("comms_unavailable", "Export artifact cleanup is not confirmed", 503)
+        for export_child in (CommsExportEntry, CommsExportSource):
+            _delete_batches(
+                db,
+                export_child,
+                (export_child.org_id == org) & (export_child.export_id == export_id),
+            )
+        _delete_batches(
+            db,
+            ScheduledWork,
+            (ScheduledWork.org_id == org) & (ScheduledWork.comms_export_id == export_id),
+        )
+        db.delete(export)
+        db.flush()
+    messages = select(CommsMessage.id).where(
+        CommsMessage.org_id == org,
+        CommsMessage.conversation_id == identity,
+    )
+    _delete_batches(
+        db,
+        InAppNotification,
+        ((InAppNotification.org_id == org) & (InAppNotification.comms_conversation_id == identity)),
+    )
     for model in (CommsReport, CommsThread):
         _delete_batches(db, model, (model.org_id == org) & (model.conversation_id == identity))
-    for child in (CommsMessageAttachment, CommsMessageRecordLink, CommsMention,
-                  CommsReaction, CommsMessageRevision):
+    for child in (
+        CommsMessageAttachment,
+        CommsMessageRecordLink,
+        CommsMention,
+        CommsReaction,
+        CommsMessageRevision,
+    ):
         _delete_batches(db, child, (child.org_id == org) & child.message_id.in_(messages))
-    _delete_batches(db, CommsThreadFollow, (
-        (CommsThreadFollow.org_id == org) & CommsThreadFollow.root_message_id.in_(messages)
-    ))
+    _delete_batches(
+        db,
+        CommsThreadFollow,
+        ((CommsThreadFollow.org_id == org) & CommsThreadFollow.root_message_id.in_(messages)),
+    )
     # Null self-references individually before deleting any source batch. No ordering
     # assumption or cascade can silently delete a different conversation's message.
-    while rows := list(db.scalars(select(CommsMessage).where(
-        CommsMessage.org_id == org, CommsMessage.conversation_id == identity,
-        or_(CommsMessage.parent_id.is_not(None), CommsMessage.reply_to_id.is_not(None)),
-    ).order_by(CommsMessage.id).limit(BATCH_SIZE))):
+    while rows := list(
+        db.scalars(
+            select(CommsMessage)
+            .where(
+                CommsMessage.org_id == org,
+                CommsMessage.conversation_id == identity,
+                or_(CommsMessage.parent_id.is_not(None), CommsMessage.reply_to_id.is_not(None)),
+            )
+            .order_by(CommsMessage.id)
+            .limit(BATCH_SIZE)
+        )
+    ):
         for message in rows:
             message.parent_id = message.reply_to_id = None
             message.also_send_to_channel = False
         db.flush()
-    _delete_batches(db, CommsMessage,
-                    (CommsMessage.org_id == org) & (CommsMessage.conversation_id == identity))
-    for owned in (File, CommsMember, CommsReadState, CommsMemberPreferences, CommsSettings,
-                  CommsCapabilityGrant, CommsConversationGroup, CommsTyping, CommsRealtimeGrant,
-                  CommsConversationCounter):
+    _delete_batches(
+        db, CommsMessage, (CommsMessage.org_id == org) & (CommsMessage.conversation_id == identity)
+    )
+    for owned in (
+        File,
+        CommsMember,
+        CommsReadState,
+        CommsMemberPreferences,
+        CommsSettings,
+        CommsCapabilityGrant,
+        CommsConversationGroup,
+        CommsTyping,
+        CommsRealtimeGrant,
+        CommsConversationCounter,
+        CommsRetentionPolicy,
+        CommsExpiredSend,
+    ):
         _delete_batches(db, owned, (owned.org_id == org) & (owned.conversation_id == identity))
     db.delete(current.conversation)
     for recipient in recipients:

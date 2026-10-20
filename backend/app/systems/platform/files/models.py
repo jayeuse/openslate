@@ -27,20 +27,28 @@ class File(BaseModel):
             "(purpose = 'user_avatar') = (org_id IS NULL)", name="ck_files_organization"
         ),
         ForeignKeyConstraint(
-            ["org_id", "record_id"], ["records.org_id", "records.id"],
-            name="fk_files_record_id_records", ondelete="RESTRICT",
+            ["org_id", "record_id"],
+            ["records.org_id", "records.id"],
+            name="fk_files_record_id_records",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
-            ["org_id", "board_id"], ["boards.org_id", "boards.id"],
-            name="fk_files_board_id_boards", ondelete="RESTRICT",
+            ["org_id", "board_id"],
+            ["boards.org_id", "boards.id"],
+            name="fk_files_board_id_boards",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
-            ["org_id", "department_id"], ["departments.org_id", "departments.id"],
-            name="fk_files_department_id_departments", ondelete="RESTRICT",
+            ["org_id", "department_id"],
+            ["departments.org_id", "departments.id"],
+            name="fk_files_department_id_departments",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
-            ["org_id", "conversation_id"], ["comms_conversations.org_id", "comms_conversations.id"],
-            name="fk_files_conversation_id_comms_conversations", ondelete="RESTRICT",
+            ["org_id", "conversation_id"],
+            ["comms_conversations.org_id", "comms_conversations.id"],
+            name="fk_files_conversation_id_comms_conversations",
+            ondelete="RESTRICT",
         ),
         CheckConstraint(
             "(purpose = 'record_attachment' AND record_id IS NOT NULL "
@@ -80,9 +88,14 @@ class File(BaseModel):
         ),
         CheckConstraint("enc_version IS NULL OR enc_version > 0", name="ck_files_enc_version"),
         CheckConstraint(
+            "retention_erased_at IS NULL OR (purpose = 'comms_attachment' AND is_deleted = true)",
+            name="ck_files_retention_erased",
+        ),
+        CheckConstraint(
             "deletion_origin IS NULL OR (((deletion_origin = 'logo_replacement' "
             "AND purpose = 'workspace_logo') OR (deletion_origin = 'avatar_replacement' "
-            "AND purpose = 'user_avatar')) AND is_deleted = true "
+            "AND purpose = 'user_avatar') OR (deletion_origin = 'comms_retention' "
+            "AND purpose = 'comms_attachment')) AND is_deleted = true "
             "AND state = 'deleting' AND operation_id IS NOT NULL)",
             name="ck_files_deletion_origin",
         ),
@@ -120,3 +133,4 @@ class File(BaseModel):
     operation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failure_code: Mapped[str | None] = mapped_column(String(60))
     deletion_origin: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    retention_erased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -24,6 +24,13 @@ from app.systems.comms.conversations.models import CommsConversation as CommsCon
 from app.systems.comms.conversations.models import CommsConversationGroup as CommsConversationGroup
 from app.systems.comms.conversations.models import CommsDirectBlock as CommsDirectBlock
 from app.systems.comms.conversations.models import CommsMember as CommsMember
+from app.systems.comms.jobs.models import CommsExpiredSend as CommsExpiredSend
+from app.systems.comms.jobs.models import CommsExport as CommsExport
+from app.systems.comms.jobs.models import CommsExportEntry as CommsExportEntry
+from app.systems.comms.jobs.models import CommsExportSource as CommsExportSource
+from app.systems.comms.jobs.models import CommsRetentionPolicy as CommsRetentionPolicy
+from app.systems.comms.jobs.models import CommsRetentionSweep as CommsRetentionSweep
+from app.systems.comms.jobs.models import CommsSchedule as CommsSchedule
 from app.systems.comms.messages.interaction_models import CommsMention as CommsMention
 from app.systems.comms.messages.interaction_models import CommsReaction as CommsReaction
 from app.systems.comms.messages.interaction_models import CommsThread as CommsThread

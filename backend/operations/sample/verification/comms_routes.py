@@ -2,6 +2,19 @@
 
 COMMS_ROUTES = frozenset(
     {
+        ("GET", "/api/comms/scheduled-messages"),
+        ("POST", "/api/comms/scheduled-messages"),
+        ("GET", "/api/comms/scheduled-messages/{schedule_id}"),
+        ("PUT", "/api/comms/scheduled-messages/{schedule_id}"),
+        ("POST", "/api/comms/scheduled-messages/{schedule_id}/send"),
+        ("POST", "/api/comms/scheduled-messages/{schedule_id}/cancellation"),
+        ("GET", "/api/comms/retention"),
+        ("PUT", "/api/comms/retention"),
+        ("POST", "/api/comms/retention/preview"),
+        ("GET", "/api/comms/exports"),
+        ("POST", "/api/comms/exports"),
+        ("GET", "/api/comms/exports/{export_id}"),
+        ("GET", "/api/comms/exports/{export_id}/content"),
         ("GET", "/api/comms/search"),
         ("POST", "/api/realtime/token"),
         ("POST", "/api/comms/conversations/{conversation_id}/typing"),

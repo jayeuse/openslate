@@ -744,6 +744,84 @@
     "path": "/api/comms/conversations/{param}/messages"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "cancelSchedule",
+    "method": "POST",
+    "path": "/api/comms/scheduled-messages/{param}/cancellation"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "createSchedule",
+    "method": "POST",
+    "path": "/api/comms/scheduled-messages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "downloadExport",
+    "method": "GET",
+    "path": "/api/comms/exports/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "getExport",
+    "method": "GET",
+    "path": "/api/comms/exports/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "getSchedule",
+    "method": "GET",
+    "path": "/api/comms/scheduled-messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "listExports",
+    "method": "GET",
+    "path": "/api/comms/exports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "listSchedules",
+    "method": "GET",
+    "path": "/api/comms/scheduled-messages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "sendScheduleNow",
+    "method": "POST",
+    "path": "/api/comms/scheduled-messages/{param}/send"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "startExport",
+    "method": "POST",
+    "path": "/api/comms/exports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "updateSchedule",
+    "method": "PUT",
+    "path": "/api/comms/scheduled-messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/retention-api.ts",
+    "function": "getRetention",
+    "method": "GET",
+    "path": "/api/comms/retention"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/retention-api.ts",
+    "function": "previewRetention",
+    "method": "POST",
+    "path": "/api/comms/retention/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/retention-api.ts",
+    "function": "updateRetention",
+    "method": "PUT",
+    "path": "/api/comms/retention"
+  },
+  {
     "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
     "function": "getReport",
     "method": "GET",

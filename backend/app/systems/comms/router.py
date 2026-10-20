@@ -4,6 +4,9 @@ from fastapi import APIRouter
 
 from app.systems.comms.conversations.router import router as conversations
 from app.systems.comms.files.router import router as files
+from app.systems.comms.jobs.exports import router as exports
+from app.systems.comms.jobs.retention import router as retention
+from app.systems.comms.jobs.schedules import router as schedules
 from app.systems.comms.messages.interactions import router as interactions
 from app.systems.comms.messages.router import router as messages
 from app.systems.comms.messages.threads import router as threads
@@ -26,3 +29,6 @@ router.include_router(search)
 router.include_router(realtime)
 router.include_router(moderation)
 router.include_router(lifecycle)
+router.include_router(schedules)
+router.include_router(retention)
+router.include_router(exports)

@@ -85,6 +85,7 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
         "subject_id": str(run.id),
         "recipient_id": str(owner.id),
         "read_at": None,
+        "comms_conversation_id": None,
     }
     savepoint = db.begin_nested()
     db.add(

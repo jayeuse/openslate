@@ -54,6 +54,30 @@ export function responseData<Schema extends z.ZodType>(
   return result.data;
 }
 
+/** Private job/protected-resource replies must not enter a shared cache. */
+export function requirePrivateNoStore(headers: Headers): void {
+  const directives =
+    headers
+      .get("Cache-Control")
+      ?.toLowerCase()
+      .split(",")
+      .map((part) => part.trim()) ?? [];
+  if (
+    !directives.includes("private") ||
+    !directives.includes("no-store") ||
+    directives.includes("public")
+  )
+    throw new ApiContractError();
+}
+
+export function privateResponse<Schema extends z.ZodType>(
+  result: ApiFetchMetadata<Schema>,
+  status = 200,
+): z.output<Schema> {
+  requirePrivateNoStore(result.response.headers);
+  return responseData(result, status);
+}
+
 export function versioned<Schema extends z.ZodType<{ id: string }>>(
   result: ApiFetchMetadata<Schema>,
   statuses: readonly number[] = [200],

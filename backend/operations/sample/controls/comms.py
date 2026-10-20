@@ -109,12 +109,17 @@ def execute_comms_control(
     *,
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
+    if action.values.get("operation") in ("jobs_roundtrip", "partner_jobs_roundtrip"):
+        from operations.sample.controls.comms_jobs import execute_comms_job_control
+
+        return execute_comms_job_control(action, dataset, context, on_substep=on_substep)
     if action.values.get("operation") in ("moderation_roundtrip", "partner_moderation_roundtrip"):
         from operations.sample.controls.comms_moderation import execute_moderation_control
 
         return execute_moderation_control(action, dataset, context, on_substep=on_substep)
     if action.values.get("operation") in (
-        "notification_roundtrip", "partner_notification_roundtrip",
+        "notification_roundtrip",
+        "partner_notification_roundtrip",
     ):
         from operations.sample.controls.comms_notifications import (
             execute_comms_notification_control,

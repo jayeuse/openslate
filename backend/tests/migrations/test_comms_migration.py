@@ -8,16 +8,19 @@ from sqlalchemy.pool import NullPool
 
 from tests.conftest import alembic_heads, guarded_create_engine
 from tests.database_pool import dispose_process_engines
-from tests.migrations.test_organization_root import COMMS_TABLES
+from tests.migrations.test_organization_root import COMMS_TABLES, ORGANIZATION_TABLES
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
 pytestmark = pytest.mark.integration
 BASELINE = "226847298ae4"
+CURRENT_COMMS_TABLES = {name for name in ORGANIZATION_TABLES if name.startswith("comms_")}
 
 
-def test_comms_inventory_is_exactly_the_twenty_approved_tables(integration_owner_db):
+def test_comms_inventory_contains_the_foundation_and_current_approved_extensions(
+    integration_owner_db,
+):
     tables = inspect(integration_owner_db.connection()).get_table_names(schema="public")
-    assert {name for name in tables if name.startswith("comms_")} == COMMS_TABLES
+    assert {name for name in tables if name.startswith("comms_")} == CURRENT_COMMS_TABLES
     assert len(COMMS_TABLES) == 20
 
 
@@ -120,10 +123,12 @@ def test_empty_comms_downgrade_upgrade_removes_owned_triggers_without_provider_c
     try:
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT count(*) FROM organizations")) == 0
-            for table in COMMS_TABLES:
+            for table in CURRENT_COMMS_TABLES:
                 assert connection.scalar(text(f"SELECT count(*) FROM {table}")) == 0
             before = _provider_catalog(connection)
-            non_comms = set(inspect(connection).get_table_names(schema="public")) - COMMS_TABLES
+            non_comms = (
+                set(inspect(connection).get_table_names(schema="public")) - CURRENT_COMMS_TABLES
+            )
             triggers = connection.execute(
                 text("""
                 SELECT c.relname,p.oid::regprocedure::text
@@ -154,7 +159,7 @@ def test_empty_comms_downgrade_upgrade_removes_owned_triggers_without_provider_c
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == head
             assert set(inspect(connection).get_table_names(schema="public")) == (
-                non_comms | COMMS_TABLES
+                non_comms | CURRENT_COMMS_TABLES
             )
             assert _provider_catalog(connection) == before
     finally:

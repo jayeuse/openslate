@@ -132,6 +132,15 @@ def native_room(request):
         with owner.begin() as connection:
             params = {"orgs": orgs, "users": [person.id for person in people]}
             for table in (
+                "comms_export_entries",
+                "comms_export_sources",
+                "scheduled_work",
+                "comms_exports",
+                "comms_schedules",
+                "comms_retention_sweeps",
+                "comms_retention_policies",
+                "comms_expired_sends",
+                "security_events",
                 "in_app_notifications",
                 "comms_reports",
                 "comms_message_attachments",

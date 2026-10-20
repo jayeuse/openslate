@@ -61,6 +61,7 @@ from app.systems.boards.post_router import router as board_posts_router
 from app.systems.boards.record_link_router import router as board_record_links_router
 from app.systems.boards.router import router as boards_router
 from app.systems.boards.widget_router import router as board_widgets_router
+from app.systems.comms.jobs.worker import scheduling_worker as comms_scheduler
 from app.systems.comms.realtime.publisher import install_publication
 from app.systems.comms.router import router as comms_router
 from app.systems.manage.audit.router import internal_security_events_router, security_events_router
@@ -87,7 +88,6 @@ from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as files_router
 from app.systems.platform.realtime.router import router as realtime_router
 from app.systems.platform.scheduling.notification_router import router as notifications_router
-from app.systems.platform.scheduling.worker import ReportSchedulingWorker
 from app.systems.platform.search.router import router as search_router
 from app.systems.sandbox.departments.router import router as departments_router
 from app.systems.sandbox.designs.router import router as sandbox_designs_router
@@ -179,9 +179,9 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             report_worker.start()
         yield
     finally:
-        comms_stopped = app.state.comms_publisher.stop()
         signout_stopped = signout_worker.stop() if signout_worker is not None else True
         report_stopped = report_worker.stop() if report_worker is not None else True
+        comms_stopped = app.state.comms_publisher.stop() if report_stopped else False
         trigger_stopped = app.state.trigger_worker.stop()
         app.state.events_listener.stop()
         if trigger_stopped and report_stopped and signout_stopped and comms_stopped:
@@ -228,7 +228,6 @@ def create_app() -> FastAPI:
     app.state.events_hub = events_hub
     app.state.events_listener = PostgresInvalidationListener(events_hub)
     app.state.trigger_worker = TriggerWorker(settings)
-    app.state.report_scheduling_worker = ReportSchedulingWorker(settings)
     app.state.provider_signout_worker = ProviderSignoutWorker(settings)
     relaxed_development = is_relaxed_development(settings)
     if not relaxed_development:
@@ -446,6 +445,7 @@ def create_app() -> FastAPI:
         return await http_exception_handler(request, error)
 
     install_publication(app, settings)
+    app.state.report_scheduling_worker = comms_scheduler(settings, app.state.comms_publisher.submit)
     return app
 
 
