@@ -122,6 +122,7 @@ type Props = {
   patchPreferences: (patch: Partial<CommsPreferences>) => Promise<void>;
   list: ReactNode;
   conversation: ReactNode;
+  tool?: ReactNode;
   right: ReactNode;
   dialogs: ReactNode;
   rightKind: "thread" | "record" | "members";
@@ -134,6 +135,7 @@ export function CommsLayout({
   patchPreferences,
   list,
   conversation,
+  tool,
   right,
   dialogs,
   rightKind,
@@ -262,7 +264,10 @@ export function CommsLayout({
                   id="conversation"
                   minSize={desktop ? minimumChatWidth : 0}
                 >
-                  {conversation}
+                  <Activity mode={tool ? "hidden" : "visible"}>
+                    {conversation}
+                  </Activity>
+                  {tool}
                 </ResizablePanel>
               )}
               {rightOpen && (

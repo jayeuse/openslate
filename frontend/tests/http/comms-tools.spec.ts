@@ -150,10 +150,93 @@ async function openTool(page: Page, name: string) {
   });
   await expect(item).toBeVisible();
   await item.click();
-  const tool = page.getByRole("dialog", { name, exact: true });
+  const tool = page.getByRole("region", { name, exact: true });
   await expect(tool).toBeVisible();
   return tool;
 }
+
+test("admin tools use the main work region and guard a draft on Back and conversation navigation", async ({
+  page,
+}) => {
+  await seedTools(page);
+  await page.goto("/comms");
+  const composer = page.getByRole("textbox", { name: "Message", exact: true });
+  await composer.fill("Keep the conversation draft");
+  await openTool(page, "Channel templates");
+  await expect(
+    page.getByRole("dialog", { name: "Channel templates", exact: true }),
+  ).toHaveCount(0);
+  const tool = page.getByRole("region", {
+    name: "Channel templates",
+    exact: true,
+  });
+  await tool.getByRole("button", { name: /Advanced settings/ }).click();
+  await tool
+    .getByLabel("Template name", { exact: true })
+    .fill("Unfinished template");
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
+  const discard = page.getByRole("alertdialog", {
+    name: "Discard changes?",
+    exact: true,
+  });
+  await expect(discard).toBeVisible();
+  await discard
+    .getByRole("button", { name: "Keep editing", exact: true })
+    .click();
+  await expect(tool.getByLabel("Template name", { exact: true })).toHaveValue(
+    "Unfinished template",
+  );
+  await tool
+    .getByRole("button", { name: "Back to conversation", exact: true })
+    .click();
+  await discard
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(composer).toHaveValue("Keep the conversation draft");
+});
+
+test("scheduled messages expose Send Now Edit and Cancel on entry without bypassing confirmation", async ({
+  page,
+}) => {
+  await seedTools(page);
+  await page.goto("/comms");
+  const tool = await openTool(page, "Scheduled messages");
+  await expect(
+    tool.getByRole("button", { name: "Send Now", exact: true }),
+  ).toHaveCount(2);
+  await expect(
+    tool.getByRole("button", { name: /^Edit scheduled message:/ }),
+  ).toHaveCount(2);
+  await expect(
+    tool.getByRole("button", { name: "Cancel scheduled message", exact: true }),
+  ).toHaveCount(2);
+  await tool
+    .getByRole("group", {
+      name: "Scheduled message: Deliver scheduled update",
+      exact: true,
+    })
+    .getByRole("button", { name: "Send Now", exact: true })
+    .click();
+  await expect(
+    tool.getByText("Scheduled message sent.", { exact: true }),
+  ).toHaveCount(0);
+  await tool
+    .getByRole("button", { name: "Confirm Send Now", exact: true })
+    .click();
+  await expect(
+    tool.getByText("Scheduled message sent.", { exact: true }),
+  ).toBeVisible();
+  await tool
+    .getByRole("group", {
+      name: "Scheduled message: Cancel this schedule",
+      exact: true,
+    })
+    .getByRole("button", { name: "Cancel scheduled message", exact: true })
+    .click();
+  await expect(
+    tool.getByText("Scheduled message cancelled.", { exact: true }),
+  ).toBeVisible();
+});
 
 test("moderation starts with reports and recoverable restore, not advanced posting controls", async ({
   page,
@@ -227,12 +310,18 @@ test("scheduled messages edit in the regional timezone then send now and cancel 
   await tool
     .getByRole("button", { name: "Preview scheduled message", exact: true })
     .click();
-  await tool.getByRole("button", { name: "Send Now", exact: true }).click();
+  await tool
+    .getByRole("button", { name: "Confirm Send Now", exact: true })
+    .click();
   await expect(
     tool.getByText("Scheduled message sent.", { exact: true }),
   ).toBeVisible();
   await tool.getByRole("button", { name: /Cancel this schedule/ }).click();
   await tool
+    .getByRole("group", {
+      name: "Scheduled message: Cancel this schedule",
+      exact: true,
+    })
     .getByRole("button", { name: "Cancel scheduled message", exact: true })
     .click();
   await expect(

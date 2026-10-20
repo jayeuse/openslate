@@ -30,6 +30,7 @@ import { releaseAllLocalAttachments } from "../../shared/runtime/local-attachmen
 import type { CommsGroup } from "../domain/groups";
 
 type ClientState = {
+  organizationName: string | undefined;
   groups: CommsGroup[];
   catalog: {
     departments: { id: string; name: string }[];
@@ -261,6 +262,13 @@ function OwnedClient({
   return (
     <ClientContext.Provider
       value={{
+        organizationName:
+          !suspended &&
+          !identity.isError &&
+          identity.data?.id === userId &&
+          identity.data.currentOrganization?.orgId === orgId
+            ? identity.data.currentOrganization.name
+            : undefined,
         groups,
         catalog,
         generation,

@@ -174,6 +174,7 @@ for (const scenario of ["nonmembers", "empty"] as const) {
     await expect(
       page.getByRole("heading", { name: "Eligible group", exact: true }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "Members", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "Members 3", exact: true }),
     ).toBeVisible();
@@ -506,6 +507,7 @@ test("Comms starts a group from visible people, keeps the actor, and persists ca
   await expect(
     page.getByRole("heading", { name: "Dispatch planning", exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Members", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Members 3", exact: true }),
   ).toBeVisible();

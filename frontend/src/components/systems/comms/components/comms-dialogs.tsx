@@ -17,7 +17,12 @@ import {
 import { CommsThreadList } from "./thread-list";
 import type { ChannelDialog as ChannelEditor } from "./channel-dialog";
 import type { CommsSettingsDialog as SettingsEditor } from "./settings-dialog";
-import { AdminTools, toolViews, type ToolView } from "./admin-tools";
+import {
+  AdminTools,
+  mainToolViews,
+  toolViews,
+  type ToolView,
+} from "./admin-tools";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 import type { NavigationState } from "../state/use-comms-navigation";
 import { newChannel, type Channel, type Category } from "../domain/view-model";
@@ -192,16 +197,18 @@ export function CommsDialogs({
           }}
         />
       )}
-      {toolViews.includes(tool) && fallback && (
-        <AdminTools
-          view={tool}
-          opener={state.toolOpener ?? fallback}
-          channelId={navigation.selected || undefined}
-          threadId={navigation.threadId || undefined}
-          messageId={navigation.messageId || undefined}
-          onClose={() => navigation.update({ tool: null })}
-        />
-      )}
+      {toolViews.includes(tool) &&
+        !mainToolViews.includes(tool) &&
+        fallback && (
+          <AdminTools
+            view={tool}
+            opener={state.toolOpener ?? fallback}
+            channelId={navigation.selected || undefined}
+            threadId={navigation.threadId || undefined}
+            messageId={navigation.messageId || undefined}
+            onClose={() => navigation.update({ tool: null })}
+          />
+        )}
       {state.editor && (
         <ChannelDialog
           key={`${state.editor.kind}-${state.editor.value.id}`}

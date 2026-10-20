@@ -6,7 +6,7 @@ import { useCommsClient } from "../state/client-context";
 import { Action } from "../../shared/components/ui";
 
 export function ConnectionBanner() {
-  const { client, error, reload } = useCommsClient();
+  const { client, error, reload, organizationName } = useCommsClient();
   const [observed, setObserved] = useState<{
     client: CommsClient;
     state: ConnectionState;
@@ -80,8 +80,16 @@ export function ConnectionBanner() {
         state === "connecting" ||
         (state === "reconnecting" && !observed?.delayed)
       }
-      className="flex min-h-6 shrink-0 flex-wrap items-center gap-x-3 border-b px-3 text-xs"
+      className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-3 border-b px-3 py-1 text-xs"
     >
+      {organizationName && (
+        <span
+          aria-label="Current organization"
+          className="text-sm font-semibold"
+        >
+          {organizationName}
+        </span>
+      )}
       <span className="text-muted-foreground">Local example connection</span>
       <span>{label}</span>
       {(state === "offline" || state === "paused") && (

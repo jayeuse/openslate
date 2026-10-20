@@ -77,6 +77,8 @@ test("Comms replaces panel toggles and restores thread and tool destinations fro
   const conversationUrl = page.url();
   await expect(page).toHaveURL(/conversation=/);
   await page.getByRole("button", { name: "Members", exact: true }).click();
+  await expect(page).toHaveURL(/panel=members/);
+  await page.getByRole("button", { name: "Members", exact: true }).click();
   await expect(page).toHaveURL(/panel=none/);
   await page.getByRole("button", { name: "Members", exact: true }).click();
   await expect(page).toHaveURL(/panel=members/);
@@ -125,9 +127,11 @@ test("Comms replaces panel toggles and restores thread and tool destinations fro
   await page.getByRole("menuitem", { name: "Moderation", exact: true }).click();
   await expect(page).toHaveURL(/tool=moderation/);
   await page.reload();
-  const tool = page.getByRole("dialog", { name: "Moderation", exact: true });
+  const tool = page.getByRole("region", { name: "Moderation", exact: true });
   await expect(tool).toBeVisible();
-  await tool.getByRole("button", { name: "Close", exact: true }).click();
+  await tool
+    .getByRole("button", { name: "Back to conversation", exact: true })
+    .click();
   await expect(page).not.toHaveURL(/tool=/);
   expect(new URL(page.url()).searchParams.get("conversation")).toBe(
     new URL(conversationUrl).searchParams.get("conversation"),

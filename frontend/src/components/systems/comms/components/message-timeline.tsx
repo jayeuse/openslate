@@ -717,20 +717,22 @@ const TimelineRow = memo(function TimelineRow({
                       TONE_EDGE[group?.tone ?? 0],
                     )}
                   >
-                    <div className="flex items-center gap-2 border-b pr-3">
+                    <div className="flex flex-col gap-1 border-b sm:flex-row sm:items-center sm:gap-2 sm:pr-3">
                       <button
                         type="button"
                         onClick={() => onOpenRecord?.(message.recordId!)}
-                        className="hover:bg-muted focus-visible:outline-ring flex min-h-11 min-w-0 flex-1 flex-wrap items-center gap-x-2 px-3 py-1.5 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 sm:flex-nowrap"
+                        className="hover:bg-muted focus-visible:outline-ring flex min-h-11 min-w-0 flex-1 flex-col items-start gap-1 px-3 py-2 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 sm:flex-row sm:items-center sm:gap-2"
                       >
                         <span className="sr-only">Open record: </span>
-                        <TableGlyph />
-                        <span className="text-muted-foreground order-first w-full text-xs sm:order-none sm:w-auto sm:shrink-0">
-                          {group ? `${group.name} › ` : ""}
-                          {module}
+                        <span className="text-muted-foreground flex items-center gap-2 text-xs sm:shrink-0">
+                          <TableGlyph />
+                          <span>
+                            {group ? `${group.name} › ` : ""}
+                            {module}
+                          </span>
                         </span>
                         {record && (
-                          <span className="truncate text-sm font-semibold">
+                          <span className="min-w-0 text-sm font-semibold break-words whitespace-normal">
                             {title}
                           </span>
                         )}
@@ -738,7 +740,7 @@ const TimelineRow = memo(function TimelineRow({
                       <Link
                         href={`/openview?record=${encodeURIComponent(message.recordId)}`}
                         aria-label={`Open in OpenView: ${title}`}
-                        className="text-action-text shrink-0 text-xs font-semibold hover:underline"
+                        className="text-action-text inline-flex min-h-11 shrink-0 items-center px-3 text-xs font-semibold hover:underline sm:min-h-6 sm:px-0"
                       >
                         Open in OpenView
                       </Link>

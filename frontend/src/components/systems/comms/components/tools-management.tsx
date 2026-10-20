@@ -32,7 +32,10 @@ import {
   type CommsSettingKey,
 } from "../domain/configuration";
 import { parseTemplateImport } from "../memory/template-import";
-import { ConfigurationFrame } from "./configuration-frame";
+import {
+  ConfigurationFrame,
+  type ConfigurationFrameProps,
+} from "./configuration-frame";
 import { SettingsFields, SETTINGS_LABELS } from "./settings-fields";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 import {
@@ -44,10 +47,12 @@ import { complete } from "../state/workspace-view";
 import { wireSettingKey, wireSettings } from "../state/settings-wire";
 
 export function ManagementTools({
+  embedded,
   channelId,
   opener,
   onClose,
 }: {
+  embedded?: ConfigurationFrameProps["embedded"];
   channelId?: string;
   opener: HTMLElement | null;
   onClose: () => void;
@@ -397,6 +402,7 @@ export function ManagementTools({
   );
   return (
     <ConfigurationFrame
+      embedded={embedded}
       className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       title="Channel templates"
       description="Copy chosen settings from a saved template to several channels. Messages and members stay as they are."

@@ -8,6 +8,7 @@ import {
   type SetStateAction,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
 import {
   threadMessages,
   type Message,
@@ -24,6 +25,7 @@ export function useCommsNavigationState(
   threads: Thread[] = [],
 ) {
   const router = useRouter();
+  const requestNavigation = useWorkspaceNavigationRequest();
   const { client } = useCommsClient();
   const [navigating, startNavigation] = useTransition();
   const query = useSearchParams();
@@ -81,11 +83,19 @@ export function useCommsNavigationState(
     "";
   const panel = query.get("panel");
   const memberOpen = panel === "members";
-  const membersVisible = panel === null || memberOpen;
+  const membersVisible = memberOpen;
   const recordId = panel?.startsWith("record:") ? panel.slice(7) : "";
   const mobileConversation =
-    query.has("conversation") || !!messageId || !!threadId || !!view;
-  function update(patch: Record<string, string | null>, push = false) {
+    query.has("conversation") ||
+    !!messageId ||
+    !!threadId ||
+    !!view ||
+    query.has("tool");
+  function update(
+    patch: Record<string, string | null>,
+    push = false,
+    confirmed = false,
+  ) {
     const next = new URLSearchParams(query.toString());
     for (const [key, value] of Object.entries(patch)) {
       if (value === null || value === "") next.delete(key);
@@ -93,9 +103,11 @@ export function useCommsNavigationState(
     }
     const href = next.size ? (`/comms?${next}` as const) : "/comms";
     if (href === `/comms${query.size ? `?${query}` : ""}`) return;
-    startNavigation(() =>
-      (push ? router.push : router.replace)(href, { scroll: false }),
-    );
+    const resume = () =>
+      startNavigation(() =>
+        (push ? router.push : router.replace)(href, { scroll: false }),
+      );
+    if (confirmed || requestNavigation(href, resume)) resume();
   }
   function navigate(id: string, detail: Record<string, string | null> = {}) {
     update(
@@ -172,6 +184,7 @@ export function useCommsNavigationState(
     navigating,
     query,
     update,
+    closeTool: () => update({ tool: null }, false, true),
     navigate,
     messageId,
     membersVisible,

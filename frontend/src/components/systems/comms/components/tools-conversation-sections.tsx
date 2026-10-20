@@ -176,7 +176,12 @@ export function OutboxFields({
         </Empty>
       )}
       {schedules.map((schedule) => (
-        <Card key={schedule.id} className="w-full">
+        <Card
+          key={schedule.id}
+          role="group"
+          aria-label={`Scheduled message: ${schedule.request.body}`}
+          className="w-full"
+        >
           <CardHeader>
             <CardTitle>Scheduled message</CardTitle>
             <CardDescription>
@@ -186,16 +191,37 @@ export function OutboxFields({
                 : ""}
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <Button
-              variant="outline"
-              className="h-auto justify-start text-left whitespace-normal"
-              aria-label={`${schedule.request.body} · ${timestamp(schedule.request.send_at)}`}
-              disabled={dirty || !region}
-              onClick={() => onSelectSchedule(schedule)}
-            >
+          <CardContent className="flex flex-col gap-3">
+            <p className="text-sm whitespace-pre-wrap">
               {schedule.request.body}
-            </Button>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={dirty || !region || schedule.status !== "pending"}
+                onClick={() => {
+                  onSelectSchedule(schedule);
+                  setPreview(true);
+                }}
+              >
+                Send Now
+              </Button>
+              <Button
+                variant="outline"
+                className="h-auto justify-start text-left whitespace-normal"
+                aria-label={`Edit scheduled message: ${schedule.request.body}`}
+                disabled={dirty || !region}
+                onClick={() => onSelectSchedule(schedule)}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="outline"
+                disabled={dirty || schedule.status !== "pending"}
+                onClick={() => onCancelSchedule(schedule.id)}
+              >
+                Cancel scheduled message
+              </Button>
+            </div>
           </CardContent>
         </Card>
       ))}
@@ -289,19 +315,10 @@ export function OutboxFields({
                   disabled={selectedSchedule.status !== "pending"}
                   onClick={onSendNow}
                 >
-                  Send Now
+                  Confirm Send Now
                 </Button>
               </CardContent>
             </Card>
-          )}
-          {selectedSchedule && (
-            <Button
-              variant="outline"
-              disabled={selectedSchedule.status !== "pending"}
-              onClick={() => onCancelSchedule(selectedSchedule.id)}
-            >
-              Cancel scheduled message
-            </Button>
           )}
         </>
       )}

@@ -151,11 +151,12 @@ export function ConversationView({
     id: string;
     state: "sending" | "failed";
   }>();
-  useVisibleCommsRead(
+  const firstUnreadVisible = useVisibleCommsRead(
     messageList,
     summary,
     canView && !navigation.navigating && !history.loading,
     history.page,
+    entry?.id === selected ? entry.first : null,
   );
   const operations = createCommsMessageOperations({
     run,
@@ -290,26 +291,29 @@ export function ConversationView({
                       Load older messages
                     </Action>
                   )}
-                  {!history.page?.pagination.has_older && (
-                    <div className="mt-4 mb-8 px-3">
-                      <div className="bg-muted mb-3 flex size-12 items-center justify-center rounded-2xl">
-                        {channel ? (
-                          <Hash className="text-muted-foreground size-6" />
-                        ) : (
-                          <MessageSquare className="text-muted-foreground size-6" />
-                        )}
+                  {history.page &&
+                    !history.loading &&
+                    history.messages.length === 0 &&
+                    !history.page.pagination.has_older && (
+                      <div className="mt-4 mb-8 px-3">
+                        <div className="bg-muted mb-3 flex size-12 items-center justify-center rounded-2xl">
+                          {channel ? (
+                            <Hash className="text-muted-foreground size-6" />
+                          ) : (
+                            <MessageSquare className="text-muted-foreground size-6" />
+                          )}
+                        </div>
+                        <h3 className="text-xl font-semibold tracking-tight">
+                          {channel
+                            ? `Welcome to #${channel.name}`
+                            : `A conversation with ${direct?.user}`}
+                        </h3>
+                        <p className="text-muted-foreground mt-2 text-sm">
+                          {channel?.description ||
+                            "This is the beginning of your conversation."}
+                        </p>
                       </div>
-                      <h3 className="text-xl font-semibold tracking-tight">
-                        {channel
-                          ? `Welcome to #${channel.name}`
-                          : `A conversation with ${direct?.user}`}
-                      </h3>
-                      <p className="text-muted-foreground mt-2 text-sm">
-                        {channel?.description ||
-                          "This is the beginning of your conversation."}
-                      </p>
-                    </div>
-                  )}
+                    )}
                   {visibleMessages.length === 0 && (
                     <Empty>
                       <EmptyDescription>
@@ -363,7 +367,7 @@ export function ConversationView({
           )}
         </div>
       </div>
-      {entry?.first != null && canView && (
+      {entry?.first != null && canView && !firstUnreadVisible && (
         <Action
           className="mx-auto mb-2"
           size="sm"
@@ -371,14 +375,18 @@ export function ConversationView({
             if (!client || entry.first === null) return;
             void client
               .getMessageBySequence(selected, entry.first)
-              .then(({ data }) =>
+              .then(({ data }) => {
+                if (messageId === data.id)
+                  document
+                    .getElementById(data.id)
+                    ?.scrollIntoView({ block: "center", behavior: "instant" });
                 navigation.navigate(selected, {
                   message: data.id,
                   ...(data.parent_id && data.thread
                     ? { thread: data.thread.id, panel: "thread" }
                     : {}),
-                }),
-              )
+                });
+              })
               .catch(() =>
                 reportCommsError("The unread message is not available."),
               );

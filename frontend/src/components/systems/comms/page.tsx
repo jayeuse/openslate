@@ -1,8 +1,16 @@
 "use client";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useUserPreferences } from "@/components/theme-provider";
 import { commsShortcutAction } from "@/lib/shortcuts";
-import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import {
+  useWorkspaceNavigationGuard,
+  type WorkspaceNavigationGuard,
+} from "@/components/workspace-navigation-guard";
+import {
+  AdminTools,
+  mainToolViews,
+  type ToolView,
+} from "./components/admin-tools";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import {
   useCommsWorkspace,
@@ -49,13 +57,25 @@ function CommsScreen({
   const dialogs = useCommsDialogs(navigation);
   const patchPreferences = useCommsPreferences(preferences);
   const { run, isPending } = useCommsCommands();
-  const guardWorkspaceNavigation = useCallback(() => {
-    if (!isPending()) return true;
-    reportCommsError(
-      "Finish the current OpenComms change before leaving this page.",
-    );
-    return false;
-  }, [isPending]);
+  const toolGuard = useRef<WorkspaceNavigationGuard | null>(null);
+  const registerGuard = useCallback(
+    (guard: WorkspaceNavigationGuard | null) => {
+      toolGuard.current = guard;
+    },
+    [],
+  );
+  const tool = navigation.query.get("tool") as ToolView;
+  const mainTool = mainToolViews.includes(tool);
+  const guardWorkspaceNavigation = useCallback<WorkspaceNavigationGuard>(
+    (href, resume) => {
+      if (!isPending()) return toolGuard.current?.(href, resume) ?? true;
+      reportCommsError(
+        "Finish the current OpenComms change before leaving this page.",
+      );
+      return false;
+    },
+    [isPending],
+  );
   useWorkspaceNavigationGuard(guardWorkspaceNavigation);
   const currentThread = canView
     ? threads.find(
@@ -67,8 +87,8 @@ function CommsScreen({
   const openRecord = !currentThread && !!navigation.recordId;
   const layout = useCommsPanelLayout({
     preferences,
-    hasThread: !!currentThread || !!openRecord,
-    membersVisible: !navigation.view && navigation.membersVisible,
+    hasThread: !mainTool && (!!currentThread || !!openRecord),
+    membersVisible: !mainTool && !navigation.view && navigation.membersVisible,
   });
   const [clockNow, setClockNow] = useState(() => Date.now());
   useEffect(() => {
@@ -138,6 +158,18 @@ function CommsScreen({
       layout={layout}
       navigation={navigation}
       patchPreferences={patchPreferences}
+      tool={
+        mainTool ? (
+          <AdminTools
+            key={tool}
+            view={tool}
+            embedded={{ registerGuard }}
+            opener={dialogs.toolOpener}
+            channelId={navigation.selected || undefined}
+            onClose={navigation.closeTool}
+          />
+        ) : undefined
+      }
       rightKind={currentThread ? "thread" : openRecord ? "record" : "members"}
       dialogOpen={
         !!navigation.query.get("tool") || !!dialogs.settings || !!dialogs.editor

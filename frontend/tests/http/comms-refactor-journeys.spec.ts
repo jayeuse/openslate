@@ -586,7 +586,7 @@ test("the OpenComms menu keeps everyday items up front and admin tools behind on
     "Settings history",
   ]);
   await tools.getByRole("menuitem", { name: "Moderation" }).click();
-  await expect(page.getByRole("dialog", { name: "Moderation" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Moderation" })).toBeVisible();
 });
 
 test("settings history keeps workspace changes visible while a channel is selected", async ({
@@ -618,7 +618,7 @@ test("settings history keeps workspace changes visible while a channel is select
     .click();
   await expect(settings).toBeHidden();
   await openTool("Settings history");
-  const history = page.getByRole("dialog", {
+  const history = page.getByRole("region", {
     name: "Settings history",
     exact: true,
   });
@@ -971,6 +971,7 @@ test("category defaults preserve existing members and the saved Permissions summ
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/comms");
   await page.getByRole("button", { name: /^operations(,|$)/ }).click();
+  await page.getByRole("button", { name: "Members", exact: true }).click();
   await expect(
     page.getByRole("complementary", { name: "Channel members" }),
   ).toContainText("Members 4");

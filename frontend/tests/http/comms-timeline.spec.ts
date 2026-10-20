@@ -364,21 +364,28 @@ test("Comms keeps an older-reading anchor when the existing client delivers anot
   await page
     .getByRole("menuitem", { name: "Scheduled messages", exact: true })
     .click();
-  const outbox = page.getByRole("dialog", {
+  const outbox = page.getByRole("region", {
     name: "Scheduled messages",
     exact: true,
   });
   await outbox
-    .getByRole("button", { name: /^A newly delivered scheduled message/ })
+    .getByRole("button", {
+      name: /^Edit scheduled message: A newly delivered scheduled message/,
+    })
     .click();
   await outbox
     .getByRole("button", { name: "Preview scheduled message", exact: true })
     .click();
-  await outbox.getByRole("button", { name: "Send Now", exact: true }).click();
+  await outbox
+    .getByRole("button", { name: "Confirm Send Now", exact: true })
+    .click();
   await expect(
     outbox.getByText("Scheduled message sent.", { exact: true }),
   ).toBeVisible();
-  await outbox.getByRole("button", { name: "Close", exact: true }).click();
+  await outbox
+    .getByRole("button", { name: "Back to conversation", exact: true })
+    .click();
+  await expect(page.locator(`[id="${anchor.id}"]`)).toBeVisible();
   await expect
     .poll(async () =>
       Math.abs(

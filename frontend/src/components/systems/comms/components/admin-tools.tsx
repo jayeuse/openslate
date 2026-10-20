@@ -7,6 +7,15 @@ export const AdminTools = dynamic(() =>
   import("./tools-dialog").then((module) => module.CommsToolsDialog),
 );
 export type ToolView = ComponentProps<typeof CommsToolsDialog>["view"];
+export const mainToolViews: readonly ToolView[] = [
+  "management",
+  "templates",
+  "history",
+  "moderation",
+  "outbox",
+  "retention",
+  "export",
+];
 export const toolViews: readonly ToolView[] = [
   "management",
   "templates",

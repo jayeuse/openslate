@@ -23,8 +23,8 @@ const gzip = {
   memLevel: 8,
   strategy: constants.Z_DEFAULT_STRATEGY,
 };
-// Plan §6: S13 grows at most 5% from the previous committed slice, S12 (7df54275).
-const baselineColdGzipBytes = 587_734;
+// Plan §6: S14 grows at most 5% from the previous committed slice, S13 (18447d82).
+const baselineColdGzipBytes = 588_981;
 const maximumColdGzipBytes = Math.floor(baselineColdGzipBytes * 1.05);
 // S26 has a separate strict target: below the original S04 baseline, not +5%.
 const s04BaselineColdGzipBytes = 546_979;
@@ -186,15 +186,15 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
     .click();
   await page.getByRole("menuitem", { name: "Moderation", exact: true }).click();
   await expect(
-    page.getByRole("dialog", { name: "Moderation", exact: true }),
+    page.getByRole("region", { name: "Moderation", exact: true }),
   ).toBeVisible();
   const tools = await checkpoint();
   const growthBytes = cold.gzip_bytes - baselineColdGzipBytes;
   const growthPercent = (growthBytes / baselineColdGzipBytes) * 100;
 
   const report = {
-    budget_slice: "S13",
-    previous_committed_slice: "S12@7df54275",
+    budget_slice: "S14",
+    previous_committed_slice: "S13@18447d82",
     s04_baseline_cold_gzip_bytes: s04BaselineColdGzipBytes,
     s26_target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
     baseline_cold_gzip_bytes: baselineColdGzipBytes,

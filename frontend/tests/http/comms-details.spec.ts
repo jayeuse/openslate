@@ -427,6 +427,38 @@ test("thread management and record detail do not broaden read-only source permis
   ).toHaveCount(0);
 });
 
+test("phone record cards keep their title readable with inline context and a separate OpenView action", async ({
+  page,
+}) => {
+  const data = await seedDetails(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/comms?conversation=${data.conversation}`);
+  const card = page.getByRole("button", {
+    name: /Open record:.*Riverside service visit/,
+  });
+  const title = card.getByText("Riverside service visit", { exact: true });
+  await expect(title).toBeVisible();
+  expect(
+    await title.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  await expect(title).toHaveCSS("white-space", "normal");
+  const icon = await card.locator("svg").boundingBox();
+  const context = await card
+    .getByText("Service requests", { exact: true })
+    .boundingBox();
+  expect(Math.abs(icon!.y - context!.y)).toBeLessThan(12);
+  await expect(
+    page.getByRole("link", {
+      name: "Open in OpenView: Riverside service visit",
+      exact: true,
+    }),
+  ).toHaveAttribute("href", `/openview?record=${data.record}`);
+  await card.click();
+  await expect(
+    page.getByRole("dialog", { name: "Record", exact: true }),
+  ).toBeVisible();
+});
+
 test("detail panes retain usable light and dark desktop and phone layouts", async ({
   page,
 }, testInfo) => {

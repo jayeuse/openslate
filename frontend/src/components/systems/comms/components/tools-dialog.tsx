@@ -13,7 +13,10 @@ import { FieldGroup } from "@/components/ui/field";
 import { NativeSelectOption } from "@/components/ui/native-select";
 import { Choice, Toggle } from "../../shared/components/ui";
 import type * as C from "../contract/types";
-import { ConfigurationFrame } from "./configuration-frame";
+import {
+  ConfigurationFrame,
+  type ConfigurationFrameProps,
+} from "./configuration-frame";
 import {
   ConfigurationChanges,
   ConfigurationHistoryFields,
@@ -54,6 +57,7 @@ export type CommsToolsView =
   | "message-history"
   | "report";
 export interface CommsToolsDialogProps {
+  embedded?: ConfigurationFrameProps["embedded"];
   view: CommsToolsView;
   channelId?: string;
   threadId?: string;
@@ -96,6 +100,7 @@ type ToolData = {
 const sampleMarker = "CONFIRM LOCAL SAMPLE";
 
 function LifecycleTools({
+  embedded,
   view,
   channelId,
   threadId,
@@ -426,6 +431,7 @@ function LifecycleTools({
   const protectedView = view === "history" || view === "retention";
   return (
     <ConfigurationFrame
+      embedded={embedded}
       className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       title={titles[view]}
       description={

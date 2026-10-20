@@ -77,6 +77,7 @@ export function VirtualMessageList({
         : (virtual.range?.endIndex ?? count - 1);
   const lastId = messages.at(-1)?.id;
   const positionRef = useRef({ targetId, lastId, followLatest });
+  const alignedTarget = useRef("");
   useLayoutEffect(() => {
     restoreAnchor?.((id, top) => {
       const viewport = viewportRef.current,
@@ -95,6 +96,7 @@ export function VirtualMessageList({
     const previous = positionRef.current;
     positionRef.current = { targetId, lastId, followLatest };
     if (!targetId) {
+      alignedTarget.current = "";
       // Mount starts at the estimated end. Only subsequent explicit latest/send
       // transitions need a command; measurements preserve the end themselves.
       if (
@@ -106,10 +108,11 @@ export function VirtualMessageList({
         virtual.scrollToOffset(virtual.getTotalSize() + margin);
       return;
     }
-    if (targetIndex >= 0)
-      virtual.scrollToIndex(targetIndex, { align: "center" });
+    if (targetIndex < 0 || alignedTarget.current === targetId) return;
+    virtual.scrollToIndex(targetIndex, { align: "center" });
     const frame = requestAnimationFrame(() => {
       const target = document.getElementById(targetId);
+      if (target) alignedTarget.current = targetId;
       target?.focus({ preventScroll: true });
       // Align the mounted, measured article after WebKit's deferred scroll write.
       target?.scrollIntoView({ block: "center", behavior: "instant" });
@@ -170,13 +173,7 @@ export function VirtualMessageList({
         {virtual.getVirtualItems().map((item) => (
           <div
             key={item.key}
-            ref={
-              virtual.range &&
-              item.index >= virtual.range.startIndex &&
-              item.index <= virtual.range.endIndex
-                ? virtual.measureElement
-                : undefined
-            }
+            ref={virtual.measureElement}
             data-index={item.index}
             className="absolute top-0 left-0 flow-root w-full"
             style={{ transform: `translateY(${item.start - margin}px)` }}

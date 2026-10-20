@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { useCommsClient } from "./client-context";
 import type { ConversationSummary } from "../contract/types";
 
@@ -8,21 +8,42 @@ export function useVisibleCommsRead(
   summary: ConversationSummary | undefined,
   enabled: boolean,
   revision: unknown,
+  firstUnread?: number | null,
 ) {
   const { client } = useCommsClient();
   const sent = useRef<{ id: string; seq: number } | undefined>(undefined);
   const engagement = useRef(false);
+  const [unreadVisible, setUnreadVisible] = useState(false);
+  useEffect(
+    () => setUnreadVisible(false),
+    [client, summary?.conversation.id, firstUnread],
+  );
   useEffect(() => {
     sent.current = undefined;
     engagement.current = false;
   }, [client, summary?.conversation.id]);
   useEffect(() => {
     const node = viewport.current;
-    if (!node || !client || !summary || !enabled) return;
+    if (!node || !client || !summary) return;
     const abort = new AbortController();
     let frame = 0;
     const read = () => {
+      const box = node.getBoundingClientRect();
+      const target =
+        firstUnread == null
+          ? null
+          : node.querySelector<HTMLElement>(
+              `[data-comms-seq="${firstUnread}"]`,
+            );
+      const bounds = target?.getBoundingClientRect();
+      setUnreadVisible(
+        !!bounds &&
+          !!node.getClientRects().length &&
+          bounds.bottom > box.top &&
+          bounds.top < box.bottom,
+      );
       if (
+        !enabled ||
         document.visibilityState !== "visible" ||
         !document.hasFocus() ||
         getComputedStyle(node).visibility !== "visible" ||
@@ -30,7 +51,6 @@ export function useVisibleCommsRead(
         document.querySelector('[role="dialog"][data-open]')
       )
         return;
-      const box = node.getBoundingClientRect();
       let seq = summary.last_read_seq;
       for (const wrapper of node.querySelectorAll<HTMLElement>(
         "[data-comms-seq]",
@@ -72,14 +92,21 @@ export function useVisibleCommsRead(
     node.addEventListener("scroll", schedule);
     window.addEventListener("focus", schedule);
     document.addEventListener("visibilitychange", schedule);
+    const resize = new ResizeObserver(() => schedule());
+    resize.observe(node);
+    const mounted = new MutationObserver(() => schedule());
+    mounted.observe(node, { childList: true, subtree: true });
     schedule();
     return () => {
       abort.abort();
       cancelAnimationFrame(frame);
+      resize.disconnect();
+      mounted.disconnect();
       node.removeEventListener("scroll", schedule);
       for (const type of engagements) node.removeEventListener(type, schedule);
       window.removeEventListener("focus", schedule);
       document.removeEventListener("visibilitychange", schedule);
     };
-  }, [client, summary, enabled, viewport, revision]);
+  }, [client, summary, enabled, viewport, revision, firstUnread]);
+  return unreadVisible;
 }

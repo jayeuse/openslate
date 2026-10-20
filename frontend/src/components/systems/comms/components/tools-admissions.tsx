@@ -17,7 +17,11 @@ import { ToolAdvanced } from "./tool-advanced";
 import type { Admission } from "../contract/types";
 import type { CommsToolsDialogProps } from "./tools-dialog";
 
-export function AdmissionTools({ opener, onClose }: CommsToolsDialogProps) {
+export function AdmissionTools({
+  opener,
+  onClose,
+  embedded,
+}: CommsToolsDialogProps) {
   const { channels, people, checks } = useCommsWorkspaceView();
   const { run, isPending } = useCommsCommands();
   const managed = channels.filter(
@@ -88,6 +92,7 @@ export function AdmissionTools({ opener, onClose }: CommsToolsDialogProps) {
   }
   return (
     <ConfigurationFrame
+      embedded={embedded}
       className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       title="Join requests"
       opener={opener}

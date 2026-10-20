@@ -19,6 +19,7 @@ import { TextField } from "./message-shared";
 import type { CommsToolsDialogProps } from "./tools-dialog";
 
 export function ExportTools({
+  embedded,
   channelId,
   opener,
   onClose,
@@ -136,6 +137,7 @@ export function ExportTools({
   }
   return (
     <ConfigurationFrame
+      embedded={embedded}
       className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       title="Export messages"
       opener={opener}
