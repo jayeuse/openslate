@@ -1,4 +1,4 @@
-"""Ordinary settings and private preferences; no retention or protected command bodies."""
+"""Ordinary settings, private preferences and protected configuration history; never retention."""
 
 from datetime import datetime
 from typing import Annotated, Any, Literal, Self
@@ -240,3 +240,49 @@ class CreationCheck(WireModel):
     scope: WorkspaceScope | CategoryScope
     membership_role: Literal["admin", "member", "guest"]
     decision: CapabilityDecision
+
+
+class ConfigurationSnapshot(WireModel):
+    settings: dict[str, Any]
+    capabilities: CapabilityConfiguration
+    dm_rule: Literal["everyone", "shared-channel", "none"] | None = None
+    setting_locks: list[str] | None = None
+    capability_locks: list[str] | None = None
+
+    @model_validator(mode="after")
+    def workspace_fields(self) -> Self:
+        if self.capabilities.scope.kind != "workspace" and any(
+            value is not None for value in (self.dm_rule, self.setting_locks, self.capability_locks)
+        ):
+            raise ValueError("Only workspace snapshots carry locks or direct policy")
+        return self
+
+
+class ConfigurationHistory(WireModel):
+    id: UUID
+    org_id: UUID
+    actor_id: UUID
+    scope: SettingsScope
+    before: ConfigurationSnapshot
+    after: ConfigurationSnapshot
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConfigurationRestorePreviewRequest(WireModel):
+    history_id: UUID
+    password: str = Field(min_length=1, max_length=256)
+
+
+class ConfigurationRestoreRequest(ConfigurationRestorePreviewRequest):
+    preview_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class ConfigurationRestorePreview(WireModel):
+    org_id: UUID
+    history_id: UUID
+    scope: SettingsScope
+    before: ConfigurationSnapshot
+    after: ConfigurationSnapshot
+    preview_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    expires_at: datetime

@@ -192,6 +192,7 @@ def main(arguments=()):
         ("--comms-moderation-only",),
         ("--comms-jobs-only",),
         ("--comms-candidates-only",),
+        ("--comms-configuration-only",),
     )
     if comms_native:
         target = "comms_capacity.py" if arguments == ("--comms-capacity-only",) else "comms_live.py"
@@ -203,6 +204,8 @@ def main(arguments=()):
             target = "comms_jobs_live.py"
         if arguments == ("--comms-candidates-only",):
             target = "comms_candidates_live.py"
+        if arguments == ("--comms-configuration-only",):
+            target = "comms_configuration_live.py"
         batch = {
             "targets": [f"tests/realtime/{target}"],
             "layer": "integration",

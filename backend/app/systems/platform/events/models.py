@@ -36,6 +36,8 @@ _PRIVATE_INVALIDATION_ENTITIES = frozenset(
         "comms_message_revisions",
         "comms_messages",
         "comms_reports",
+        "comms_templates",
+        "comms_admissions",
         "comms_schedules",
         "comms_exports",
         "comms_retention_policies",

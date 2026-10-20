@@ -109,6 +109,13 @@ def execute_comms_control(
     *,
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
+    if action.values.get("operation") in (
+        "configuration_roundtrip",
+        "partner_configuration_roundtrip",
+    ):
+        from operations.sample.controls.comms_configuration import execute_configuration_control
+
+        return execute_configuration_control(action, dataset, context, on_substep=on_substep)
     if action.values.get("operation") in ("direct_candidates", "partner_direct_candidates"):
         from operations.sample.controls.comms_candidates import execute_candidate_control
 

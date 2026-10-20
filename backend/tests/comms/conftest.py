@@ -25,6 +25,8 @@ from tests.organization_scope_support import organization_bindings
 
 NOW = datetime(2026, 10, 19, 12, tzinfo=UTC)
 COMMS_DELETE_ORDER = (
+    "comms_admissions",
+    "comms_templates",
     "lifecycle_rate_limit_failures",
     "lifecycle_rate_limit_buckets",
     "lifecycle_confirmation_challenges",

@@ -25,6 +25,7 @@ from app.systems.comms.settings.resolution import (
     ScopeContext,
     _paired_hours,
     locked_keys,
+    normalize_scope,
     resolve_settings,
     scope_clause,
     scope_context,
@@ -32,6 +33,9 @@ from app.systems.comms.settings.resolution import (
 )
 from app.systems.comms.settings.schemas import (
     CapabilityConfiguration,
+    CapabilityLocks,
+    ConfigurationSnapshot,
+    SettingLocks,
     SettingsResponse,
     WorkspaceSettingsResponse,
 )
@@ -229,3 +233,58 @@ def replace_locks(
     for key in keys:
         if key not in known:
             db.add(CommsSettingLock(org_id=bound_organization(db), namespace=namespace, key=key))
+
+
+def validate_snapshot(db: Session, scope: Scope, proposed: ConfigurationSnapshot) -> None:
+    """History and ordinary writers share current references, pairs, grant scopes and locks."""
+    from app.systems.comms.settings.history_replay import current_snapshot
+
+    if (
+        normalize_scope(proposed.capabilities.scope.model_dump()) != scope
+        or "dm_rule" in proposed.settings
+    ):
+        raise error("comms_settings_invalid", "Snapshot does not match this settings scope", 422)
+    if proposed.settings:
+        validate_settings_patch(db, scope, proposed.settings)
+    current = current_snapshot(db, scope)
+    removed = set(current.settings) - set(proposed.settings)
+    if scope["kind"] != "workspace" and removed & locked_keys(db, "setting"):
+        raise error("comms_settings_locked", "Workspace setting is locked", 403)
+    validate_capability_configuration(db, scope, proposed.capabilities.model_dump(mode="json"))
+    if proposed.setting_locks is not None:
+        SettingLocks.model_validate({"keys": proposed.setting_locks})
+    if proposed.capability_locks is not None:
+        CapabilityLocks.model_validate({"capabilities": proposed.capability_locks})
+
+
+def restore_snapshot(
+    db: Session, actor: User, scope: Scope, proposed: ConfigurationSnapshot
+) -> bool:
+    """Caller owns exact-admin/source locks and commit; no alternate raw-state writer."""
+    from app.systems.comms.conversations.mutations import retain_read
+    from app.systems.comms.settings.history_replay import current_snapshot
+
+    validate_snapshot(db, scope, proposed)
+    before = current_snapshot(db, scope)
+    removed = sorted(set(before.settings) - set(proposed.settings))
+    if removed:
+        reset_settings(db, scope, removed)
+    patch = dict(proposed.settings) if proposed.settings != before.settings else {}
+    if proposed.dm_rule is not None and proposed.dm_rule != before.dm_rule:
+        patch["dm_rule"] = proposed.dm_rule
+    if patch:
+        patch_settings(db, scope, patch)
+    if proposed.capabilities != before.capabilities:
+        replace_configuration(db, scope, proposed.capabilities)
+    if proposed.setting_locks is not None and proposed.setting_locks != before.setting_locks:
+        replace_locks(db, "setting", proposed.setting_locks)
+    if (
+        proposed.capability_locks is not None
+        and proposed.capability_locks != before.capability_locks
+    ):
+        replace_locks(db, "capability", proposed.capability_locks)
+    db.flush()
+    context = scope_context(db, scope)
+    if context.conversation is not None:
+        retain_read(db, actor, context.conversation)
+    return current_snapshot(db, scope) != before

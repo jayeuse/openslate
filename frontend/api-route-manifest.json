@@ -750,6 +750,144 @@
     "path": "/api/comms/conversations/{param}/messages"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/admissions-api.ts",
+    "function": "decideAdmission",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/admissions/{param}/decision"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/admissions-api.ts",
+    "function": "getAdmission",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/admissions/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/admissions-api.ts",
+    "function": "invitePerson",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/invitations"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/admissions-api.ts",
+    "function": "listAdmissions",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/admissions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/admissions-api.ts",
+    "function": "submitJoinRequest",
+    "method": "POST",
+    "path": "/api/comms/join-requests"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "applyTemplate",
+    "method": "POST",
+    "path": "/api/comms/templates/{param}/applications"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "createTemplate",
+    "method": "POST",
+    "path": "/api/comms/templates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "getConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/category/{param}/history/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "getConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/channel/{param}/history/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "getConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace/history/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "getTemplate",
+    "method": "GET",
+    "path": "/api/comms/templates/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "listConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/category/{param}/history"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "listConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/channel/{param}/history"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "listConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace/history"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "listTemplates",
+    "method": "GET",
+    "path": "/api/comms/templates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "previewConfigurationRestore",
+    "method": "POST",
+    "path": "/api/comms/settings/category/{param}/restoration-preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "previewConfigurationRestore",
+    "method": "POST",
+    "path": "/api/comms/settings/channel/{param}/restoration-preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "previewConfigurationRestore",
+    "method": "POST",
+    "path": "/api/comms/settings/workspace/restoration-preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "previewTemplateApply",
+    "method": "POST",
+    "path": "/api/comms/templates/{param}/application-preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "restoreConfiguration",
+    "method": "POST",
+    "path": "/api/comms/settings/category/{param}/restoration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "restoreConfiguration",
+    "method": "POST",
+    "path": "/api/comms/settings/channel/{param}/restoration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "restoreConfiguration",
+    "method": "POST",
+    "path": "/api/comms/settings/workspace/restoration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "saveTemplate",
+    "method": "PUT",
+    "path": "/api/comms/templates/{param}"
+  },
+  {
     "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
     "function": "cancelSchedule",
     "method": "POST",

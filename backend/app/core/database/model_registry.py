@@ -19,6 +19,7 @@ from app.systems.boards.record_link_models import (  # noqa: F401
     BoardRecordLink,
 )
 from app.systems.boards.reminder_models import BoardEventReminder  # noqa: F401
+from app.systems.comms.admissions.models import CommsAdmission as CommsAdmission
 from app.systems.comms.conversations.models import CommsCategory as CommsCategory
 from app.systems.comms.conversations.models import CommsConversation as CommsConversation
 from app.systems.comms.conversations.models import CommsConversationGroup as CommsConversationGroup
@@ -51,6 +52,7 @@ from app.systems.comms.settings.models import CommsMemberPreferences as CommsMem
 from app.systems.comms.settings.models import CommsPersonalPreferences as CommsPersonalPreferences
 from app.systems.comms.settings.models import CommsSettingLock as CommsSettingLock
 from app.systems.comms.settings.models import CommsSettings as CommsSettings
+from app.systems.comms.templates.models import CommsTemplate as CommsTemplate
 from app.systems.manage.audit.models import AuditLog, SecurityEvent  # noqa: F401
 from app.systems.manage.backups.models import (  # noqa: F401
     BackupExportOperation,

@@ -132,6 +132,8 @@ def native_room(request):
         with owner.begin() as connection:
             params = {"orgs": orgs, "users": [person.id for person in people]}
             for table in (
+                "comms_admissions",
+                "comms_templates",
                 "comms_export_entries",
                 "comms_export_sources",
                 "scheduled_work",
@@ -155,9 +157,13 @@ def native_room(request):
                 "comms_messages",
                 "files",
                 "comms_settings",
+                "comms_capability_grants",
+                "comms_setting_locks",
+                "comms_conversation_groups",
                 "comms_members",
                 "comms_conversation_counters",
                 "comms_conversations",
+                "comms_categories",
             ):
                 connection.execute(text(f"DELETE FROM {table} WHERE org_id=ANY(:orgs)"), params)
             for sql in (
