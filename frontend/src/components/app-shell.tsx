@@ -349,6 +349,7 @@ export function AppShell({
   return (
     <WorkspaceNavigationGuardProvider
       onAcceptedNavigation={closeMobileNavigation}
+      onOpenOrganization={onSwitchOrganization}
     >
       <WorkspaceSignOutProvider complete={finishSignOut}>
         <SidebarProvider

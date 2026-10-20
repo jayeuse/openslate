@@ -21,6 +21,7 @@ from app.systems.comms.messages.interaction_models import (
 )
 from app.systems.comms.messages.link_models import CommsMessageAttachment, CommsMessageRecordLink
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
+from app.systems.comms.notifications import stage_notifications
 from app.systems.comms.rate_limit import admit_message_send
 from app.systems.comms.realtime.events import message_event
 from app.systems.comms.settings.resolution import Scope, resolve_settings
@@ -434,6 +435,7 @@ def send_message(
         # Establish the parent and its timestamp before any dependent insert.
         db.flush()
         _stage_children(db, message, command, root, thread, records)
+        stage_notifications(db, message, command.mention_user_ids)
         message_event(db, conversation_id, message.seq, "created")
         if root is not None:
             message_event(db, conversation_id, root.seq, "thread")

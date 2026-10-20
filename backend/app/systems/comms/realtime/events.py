@@ -46,7 +46,7 @@ def message_event(
 def user_event(
     db: Session,
     recipient: UUID,
-    kind: Literal["read", "membership", "grants", "structure"],
+    kind: Literal["read", "membership", "grants", "structure", "notification"],
     payload: dict[str, Any],
 ) -> None:
     org = bound_organization(db)

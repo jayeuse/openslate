@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { currentOrganizationId } from "@/lib/organization-context";
 import {
   ApiContractError,
   ApiError,
@@ -21,6 +22,25 @@ const commonNotification = {
 };
 const wireNotificationSchema = z
   .discriminatedUnion("kind", [
+    z
+      .object({
+        ...commonNotification,
+        kind: z.enum([
+          "comms-mention",
+          "comms-direct",
+          "comms-thread-reply",
+          "comms-keyword",
+        ]),
+        subject_type: z.literal("comms_message"),
+        org_id: uuidSchema,
+        conversation_id: uuidSchema,
+        message_id: uuidSchema,
+        scheduled_for: z.null(),
+      })
+      .strict()
+      .refine(
+        (notification) => notification.subject_id === notification.message_id,
+      ),
     z
       .object({
         ...commonNotification,
@@ -120,6 +140,16 @@ const wireNotificationSchema = z
       createdAt: notification.created_at,
       readAt: notification.read_at,
     };
+    if (notification.subject_type === "comms_message")
+      return {
+        ...common,
+        kind: notification.kind,
+        subjectType: notification.subject_type,
+        scheduledFor: null,
+        orgId: notification.org_id,
+        conversationId: notification.conversation_id,
+        messageId: notification.message_id,
+      };
     if (notification.kind === "report-run-failed")
       return {
         ...common,
@@ -252,6 +282,7 @@ export async function listNotifications(
   rawOptions: NotificationListOptions = {},
   signal?: AbortSignal,
 ): Promise<NotificationPage> {
+  const organizationId = currentOrganizationId();
   const options = listOptionsSchema.parse(rawOptions);
   const parameters = new URLSearchParams({
     limit: String(options.limit),
@@ -276,7 +307,13 @@ export async function listNotifications(
       pagination.offset + pagination.count < pagination.total ||
     new Set(page.items.map((item) => item.id)).size !== page.items.length ||
     (options.status === "unread" &&
-      page.items.some((item) => item.status !== "unread"))
+      page.items.some((item) => item.status !== "unread")) ||
+    page.items.some(
+      (item) =>
+        item.subjectType === "comms_message" &&
+        (item.orgId !== organizationId ||
+          organizationId !== currentOrganizationId()),
+    )
   )
     throw new ApiContractError();
   return page;
@@ -285,6 +322,7 @@ export async function listNotifications(
 export async function markNotificationRead(
   rawNotificationId: string,
 ): Promise<Notification> {
+  const organizationId = currentOrganizationId();
   const notificationId = uuidSchema.parse(rawNotificationId);
   const notification = await safeNotificationJson(
     `/notifications/${encodeURIComponent(notificationId)}/read`,
@@ -294,7 +332,10 @@ export async function markNotificationRead(
   if (
     notification.id !== notificationId ||
     notification.status !== "read" ||
-    notification.readAt === null
+    notification.readAt === null ||
+    (notification.subjectType === "comms_message" &&
+      (notification.orgId !== organizationId ||
+        organizationId !== currentOrganizationId()))
   )
     throw new ApiContractError();
   return notification;

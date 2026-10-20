@@ -57,6 +57,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.boards import plan_board_controls
     from operations.sample.controls.comms import plan_comms_controls
     from operations.sample.controls.comms_content import plan_content_controls
+    from operations.sample.controls.comms_notifications import plan_comms_notification_controls
     from operations.sample.controls.comms_presence import plan_presence_controls
     from operations.sample.controls.comms_realtime import plan_token_controls
     from operations.sample.controls.comms_search import plan_search_controls
@@ -125,6 +126,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         *plan_search_controls(dataset),
         *plan_token_controls(dataset),
         *plan_presence_controls(dataset),
+        *plan_comms_notification_controls(dataset),
         *plan_manage_controls(dataset),
         *plan_notification_controls(dataset),
         *plan_read_controls(dataset),

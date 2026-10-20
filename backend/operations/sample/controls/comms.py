@@ -109,6 +109,14 @@ def execute_comms_control(
     *,
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
+    if action.values.get("operation") in (
+        "notification_roundtrip", "partner_notification_roundtrip",
+    ):
+        from operations.sample.controls.comms_notifications import (
+            execute_comms_notification_control,
+        )
+
+        return execute_comms_notification_control(action, dataset, context, on_substep=on_substep)
     if action.values.get("operation") in ("presence_roundtrip", "partner_presence_roundtrip"):
         from operations.sample.controls.comms_presence import execute_presence_control
 

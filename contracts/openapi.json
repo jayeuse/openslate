@@ -4121,6 +4121,94 @@
         "title": "CommsFile",
         "type": "object"
       },
+      "CommsNotificationResponse": {
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "comms-mention",
+              "comms-direct",
+              "comms-thread-reply",
+              "comms-keyword"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "scheduled_for": {
+            "title": "Scheduled For",
+            "type": "null"
+          },
+          "status": {
+            "enum": [
+              "unread",
+              "read"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_type": {
+            "const": "comms_message",
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "kind",
+          "subject_type",
+          "subject_id",
+          "conversation_id",
+          "message_id",
+          "status",
+          "scheduled_for",
+          "created_at",
+          "read_at"
+        ],
+        "title": "CommsNotificationResponse",
+        "type": "object"
+      },
       "CommsSearchSort": {
         "enum": [
           "created_at",
@@ -10540,6 +10628,10 @@
                 "mapping": {
                   "access-changed": "#/components/schemas/AccessChangedNotificationResponse",
                   "backup-failed": "#/components/schemas/BackupFailureNotificationResponse",
+                  "comms-direct": "#/components/schemas/CommsNotificationResponse",
+                  "comms-keyword": "#/components/schemas/CommsNotificationResponse",
+                  "comms-mention": "#/components/schemas/CommsNotificationResponse",
+                  "comms-thread-reply": "#/components/schemas/CommsNotificationResponse",
                   "event-reminder": "#/components/schemas/EventReminderNotificationResponse",
                   "invitation-accepted": "#/components/schemas/InvitationAcceptedNotificationResponse",
                   "post-publish": "#/components/schemas/PostNotificationResponse",
@@ -10577,6 +10669,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/AccessChangedNotificationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/CommsNotificationResponse"
                 }
               ]
             },
@@ -44817,6 +44912,10 @@
                     "mapping": {
                       "access-changed": "#/components/schemas/AccessChangedNotificationResponse",
                       "backup-failed": "#/components/schemas/BackupFailureNotificationResponse",
+                      "comms-direct": "#/components/schemas/CommsNotificationResponse",
+                      "comms-keyword": "#/components/schemas/CommsNotificationResponse",
+                      "comms-mention": "#/components/schemas/CommsNotificationResponse",
+                      "comms-thread-reply": "#/components/schemas/CommsNotificationResponse",
                       "event-reminder": "#/components/schemas/EventReminderNotificationResponse",
                       "invitation-accepted": "#/components/schemas/InvitationAcceptedNotificationResponse",
                       "post-publish": "#/components/schemas/PostNotificationResponse",
@@ -44854,6 +44953,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/AccessChangedNotificationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CommsNotificationResponse"
                     }
                   ],
                   "title": "Response Mark Notification Read Api Notifications  Notification Id  Read Post"

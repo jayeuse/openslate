@@ -5,7 +5,9 @@ import {
   getNotificationUnreadCount,
   listNotifications,
   markAllNotificationsRead,
+  markNotificationRead,
 } from "../../../src/components/systems/shared/adapters/notifications-api";
+import { setCurrentOrganizationId } from "../../../src/lib/organization-context";
 import { ids, installFetch, notificationWire, pagination } from "./fixtures";
 import { wirePagination } from "../../helpers/pagination";
 
@@ -250,4 +252,123 @@ test("notification page accepts an empty terminal page after concurrent removal"
   } finally {
     mock.restore();
   }
+});
+
+test.describe("Comms notification references", () => {
+  const org = "00000000-0000-4000-8000-000000000301";
+  const conversation = "00000000-0000-4000-8000-000000000302";
+  const message = "00000000-0000-4000-8000-000000000303";
+  const created = "2026-10-20T10:00:00Z";
+  const wire = {
+    id: ids.notification,
+    org_id: org,
+    kind: "comms-mention",
+    subject_type: "comms_message",
+    subject_id: message,
+    conversation_id: conversation,
+    message_id: message,
+    status: "unread",
+    scheduled_for: null,
+    created_at: created,
+    read_at: null,
+  };
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  test.beforeEach(() => {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {},
+    });
+    setCurrentOrganizationId(org);
+  });
+  test.afterEach(() => {
+    setCurrentOrganizationId(null);
+    if (originalWindow)
+      Object.defineProperty(globalThis, "window", originalWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+
+  for (const kind of [
+    "comms-mention",
+    "comms-direct",
+    "comms-thread-reply",
+    "comms-keyword",
+  ])
+    test(`Comms accepts ${kind} and its confirmed read without content`, async () => {
+      const mock = installFetch((_input, init) =>
+        Response.json(
+          init?.method === "POST"
+            ? { ...wire, kind, status: "read", read_at: created }
+            : { items: [{ ...wire, kind }], pagination: pagination(1) },
+        ),
+      );
+      try {
+        const expected = {
+          id: ids.notification,
+          orgId: org,
+          kind,
+          subjectType: "comms_message",
+          subjectId: message,
+          conversationId: conversation,
+          messageId: message,
+          status: "unread",
+          scheduledFor: null,
+          createdAt: created,
+          readAt: null,
+        };
+        expect((await listNotifications()).items).toEqual([expected]);
+        await expect(markNotificationRead(ids.notification)).resolves.toEqual({
+          ...expected,
+          status: "read",
+          readAt: created,
+        });
+      } finally {
+        mock.restore();
+      }
+    });
+
+  test("Comms refuses foreign, inconsistent, incomplete and content-bearing references", async () => {
+    let row: Record<string, unknown> = wire;
+    const mock = installFetch(() =>
+      Response.json({ items: [row], pagination: pagination(1) }),
+    );
+    try {
+      // A valid control prevents a decoder that rejects all Comms from passing.
+      expect((await listNotifications()).items).toHaveLength(1);
+      for (const change of [
+        { org_id: ids.otherUser },
+        { org_id: undefined },
+        { conversation_id: "invalid" },
+        { message_id: undefined },
+        { subject_id: ids.otherUser },
+        { subject_type: "record" },
+        { kind: "comms-unknown" },
+        { scheduled_for: created },
+        { created_at: "2026-10-20T11:00:00+01:00" },
+        { body: "Private message" },
+        { preview: "Private preview" },
+        { title: "Captured title" },
+      ]) {
+        row = { ...wire, ...change };
+        await expect(listNotifications()).rejects.toBeInstanceOf(
+          ApiContractError,
+        );
+      }
+    } finally {
+      mock.restore();
+    }
+  });
+
+  test("Comms discards a response completed after the tab changes organization", async () => {
+    const mock = installFetch(() => {
+      setCurrentOrganizationId(ids.otherUser);
+      return Response.json({ items: [wire], pagination: pagination(1) });
+    });
+    try {
+      await expect(listNotifications()).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
+    } finally {
+      mock.restore();
+    }
+  });
 });

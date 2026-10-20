@@ -25,6 +25,7 @@ from tests.organization_scope_support import organization_bindings
 
 NOW = datetime(2026, 10, 19, 12, tzinfo=UTC)
 COMMS_DELETE_ORDER = (
+    "in_app_notifications",
     "comms_message_attachments", "comms_message_record_links", "comms_message_revisions",
     "comms_reactions", "comms_mentions", "comms_thread_follows", "comms_threads",
     "comms_read_states", "comms_member_preferences", "comms_members",

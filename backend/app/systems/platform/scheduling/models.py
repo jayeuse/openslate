@@ -164,6 +164,10 @@ class NotificationKind(StrEnum):
     INVITATION_ACCEPTED = "invitation-accepted"
     SANDBOX_PUBLISHED = "sandbox-published"
     ACCESS_CHANGED = "access-changed"
+    COMMS_MENTION = "comms-mention"
+    COMMS_DIRECT = "comms-direct"
+    COMMS_THREAD_REPLY = "comms-thread-reply"
+    COMMS_KEYWORD = "comms-keyword"
 
 
 class InAppNotification(BaseModel):
@@ -180,6 +184,15 @@ class InAppNotification(BaseModel):
             ["org_id", "work_id"], ["scheduled_work.org_id", "scheduled_work.id"],
             name="fk_in_app_notifications_work_id_scheduled_work", ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["org_id", "comms_conversation_id"],
+            ["comms_conversations.org_id", "comms_conversations.id"],
+            name="fk_in_app_notifications_comms_conversation", ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "(subject_type = 'comms_message') = (comms_conversation_id IS NOT NULL)",
+            name="ck_in_app_notifications_comms_reference",
+        ),
         CheckConstraint(
             "(kind = 'report-run' AND subject_type = 'report_run' AND work_id IS NOT NULL) OR "
             "(kind = 'post-publish' AND subject_type = 'board_post' AND work_id IS NOT NULL) OR "
@@ -192,10 +205,16 @@ class InAppNotification(BaseModel):
             "(kind = 'sandbox-published' AND subject_type = 'sandbox_version' "
             "AND work_id IS NULL) OR "
             "(kind = 'access-changed' AND subject_type = 'user' AND work_id IS NULL "
-            "AND subject_id = recipient_id)",
+            "AND subject_id = recipient_id) OR "
+            "(kind IN ('comms-mention','comms-direct','comms-thread-reply','comms-keyword') "
+            "AND subject_type = 'comms_message' AND work_id IS NULL AND org_id IS NOT NULL)",
             name="ck_in_app_notifications_reference",
         ),
         UniqueConstraint("work_id", "recipient_id", name="uq_in_app_notifications_work_recipient"),
+        Index(
+            "uq_in_app_notifications_comms_recipient", "org_id", "recipient_id", "subject_id",
+            unique=True, postgresql_where=text("subject_type = 'comms_message'"),
+        ),
         Index("ix_in_app_notifications_recipient_created", "recipient_id", "created_at", "id"),
         Index(
             "ix_in_app_notifications_recipient_unread",
@@ -213,6 +232,7 @@ class InAppNotification(BaseModel):
     subject_type: Mapped[str] = mapped_column(String(24), nullable=False)
     subject_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     work_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    comms_conversation_id: Mapped[UUID | None] = mapped_column(nullable=True)
     recipient_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )

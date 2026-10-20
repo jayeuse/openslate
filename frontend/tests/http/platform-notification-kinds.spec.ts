@@ -1,4 +1,14 @@
-import { expect, signedInAs, test, type Page } from "./helpers/test";
+import {
+  authMeBody,
+  defaultOrganization,
+  expect,
+  heldResponse,
+  settleReact,
+  signedInAs,
+  test,
+  type Page,
+} from "./helpers/test";
+import { wireWorkspace } from "../helpers/wire";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -277,4 +287,296 @@ test("source refusal and foreign Backup metadata expose no cached title or desti
     region.getByRole("link", { name: "Open backup history" }),
   ).toHaveCount(0);
   expect([...new Set(state.backupRunIds)]).toEqual([backupId]);
+});
+
+async function commsSetup(page: Page) {
+  await installOpenViewEventSource(page);
+  const first = { ...defaultOrganization, role: "admin" as const };
+  const second = {
+    org_id: id(702),
+    name: "Second organization",
+    slug: "second",
+    role: "admin" as const,
+  };
+  const state = {
+    organization: first as typeof first | typeof second,
+    account: userId,
+    metadataStatus: 200,
+    metadataOrg: null as string | null,
+    title: "Current dispatch channel",
+    hold: null as
+      | (ReturnType<typeof heldResponse> & {
+          finished: ReturnType<typeof heldResponse>;
+        })
+      | null,
+    foreignRow: false,
+    sourceReads: [] as string[],
+    selectedOrganizations: [] as string[],
+  };
+  const identity = () =>
+    authMeBody({
+      id: state.account,
+      role: "admin",
+      memberships: [first, second],
+      current_organization: { ...state.organization, access: [] },
+    });
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({ json: identity() }),
+  );
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user_id: state.account,
+        organization_id: state.organization.org_id,
+        default_organization_blocked: null,
+        setup_required: false,
+      },
+    }),
+  );
+  await page.route("**/api/auth/session/organization", (route) => {
+    const selected = route.request().postDataJSON().org_id;
+    state.selectedOrganizations.push(selected);
+    state.organization = selected === first.org_id ? first : second;
+    return route.fulfill({ json: identity() });
+  });
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({
+      json: wireWorkspace({
+        id: state.organization.org_id,
+        display_name: state.organization.name,
+        locale: "en-US",
+        timezone: "UTC",
+        currency: "USD",
+        today: "2026-10-20",
+        purge_enabled: true,
+      }),
+    }),
+  );
+  await page.route("**/api/notifications**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("unread-count"))
+      return route.fulfill({ json: { unread_count: 4 } });
+    const rows = [
+      "comms-mention",
+      "comms-direct",
+      "comms-thread-reply",
+      "comms-keyword",
+    ].map((kind, index) => ({
+      id: id(710 + index),
+      kind,
+      org_id: state.foreignRow ? second.org_id : state.organization.org_id,
+      subject_type: "comms_message",
+      subject_id: id(720 + index),
+      message_id: id(720 + index),
+      conversation_id: id(730),
+      status: "unread",
+      scheduled_for: null,
+      created_at: when,
+      read_at: null,
+    }));
+    return route.fulfill({
+      json: pageOf(rows, {
+        limit: Number(url.searchParams.get("limit")),
+        offset: 0,
+      }),
+    });
+  });
+  await page.route("**/api/comms/**", async (route) => {
+    const url = new URL(route.request().url());
+    state.sourceReads.push(url.pathname);
+    if (url.pathname !== `/api/comms/conversations/${id(730)}`)
+      return route.fulfill({
+        status: 500,
+        json: { detail: "Message bodies must not be fetched" },
+      });
+    const body = {
+      id: id(730),
+      org_id: state.metadataOrg ?? state.organization.org_id,
+      kind: "channel",
+      name: state.title,
+      topic: "Private topic not notification content",
+      scope: "organization",
+      category_id: null,
+      position: 0,
+      member_count: 2,
+      member_role: "member",
+      level: "read",
+      archived_at: null,
+      created_at: when,
+      updated_at: when,
+    };
+    const held = state.hold;
+    if (held) {
+      held.enter();
+      await held.released;
+    }
+    await route.fulfill(
+      state.metadataStatus === 200
+        ? { json: body, headers: { ETag: '"conversation-1"' } }
+        : {
+            status: state.metadataStatus,
+            json: { detail: "Private denial detail" },
+          },
+    );
+    held?.finished.enter();
+  });
+  return state;
+}
+
+test("Comms inbox opens a current-organization message through the shell's unsaved-work guard", async ({
+  page,
+}) => {
+  const state = await commsSetup(page);
+  await page.goto("/platform?section=notifications");
+  const region = inbox(page);
+  await expect(
+    region.getByText("Current dispatch channel", { exact: true }),
+  ).toHaveCount(4);
+  for (const label of [
+    "Mention",
+    "Direct message",
+    "Thread reply",
+    "Keyword match",
+  ])
+    await expect(region.getByText(label, { exact: true })).toBeVisible();
+  await expect(region.getByText(/· Scheduled/)).toHaveCount(0);
+  await expect(region).not.toContainText("Private topic");
+  await expect(
+    region.getByRole("link", { name: "Open message" }).first(),
+  ).toHaveAttribute(
+    "href",
+    `/comms?conversation=${id(730)}&message=${id(720)}`,
+  );
+  await page
+    .getByRole("button", { name: "Organization: OpenSlate", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: /Second organization/ }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Organization: Second organization",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Manage", exact: true }).click();
+  await page.getByRole("link", { name: "Organization", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Description", exact: true })
+    .fill("Unsaved organization change");
+  await page.getByRole("button", { name: "Notifications, 4 unread" }).click();
+  const popup = page.getByRole("dialog", {
+    name: "Notifications",
+    exact: true,
+  });
+  await popup.getByRole("link", { name: "Open message" }).first().click();
+  const guard = page.getByRole("alertdialog", {
+    name: "Discard unsaved Manage changes?",
+  });
+  await expect(guard).toBeVisible();
+  await expect(page).toHaveURL(/\/manage/);
+  await guard
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/comms\\?conversation=${id(730)}&message=${id(720)}`),
+  );
+  await expect(
+    page.getByRole("button", {
+      name: "Organization: Second organization",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(state.selectedOrganizations).toEqual([id(702)]);
+  expect([...new Set(state.sourceReads)]).toEqual([
+    `/api/comms/conversations/${id(730)}`,
+  ]);
+});
+
+test("Comms metadata failures hide cached titles and destinations and foreign inbox rows are refused", async ({
+  page,
+}) => {
+  const state = await commsSetup(page);
+  await page.goto("/platform?section=notifications");
+  const region = inbox(page);
+  await expect(region.getByText(state.title, { exact: true })).toHaveCount(4);
+  state.metadataStatus = 404;
+  await sendOpenViewEvent(page, "resync");
+  await expect(
+    region.getByText("You no longer have access to this item."),
+  ).toHaveCount(4);
+  await expect(region.getByRole("link", { name: "Open message" })).toHaveCount(
+    0,
+  );
+  await expect(region).not.toContainText(state.title);
+  await expect(region).not.toContainText("Private denial detail");
+  state.metadataStatus = 503;
+  await sendOpenViewEvent(page, "resync");
+  await expect(region.getByText("The title couldn’t be loaded.")).toHaveCount(
+    4,
+  );
+  state.metadataStatus = 200;
+  await region
+    .getByRole("button", { name: "Try again", exact: true })
+    .first()
+    .click();
+  await expect(region.getByText(state.title, { exact: true })).toHaveCount(4);
+  state.foreignRow = true;
+  // Invalid refreshes preserve a last-good authorized page. A cold inbox
+  // must refuse the foreign row altogether, not render or query its source.
+  await page.reload();
+  await expect(region.getByText(state.title, { exact: true })).toHaveCount(0);
+  await expect(region.getByRole("link", { name: "Open message" })).toHaveCount(
+    0,
+  );
+  await expect(region.getByRole("alert")).toBeVisible();
+});
+
+test("Comms metadata completed after organization and account changes cannot populate the new inbox", async ({
+  page,
+}) => {
+  const state = await commsSetup(page);
+  state.hold = { ...heldResponse(), finished: heldResponse() };
+  const oldRead = state.hold;
+  await page.goto("/platform?section=notifications");
+  await oldRead.entered;
+  state.hold = null;
+  state.title = "Second organization channel";
+  await page
+    .getByRole("button", { name: "Organization: OpenSlate", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: /Second organization/ }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Organization: Second organization",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Notifications, 4 unread" }).click();
+  await expect(
+    page.getByText("Second organization channel", { exact: true }),
+  ).toHaveCount(4);
+  oldRead.release();
+  await oldRead.finished.entered;
+  await settleReact(page, 1);
+  await expect(
+    page.getByText("Current dispatch channel", { exact: true }),
+  ).toHaveCount(0);
+  state.hold = { ...heldResponse(), finished: heldResponse() };
+  const oldAccountRead = state.hold;
+  await sendOpenViewEvent(page, "resync");
+  await oldAccountRead.entered;
+  state.hold = null;
+  state.account = id(799);
+  state.title = "New account channel";
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await page.getByRole("button", { name: "Notifications, 4 unread" }).click();
+  await expect(
+    page.getByText("New account channel", { exact: true }),
+  ).toHaveCount(4);
+  oldAccountRead.release();
+  await oldAccountRead.finished.entered;
+  await settleReact(page, 1);
+  await expect(
+    page.getByText("Second organization channel", { exact: true }),
+  ).toHaveCount(0);
 });

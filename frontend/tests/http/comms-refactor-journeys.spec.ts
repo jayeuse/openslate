@@ -767,6 +767,9 @@ test("group access in channel settings changes who the channel says it is for", 
   await page.goto("/comms");
   await createWorkshop(page);
   await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "workshop", exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
@@ -813,6 +816,9 @@ test("lowering Everyone keeps what each group can already do", async ({
   await page.goto("/comms");
   await createWorkshop(page);
   await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "workshop", exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();

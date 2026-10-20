@@ -9,6 +9,7 @@ from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.membership import require_current_membership
 from app.systems.access.users.models import Membership, User, UserRole
+from app.systems.comms.notifications import visible_notification_ids
 from app.systems.manage.backups.models import BackupRun
 from app.systems.openview.reports.models import Report
 from app.systems.platform.scheduling.models import (
@@ -118,6 +119,7 @@ def additional_notification_ids(db: Session, user: User) -> Select[tuple[UUID]]:
             InAppNotification.id.in_(invitation),
             InAppNotification.id.in_(publication),
             InAppNotification.id.in_(access),
+            InAppNotification.id.in_(visible_notification_ids(db, user)),
         )
     )
 

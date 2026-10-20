@@ -115,7 +115,13 @@ paging. It then batches only the returned page's post and reminder
 reference columns, with at most one lookup for each kind present. These maps
 last only for that response and contain no content bodies; they do not cache
 authorization or change the separately locked, audited mark-read operation.
-The implementation is `platform/scheduling/notification_router.py`.
+The implementation is `platform/scheduling/notification_router.py`. Comms notifications
+store only recipient/message/conversation references, in the message send transaction.
+`comms/notifications.py` selects current eligible members using the resolved notification
+policy; quiet hours do not remove inbox rows. List, count and mark-read recheck the stored
+conversation against the current message parent and current conversation access. Page
+hydration repeats that check without copying message content. IDs-only notification events
+use the existing Comms after-response publisher on each recipient's private user topic.
 
 ## Background ownership and failure boundaries
 
