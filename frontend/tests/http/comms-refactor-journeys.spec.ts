@@ -12,6 +12,7 @@ import {
   ownedCommsDraftTextId,
 } from "../../src/components/systems/comms/state/draft-text";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
+import { installCommsWorld } from "./helpers/comms-world";
 import { createMemorySeed } from "../support/comms-memory/memory/seed";
 import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
 import type { Page } from "@playwright/test";
@@ -340,6 +341,12 @@ test("Comms retains a rate-limited send draft and retries once after the real se
   page,
 }) => {
   const start = new Date("2026-10-19T12:00:00Z");
+  // The server owns the 20-send/10-second limit; its clock moves only with the page's.
+  const { clock } = await installCommsWorld(page, {
+    userId: "00000000-0000-4000-8000-000000000101",
+    displayName: "Journey owner",
+    clock: { time: start, installPage: false },
+  });
   await page.clock.setFixedTime(start);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -353,7 +360,7 @@ test("Comms retains a rate-limited send draft and retries once after the real se
     name: "Send message",
     exact: true,
   });
-  // The real client owns the 20-send/10-second limit, including administrators.
+  // The limit applies to administrators too.
   for (let index = 1; index <= 20; index++) {
     const body = `Send-window setup ${index}.`;
     await draft.fill(body);
@@ -378,6 +385,7 @@ test("Comms retains a rate-limited send draft and retries once after the real se
   // Fixed Date changes admission time, not browser timers. Do not edit the draft:
   // the real composer retains its fingerprint/client key across this retry.
   await page.clock.setFixedTime(new Date(start.getTime() + 11_000));
+  clock!.set(start.getTime() + 11_000);
   await page
     .getByRole("button", { name: "Retry message", exact: true })
     .click();
@@ -609,6 +617,7 @@ test("archiving a channel asks first and can be undone", async ({ page }) => {
 });
 
 test("blocking a person asks first; unblocking does not", async ({ page }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await page
     .getByRole("button", { name: "Start direct message", exact: true })
@@ -617,6 +626,10 @@ test("blocking a person asks first; unblocking does not", async ({ page }) => {
     .getByRole("dialog", { name: "Start direct message", exact: true })
     .getByRole("combobox", { name: "Person", exact: true })
     .click();
+  // The person picker is search-first.
+  await page
+    .getByRole("combobox", { name: "Search person", exact: true })
+    .fill("Noah Tan");
   await page.getByRole("option", { name: "Noah Tan", exact: true }).click();
   await page
     .getByRole("button", { name: "Start conversation", exact: true })
@@ -844,6 +857,7 @@ test("categories carry department identity, and a channel says who can use it", 
 test("a linked record opens beside the conversation and gives way to a thread", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/comms");
   const followed = page.getByRole("list", { name: "Records you follow" });
@@ -963,6 +977,7 @@ test("lowering Everyone keeps what each group can already do", async ({
 test("on a phone, a record's mention closes the record and shows the message", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/comms");
   await page.getByRole("button", { name: /^operations(,|$)/ }).click();
@@ -988,6 +1003,7 @@ test("on a phone, a record's mention closes the record and shows the message", a
 test("OpenComms opens at the latest message, with few and meaningful unread marks", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   // Inspect unread state before opening the now automatically acknowledged feed.
   await page.goto("/comms?view=inbox");
@@ -1051,11 +1067,11 @@ test("each message's actions are named for it and fit its author", async ({
 test("Comms rechecks reaction capabilities when the admitted member becomes a guest", async ({
   page,
 }) => {
-  const identity = {
-    id: "00000000-0000-4000-8000-000000000101",
-    role: "member" as const,
-  };
-  await signedInAs(page, identity);
+  const world = await installCommsWorld(page, {
+    userId: "00000000-0000-4000-8000-000000000101",
+    displayName: "Journey owner",
+    role: "member",
+  });
   await page.goto("/comms");
   const root = page
     .getByRole("article")
@@ -1065,7 +1081,8 @@ test("Comms rechecks reaction capabilities when the admitted member becomes a gu
     page.getByRole("menuitem", { name: "Add reaction", exact: true }),
   ).toBeEnabled();
   await page.keyboard.press("Escape");
-  await signedInAs(page, { ...identity, role: "guest" });
+  // The server admits the member again as a guest; the reload rereads it.
+  await world.setRole("guest", { event: "none" });
   await page.reload();
   await expect(root).toBeVisible();
   await root.getByRole("button", { name: /^Message actions:/ }).click();

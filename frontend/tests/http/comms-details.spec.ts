@@ -108,6 +108,21 @@ async function seedDetails(
   };
 }
 
+/** Serves the seeded details world through the live Comms routes. */
+function serveDetails(
+  page: Page,
+  data: Awaited<ReturnType<typeof seedDetails>>,
+) {
+  return installCommsLiveApi(page, {
+    userId: data.owner.user_id,
+    organizationId: data.owner.org_id,
+    runtime: createMemoryCommsRuntime({
+      owner: data.owner,
+      initial: data.initial,
+    }),
+  });
+}
+
 test("thread focus returns to its older virtualized parent after close", async ({
   page,
 }) => {
@@ -151,6 +166,7 @@ test("thread follow copy resolve reopen and also-send use the existing client", 
   page,
 }) => {
   const data = await seedDetails(page);
+  const server = await serveDetails(page, data);
   await page.addInitScript(() =>
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -199,22 +215,13 @@ test("thread follow copy resolve reopen and also-send use the existing client", 
     .check();
   await thread.getByRole("button", { name: "Send reply", exact: true }).click();
   await expect(reply).toHaveValue("");
-  const posted = await page.evaluate(({ key }) => {
-    const messages: {
-      body: string;
-      parent_id: string | null;
-      also_send_to_channel: boolean;
-    }[] = Object.values(
-      JSON.parse(sessionStorage.getItem(key)!).values["comms-memory-v1"].state
-        .messages,
-    );
-    return messages
-      .filter((message) => message.body === "Also visible in the channel")
-      .map(({ parent_id, also_send_to_channel }) => ({
-        parent_id,
-        also_send_to_channel,
-      }));
-  }, data);
+  // The draft clears only after the server accepted the reply.
+  const posted = Object.values(server.snapshot().messages)
+    .filter((message) => message.body === "Also visible in the channel")
+    .map(({ parent_id, also_send_to_channel }) => ({
+      parent_id,
+      also_send_to_channel,
+    }));
   expect(posted).toEqual([
     { parent_id: data.root, also_send_to_channel: true },
   ]);
@@ -392,7 +399,7 @@ test("member presence has three named groups and verified person cards stay scop
 test("record detail and recent linked records include thread-only references and authorized fields", async ({
   page,
 }) => {
-  await seedDetails(page, { replyRecord: true });
+  await serveDetails(page, await seedDetails(page, { replyRecord: true }));
   await page.goto("/comms");
   await page
     .getByRole("list", { name: "Records you follow", exact: true })
@@ -414,6 +421,7 @@ test("thread management and record detail do not broaden read-only source permis
   page,
 }) => {
   const data = await seedDetails(page, { deniedRecord: true });
+  await serveDetails(page, data);
   await page.goto(
     `/comms?conversation=${data.conversation}&thread=${data.thread}`,
   );
@@ -442,6 +450,7 @@ test("phone record cards keep their title readable with inline context and a sep
   page,
 }) => {
   const data = await seedDetails(page);
+  await serveDetails(page, data);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/comms?conversation=${data.conversation}`);
   const card = page.getByRole("button", {
@@ -474,6 +483,7 @@ test("detail panes retain usable light and dark desktop and phone layouts", asyn
   page,
 }, testInfo) => {
   const data = await seedDetails(page);
+  await serveDetails(page, data);
   await page.route(`**/api/users/${data.owner.user_id}/preferences`, (route) =>
     route.fulfill({
       json: { ...profilePreferences(data.owner.user_id), theme: "system" },
