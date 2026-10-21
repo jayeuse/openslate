@@ -66,7 +66,7 @@ __all__ = (
 )
 
 
-def browser_acceptance_command(*, browser_only: bool = False) -> list[str]:
+def browser_acceptance_command(*, browser_only: bool = False, comms: bool = False) -> list[str]:
     """Keep the auth-only repair run separate from complete browser acceptance."""
     command = [
         "npx",
@@ -75,7 +75,9 @@ def browser_acceptance_command(*, browser_only: bool = False) -> list[str]:
         "--config=playwright.fullstack.config.ts",
         *e2e_browser_flags(),
     ]
-    if browser_only:
+    if comms:
+        command.append("tests/fullstack/comms-two-account.spec.ts")
+    elif browser_only:
         command.append("tests/fullstack/auth-session.spec.ts")
     return command
 
@@ -130,7 +132,7 @@ def wait_for(url, process, *, verify: bool = True):
     raise RuntimeError("application startup deadline exceeded")
 
 
-def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
+def seed(owner_url, run_id, database_environment, roles=("admin", "member"), comms=False):
     """Owner-only fixture setup, guarded by a brand-new empty application DB."""
     from app.systems.access.users.models import UserStatus
     from tests.conftest import create_member, create_organization
@@ -148,7 +150,9 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
             assert_instance_target(db.connection(), target, expected_user="openslate_owner")
             if db.scalar(text("SELECT count(*) FROM public.users")) != 0:
                 raise RuntimeError("refusing to seed a nonempty database")
-            organization = create_organization(db)
+            organization = create_organization(
+                db, **({"display_name": "S32 Primary"} if comms else {})
+            )
             for role in roles:
                 email = f"p5-{run_id}-{role}@example.com"
                 password = f"P5-{secrets.token_urlsafe(24)}!9"
@@ -159,6 +163,7 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
                     username=f"p5-{role}",
                     status=UserStatus.ACTIVE.value,
                     role=role,
+                    **({"display_name": "S32 Administrator"} if comms and role == "admin" else {}),
                 )
                 db.add(user)
                 db.flush()
@@ -172,6 +177,18 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
                     raise RuntimeError("Disposable Auth user provisioning failed")
                 user.supabase_user_id = UUID(response.json()["id"])
                 identities[role] = {"email": email, "password": password, "id": str(user.id)}
+            if comms:
+                from app.systems.access.users.models import User
+
+                administrator = db.get(User, UUID(identities["admin"]["id"]))
+                if administrator is None:
+                    raise RuntimeError("Comms fixture requires its owned administrator")
+                other = create_organization(db, display_name="S32 Isolated")
+                create_member(db, other, "admin", user=administrator)
+                identities["comms"] = {
+                    "orgId": str(organization.id), "orgName": organization.display_name,
+                    "otherOrgId": str(other.id), "otherOrgName": other.display_name,
+                }
             db.commit()
     finally:
         engine.dispose()
@@ -237,13 +254,15 @@ def main(arguments=()):
         ("--backend-coverage-only",),
         ("--acceptance-only",),
         ("--browser-only",),
+        ("--comms-browser-only",),
     ):
         raise SystemExit("Usage: fullstack_runner.py [mode]")
     backend_only = (
         batch is not None or shard is not None or arguments == ("--backend-coverage-only",)
     )
     acceptance_only = arguments == ("--acceptance-only",)
-    browser_only = arguments == ("--browser-only",)
+    comms_browser_only = arguments == ("--comms-browser-only",)
+    browser_only = arguments == ("--browser-only",) or comms_browser_only
     if batch is None and not acceptance_only and not browser_only:
         output = coverage_output(BACKEND)
         if output.exists():
@@ -431,7 +450,13 @@ def main(arguments=()):
             result = result if batch else 0
         else:
             timed("dedicated identities")
-            identities = seed(owner_url, run_id, migration_env)
+            identities = (
+                seed(owner_url, run_id, migration_env, ("admin",), True)
+                if comms_browser_only
+                else seed(owner_url, run_id, migration_env, ("admin", "member"), True)
+                if not browser_only
+                else seed(owner_url, run_id, migration_env)
+            )
             fixture = private / "fixture.json"
             fixture.write_text(
                 json.dumps(
@@ -471,8 +496,9 @@ def main(arguments=()):
                 )
             )
             wait_for(API + "/api/ready", processes[-1])
-            timed("bounded admission and recovery")
-            admission = measure_admission()
+            if not comms_browser_only:
+                timed("bounded admission and recovery")
+                admission = measure_admission()
             timed("Caddy gateway startup")
             caddy = DisposableCaddy(private, run_id, gateway_env, log)
             caddy.start()
@@ -487,7 +513,7 @@ def main(arguments=()):
                 "PLAYWRIGHT_NO_COPY_PROMPT": "1",
             }
             run(
-                browser_acceptance_command(browser_only=browser_only),
+                browser_acceptance_command(browser_only=browser_only, comms=comms_browser_only),
                 FRONTEND,
                 test_env,
                 shown=browser_lines,
