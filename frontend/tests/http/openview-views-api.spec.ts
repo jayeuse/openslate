@@ -4729,6 +4729,7 @@ test.describe("OpenView workspace regional dates", () => {
         json: {
           authenticated: true,
           user_id: actor,
+          organization_id: defaultOrganization.org_id,
           setup_required: false,
           default_organization_blocked: null,
         },
@@ -6139,6 +6140,7 @@ async function installS16Export(
       json: {
         authenticated: true,
         user_id: actor,
+        organization_id: defaultOrganization.org_id,
         setup_required: false,
         default_organization_blocked: null,
       },

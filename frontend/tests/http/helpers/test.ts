@@ -136,7 +136,9 @@ export async function signedOut(target: Page | BrowserContext): Promise<void> {
  * Answers `/api/auth/session` with a signed-in session for `userId`. Use it
  * alone when the spec owns `/api/auth/me` separately or keeps the default
  * identity; otherwise use `signedInAs`. Stateful, held, counted, or failing
- * session reads stay inline in the spec.
+ * session reads stay inline in the spec. The session admits
+ * `defaultOrganization`, as the server does for anyone who can open a
+ * workspace page; pass `organizationId: null` for an undecided person.
  */
 export async function signedInSession(
   target: Page | BrowserContext,
@@ -148,9 +150,10 @@ export async function signedInSession(
       json: {
         authenticated: true,
         user_id: userId,
-        ...(options.organizationId === undefined
-          ? {}
-          : { organization_id: options.organizationId }),
+        organization_id:
+          options.organizationId === undefined
+            ? defaultOrganization.org_id
+            : options.organizationId,
         default_organization_blocked: null,
         setup_required: options.setupRequired ?? false,
       },

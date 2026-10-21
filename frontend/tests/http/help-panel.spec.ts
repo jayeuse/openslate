@@ -1,5 +1,6 @@
 import {
   authMeBody,
+  defaultOrganization,
   expect,
   heldResponse,
   test,
@@ -100,6 +101,7 @@ async function installHelpApi(page: Page) {
           json: {
             authenticated: true,
             user_id: api.userId,
+            organization_id: defaultOrganization.org_id,
             default_organization_blocked: null,
             setup_required: false,
           },
@@ -659,6 +661,7 @@ for (const boundary of ["close", "account", "curtain"] as const) {
             json: {
               authenticated: true,
               user_id: api.userId,
+              organization_id: defaultOrganization.org_id,
               default_organization_blocked: null,
               setup_required: false,
             },

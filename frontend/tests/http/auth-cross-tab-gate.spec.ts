@@ -8,6 +8,7 @@ import {
 } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
 import { mockManageBackups } from "./helpers/manage-backups";
+import { installSeededComms } from "./helpers/comms-seeded-world";
 import {
   concealMfaTestCredentials,
   deferredMfaResponse,
@@ -797,6 +798,7 @@ for (const transition of [
         },
       });
     });
+    await installSeededComms(page, userA);
     await page.goto("/comms");
     const workshop = page.getByRole("button", { name: /^operations(,|$)/ });
     const composer = page.getByRole("textbox", {
@@ -869,6 +871,9 @@ for (const transition of [
         .getByRole("menuitem", { name: "Sign out", exact: true })
         .click();
     } else {
+      // The next account sees its own Comms data, never the previous one's.
+      if (changingAccount)
+        await installSeededComms(page, userB, { workspaceEvents: false });
       activeUser = transition === "invalid" ? null : userB;
       await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
     }
@@ -886,6 +891,7 @@ for (const transition of [
       page.getByText("The browser could not copy the link.", { exact: true }),
     ).toHaveCount(0);
     if (!changingAccount) {
+      await installSeededComms(page, userB, { workspaceEvents: false });
       activeUser = userB;
       await page.goto("/comms");
     }

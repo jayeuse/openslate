@@ -2207,6 +2207,7 @@ for (const replacement of ["board", "source", "account"] as const) {
           json: {
             authenticated: true,
             user_id: actor,
+            organization_id: defaultOrganization.org_id,
             setup_required: false,
             default_organization_blocked: null,
           },

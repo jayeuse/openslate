@@ -2,7 +2,9 @@
 // or out, it tells the browser's other OpenSlate tabs, which then cover their
 // workspace and check who is signed in before they show it again.
 const CHANNEL = "openslate-session";
-const tabId = crypto.randomUUID();
+// Created on first use, not at import: UI primitives import this module, and
+// `crypto.randomUUID` is unavailable outside a secure context.
+let tabId: string | undefined;
 let channel: BroadcastChannel | null | undefined;
 
 function sessionChannel(): BroadcastChannel | null {
@@ -14,9 +16,14 @@ function sessionChannel(): BroadcastChannel | null {
   return channel;
 }
 
+function currentTabId(): string {
+  tabId ??= crypto.randomUUID();
+  return tabId;
+}
+
 /** Tells the browser's other tabs that the signed-in account may have changed. */
 export function announceIdentityChange(): void {
-  sessionChannel()?.postMessage({ tabId });
+  sessionChannel()?.postMessage({ tabId: currentTabId() });
 }
 
 /** Calls `listener` when another tab announces an account change. */
@@ -28,7 +35,7 @@ export function subscribeIdentityChanges(listener: () => void): () => void {
     if (
       typeof data === "object" &&
       data !== null &&
-      (data as { tabId?: unknown }).tabId !== tabId
+      (data as { tabId?: unknown }).tabId !== currentTabId()
     )
       listener();
   };

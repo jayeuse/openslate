@@ -493,7 +493,17 @@ test("Comms inbox opens a current-organization message through the shell's unsav
     }),
   ).toBeVisible();
   expect(state.selectedOrganizations).toEqual([id(702)]);
-  expect(new Set(state.sourceReads)).toEqual(
+  // This guard owns the notification's Comms sources: the conversation title
+  // metadata and the bootstrap, never a message body or any other read. The
+  // opened Comms page also checks channel creation and sends its presence
+  // heartbeat; neither carries message content, and Comms specs own both.
+  const commsPageReads = new Set([
+    "/api/comms/capabilities/channel-creation",
+    "/api/comms/presence",
+  ]);
+  expect(
+    new Set(state.sourceReads.filter((path) => !commsPageReads.has(path))),
+  ).toEqual(
     new Set([`/api/comms/conversations/${id(730)}`, "/api/comms/bootstrap"]),
   );
 });

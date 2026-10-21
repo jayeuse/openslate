@@ -1,5 +1,10 @@
 import { expect, type Locator, type Page } from "@playwright/test";
-import { authMeBody, test, isEventStream } from "./helpers/test";
+import {
+  authMeBody,
+  defaultOrganization,
+  test,
+  isEventStream,
+} from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -207,6 +212,7 @@ async function installDates(
       return json({
         authenticated: true,
         user_id: id(1),
+        organization_id: defaultOrganization.org_id,
         default_organization_blocked: null,
         setup_required: false,
       });
