@@ -180,6 +180,8 @@ export function MessageComposer({
   const [choice, setChoice] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [backoff, setBackoff] = useState(0);
+  // The live timeline is not in the workspace view, so an accepted send starts slow mode here.
+  const [accepted, setAccepted] = useState(0);
   const fileInputId = useId();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const restoreComposerFocus = useRef(false);
@@ -248,7 +250,10 @@ export function MessageComposer({
       ),
     [workspace.messages, workspace.threads, conversationId, userId],
   );
-  const until = Math.max(backoff, lastSent + settings.slowModeSeconds * 1000);
+  const until = Math.max(
+    backoff,
+    Math.max(lastSent, accepted) + settings.slowModeSeconds * 1000,
+  );
   const seconds = Math.max(0, Math.ceil((until - now) / 1000));
   useEffect(() => {
     setNow(Date.now());
@@ -442,6 +447,7 @@ export function MessageComposer({
             return;
           }
           if (signal.aborted) return;
+          if (sendAt === undefined) setAccepted(Date.now());
           setError("");
           const cleared = await draftText.clear(submittedTextRevision);
           if (!cleared) return;

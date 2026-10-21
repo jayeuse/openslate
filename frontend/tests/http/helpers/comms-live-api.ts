@@ -369,6 +369,16 @@ export async function installCommsLiveApi(
       if (page.isClosed()) return Promise.resolve();
       if (error instanceof Error && "failure" in error) {
         const failure = S.commsFailureSchema.parse(error.failure);
+        // Like the backend, every Comms 429 carries its wait as Retry-After.
+        if (failure.status === 429)
+          return route.fulfill({
+            status: 429,
+            json: failure.body,
+            headers: {
+              "Cache-Control": "private, no-store",
+              "Retry-After": String(failure.retry_after_seconds),
+            },
+          });
         return reply(failure.body, failure.status);
       }
       throw error;
