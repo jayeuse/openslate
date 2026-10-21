@@ -145,42 +145,42 @@ traceable procedures and artifacts for executed E2E acceptance, including comman
 working directory, revision, prerequisites, outcome, and report/trace locations;
 architecture docs do not record task-run counts or results.
 
-### Comms native checks and prepared browser journey
+### OpenComms native checks and browser journey
 
 The existing runner's `--comms-realtime-only`, `--comms-jobs-only` and other
 `--comms-…-only` native selectors exercise their fixed backend/provider targets;
-they are not rendered-browser or complete S32 acceptance. The separate
+they are not rendered-browser or complete integrated acceptance. The separate
 `--comms-browser-only` selector uses the same guarded disposable Supabase, real
 Auth/Mailpit, FastAPI/static export and Caddy/Realtime wiring, and selects only
 [`comms-two-account.spec.ts`](../../frontend/tests/fullstack/comms-two-account.spec.ts).
 It does not run backend coverage/batches, the admission burst or the operational
 checker. It is not a second runner or permission to use a developer's accounts.
 
-**Prepared, NOT RUN:** that journey provisions its owned administrator, invites
+The browser fixture defines a journey that provisions its owned administrator, invites
 an ordinary member through the actual API/mail flow, and uses separate browser
 contexts for send/receive/reply/name assertions. An owned second-organization tab
 and independent logout exercise organization/session isolation. Messages, SSE and
 WebSockets are not mocked. Credentials remain in the runner's private handoff or
 test memory; auth traces, screenshots and video are disabled. Unit/collection/static
-checks of this preparation do not prove that the invitation or rendered journey
-has executed successfully. Recheck it against the completed frontend dependencies
-before the owner-authorized live run.
+checks of the fixture do not prove that the invitation or rendered journey has
+executed successfully. Integrated acceptance requires compatible frontend/backend
+artifacts and an actual run against the owned provider stack. Execution status and
+results belong in run evidence, not this test-boundary description.
 
-S32 still owns the full journey matrix, provider/sample packs, removal/expiry and
-reconnect behavior, and capacity/latency evidence. The D20 **9000-delivery burst
-and latency distribution** and **600-event fan-out** are **NOT MEASURED** by the
-prepared two-account case or a service handshake. The existing
-[10k purge case](../../backend/tests/comms/routes/test_comms_purge.py) also needs
-its own current timing acceptance; see [active Comms risks](20-architecture-risks.md).
+Integrated acceptance separately covers the full journey matrix, provider/sample
+packs, removal/expiry, reconnect behavior and capacity/latency. Capacity testing
+includes a **9000-delivery burst and latency distribution** and **600-event fan-out**;
+a two-account functional journey or service handshake does not cover those workloads.
+The existing [10k purge case](../../backend/tests/comms/routes/test_comms_purge.py)
+has a **15-second timing requirement**; see [active OpenComms risks](20-architecture-risks.md).
 
-Before that authorized measurement window, follow the [root test policy](../../AGENTS.md):
+Before an authorized measurement window, follow the [root test policy](../../AGENTS.md):
 record and stop only authorized development runtimes, preserve all volumes, obtain
 the common exclusive heavy-lane lock, and document machine headroom. Never overlap
-backend work with frontend tests/builds. Measure the purge case once on the freed
-machine first; if it misses, diagnose the actual ORM/driver path and fix the supported
-cause before S35 acceptance, without weakening audit/confirmation controls or the
-timing assertion. Restore every runtime actually stopped and report any restoration
-failure. A documentation/preparation task does not authorize that window.
+backend work with frontend tests/builds. Measure the purge case on the freed machine;
+if it misses the target, diagnose the actual ORM/driver path before repair and
+reverification. Preserve audit/confirmation controls and the timing assertion.
+Restore every runtime actually stopped and report any restoration failure.
 
 ## Release smoke suite
 
@@ -255,8 +255,9 @@ Acceptance must exercise provider outages, missing mail configuration, and calle
 deadlines without spawning replacement work. Production readiness still requires live acceptance; its response
 does not establish mail delivery, schema compatibility, or backup integrity. Supabase
 Realtime and its Comms authorization/publication paths are implemented; readiness
-does not establish end-to-end Realtime delivery. Complete S32 browser/provider/load
-and full-gate evidence remain deferred, alongside the target-platform boundaries above.
+does not establish end-to-end Realtime delivery. Browser/provider delivery, capacity
+and configured gates each require separate acceptance evidence, alongside the
+target-platform boundaries above.
 Documentation-only edits require diff and link review, not application test execution.
 See [Deployment Architecture](12-deployment-architecture.md) for the current release and
 restore limits.

@@ -132,7 +132,7 @@ HTTPX timeout configuration, and disables redirects/environment proxies. Its
 is capped at 1024 events. Full queues report safe reason codes and may lose
 invalidations; clients must recover through authorized reads. The
 [Compose tenant ceilings](../../infra/supabase/compose.yaml) are 500 concurrent
-Realtime users and 1000 events/second, not proof of the deferred D20 workload.
+Realtime users and 1000 events/second, not a guarantee of application throughput.
 
 FastAPI separates exact static exports, `/api`, and
 `/api/events`; it never sends UI HTML for an API or missing-asset path. Static
