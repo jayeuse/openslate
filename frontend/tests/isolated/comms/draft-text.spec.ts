@@ -5,6 +5,7 @@ import {
 } from "../../../src/components/systems/shared/runtime/workspace-identity";
 import {
   clearCommsDraftTextStore,
+  commsDraftOrganizationLeft,
   commsDraftTextKey,
   COMMS_DRAFT_TEXT_PREFIX,
   createCommsDraftTextStore,
@@ -145,6 +146,16 @@ test("a failed workspace cleanup listener reports failure and still clears other
       Object.defineProperty(globalThis, "sessionStorage", originalStorage);
     else Reflect.deleteProperty(globalThis, "sessionStorage");
   }
+});
+
+test("only a real organization switch releases a Comms client's drafts", () => {
+  for (const [tab, released, reason] of [
+    // A remount in a tab without a stored organization is not a switch.
+    [null, false, "no stored organization"],
+    ["org-a", false, "same organization"],
+    ["org-b", true, "switched organization"],
+  ] as const)
+    expect(commsDraftOrganizationLeft(tab, "org-a"), reason).toBe(released);
 });
 
 test("draft subscribers receive a new snapshot when text changes", () => {

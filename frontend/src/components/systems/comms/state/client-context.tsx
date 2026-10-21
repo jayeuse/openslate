@@ -30,7 +30,10 @@ import type { CommsViewClient } from "../contract/client";
 import type { Bootstrap } from "../contract/types";
 import type { CommsGroup } from "../domain/groups";
 import { complete } from "./workspace-view";
-import { clearCommsDraftTextStore } from "./draft-text";
+import {
+  clearCommsDraftTextStore,
+  commsDraftOrganizationLeft,
+} from "./draft-text";
 import { managedDepartmentIds } from "../../openview/domain/manage-access";
 
 export type CommsClientState = {
@@ -97,7 +100,7 @@ function OwnedClient({
     const unregister = registerWorkspaceSessionClear(userId, clear);
     return () => {
       unregister();
-      if (currentOrganizationId() !== orgId) clear();
+      if (commsDraftOrganizationLeft(currentOrganizationId(), orgId)) clear();
     };
   }, [userId, orgId]);
   useLayoutEffect(() => {

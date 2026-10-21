@@ -1,6 +1,12 @@
 "use client";
-import dynamic from "next/dynamic";
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { X } from "lucide-react";
 import {
   Dialog,
@@ -27,15 +33,70 @@ import type { NavigationState } from "../state/use-comms-navigation";
 import { newChannel, type Channel, type Category } from "../domain/view-model";
 import type { OpenWorkspaceSetting } from "./comms-menu";
 
-const ChannelDialog = dynamic(() =>
-  import("./channel-dialog").then((module) => module.ChannelDialog),
+// Each lazy dialog has its own Suspense boundary below. Without one, the first
+// open suspends the whole Comms page into its skeleton until the code arrives.
+const loadChannelEditor = () => import("./channel-dialog");
+const ChannelDialog = lazy(() =>
+  loadChannelEditor().then((module) => ({ default: module.ChannelDialog })),
 );
-const DirectDialog = dynamic(() =>
-  import("./direct-dialog").then((module) => module.DirectDialog),
+const DirectDialog = lazy(() =>
+  import("./direct-dialog").then((module) => ({
+    default: module.DirectDialog,
+  })),
 );
-const CommsSettingsDialog = dynamic(() =>
-  import("./settings-dialog").then((module) => module.CommsSettingsDialog),
+const CommsSettingsDialog = lazy(() =>
+  import("./settings-dialog").then((module) => ({
+    default: module.CommsSettingsDialog,
+  })),
 );
+/** Starts loading the channel editor before the first click needs it. */
+export function preloadChannelEditor() {
+  // A failed preload is retried when the editor itself renders.
+  void loadChannelEditor().catch(() => undefined);
+}
+
+/** The dialog frame shown at once while a dialog's code loads. */
+function DialogLoading({
+  title,
+  status,
+  opener,
+  onClose,
+  className,
+}: {
+  title: string;
+  status: string;
+  opener?: HTMLElement | null;
+  onClose: () => void;
+  className?: string;
+}) {
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent
+        aria-busy="true"
+        finalFocus={() => opener ?? false}
+        className={className}
+      >
+        <DialogTitle className="border-b px-5 py-4 sm:px-6">
+          {title}
+        </DialogTitle>
+        <p role="status" className="text-muted-foreground px-5 py-4 text-sm">
+          {status}
+        </p>
+      </DialogContent>
+    </Dialog>
+  );
+}
+const largeDialog = "flex h-[90dvh] max-h-[90dvh] max-w-5xl flex-col p-0";
+const scopeTitles = {
+  workspace: "Workspace settings",
+  category: "Category settings",
+  channel: "Channel settings",
+};
 type Editor = (
   { kind: "channel"; value: Channel } | { kind: "category"; value: Category }
 ) & { opener: HTMLElement };
@@ -164,6 +225,11 @@ export function CommsDialogs({
             : "everyone",
         }
       : null);
+  const closeSettings = () => {
+    state.setSettings(null);
+    if (legacySettings)
+      navigation.update({ settings: null, channel: null, role: null });
+  };
   const workspaceThreads = threads.flatMap((thread) => {
     const message = messages.find((item) => item.id === thread.messageId);
     const channel = channels.find(
@@ -186,18 +252,30 @@ export function CommsDialogs({
         onClose={() => state.setConfirm(null)}
       />
       {settings && (
-        <CommsSettingsDialog
-          {...settings}
-          channels={channels}
-          categories={categories}
-          people={people}
-          roles={roles}
-          onClose={() => {
-            state.setSettings(null);
-            if (legacySettings)
-              navigation.update({ settings: null, channel: null, role: null });
-          }}
-        />
+        <Suspense
+          fallback={
+            <DialogLoading
+              title={
+                settings.scope === "personal"
+                  ? "My preferences"
+                  : scopeTitles[settings.scope.kind]
+              }
+              status="Loading settings…"
+              opener={settings.opener}
+              onClose={closeSettings}
+              className={largeDialog}
+            />
+          }
+        >
+          <CommsSettingsDialog
+            {...settings}
+            channels={channels}
+            categories={categories}
+            people={people}
+            roles={roles}
+            onClose={closeSettings}
+          />
+        </Suspense>
       )}
       {toolViews.includes(tool) &&
         !mainToolViews.includes(tool) &&
@@ -212,17 +290,33 @@ export function CommsDialogs({
           />
         )}
       {state.editor && (
-        <ChannelDialog
+        <Suspense
           key={`${state.editor.kind}-${state.editor.value.id}`}
-          {...(state.editor as ComponentProps<typeof ChannelEditor>)}
-          roles={roles}
-          categories={categories}
-          channels={channels}
-          existing={state.editor.kind === "channel" ? channels : categories}
-          onClose={() => state.setEditor(null)}
-          people={people}
-          onAcceptedChannelSave={select}
-        />
+          fallback={
+            <DialogLoading
+              title={
+                state.editor.value.id
+                  ? scopeTitles[state.editor.kind]
+                  : `Create ${state.editor.kind}`
+              }
+              status="Loading editor…"
+              opener={state.editor.opener}
+              onClose={() => state.setEditor(null)}
+              className={largeDialog}
+            />
+          }
+        >
+          <ChannelDialog
+            {...(state.editor as ComponentProps<typeof ChannelEditor>)}
+            roles={roles}
+            categories={categories}
+            channels={channels}
+            existing={state.editor.kind === "channel" ? channels : categories}
+            onClose={() => state.setEditor(null)}
+            people={people}
+            onAcceptedChannelSave={select}
+          />
+        </Suspense>
       )}
       <Dialog
         open={!!state.threadDirectory}
@@ -276,7 +370,20 @@ export function CommsDialogs({
         </DialogContent>
       </Dialog>
       {state.dmOpen && (
-        <DirectDialog onClose={() => state.setDmOpen(false)} select={select} />
+        <Suspense
+          fallback={
+            <DialogLoading
+              title="Start direct message"
+              status="Loading…"
+              onClose={() => state.setDmOpen(false)}
+            />
+          }
+        >
+          <DirectDialog
+            onClose={() => state.setDmOpen(false)}
+            select={select}
+          />
+        </Suspense>
       )}
     </>
   );

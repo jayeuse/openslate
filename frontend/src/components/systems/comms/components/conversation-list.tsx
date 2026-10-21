@@ -15,7 +15,7 @@ import { Action } from "../../shared/components/ui";
 import { RowEditMenu } from "./floating";
 import { GroupMark } from "./group-mark";
 import { CommsMenu } from "./comms-menu";
-import type { CommsDialogsState } from "./comms-dialogs";
+import { preloadChannelEditor, type CommsDialogsState } from "./comms-dialogs";
 import { newChannel, threadMessages, type Thread } from "../domain/view-model";
 import { recordContext } from "../domain/groups";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
@@ -107,6 +107,8 @@ export function ConversationList({
             aria-label="Create channel"
             size="icon"
             variant="ghost"
+            onPointerEnter={preloadChannelEditor}
+            onFocus={preloadChannelEditor}
             onClick={(event) =>
               dialogs.setEditor({
                 opener: event.currentTarget,

@@ -393,6 +393,19 @@ export function useCommsDraftText(
   ];
 }
 
+/**
+ * Whether a released Comms client left its organization, so its drafts must be
+ * cleared. `tabOrganizationId` is the tab's stored organization.
+ */
+export function commsDraftOrganizationLeft(
+  tabOrganizationId: string | null,
+  organizationId: string,
+): boolean {
+  // No stored organization means the tab follows the session; that is not a
+  // switch. Sign-out clears drafts through its own session cleanup listener.
+  return tabOrganizationId !== null && tabOrganizationId !== organizationId;
+}
+
 /** Clear one account's dedicated draft values during logout/reset. */
 export function clearCommsDraftTextStore(
   userId?: string,
