@@ -7,9 +7,9 @@ import {
   type Page,
 } from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
-import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
-import { createMemoryCommsRuntime } from "../../src/components/systems/comms/adapters/memory-client";
-import type { MemorySnapshot } from "../../src/components/systems/comms/memory/store-types";
+import { createMemorySeed } from "../support/comms-memory/memory/seed";
+import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
+import type { MemorySnapshot } from "../support/comms-memory/memory/store-types";
 import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 

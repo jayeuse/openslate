@@ -216,7 +216,7 @@ function LoadedCommsSettingsDialog({
   const userId = useVerifiedWorkspaceUserId();
   const region = useWorkspaceDisplayRegion();
   const browserPermission = useNotificationPermission();
-  const { client } = useCommsClient();
+  const { client, live } = useCommsClient();
   const { run } = useCommsCommands();
   const [config] = useCommsConfiguration();
   const personal = scope === "personal";
@@ -581,6 +581,9 @@ function LoadedCommsSettingsDialog({
       );
       return false;
     }
+    // Join the follow-up read that run() started, so the next dialog opens on
+    // the saved locks instead of the previous read model.
+    await live?.refresh().catch(() => {});
     onAfterSave?.();
     onClose();
     return true;

@@ -7,8 +7,8 @@ import {
 } from "./helpers/test";
 import type { Page } from "@playwright/test";
 import { wireWorkspace } from "../helpers/wire";
-import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
-import { createMemoryCommsRuntime } from "../../src/components/systems/comms/adapters/memory-client";
+import { createMemorySeed } from "../support/comms-memory/memory/seed";
+import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
 
 const userId = "00000000-0000-4000-8000-000000000101";

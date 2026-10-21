@@ -7,22 +7,35 @@ import {
   type Page,
 } from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
-import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
-import { validateMemoryState } from "../../src/components/systems/comms/memory/snapshot";
-import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
-import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
+import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
+import { createMemorySeed } from "../support/comms-memory/memory/seed";
+import { validateMemoryState } from "../support/comms-memory/memory/snapshot";
 
 async function seedSettings(
   page: Page,
   mode: "admin" | "manager" | "member" = "admin",
   userId = "00000000-0000-4000-8000-000000000101",
+  prepare?: (state: ReturnType<typeof createMemorySeed>, room: string) => void,
 ) {
   const owner = { user_id: userId, org_id: defaultOrganization.org_id };
   const role = mode === "admin" ? "admin" : "member";
-  await signedInAs(page, { id: userId, role });
   const state = createMemorySeed(owner, {
     role,
     display_name: "Settings owner",
+  });
+  // A live manager reads the group catalog through department management.
+  await signedInAs(page, {
+    id: userId,
+    role,
+    access:
+      mode === "manager"
+        ? Object.keys(state.departments).map((department_id) => ({
+            department_id,
+            module_id: null,
+            level: "manage" as const,
+          }))
+        : [],
   });
   const room = Object.values(state.conversations)[0];
   if (room.kind !== "channel") throw new Error("Expected channel fixture");
@@ -42,25 +55,17 @@ async function seedSettings(
       group_grants: [{ group_id: group.id, capability: "pin" }],
     },
   };
+  prepare?.(state, room.id);
   validateMemoryState(state, owner.org_id);
-  const key = workspaceSessionSnapshotStorageKey(userId, owner.org_id);
-  const value = serializeSampleSessionSnapshot(
-    userId,
-    { "comms-memory-v1": { format: 1, owner, state } },
-    owner.org_id,
-  );
-  await page.addInitScript(
-    ({ key, value }) => {
-      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, value);
-    },
-    { key, value },
-  );
+  const runtime = createMemoryCommsRuntime({ owner, initial: state });
+  const server = await installCommsLiveApi(page, { userId, runtime });
   return {
     owner,
+    runtime,
+    server,
     conversation: room.id,
     category: room.category_id!,
     group: group.id,
-    key,
     sofia: Object.values(state.people).find(
       (person) => person.display_name === "Sofia Garcia",
     )!.user_id,
@@ -123,6 +128,7 @@ test("settings Advanced is collapsed, counts customized fields, and persists onl
   await dialog
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
+  await expect(dialog).toBeHidden();
   await page.reload();
   await openChannel(page);
   await dialog.getByRole("tab", { name: "Messaging", exact: true }).click();
@@ -196,6 +202,87 @@ for (const { label, value, advanced } of [
     await expect(field).toHaveValue(value);
   });
 }
+
+test("turning on link previews saves with If-Match and shows the server's preview card", async ({
+  page,
+}) => {
+  const data = await seedSettings(page, "admin", undefined, (state, room) => {
+    const latest = Object.values(state.messages)
+      .filter(
+        (message) =>
+          message.conversation_id === room && message.parent_id === null,
+      )
+      .sort((a, b) => b.seq - a.seq)[0];
+    latest.link_previews = [
+      {
+        url: "https://example.org/handover",
+        title: "Shift handover guide",
+        description: "Steps for the next team.",
+        site_name: "Example Handbook",
+      },
+    ];
+  });
+  await page.goto(`/comms?conversation=${data.conversation}`);
+  const card = page.getByRole("link", { name: /Shift handover guide/ });
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeEnabled();
+  await expect(card).toHaveCount(0);
+  await openChannel(page);
+  const dialog = settings(page);
+  await dialog.getByRole("tab", { name: "Messaging", exact: true }).click();
+  await dialog.getByRole("button", { name: /Advanced settings/ }).click();
+  await dialog
+    .getByRole("switch", { name: "Show link previews", exact: true })
+    .check();
+  await dialog
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect(card).toBeVisible();
+  await expect(card).toHaveAttribute("href", "https://example.org/handover");
+  const write = data.server.requests.find(
+    (request) =>
+      request.method === "PATCH" &&
+      request.path === `/settings/channel/${data.conversation}`,
+  );
+  expect(write?.ifMatch).toMatch(/^"[^"]+"$/);
+});
+
+test("a workspace capability grant for a group saves with If-Match", async ({
+  page,
+}) => {
+  const data = await seedSettings(page);
+  await page.goto("/comms");
+  const workspace = await workspaceSettings(page);
+  await workspace.getByRole("tab", { name: "Access", exact: true }).click();
+  await workspace.getByRole("button", { name: /Advanced settings/ }).click();
+  await workspace
+    .getByLabel("Capabilities for", { exact: true })
+    .selectOption({ label: "Dispatch team" });
+  await expect(
+    workspace.getByRole("checkbox", { name: "Pin messages", exact: true }),
+  ).toBeChecked();
+  await workspace
+    .getByRole("checkbox", { name: "Moderate conversations", exact: true })
+    .check();
+  await workspace
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(workspace).toBeHidden();
+  const write = data.server.requests.find(
+    (request) =>
+      request.method === "PUT" &&
+      request.path === "/settings/workspace/capabilities",
+  );
+  expect(write?.ifMatch).toMatch(/^"[^"]+"$/);
+  const saved = await data.runtime.client.getCapabilityConfiguration({
+    kind: "workspace",
+  });
+  expect(saved.data.group_grants).toEqual(
+    expect.arrayContaining([{ group_id: data.group, capability: "moderate" }]),
+  );
+});
 
 test("workspace locks live in Advanced and keep lower-scope common values locked", async ({
   page,

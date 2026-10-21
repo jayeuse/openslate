@@ -166,7 +166,7 @@ export function OutboxFields({
   return (
     <>
       <p className="text-muted-foreground text-sm">
-        In this local example, scheduled messages send when you choose Send Now.
+        Scheduled messages send at their time. Send Now sends one at once.
       </p>
       {!schedules.length && (
         <Empty>

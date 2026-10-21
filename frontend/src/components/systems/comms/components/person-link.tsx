@@ -19,7 +19,7 @@ export function PersonLink({
   const { scope, client } = useCommsClient();
   const workspace = useCommsWorkspaceView();
   // Only live DTO identities may reach the authorized core profile boundary.
-  return scope?.kind === "live" ? (
+  return scope ? (
     <PersonCardPopover
       personId={props.person.id}
       label={props.person.name}

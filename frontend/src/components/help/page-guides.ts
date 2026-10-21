@@ -29,7 +29,7 @@ export const PAGE_GUIDES = {
       "OpenComms reads conversations and messages from the current organization's server. Your access determines which conversations you can open.",
       "A message is sent only after the server accepts it. If it is marked Not sent, Retry keeps the original send identity and your draft stays available.",
       "People, linked records and files keep their own access checks. Opening a conversation does not grant access to everything linked from it.",
-      "Channel templates, settings history and join-request tools temporarily use a separate labeled example workspace. Those simulated changes are not saved to your organization.",
+      "Administrators open channel templates, settings history, join requests, moderation, retention and export from Admin tools. Changes there are saved to your organization; retention changes and settings restores ask for your password first.",
     ],
   },
   access: {

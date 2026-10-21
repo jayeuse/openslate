@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
-import { createMemorySeed } from "../../../src/components/systems/comms/memory/seed";
-import { createMemoryCommsRuntime } from "../../../src/components/systems/comms/adapters/memory-client";
+import { createMemorySeed } from "../../support/comms-memory/memory/seed";
+import { createMemoryCommsRuntime } from "../../support/comms-memory/memory-client";
 import type { SearchHit } from "../../../src/components/systems/comms/contract/types";
 import { installCommsLiveApi } from "./comms-live-api";
 import {

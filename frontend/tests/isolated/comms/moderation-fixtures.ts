@@ -1,5 +1,5 @@
 import * as api from "../../../src/components/systems/comms/adapters/moderation-api";
-import { DEFAULT_SETTINGS } from "../../../src/components/systems/comms/domain/settings";
+import { DEFAULT_SETTINGS } from "../../../src/components/systems/comms/domain/setting-defaults";
 import {
   context,
   org,

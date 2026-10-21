@@ -8,12 +8,14 @@ import {
   type Page,
 } from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
-import { createMemoryCommsRuntime } from "../../src/components/systems/comms/adapters/memory-client";
-import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
-import { validateMemoryState } from "../../src/components/systems/comms/memory/snapshot";
-import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
-import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
+import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
+import { createMemorySeed } from "../support/comms-memory/memory/seed";
+import { validateMemoryState } from "../support/comms-memory/memory/snapshot";
 
+const freshPassword = "owned-synthetic-proof";
+
+/** Seeds the fixture server world, then serves it through the live /api routes. */
 async function seedTools(
   page: Page,
   member = false,
@@ -35,13 +37,11 @@ async function seedTools(
     (message) => message.parent_id !== null,
   )!;
   let tick = 0;
-  const runtime = createMemoryCommsRuntime(
-    { owner, initial },
-    { clock: () => Date.parse("2026-10-20T00:00:00Z") + tick++ },
-  );
+  const clock = () => Date.parse("2026-10-20T00:00:00Z") + tick++;
+  const seeding = createMemoryCommsRuntime({ owner, initial }, { clock });
   let snapshot;
   try {
-    const client = runtime.client;
+    const client = seeding.client;
     await client.reportMessage(room.id, root.id, {
       reason: "Review dispatch wording",
     });
@@ -93,7 +93,7 @@ async function seedTools(
         ).etag,
       },
     );
-    snapshot = runtime.exportSnapshot();
+    snapshot = seeding.exportSnapshot();
     for (const [index, user_id] of [
       root.author_id,
       reply.author_id,
@@ -112,30 +112,29 @@ async function seedTools(
       };
     }
   } finally {
-    runtime.dispose();
+    seeding.dispose();
   }
   if (member) {
     snapshot.state.people[owner.user_id].role = "member";
     snapshot.state.members[room.id][owner.user_id].member_role = "manager";
   }
   validateMemoryState(snapshot.state, owner.org_id);
+  const runtime = createMemoryCommsRuntime(
+    { owner, initial: snapshot.state },
+    {
+      clock,
+      verifyConfirmation: async (password) => password === freshPassword,
+    },
+  );
   await signedInAs(page, {
     id: owner.user_id,
     role: member ? "member" : "admin",
   });
-  const key = workspaceSessionSnapshotStorageKey(owner.user_id, owner.org_id);
-  const value = serializeSampleSessionSnapshot(
-    owner.user_id,
-    { "comms-memory-v1": snapshot },
-    owner.org_id,
-  );
-  await page.addInitScript(
-    ({ key, value }) => {
-      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, value);
-    },
-    { key, value },
-  );
-  return { owner, conversation: room.id, key };
+  const server = await installCommsLiveApi(page, {
+    userId: owner.user_id,
+    runtime,
+  });
+  return { owner, conversation: room.id, runtime, server };
 }
 async function openTool(page: Page, name: string) {
   await page
@@ -350,25 +349,20 @@ async function newYorkOutbox(page: Page, scheduledAt: string) {
   return { ...data, tool };
 }
 
-async function savedSchedule(page: Page, key: string, body: string) {
-  return page.evaluate(
-    ({ key, body }) => {
-      const rows: { request: { body: string; send_at: string } }[] =
-        Object.values(
-          JSON.parse(sessionStorage.getItem(key)!).values["comms-memory-v1"]
-            .state.schedules,
-        );
-      return rows.find((row) => row.request.body === body)?.request.send_at;
-    },
-    { key, body },
-  );
+/** Reads the stored instant from the fixture server, not the browser. */
+async function savedSchedule(
+  runtime: ReturnType<typeof createMemoryCommsRuntime>,
+  body: string,
+) {
+  const rows = Object.values(runtime.exportSnapshot().state.schedules);
+  return rows.find((row) => row.request.body === body)?.request.send_at;
 }
 
 test("a body-only edit of an existing fold schedule preserves its exact original instant", async ({
   page,
 }) => {
   const original = "2026-11-01T05:30:45.123Z";
-  const { tool, key } = await newYorkOutbox(page, original);
+  const { tool, runtime } = await newYorkOutbox(page, original);
   await expect(tool.getByLabel("Scheduled time", { exact: true })).toHaveValue(
     "2026-11-01T01:30",
   );
@@ -380,7 +374,7 @@ test("a body-only edit of an existing fold schedule preserves its exact original
     tool.getByText("Scheduled message saved.", { exact: true }),
   ).toBeVisible();
   expect(
-    await savedSchedule(page, key, "Body edited without changing the instant"),
+    await savedSchedule(runtime, "Body edited without changing the instant"),
   ).toBe(original);
   await expect(
     tool.getByRole("button", { name: /Deliver scheduled update/ }),
@@ -397,7 +391,7 @@ test("a body-only edit of an existing fold schedule preserves its exact original
 test("editing a schedule into a fold requires an offset and a gap refuses without losing the draft", async ({
   page,
 }) => {
-  const { tool, key } = await newYorkOutbox(page, "2099-12-01T12:00:00Z");
+  const { tool, runtime } = await newYorkOutbox(page, "2099-12-01T12:00:00Z");
   const input = tool.getByLabel("Scheduled time", { exact: true });
   const body = tool.getByLabel("Scheduled message", { exact: true });
   await body.fill("Explicit later fold occurrence");
@@ -410,7 +404,7 @@ test("editing a schedule into a fold requires an offset and a gap refuses withou
   await expect(offset).toHaveValue("");
   await tool.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(tool.getByRole("alert")).toContainText("occurs twice");
-  expect(await savedSchedule(page, key, "Deliver scheduled update")).toBe(
+  expect(await savedSchedule(runtime, "Deliver scheduled update")).toBe(
     "2099-12-01T12:00:00Z",
   );
   await offset.selectOption("-05:00");
@@ -418,7 +412,7 @@ test("editing a schedule into a fold requires an offset and a gap refuses withou
   await expect(
     tool.getByText("Scheduled message saved.", { exact: true }),
   ).toBeVisible();
-  expect(await savedSchedule(page, key, "Explicit later fold occurrence")).toBe(
+  expect(await savedSchedule(runtime, "Explicit later fold occurrence")).toBe(
     "2026-11-01T06:45:00Z",
   );
   await body.fill("Keep this draft after the nonexistent time");
@@ -427,7 +421,7 @@ test("editing a schedule into a fold requires an offset and a gap refuses withou
   await expect(tool.getByRole("alert")).toContainText("does not exist");
   await expect(input).toHaveValue("2027-03-14T02:30");
   await expect(body).toHaveValue("Keep this draft after the nonexistent time");
-  expect(await savedSchedule(page, key, "Explicit later fold occurrence")).toBe(
+  expect(await savedSchedule(runtime, "Explicit later fold occurrence")).toBe(
     "2026-11-01T06:45:00Z",
   );
 });
@@ -445,8 +439,8 @@ test("retention previews the org policy before applying and keeps file overrides
     tool.getByRole("button", { name: "Preview impact", exact: true }),
   ).toBeDisabled();
   await tool
-    .getByRole("checkbox", { name: /^Confirm sample operation/ })
-    .check();
+    .getByLabel("Current password", { exact: true })
+    .fill(freshPassword);
   await tool
     .getByLabel("Retention days (0 keeps everything)", { exact: true })
     .fill("7");
@@ -456,6 +450,9 @@ test("retention previews the org policy before applying and keeps file overrides
   await expect(
     tool.getByText(/messages and .* files would be affected/),
   ).toBeVisible();
+  await tool
+    .getByLabel("Current password", { exact: true })
+    .fill(freshPassword);
   await tool
     .getByRole("button", { name: "Apply retention policy", exact: true })
     .click();
@@ -470,8 +467,14 @@ test("retention previews the org policy before applying and keeps file overrides
     tool.getByRole("button", { name: "Apply retention policy", exact: true }),
   ).toHaveCount(0);
   await tool
+    .getByLabel("Current password", { exact: true })
+    .fill(freshPassword);
+  await tool
     .getByRole("button", { name: "Preview impact", exact: true })
     .click();
+  await tool
+    .getByLabel("Current password", { exact: true })
+    .fill(freshPassword);
   await tool
     .getByRole("button", { name: "Apply retention policy", exact: true })
     .click();
@@ -480,38 +483,36 @@ test("retention previews the org policy before applying and keeps file overrides
   ).toBeVisible();
 });
 
-test("export records format and dates but downloads honest fixed sample CSV and refuses lost bytes", async ({
+test("export starts a job with its format and dates and downloads its file", async ({
   page,
 }) => {
-  await seedTools(page);
+  const { server } = await seedTools(page);
   await page.goto("/comms");
   const tool = await openTool(page, "Export messages");
-  await expect(tool.getByText(/fixed sample CSV/)).toBeVisible();
   await tool.getByLabel("Export format", { exact: true }).selectOption("xlsx");
   await tool.getByLabel("From date", { exact: true }).fill("2026-01-01");
   await tool.getByLabel("Before date", { exact: true }).fill("2027-01-01");
   await tool.getByRole("button", { name: "Start export", exact: true }).click();
   const download = page.waitForEvent("download");
   await tool
-    .getByRole("button", { name: "Download sample CSV", exact: true })
+    .getByRole("button", { name: "Download export", exact: true })
     .click();
   const file = await download;
   expect(file.suggestedFilename()).toBe("opencomms-sample.csv");
   expect(await readFile((await file.path())!, "utf8")).toContain(
     '"OpenComms","Local sample export"',
   );
-  await page.reload();
-  await expect(tool).toBeVisible();
-  await tool
-    .getByRole("button", { name: "Download sample CSV", exact: true })
-    .click();
-  await expect(tool.getByRole("alert")).toBeVisible();
+  expect(
+    server.requests.filter(
+      (request) => request.method === "POST" && request.path === "/exports",
+    ),
+  ).toHaveLength(1);
 });
 
 test("templates apply a saved preview before advanced authoring and preserve invalid JSON", async ({
   page,
 }) => {
-  await seedTools(page);
+  const { server } = await seedTools(page);
   await page.goto("/comms");
   const tool = await openTool(page, "Channel templates");
   await expect(tool.getByLabel("Template name", { exact: true })).toBeHidden();
@@ -531,6 +532,11 @@ test("templates apply a saved preview before advanced authoring and preserve inv
   await expect(
     tool.getByText("Selected settings applied.", { exact: true }),
   ).toBeVisible();
+  expect(
+    server.requests.find((request) =>
+      /^\/templates\/[^/]+\/applications$/.test(request.path),
+    )?.ifMatch,
+  ).toMatch(/^"[^"]+"$/);
   await tool.getByRole("button", { name: /Advanced settings/ }).click();
   await tool
     .getByLabel("Settings JSON", { exact: true })
@@ -544,10 +550,63 @@ test("templates apply a saved preview before advanced authoring and preserve inv
   );
 });
 
+test("a template changed by someone else refuses the stale save and keeps the draft", async ({
+  page,
+}) => {
+  const { server } = await seedTools(page);
+  await page.goto("/comms");
+  const tool = await openTool(page, "Channel templates");
+  await tool
+    .getByLabel("Template", { exact: true })
+    .selectOption({ label: "Dispatch defaults" });
+  await tool.getByRole("button", { name: /Advanced settings/ }).click();
+  const name = tool.getByLabel("Template name", { exact: true });
+  await expect(name).toHaveValue("Dispatch defaults");
+  await name.fill("Dispatch defaults, revised");
+  server.conflictNextWrite(/^\/templates\/[^/]+$/);
+  await tool
+    .getByRole("button", { name: "Save template", exact: true })
+    .click();
+  await expect(tool.getByRole("alert")).toContainText(
+    "changed this after you opened it",
+  );
+  await expect(name).toHaveValue("Dispatch defaults, revised");
+  const save = server.requests.find(
+    (request) =>
+      request.method === "PUT" && /^\/templates\/[^/]+$/.test(request.path),
+  );
+  expect(save?.ifMatch).toMatch(/^"[^"]+"$/);
+});
+
+test("a stale template preview is refused on apply and must be previewed again", async ({
+  page,
+}) => {
+  const { server } = await seedTools(page);
+  await page.goto("/comms");
+  const tool = await openTool(page, "Channel templates");
+  await tool
+    .getByLabel("Template", { exact: true })
+    .selectOption({ label: "Dispatch defaults" });
+  await tool
+    .getByRole("button", { name: "Preview changes", exact: true })
+    .click();
+  const apply = tool.getByRole("button", {
+    name: "Apply selected settings",
+    exact: true,
+  });
+  await expect(apply).toBeVisible();
+  server.conflictNextWrite(/^\/templates\/[^/]+\/applications$/);
+  await apply.click();
+  await expect(tool.getByRole("alert")).toContainText(
+    "Preview the current state again.",
+  );
+  await expect(apply).toHaveCount(0);
+});
+
 test("join requests approve and decline without opening the invitation editor", async ({
   page,
 }) => {
-  await seedTools(page);
+  const { server } = await seedTools(page);
   await page.goto("/comms");
   const tool = await openTool(page, "Join requests");
   await expect(tool.getByLabel("Invite person", { exact: true })).toBeHidden();
@@ -563,6 +622,13 @@ test("join requests approve and decline without opening the invitation editor", 
   });
   await sofia.getByRole("button", { name: "Decline", exact: true }).click();
   await expect(sofia).toContainText("declined");
+  const decisions = server.requests.filter((request) =>
+    request.path.endsWith("/decision"),
+  );
+  expect(decisions.map((request) => request.ifMatch)).toEqual([
+    expect.stringMatching(/^"[^"]+"$/),
+    expect.stringMatching(/^"[^"]+"$/),
+  ]);
 });
 
 test("settings history shows before and after then requires an advanced versioned restore preview", async ({
@@ -582,8 +648,8 @@ test("settings history shows before and after then requires an advanced versione
     tool.getByRole("button", { name: "Preview restoration", exact: true }),
   ).toHaveCount(0);
   await tool
-    .getByRole("checkbox", { name: /^Confirm sample operation/ })
-    .check();
+    .getByLabel("Current password", { exact: true })
+    .fill(freshPassword);
   await tool.getByRole("button", { name: /Advanced settings/ }).click();
   await tool
     .getByLabel("Change to restore", { exact: true })
@@ -591,6 +657,9 @@ test("settings history shows before and after then requires an advanced versione
   await tool
     .getByRole("button", { name: "Preview restoration", exact: true })
     .click();
+  await tool
+    .getByLabel("Current password", { exact: true })
+    .fill(freshPassword);
   await tool
     .getByRole("button", { name: "Confirm restoration", exact: true })
     .click();

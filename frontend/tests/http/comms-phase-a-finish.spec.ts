@@ -11,9 +11,9 @@ import {
   type Page,
 } from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
-import { createMemoryCommsRuntime } from "../../src/components/systems/comms/adapters/memory-client";
-import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
-import { validateMemoryState } from "../../src/components/systems/comms/memory/snapshot";
+import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
+import { createMemorySeed } from "../support/comms-memory/memory/seed";
+import { validateMemoryState } from "../support/comms-memory/memory/snapshot";
 import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 

@@ -1,5 +1,8 @@
 import type * as C from "../contract/types";
-import { DEFAULT_SETTINGS, DEFAULT_PERSONAL_PREFERENCES } from "./settings";
+import {
+  DEFAULT_SETTINGS,
+  DEFAULT_PERSONAL_PREFERENCES,
+} from "./setting-defaults";
 import type { Channel } from "./view-model";
 
 type Camel<T extends string> = T extends `${infer Head}_${infer Tail}`

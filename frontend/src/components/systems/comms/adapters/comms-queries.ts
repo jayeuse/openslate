@@ -6,7 +6,6 @@ import {
 import { ApiError } from "@/lib/api";
 import { commsContextSchema } from "../contract/schemas";
 import type { CommsContext, HistoryRequest } from "../contract/types";
-import type { CommsClient } from "../contract/client";
 import { bootstrap, getHistory } from "./message-api";
 import { getReplies } from "./threads-api";
 
@@ -14,30 +13,10 @@ import { getReplies } from "./threads-api";
 export function createCommsQueryScope(
   client: QueryClient,
   input: CommsContext,
-  source:
-    | { kind: "live" }
-    | {
-        kind: "example-tools";
-        client: Pick<
-          CommsClient,
-          "context" | "bootstrap" | "getHistory" | "getReplies"
-        >;
-      } = { kind: "live" },
 ) {
   const context = Object.freeze(commsContextSchema.parse(input));
-  if (
-    source.kind === "example-tools" &&
-    (source.client.context.user_id !== context.user_id ||
-      source.client.context.org_id !== context.org_id)
-  )
-    throw new Error("Example context mismatch");
-  const namespace = source.kind === "live" ? "comms" : "comms-example-tools";
-  const all = [namespace, context.user_id, context.org_id] as const;
-  const refusals = [
-    `${namespace}-refusal`,
-    context.user_id,
-    context.org_id,
-  ] as const;
+  const all = ["comms", context.user_id, context.org_id] as const;
+  const refusals = ["comms-refusal", context.user_id, context.org_id] as const;
   const controller = new AbortController();
   const reads = new Map<
     string,
@@ -133,7 +112,6 @@ export function createCommsQueryScope(
     (id !== undefined && reads.get(id)?.deniedAt != null);
   return {
     context,
-    kind: source.kind,
     signal: controller.signal,
     keys,
     read,
@@ -159,14 +137,7 @@ export function createCommsQueryScope(
       queryOptions({
         queryKey: keys.bootstrap,
         queryFn: ({ signal }) =>
-          read(
-            undefined,
-            (signal) =>
-              source.kind === "example-tools"
-                ? source.client.bootstrap({ signal })
-                : bootstrap(context, { signal }),
-            signal,
-          ),
+          read(undefined, (signal) => bootstrap(context, { signal }), signal),
       }),
     historyOptions: (
       conversationId: string,
@@ -179,28 +150,11 @@ export function createCommsQueryScope(
           read(
             conversationId,
             (signal) =>
-              source.kind === "example-tools"
-                ? threadRootId
-                  ? source.client.getReplies(
-                      conversationId,
-                      threadRootId,
-                      pageParam,
-                      { signal },
-                    )
-                  : source.client.getHistory(conversationId, pageParam, {
-                      signal,
-                    })
-                : threadRootId
-                  ? getReplies(
-                      context,
-                      conversationId,
-                      threadRootId,
-                      pageParam,
-                      {
-                        signal,
-                      },
-                    )
-                  : getHistory(context, conversationId, pageParam, { signal }),
+              threadRootId
+                ? getReplies(context, conversationId, threadRootId, pageParam, {
+                    signal,
+                  })
+                : getHistory(context, conversationId, pageParam, { signal }),
             signal,
           ),
         getPreviousPageParam: (page): HistoryRequest | undefined =>

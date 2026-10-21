@@ -1,9 +1,9 @@
 import type { Page, WebSocketRoute } from "@playwright/test";
-import { createMemorySeed } from "../../../src/components/systems/comms/memory/seed";
+import { createMemorySeed } from "../../support/comms-memory/memory/seed";
 import {
   createMemoryCommsRuntime,
   type MemoryCommsRuntime,
-} from "../../../src/components/systems/comms/adapters/memory-client";
+} from "../../support/comms-memory/memory-client";
 import * as S from "../../../src/components/systems/comms/contract/schemas";
 import type * as C from "../../../src/components/systems/comms/contract/types";
 import type {
@@ -13,6 +13,7 @@ import type {
 } from "../../../src/components/systems/comms/contract/types";
 import { defaultOrganization, defaultSignedInIdentity } from "./test";
 import { installOpenViewEventSource } from "./openview-event-source";
+import { commsToolRoute } from "./comms-tool-routes";
 
 // Two organization fixtures on one page still exercise its single socket.
 const pageSockets = new WeakMap<Page, Set<WebSocketRoute>>();
@@ -199,7 +200,8 @@ export async function installCommsLiveApi(
             ? {}
             : { "Retry-After": String(tokenRetryAfter) },
       });
-    const now = await page.evaluate(() => Date.now());
+    // A navigation can replace the page mid-read; the Node clock is then close enough.
+    const now = await page.evaluate(() => Date.now()).catch(() => Date.now());
     const topics = options.runtime
       ? (await memory.client.bootstrap()).conversations
           .map(
@@ -290,6 +292,8 @@ export async function installCommsLiveApi(
   );
   let loseNextReceipt = false;
   let refuseHistory = false;
+  const requests: { method: string; path: string; ifMatch?: string }[] = [];
+  const conflicts: RegExp[] = [];
   await page.route("**/api/comms/**", async (route) => {
     const request = route.request(),
       url = new URL(request.url()),
@@ -326,6 +330,26 @@ export async function installCommsLiveApi(
       throw error;
     };
     if (request.headers()["x-org"] !== owner.org_id) return route.fallback();
+    requests.push({
+      method: request.method(),
+      path,
+      ifMatch: request.headers()["if-match"],
+    });
+    const conflict = conflicts.findIndex(
+      (pattern) => request.method() !== "GET" && pattern.test(path),
+    );
+    if (conflict >= 0) {
+      conflicts.splice(conflict, 1);
+      return reply(
+        {
+          detail: {
+            code: "comms_precondition_failed",
+            message: "Precondition failed",
+          },
+        },
+        412,
+      );
+    }
     try {
       if (path === "/capabilities/channel-creation") {
         const kind = url.searchParams.get("scope_kind");
@@ -358,6 +382,27 @@ export async function installCommsLiveApi(
         );
         const condition = { if_match: request.headers()["if-match"] };
         const body = () => request.postDataJSON();
+        const tool = await commsToolRoute({
+          client,
+          method,
+          path,
+          url,
+          body,
+          ifMatch: request.headers()["if-match"],
+        });
+        if (tool?.bytes)
+          return route.fulfill({
+            status: tool.status,
+            body: tool.bytes.body,
+            headers: {
+              "Content-Type": tool.bytes.type,
+              "Content-Disposition": `attachment; filename="${tool.bytes.filename}"`,
+              "Cache-Control": "private, no-store",
+              "X-Content-Type-Options": "nosniff",
+            },
+          });
+        if (tool)
+          return reply(tool.json, tool.status, tool.etag, tool.location);
         if (path === "/bootstrap") return reply(await client.bootstrap());
         if (path === "/conversations" && method === "GET")
           return reply(
@@ -870,6 +915,12 @@ export async function installCommsLiveApi(
     },
     histories,
     writes,
+    /** Every Comms request this page sent, with its If-Match precondition. */
+    requests,
+    /** Refuse the next write whose path matches with a 412 precondition failure. */
+    conflictNextWrite(pattern: RegExp) {
+      conflicts.push(pattern);
+    },
     retentionProofs,
     heartbeats,
     connections: () => sockets.size,

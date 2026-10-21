@@ -97,7 +97,7 @@ export const SETTINGS_SECTIONS: {
     id: "moderation",
     label: "Posting and history",
     description:
-      "Lock the channel, limit who can post, and set how long messages are kept. In this example, nothing is deleted automatically.",
+      "Lock the channel, limit who can post, and set how long messages are kept.",
     keys: [
       "editWindowMinutes",
       "deleteWindowMinutes",
@@ -159,8 +159,7 @@ const hints: Partial<Record<CommsSettingKey, string>> = {
     "0 disables auto-archive. Review the impact before applying the setting.",
   allowedFileTypes:
     "Comma-separated extensions: pdf, png, jpg, jpeg, docx, xlsx, pptx. Empty uses the platform allowlist.",
-  maxFileSizeMb:
-    "At most 10 MB. Zero uses the platform's 10 MB limit. File bytes remain in this local sample session.",
+  maxFileSizeMb: "At most 10 MB. Zero uses the platform's 10 MB limit.",
   allowedRecordModules:
     "Choose allowed record modules. Empty permits every module you can read.",
   recordCardFields: "Choose which details appear on linked record cards.",

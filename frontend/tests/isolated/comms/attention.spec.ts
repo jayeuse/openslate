@@ -4,8 +4,8 @@ import {
   minuteIn,
   unreadTotal,
 } from "@/components/systems/comms/domain/attention";
-import { createMemorySeed } from "@/components/systems/comms/memory/seed";
-import { createMemoryCommsRuntime } from "@/components/systems/comms/adapters/memory-client";
+import { createMemorySeed } from "../../support/comms-memory/memory/seed";
+import { createMemoryCommsRuntime } from "../../support/comms-memory/memory-client";
 import type {
   Bootstrap,
   ConversationSummary,

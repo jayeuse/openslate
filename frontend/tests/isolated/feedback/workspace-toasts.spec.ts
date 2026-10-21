@@ -2,8 +2,8 @@ import { expect, test } from "@playwright/test";
 import { toast } from "../../../src/components/ui/toast";
 import { createCommsMessageOperations } from "../../../src/components/systems/comms/state/use-comms-message-operations";
 import { reportCommsError } from "../../../src/components/systems/comms/state/comms-feedback";
-import { createMemoryCommsRuntime } from "../../../src/components/systems/comms/adapters/memory-client";
-import { createMemorySeed } from "../../../src/components/systems/comms/memory/seed";
+import { createMemoryCommsRuntime } from "../../support/comms-memory/memory-client";
+import { createMemorySeed } from "../../support/comms-memory/memory/seed";
 import { createSampleCommands } from "../../../src/components/systems/shared/runtime/sample-async-state";
 
 test("a real pending Comms cancellation cannot admit its caught error during account cleanup", async () => {

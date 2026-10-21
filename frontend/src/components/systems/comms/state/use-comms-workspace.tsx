@@ -49,9 +49,7 @@ const empty = {
 export function useCommsWorkspace() {
   const binding = useCommsClient();
   const params = useSearchParams();
-  const includeRecords =
-    binding.scope?.kind === "example-tools" ||
-    params.get("panel")?.startsWith("record:") === true;
+  const includeRecords = params.get("panel")?.startsWith("record:") === true;
   const requiredRead = useRef(0);
   const acceptedRead = useRef<{
     client: CommsWorkspace["client"];

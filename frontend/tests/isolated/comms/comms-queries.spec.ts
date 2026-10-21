@@ -11,8 +11,6 @@ import type {
   CommsContext,
   HistoryPage,
 } from "../../../src/components/systems/comms/contract/types";
-import { createMemorySeed } from "../../../src/components/systems/comms/memory/seed";
-import { createMemoryCommsRuntime } from "../../../src/components/systems/comms/adapters/memory-client";
 
 const id = (n: number) =>
   `81000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -107,44 +105,6 @@ test("Comms cached bootstrap reuses only its exact account and organization", as
     ).toEqual([owner.org_id, id(5), owner.org_id]);
   } finally {
     scopes.forEach((scope) => scope.dispose());
-    cache.clear();
-    fetch.restore();
-  }
-});
-
-test("deferred example-tool reads cannot adopt live cached conversation content", async () => {
-  const cache = client();
-  const example = createMemoryCommsRuntime({
-    owner,
-    initial: createMemorySeed(owner, {
-      role: "admin",
-      display_name: "Example operator",
-    }),
-  });
-  const fixture = await example.client.bootstrap();
-  const server = structuredClone(fixture);
-  const room = server.conversations[0].conversation;
-  if (room.kind !== "channel") throw new Error("Fixture must be a channel");
-  room.name = "Private server channel";
-  const fetch = installFetch(() => Response.json(server));
-  const liveScope = createCommsQueryScope(cache, owner);
-  const exampleScope = createCommsQueryScope(cache, owner, {
-    kind: "example-tools",
-    client: example.client,
-  });
-  try {
-    await cache.fetchQuery(liveScope.bootstrapOptions());
-    const data = await cache.fetchQuery(exampleScope.bootstrapOptions());
-    expect(data.conversations[0].conversation).toMatchObject({
-      name: "operations",
-    });
-    expect(fetch.requests).toHaveLength(1);
-    exampleScope.dispose();
-    expect(cache.getQueryData(liveScope.keys.bootstrap)).toEqual(server);
-  } finally {
-    liveScope.dispose();
-    exampleScope.dispose();
-    example.dispose();
     cache.clear();
     fetch.restore();
   }

@@ -21,19 +21,6 @@ import {
   type HttpDirectCandidates,
 } from "./direct-candidates-api";
 
-/** A live client must never forward server targets into the isolated example world. */
-export class ExampleToolBoundaryError extends Error {
-  constructor() {
-    super(
-      "This operation belongs to the isolated example tool; it does not change server data.",
-    );
-    this.name = "ExampleToolBoundaryError";
-  }
-}
-const exampleOnly = async (): Promise<never> => {
-  throw new ExampleToolBoundaryError();
-};
-
 export type ReadyHttpCommsClient = Omit<
   CommsClient,
   "events" | "listDirectCandidates" | "heartbeatPresence"
@@ -370,21 +357,67 @@ export function createReadyHttpCommsClient(
       async () => (await import("./retention-api")).updateRetention,
       1,
     ),
-    // Only the lazy example-tool provider supplies these implementations until S31.
-    listTemplates: exampleOnly,
-    getTemplate: exampleOnly,
-    previewTemplateApply: exampleOnly,
-    saveTemplate: exampleOnly,
-    createTemplate: exampleOnly,
-    applyTemplate: exampleOnly,
-    listConfigurationHistory: exampleOnly,
-    getConfigurationHistory: exampleOnly,
-    previewConfigurationRestore: exampleOnly,
-    restoreConfiguration: exampleOnly,
-    listAdmissions: exampleOnly,
-    getAdmission: exampleOnly,
-    invitePerson: exampleOnly,
-    decideAdmission: exampleOnly,
-    submitJoinRequest: exampleOnly,
+    listTemplates: deferred(
+      async () => (await import("./configuration-api")).listTemplates,
+      1,
+    ),
+    getTemplate: deferred(
+      async () => (await import("./configuration-api")).getTemplate,
+      1,
+    ),
+    previewTemplateApply: deferred(
+      async () => (await import("./configuration-api")).previewTemplateApply,
+      2,
+    ),
+    saveTemplate: deferred(
+      async () => (await import("./configuration-api")).saveTemplate,
+      2,
+    ),
+    createTemplate: deferred(
+      async () => (await import("./configuration-api")).createTemplate,
+      1,
+    ),
+    applyTemplate: deferred(
+      async () => (await import("./configuration-api")).applyTemplate,
+      2,
+    ),
+    listConfigurationHistory: deferred(
+      async () =>
+        (await import("./configuration-api")).listConfigurationHistory,
+      2,
+    ),
+    getConfigurationHistory: deferred(
+      async () => (await import("./configuration-api")).getConfigurationHistory,
+      2,
+    ),
+    previewConfigurationRestore: deferred(
+      async () =>
+        (await import("./configuration-api")).previewConfigurationRestore,
+      2,
+    ),
+    restoreConfiguration: deferred(
+      async () => (await import("./configuration-api")).restoreConfiguration,
+      2,
+    ),
+    listAdmissions: deferred(
+      async () => (await import("./admissions-api")).listAdmissions,
+      2,
+    ),
+    getAdmission: deferred(
+      async () => (await import("./admissions-api")).getAdmission,
+      2,
+    ),
+    invitePerson: deferred(
+      async () => (await import("./admissions-api")).invitePerson,
+      2,
+    ),
+    decideAdmission: deferred(
+      async () => (await import("./admissions-api")).decideAdmission,
+      3,
+    ),
+    submitJoinRequest: deferred(
+      async () => (await import("./admissions-api")).submitJoinRequest,
+      1,
+    ),
   });
 }

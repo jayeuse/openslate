@@ -79,7 +79,6 @@ Examples of in-scope problems: a login or session bypass; access to a module or 
 | Behavior that needs `ENVIRONMENT=development` with a loopback bind | Development removes some limits on purpose. See `docs/architecture/14-security-architecture.md`. |
 | Attacks from another process or user on the developer's own machine | Development trusts the local host. |
 | Malware detection in uploaded files | Content scanning is not a feature of OpenSlate. |
-| Explicitly labeled OpenComms example tools remaining during the S31 cutover | Only their isolated browser-local example state is excluded. Implemented template/history/admission APIs, live conversations, messages, profiles, exports and file access remain in scope even when a UI tool is still simulated. |
 | Attacks that need the installation owner or host access | That person already controls the installation. An administrator of one organization who reaches another organization's data is in scope. |
 | Infrastructure that the operator changes or runs: host, Docker, network, TLS certificates | The operator owns these. A flaw in the shipped default configuration is in scope. |
 | Problems in Supabase, PostgreSQL, or another upstream project | Report them to that project. |
@@ -110,8 +109,7 @@ retains a session or pooled connection through HTTP publication; this is not a
 database-atomic delivery guarantee.
 
 These are implemented boundaries, not a claim of complete S32 browser/provider,
-capacity, release-gate or Linux/Windows acceptance. The remaining labeled example
-tools do not narrow the security scope of their implemented backend counterparts.
+capacity, release-gate or Linux/Windows acceptance.
 See [API contracts](docs/architecture/07-api-architecture.md) and
 [operator ingress/publication boundaries](infra/supabase/README.md#opencomms-ingress-and-private-publication).
 

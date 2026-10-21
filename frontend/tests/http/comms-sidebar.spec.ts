@@ -8,8 +8,8 @@ import {
 import { profilePreferences } from "./helpers/profile-api";
 import { wireWorkspace } from "../helpers/wire";
 import type { Page } from "@playwright/test";
-import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
-import { createMemoryCommsRuntime } from "../../src/components/systems/comms/adapters/memory-client";
+import { createMemorySeed } from "../support/comms-memory/memory/seed";
+import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
 import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";

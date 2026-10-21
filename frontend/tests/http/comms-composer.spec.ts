@@ -6,8 +6,8 @@ import {
   defaultOrganization,
   expectNoHorizontalScroll,
 } from "./helpers/test";
-import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
-import { validateMemoryState } from "../../src/components/systems/comms/memory/snapshot";
+import { createMemorySeed } from "../support/comms-memory/memory/seed";
+import { validateMemoryState } from "../support/comms-memory/memory/snapshot";
 import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 import type { Settings } from "../../src/components/systems/comms/contract/types";

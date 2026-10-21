@@ -29,7 +29,6 @@ import {
   AlertDialogFooter,
 } from "@/components/ui/alert-dialog";
 import { useDiscardGuard } from "../../shared/hooks/use-discard-guard";
-import { useCommsClient } from "../state/client-context";
 
 export interface ConfigurationFrameProps {
   title: string;
@@ -65,7 +64,6 @@ export function ConfigurationFrame({
   className,
   embedded,
 }: ConfigurationFrameProps) {
-  const example = useCommsClient().scope?.kind === "example-tools";
   const keepEditing = useRef<HTMLButtonElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   const [saving, setSaving] = useState(false);
@@ -188,11 +186,6 @@ export function ConfigurationFrame({
       </header>
       <Separator className="shrink-0" />
       <ScrollArea className="min-h-0 flex-1 overflow-hidden [&_[data-slot=scroll-area-viewport]]:[scrollbar-gutter:stable] [&_[data-slot=scroll-area-viewport]]:overscroll-contain">
-        {example && (
-          <Alert className="mx-5 mt-4">
-            Example tools — simulated, not saved to your organization.
-          </Alert>
-        )}
         <fieldset
           ref={fields}
           disabled={saving}

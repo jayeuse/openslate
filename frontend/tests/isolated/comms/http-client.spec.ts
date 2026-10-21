@@ -1,8 +1,5 @@
 import { expect, test } from "@playwright/test";
-import {
-  createReadyHttpCommsClient,
-  ExampleToolBoundaryError,
-} from "../../../src/components/systems/comms/adapters/http-client";
+import { createReadyHttpCommsClient } from "../../../src/components/systems/comms/adapters/http-client";
 import { installFetch } from "../helpers/fake-fetch";
 import { setCurrentOrganizationId } from "../../../src/lib/organization-context";
 import {
@@ -122,23 +119,42 @@ test("bound HTTP heartbeat keeps the canonical 200 result rather than a void or 
   }
 });
 
-test("live client refuses example-only methods without routing server context into memory or HTTP", async () => {
+test("bound client sends templates, settings history and join requests to their live routes", async () => {
   const lifetime = new AbortController();
   const client = createReadyHttpCommsClient(context, lifetime.signal);
-  const fetch = installFetch(() => {
-    throw new Error("No request belongs to this boundary");
+  const fetch = installFetch((input) => {
+    const url = new URL(String(input), "http://localhost");
+    const limit = Number(url.searchParams.get("limit"));
+    const offset = Number(url.searchParams.get("offset"));
+    return Response.json(
+      {
+        items: [],
+        pagination: { limit, offset, count: 0, total: 0, has_more: false },
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   });
   try {
-    await expect(client.listTemplates()).rejects.toBeInstanceOf(
-      ExampleToolBoundaryError,
-    );
+    await expect(client.listTemplates()).resolves.toMatchObject({ items: [] });
     await expect(
       client.listConfigurationHistory({ kind: "workspace" }),
-    ).rejects.toBeInstanceOf(ExampleToolBoundaryError);
-    await expect(client.listAdmissions(conversationId)).rejects.toBeInstanceOf(
-      ExampleToolBoundaryError,
-    );
-    expect(fetch.requests).toHaveLength(0);
+    ).resolves.toMatchObject({ items: [] });
+    await expect(client.listAdmissions(conversationId)).resolves.toMatchObject({
+      items: [],
+    });
+    expect(
+      fetch.requests.map((request) => ({
+        path: new URL(String(request.input), "http://localhost").pathname,
+        org: new Headers(request.init?.headers).get("X-Org"),
+      })),
+    ).toEqual([
+      { path: "/api/comms/templates", org: context.org_id },
+      { path: "/api/comms/settings/workspace/history", org: context.org_id },
+      {
+        path: `/api/comms/conversations/${conversationId}/admissions`,
+        org: context.org_id,
+      },
+    ]);
   } finally {
     lifetime.abort();
     fetch.restore();

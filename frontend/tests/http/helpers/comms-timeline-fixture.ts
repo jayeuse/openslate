@@ -1,8 +1,8 @@
 import type { Page } from "@playwright/test";
-import { createMemorySeed } from "../../../src/components/systems/comms/memory/seed";
-import { validateMemoryState } from "../../../src/components/systems/comms/memory/snapshot";
-import { createMemoryCommsRuntime } from "../../../src/components/systems/comms/adapters/memory-client";
-import type { MemorySnapshot } from "../../../src/components/systems/comms/memory/store-types";
+import { createMemorySeed } from "../../support/comms-memory/memory/seed";
+import { validateMemoryState } from "../../support/comms-memory/memory/snapshot";
+import { createMemoryCommsRuntime } from "../../support/comms-memory/memory-client";
+import type { MemorySnapshot } from "../../support/comms-memory/memory/store-types";
 import { serializeSampleSessionSnapshot } from "../../../src/components/systems/shared/runtime/sample-state";
 import { workspaceSessionSnapshotStorageKey } from "../../../src/components/systems/shared/runtime/workspace-identity";
 import { defaultOrganization, signedInAs } from "./test";

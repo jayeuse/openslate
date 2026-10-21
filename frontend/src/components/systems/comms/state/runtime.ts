@@ -83,9 +83,13 @@ export function useCommsCommands() {
     isPending: (key?: string) => (key ? pending.has(key) : pending.size > 0),
   };
 }
+/** A stale preview must be previewed again, not merely reloaded. */
+export const STALE_PREVIEW_MESSAGE =
+  "Someone changed this after your preview. Preview the current state again.";
 export function messageFromCommsError(
   error: unknown,
   fallback: string,
+  conflict = "Someone changed this after you opened it. Your changes are still here. Load the latest version, then try again.",
 ): string {
   if (
     typeof error === "object" &&
@@ -94,7 +98,23 @@ export function messageFromCommsError(
     error.kind === "cancelled"
   )
     return "The workspace changed before this operation finished. Try again.";
+  if (isCommsConflict(error)) return conflict;
   return fallback;
+}
+/** A 412 precondition failure: the version the user saw is no longer current. */
+export function isCommsConflict(error: unknown): boolean {
+  return failureStatus(error) === 412;
+}
+/** The HTTP status of a typed Comms refusal, when the error carries one. */
+function failureStatus(error: unknown): number | undefined {
+  return typeof error === "object" &&
+    error !== null &&
+    "failure" in error &&
+    typeof error.failure === "object" &&
+    error.failure !== null &&
+    "status" in error.failure
+    ? Number(error.failure.status)
+    : undefined;
 }
 
 export function useCommsRefusals() {
@@ -155,13 +175,5 @@ export function useCommsRead<T>(
 }
 export function isCommsReadRefusal(error: unknown): boolean {
   if (error instanceof ApiError) return [401, 403, 404].includes(error.status);
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "failure" in error &&
-    typeof error.failure === "object" &&
-    error.failure !== null &&
-    "status" in error.failure &&
-    [401, 403, 404].includes(Number(error.failure.status))
-  );
+  return [401, 403, 404].includes(failureStatus(error) ?? 0);
 }

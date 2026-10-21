@@ -24,10 +24,10 @@ const gzip = {
   memLevel: 8,
   strategy: constants.Z_DEFAULT_STRATEGY,
 };
-// The strict S04 target stays deferred to S31; this group uses the shell fix's baseline.
+// Plan section 6: a cold /comms load (Comms and shell) ends strictly below the
+// S04 baseline. Growth is reported against the last recorded measurement.
 const s04BaselineColdGzipBytes = 546_979;
 const baselineColdGzipBytes = 578_709;
-const maximumColdGzipBytes = Math.floor(baselineColdGzipBytes * 1.05);
 
 function manifestChunks(value: unknown): string[] {
   if (typeof value === "string") {
@@ -202,16 +202,13 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
     const growthPercent = (growthBytes / baselineColdGzipBytes) * 100;
 
     const report = {
-      budget_slice: "live-cutover-query",
-      previous_committed_slice: "shell-fix@10ea057b",
+      budget_slice: "admin-tools-wiring",
       comparison:
         "Recorded shell-fix closure measurement, not a newly measured baseline",
-      strict_cap_deferred_to: "S31",
       strict_cap_met: cold.gzip_bytes < s04BaselineColdGzipBytes,
       s04_baseline_cold_gzip_bytes: s04BaselineColdGzipBytes,
-      deferred_target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
+      target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
       baseline_cold_gzip_bytes: baselineColdGzipBytes,
-      maximum_cold_gzip_bytes: maximumColdGzipBytes,
       growth_bytes: growthBytes,
       growth_percent: growthPercent,
       linked_route_requests: linkedRouteRequests,
@@ -240,9 +237,9 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
       contentType: "application/json",
     });
     console.info(
-      `Cold JavaScript gzip: raw=${coldRaw.gzip_bytes} bytes; Comms+shell=${cold.gzip_bytes} bytes; other-route-only=${coldRaw.gzip_bytes - cold.gzip_bytes} bytes; growth=${growthBytes} bytes / ${growthPercent}%; limit=${maximumColdGzipBytes} bytes.`,
+      `Cold JavaScript gzip: raw=${coldRaw.gzip_bytes} bytes; Comms+shell=${cold.gzip_bytes} bytes; other-route-only=${coldRaw.gzip_bytes - cold.gzip_bytes} bytes; growth=${growthBytes} bytes / ${growthPercent}%; target below ${s04BaselineColdGzipBytes} bytes.`,
     );
-    expect(cold.gzip_bytes).toBeLessThanOrEqual(maximumColdGzipBytes);
+    expect(cold.gzip_bytes).toBeLessThan(s04BaselineColdGzipBytes);
   } finally {
     server.close();
   }

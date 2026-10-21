@@ -515,7 +515,7 @@ const TimelineRow = memo(function TimelineRow({
                     <bdi>{authorName}</bdi>
                   </strong>
                 </>
-              ) : scope?.kind === "live" ? (
+              ) : scope ? (
                 <PersonCardPopover
                   personId={message.authorId}
                   unavailableLabel="Unavailable person"

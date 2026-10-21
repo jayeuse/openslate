@@ -60,7 +60,7 @@ export function useCommsMessageAuthors(
   );
   const admitted =
     !!client &&
-    scope?.kind === "live" &&
+    !!scope &&
     !scope.signal.aborted &&
     !suspended &&
     !identity.error &&

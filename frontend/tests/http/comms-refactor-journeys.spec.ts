@@ -12,8 +12,8 @@ import {
   ownedCommsDraftTextId,
 } from "../../src/components/systems/comms/state/draft-text";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
-import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
-import { createMemoryCommsRuntime } from "../../src/components/systems/comms/adapters/memory-client";
+import { createMemorySeed } from "../support/comms-memory/memory/seed";
+import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
 import type { Page } from "@playwright/test";
 
 async function installOwnedJourneyApi(page: Page) {

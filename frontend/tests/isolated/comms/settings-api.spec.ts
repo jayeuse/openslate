@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import * as api from "../../../src/components/systems/comms/adapters/settings-api";
 import type * as C from "../../../src/components/systems/comms/contract/types";
-import { DEFAULT_SETTINGS } from "../../../src/components/systems/comms/domain/settings";
+import { DEFAULT_SETTINGS } from "../../../src/components/systems/comms/domain/setting-defaults";
 import { ApiContractError } from "../../../src/lib/api";
 import { installFetch } from "../helpers/fake-fetch";
 

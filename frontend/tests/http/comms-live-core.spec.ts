@@ -5,6 +5,8 @@ import {
   defaultSignedInIdentity,
 } from "./helpers/test";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
+import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
+import { createMemorySeed } from "../support/comms-memory/memory/seed";
 import {
   commsDraftTextKey,
   ownedCommsDraftTextId,
@@ -109,37 +111,49 @@ test("Comms loads the Inbox without fetching unopened conversation histories", a
   }
 });
 
-test("deferred templates stay in a labeled example workspace without adopting live channel content", async ({
+test("a new channel template saves through the live templates route", async ({
   page,
 }) => {
-  const server = await installCommsLiveApi(page);
+  const owner = {
+    user_id: defaultSignedInIdentity.id,
+    org_id: defaultOrganization.org_id,
+  };
+  const runtime = createMemoryCommsRuntime({
+    owner,
+    initial: createMemorySeed(owner, {
+      role: "admin",
+      display_name: "Templates owner",
+    }),
+  });
+  const server = await installCommsLiveApi(page, { runtime });
   try {
     await page.goto("/comms?tool=templates");
     const tools = page.getByRole("region", {
       name: "Channel templates",
       exact: true,
     });
-    await expect(
-      tools.getByText(
-        "Example tools — simulated, not saved to your organization.",
-        { exact: true },
-      ),
-    ).toBeVisible();
-    await expect(
-      tools.getByText("live-operations", { exact: true }),
-    ).toHaveCount(0);
     await tools
       .getByRole("button", { name: "Advanced settings 0 changed", exact: true })
       .click();
     await tools
       .getByRole("textbox", { name: "Template name", exact: true })
-      .fill("Example-only template");
+      .fill("Shift handover defaults");
     await tools
       .getByRole("button", { name: "Save template", exact: true })
       .click();
     await expect(
       tools.getByText("Template saved.", { exact: true }),
     ).toBeVisible();
+    expect(
+      server.requests.filter(
+        (request) => request.method === "POST" && request.path === "/templates",
+      ),
+    ).toHaveLength(1);
+    expect(
+      (await runtime.client.listTemplates()).items.map(
+        (template) => template.name,
+      ),
+    ).toEqual(["Shift handover defaults"]);
   } finally {
     server.close();
   }

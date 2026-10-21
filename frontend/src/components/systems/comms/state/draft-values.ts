@@ -11,7 +11,6 @@ import {
   useVerifiedWorkspaceUserId,
 } from "../../shared/runtime/workspace-identity";
 import { ownedCommsDraftTextId, useCommsDraftText } from "./draft-text";
-import { useCommsClient } from "./client-context";
 
 /** Small composer fields reuse the owned draft journal, never the sample world. */
 export function useCommsDraftValue<T>(
@@ -21,9 +20,8 @@ export function useCommsDraftValue<T>(
 ) {
   const user = useVerifiedWorkspaceUserId(),
     org = useVerifiedWorkspaceOrganizationId();
-  const { scope } = useCommsClient();
   const [raw, setRaw, controls] = useCommsDraftText(
-    ownedCommsDraftTextId(user, `${scope?.kind ?? "live"}:draft:${key}`, org),
+    ownedCommsDraftTextId(user, `live:draft:${key}`, org),
     "",
   );
   const decode = useCallback(

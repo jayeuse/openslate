@@ -31,7 +31,7 @@ import {
   settingsView,
   type CommsSettingKey,
 } from "../domain/configuration";
-import { parseTemplateImport } from "../memory/template-import";
+import { parseTemplateImport } from "../domain/template-import";
 import {
   ConfigurationFrame,
   type ConfigurationFrameProps,
@@ -42,6 +42,8 @@ import {
   useCommsRead,
   useCommsCommands,
   messageFromCommsError,
+  isCommsConflict,
+  STALE_PREVIEW_MESSAGE,
 } from "../state/runtime";
 import { complete } from "../state/workspace-view";
 import { wireSettingKey, wireSettings } from "../state/settings-wire";
@@ -210,10 +212,12 @@ export function ManagementTools({
       setStatus("Selected settings applied.");
       resource.reload();
     } catch (failure) {
+      if (isCommsConflict(failure)) setPreview(undefined);
       setError(
         messageFromCommsError(
           failure,
           "The settings could not be applied. Preview the current state again.",
+          STALE_PREVIEW_MESSAGE,
         ),
       );
     }

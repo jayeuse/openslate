@@ -20,7 +20,7 @@ const guides: { href: string; title: string; tasks: RegExp[] }[] = [
     title: "OpenComms",
     tasks: [
       /server/i,
-      /separate labeled example workspace/i,
+      /Admin tools.*saved to your organization/i,
       /message|conversation/i,
     ],
   },

@@ -41,7 +41,9 @@ import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 import { useCommsClient } from "../state/client-context";
 import { complete } from "../state/workspace-view";
 import {
+  isCommsConflict,
   messageFromCommsError,
+  STALE_PREVIEW_MESSAGE,
   useCommsCommands,
   useCommsRead,
 } from "../state/runtime";
@@ -98,8 +100,6 @@ type ToolData = {
   settings?: C.Settings;
   retention?: C.Versioned<C.RetentionResponse>;
 };
-const sampleMarker = "CONFIRM LOCAL SAMPLE";
-
 function LifecycleTools({
   embedded,
   view,
@@ -109,8 +109,7 @@ function LifecycleTools({
   opener,
   onClose,
 }: CommsToolsDialogProps) {
-  const { client: admittedClient, scope } = useCommsClient();
-  const example = scope?.kind === "example-tools";
+  const { client: admittedClient } = useCommsClient();
   const [password, setPassword] = useState("");
   useEffect(() => setPassword(""), [admittedClient]);
   const workspace = useCommsWorkspaceView();
@@ -233,9 +232,7 @@ function LifecycleTools({
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
-  const [sampleConfirmed, setSampleConfirmed] = useState(false);
-  const proofReady = example ? sampleConfirmed : password.length > 0;
-  const passwordProof = example ? sampleMarker : password;
+  const proofReady = password.length > 0;
   const [days, setDays] = useState(0);
   const [fileDays, setFileDays] = useState(0);
   const [inheritFiles, setInheritFiles] = useState(false);
@@ -289,6 +286,8 @@ function LifecycleTools({
     key: string,
     operation: Parameters<typeof run<void>>[1],
     success?: string,
+    /** Drops a stale preview so a 412 apply needs a fresh preview. */
+    onStalePreview?: () => void,
   ) {
     setError("");
     setStatus("");
@@ -298,10 +297,13 @@ function LifecycleTools({
       resource.reload();
       return true;
     } catch (failure) {
+      const stale = !!onStalePreview && isCommsConflict(failure);
+      if (stale) onStalePreview();
       setError(
         messageFromCommsError(
           failure,
           "The change could not be completed. Your draft is still here.",
+          stale ? STALE_PREVIEW_MESSAGE : undefined,
         ),
       );
       return false;
@@ -485,14 +487,7 @@ function LifecycleTools({
         {!resource.data && resource.status === "loading" && (
           <p role="status">Loading tool…</p>
         )}
-        {protectedView && example && (
-          <Toggle
-            label="Confirm sample operation — local example data only; no account password required."
-            checked={sampleConfirmed}
-            onCheckedChange={setSampleConfirmed}
-          />
-        )}
-        {protectedView && !example && (
+        {protectedView && (
           <TextField
             label="Current password"
             type="password"
@@ -571,7 +566,7 @@ function LifecycleTools({
                         {
                           signal,
                           if_match: current.etag,
-                          password: passwordProof,
+                          password,
                         },
                       );
                       setRestore({ entry, preview });
@@ -614,12 +609,13 @@ function LifecycleTools({
                               {
                                 signal,
                                 if_match: restore.preview.etag,
-                                password: passwordProof,
+                                password,
                               },
                             );
                             setRestore(undefined);
                           },
                           "Configuration restored.",
+                          () => setRestore(undefined),
                         );
                       }}
                     >
@@ -674,7 +670,7 @@ function LifecycleTools({
                   const value = await client.previewRetention(policy, {
                     signal,
                     if_match: current.etag,
-                    password: passwordProof,
+                    password,
                   });
                   setRetentionPreview({ value, policy, etag: current.etag });
                 });
@@ -692,13 +688,14 @@ function LifecycleTools({
                       {
                         signal,
                         if_match: retentionPreview.etag,
-                        password: passwordProof,
+                        password,
                       },
                     );
                     setRetentionPreview(undefined);
                     setDirty(false);
                   },
                   "Retention policy saved.",
+                  () => setRetentionPreview(undefined),
                 );
               }}
             />
