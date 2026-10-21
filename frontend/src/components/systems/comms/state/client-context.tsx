@@ -164,6 +164,34 @@ function OwnedClient({
     }),
     enabled: !!admitted,
   });
+  const departmentCategory = !!bootstrap.data?.categories.some(
+    ({ category }) => category.department_id !== null,
+  );
+  // Category headers name their department on first paint; the list holds only readable departments.
+  const departments = useQuery({
+    queryKey: [
+      ...(admitted?.scope.keys.all ?? ["comms-unadmitted", userId, orgId]),
+      "departments",
+    ],
+    enabled: !!admitted && departmentCategory,
+    queryFn: ({ signal }) => {
+      if (!admitted) throw new Error("Organization is not admitted");
+      return admitted.scope.read(
+        "departments",
+        async (signal) => {
+          if (currentOrganizationId() !== orgId)
+            throw new DOMException("Organization changed", "AbortError");
+          const rows = await complete((offset) =>
+            listAccessDepartments({ limit: 100, offset, signal }),
+          );
+          if (currentOrganizationId() !== orgId)
+            throw new DOMException("Organization changed", "AbortError");
+          return rows.map((row) => ({ id: row.id, name: row.department_name }));
+        },
+        signal,
+      );
+    },
+  });
   const catalogRequested = !!admitted && catalogOwner === admitted.client;
   const requestCatalog = useCallback(() => {
     if (admitted) setCatalogOwner(admitted.client);
@@ -182,15 +210,12 @@ function OwnedClient({
           if (currentOrganizationId() !== orgId)
             throw new DOMException("Organization changed", "AbortError");
           const managed = managedDepartmentIds(identity.data);
-          const [groups, departments, modules] = await Promise.all([
+          const [groups, modules] = await Promise.all([
             managed === "all" || managed.size > 0
               ? complete((offset) =>
                   listAccessGroups({ limit: 100, offset, signal }),
                 )
               : [],
-            complete((offset) =>
-              listAccessDepartments({ limit: 100, offset, signal }),
-            ),
             complete((offset) =>
               listAccessModules({ limit: 100, offset, signal }),
             ),
@@ -205,10 +230,7 @@ function OwnedClient({
               tone: 0,
             })),
             catalog: {
-              departments: departments.map((row) => ({
-                id: row.id,
-                name: row.department_name,
-              })),
+              departments: [],
               modules: modules.map((row) => ({
                 id: row.id,
                 name: row.module_name,
@@ -229,9 +251,12 @@ function OwnedClient({
             ? identity.data.currentOrganization.name
             : undefined,
         groups: catalogRequested ? (catalog.data?.groups ?? []) : [],
-        catalog: catalogRequested
-          ? (catalog.data?.catalog ?? emptyCatalog)
-          : emptyCatalog,
+        catalog: {
+          ...(catalogRequested
+            ? (catalog.data?.catalog ?? emptyCatalog)
+            : emptyCatalog),
+          departments: departments.data ?? emptyCatalog.departments,
+        },
         generation,
         client: admitted?.client ?? null,
         live: admitted,

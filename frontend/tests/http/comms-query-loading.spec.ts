@@ -1,6 +1,7 @@
 import {
   expect,
   test,
+  defaultOrganization,
   defaultSignedInIdentity,
   signedInAs,
   heldResponse,
@@ -10,11 +11,17 @@ import { installCommsLiveApi } from "./helpers/comms-live-api";
 import type { Page, Request } from "@playwright/test";
 import type { LiveMessage } from "../../src/components/systems/comms/contract/types";
 import { pageOf } from "../helpers/pagination";
+import { createMemorySeed } from "../support/comms-memory/memory/seed";
+import {
+  createMemoryCommsRuntime,
+  type MemoryCommsRuntime,
+} from "../support/comms-memory/memory-client";
 
 async function prepare(
   page: Page,
   role: "admin" | "member" = "admin",
   messageStore?: LiveMessage[],
+  runtime?: MemoryCommsRuntime,
 ) {
   await page.route("**/api/**", (route) => {
     const url = new URL(route.request().url()),
@@ -71,14 +78,16 @@ async function prepare(
       value.completedAt = Date.now();
     }
   });
-  const server = await installCommsLiveApi(page, { role, messageStore });
+  const server = await installCommsLiveApi(page, {
+    role,
+    messageStore,
+    runtime,
+  });
   return { server, calls, warnings };
 }
 
-async function ready(page: Page) {
-  await expect(
-    page.getByText("Live message 59", { exact: true }),
-  ).toBeVisible();
+async function ready(page: Page, lastMessage = "Live message 59") {
+  await expect(page.getByText(lastMessage, { exact: true })).toBeVisible();
   await expect(
     page
       .getByRole("status", { name: "Conversation connection", exact: true })
@@ -164,9 +173,14 @@ test("cold Comms reads are deduplicated and configuration catalogs wait for inte
   try {
     await page.goto("/comms");
     await ready(page);
+    // A department category names its department on first paint.
+    await expect(
+      page.getByRole("button", { name: /^Service delivery.*Operations/ }),
+    ).toBeVisible();
     const gets = api.calls.filter((call) => call.method === "GET");
     const count = (path: string) =>
       gets.filter((call) => call.path === path).length;
+    expect(count("/api/departments")).toBe(1);
     expect(count("/api/comms/bootstrap")).toBe(1);
     expect(count("/api/comms/preferences")).toBe(1);
     expect(count("/api/comms/settings/workspace")).toBe(1);
@@ -186,7 +200,6 @@ test("cold Comms reads are deduplicated and configuration catalogs wait for inte
         (call) =>
           [
             "/api/access/groups",
-            "/api/departments",
             "/api/modules",
             "/api/comms/settings/workspace/capability-locks",
             "/api/comms/direct-blocks",
@@ -242,6 +255,9 @@ test("cold Comms reads are deduplicated and configuration catalogs wait for inte
     expect(api.calls.some((call) => call.path === "/api/comms/search")).toBe(
       true,
     );
+    expect(
+      api.calls.filter((call) => call.path === "/api/departments"),
+    ).toHaveLength(1);
   } finally {
     locks.release();
     await testInfo.attach("cold query evidence", {
@@ -298,6 +314,47 @@ test("an ordinary member cold load makes no forbidden administrative reads and c
   } finally {
     receipt.release();
     await testInfo.attach("member cold query evidence", {
+      body: JSON.stringify(api.calls),
+      contentType: "application/json",
+    });
+    await page.close();
+    api.server.close();
+  }
+});
+
+test("a cold load without department categories reads no department names", async ({
+  page,
+}, testInfo) => {
+  const owner = {
+    user_id: defaultSignedInIdentity.id,
+    org_id: defaultOrganization.org_id,
+  };
+  const initial = createMemorySeed(owner, {
+    role: "admin",
+    display_name: "HTTP fixture owner",
+  });
+  for (const category of Object.values(initial.categories))
+    category.department_id = null;
+  const api = await prepare(
+    page,
+    "admin",
+    undefined,
+    createMemoryCommsRuntime({ owner, initial }),
+  );
+  try {
+    await page.goto("/comms");
+    await ready(
+      page,
+      "Two vans are loaded. The spare tool kit is beside dispatch.",
+    );
+    await expect(
+      page.getByRole("button", { name: "Service delivery", exact: true }),
+    ).toBeVisible();
+    expect(
+      api.calls.filter((call) => call.path === "/api/departments"),
+    ).toEqual([]);
+  } finally {
+    await testInfo.attach("departmentless cold query evidence", {
       body: JSON.stringify(api.calls),
       contentType: "application/json",
     });
