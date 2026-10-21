@@ -126,6 +126,8 @@ test("Comms binds drafts to the admitted organization while the next organizatio
     channelName: "second-live-room",
     messagePrefix: "Organization B message",
   });
+  serverA.setPresence(userId, "online");
+  serverB.setPresence(userId, "away");
   try {
     await page.goto("/comms");
     const composer = page.getByRole("textbox", {
@@ -133,6 +135,20 @@ test("Comms binds drafts to the admitted organization while the next organizatio
       exact: true,
     });
     await composer.fill("Organization A private draft");
+    const typer = serverA.members.find((member) => member.user_id !== userId)!;
+    const typing = page.getByRole("status", {
+      name: "Typing activity",
+      exact: true,
+    });
+    await expect(
+      page.getByRole("status", {
+        name: "Conversation connection",
+        exact: true,
+      }),
+    ).toContainText("Live");
+    serverA.publishTyping(typer.user_id);
+    await expect(typing).toContainText(typer.display_name);
+    await expect.poll(() => serverA.typingRequests).toEqual([orgA.org_id]);
     await page
       .getByRole("button", { name: "Organization: OpenSlate", exact: true })
       .click();
@@ -143,6 +159,7 @@ test("Comms binds drafts to the admitted organization while the next organizatio
         page.getByRole("dialog", { name: "Session verification", exact: true }),
       ).toBeVisible();
       await expect(composer).toBeHidden();
+      await expect(typing).toBeHidden();
       expect(
         await page.evaluate(
           (key) => sessionStorage.getItem(key),
@@ -163,6 +180,14 @@ test("Comms binds drafts to the admitted organization while the next organizatio
     ).toBeVisible();
     await page.getByRole("link", { name: "OpenComms", exact: true }).click();
     await expect(composer).toHaveValue("");
+    await expect(typing).toBeEmpty();
+    await page.getByRole("button", { name: "Members", exact: true }).click();
+    await expect(
+      page.getByRole("region", { name: "Away members", exact: true }),
+    ).toContainText("HTTP fixture owner");
+    await page
+      .getByRole("button", { name: "Close members", exact: true })
+      .click();
     await expect(
       page.getByText("Organization A message 59", { exact: true }),
     ).toHaveCount(0);
@@ -178,6 +203,7 @@ test("Comms binds drafts to the admitted organization while the next organizatio
       ),
     ).toBeNull();
     await composer.fill("Organization B retained draft");
+    await expect.poll(() => serverB.typingRequests).toEqual([orgB.org_id]);
     await page.reload();
     await expect(composer).toHaveValue("Organization B retained draft");
   } finally {

@@ -115,7 +115,7 @@ export function MessageComposer({
   preferences?: CommsPreferences;
   settings?: CommsSettings;
 }) {
-  const { client, live } = useCommsClient();
+  const { client, live, scope } = useCommsClient();
   const workspace = useCommsWorkspaceView();
   const [sendIdentity, setSendIdentity, sendJournal] = useCommsDraftValue(
     `identity:${id}`,
@@ -681,6 +681,28 @@ export function MessageComposer({
           value={text}
           onChange={(event) => {
             setText(event.target.value);
+            if (
+              event.target.value.trim() &&
+              canPost &&
+              !isPending &&
+              !settings.locked &&
+              client &&
+              workspace.client === client &&
+              workspace.effective[conversationId] &&
+              scope &&
+              !scope.isRefused(conversationId) &&
+              !scope.isRefused("bootstrap") &&
+              document.visibilityState === "visible" &&
+              event.currentTarget.getClientRects().length &&
+              getComputedStyle(event.currentTarget).visibility === "visible"
+            ) {
+              // Ephemeral activity has no write receipt or durable retry queue.
+              void client
+                .sendTyping(conversationId, {
+                  signal: lifetime.current?.signal,
+                })
+                .catch(() => {});
+            }
             setCaret(event.target.selectionStart);
             setChoice(0);
             setMentionOpen(true);

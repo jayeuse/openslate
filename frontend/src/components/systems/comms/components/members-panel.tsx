@@ -25,6 +25,7 @@ export function MembersPanel({
   onDirect: (name: string) => void;
 }) {
   const [search, setSearch] = useState("");
+  const [personCard, setPersonCard] = useState<string | null>(null);
   const filtered = members.filter((person) =>
     person.name.toLowerCase().includes(search.toLowerCase()),
   );
@@ -73,6 +74,10 @@ export function MembersPanel({
                 <div key={person.id}>
                   <PersonLink
                     person={person}
+                    open={personCard === person.id}
+                    onOpenChange={(open) =>
+                      setPersonCard(open ? person.id : null)
+                    }
                     roleName={
                       roles.find((role) => role.id === person.role)?.name ??
                       "Unassigned"

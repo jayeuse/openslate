@@ -1,9 +1,12 @@
 "use client";
 import {
   createContext,
+  useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -19,7 +22,9 @@ import type { Presence } from "../domain/view-model";
 import { useCommsClient } from "./client-context";
 import { loadWorkspace } from "./workspace-view";
 import { useCommsRead, useCommsRefusals } from "./runtime";
-type CommsWorkspace = Awaited<ReturnType<typeof loadWorkspace>>;
+type CommsWorkspace = Awaited<ReturnType<typeof loadWorkspace>> & {
+  readEpoch: number;
+};
 
 const empty = {
   client: null,
@@ -42,11 +47,21 @@ const empty = {
 
 export function useCommsWorkspace() {
   const binding = useCommsClient();
+  const requiredRead = useRef(0);
+  const acceptedRead = useRef<{
+    client: CommsWorkspace["client"];
+    epoch: number;
+  } | null>(null);
   const [lastGood, setLastGood] = useState<CommsWorkspace>();
-  const resource = useCommsRead(
-    `workspace:${binding.groups.map((group) => group.id).join(",")}`,
-    (client, signal) => loadWorkspace(client, signal, binding.groups),
-  );
+  const key = `workspace:${binding.groups.map((group) => group.id).join(",")}`;
+  const resource = useCommsRead(key, async (client, signal) => {
+    // Capture at start: a read already in flight cannot admit a later change.
+    const readEpoch = requiredRead.current;
+    return {
+      ...(await loadWorkspace(client, signal, binding.groups)),
+      readEpoch,
+    };
+  });
   useLayoutEffect(() => {
     if (resource.data) setLastGood(resource.data);
   }, [resource.data]);
@@ -54,6 +69,41 @@ export function useCommsWorkspace() {
     binding.client && resource.data?.client === binding.client
       ? resource.data
       : undefined;
+  useLayoutEffect(() => {
+    // This result has passed the existing query scope's abort/refusal guards.
+    acceptedRead.current = data
+      ? { client: data.client, epoch: data.readEpoch }
+      : null;
+  }, [data]);
+  const invalidateTypingRead = useCallback(() => {
+    requiredRead.current += 1;
+  }, []);
+  const isTypingReadCurrent = useCallback(
+    () =>
+      acceptedRead.current !== null &&
+      acceptedRead.current.client === binding.client &&
+      acceptedRead.current.epoch === requiredRead.current &&
+      !!binding.scope &&
+      !binding.scope.signal.aborted &&
+      !binding.scope.isRefused(key),
+    [binding.client, binding.scope, key],
+  );
+  useEffect(() => {
+    if (!data || !binding.client || binding.scope?.signal.aborted) return;
+    return binding.client.events.subscribe({
+      on_event(event) {
+        if (
+          event.event === "presence" &&
+          document.visibilityState === "visible" &&
+          event.topic === `org:${binding.client!.context.org_id}:presence` &&
+          Object.hasOwn(data.presence, event.payload.user_id)
+        )
+          resource.reload();
+      },
+      on_connection() {},
+      on_error() {},
+    });
+  }, [data, binding.client, binding.scope, resource.reload]);
   return {
     commsResource: {
       ...resource,
@@ -69,7 +119,11 @@ export function useCommsWorkspace() {
     },
     // Retained only to preserve mounted drafts. The page conceals this tree
     // until the current binding has produced an authorized read model.
-    workspace: data ?? lastGood ?? empty,
+    workspace: {
+      ...(data ?? lastGood ?? empty),
+      invalidateTypingRead,
+      isTypingReadCurrent,
+    },
     client: binding.client,
   };
 }

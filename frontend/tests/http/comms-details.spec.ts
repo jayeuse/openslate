@@ -11,6 +11,7 @@ import { createMemorySeed } from "../../src/components/systems/comms/memory/seed
 import { validateMemoryState } from "../../src/components/systems/comms/memory/snapshot";
 import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
 
 async function seedDetails(
   page: Page,
@@ -305,77 +306,54 @@ test("thread settings keep the draft while locked and show archived state indepe
   ).toBeVisible();
 });
 
-test("member presence has three named groups and local versus verified person cards stay scoped", async ({
+test("member presence has three named groups and verified person cards stay scoped", async ({
   page,
 }) => {
-  const data = await seedDetails(page);
-  await page.addInitScript(({ noah, sofia }) => {
-    const clone = window.structuredClone.bind(window);
-    window.structuredClone = (value, options) => {
-      const result = clone(value, options);
-      if (
-        result &&
-        typeof result === "object" &&
-        "org_id" in result &&
-        "items" in result &&
-        Array.isArray(result.items) &&
-        result.items.length &&
-        result.items.every(
-          (item: unknown) =>
-            item &&
-            typeof item === "object" &&
-            "user_id" in item &&
-            "state" in item &&
-            ["online", "away", "offline"].includes(String(item.state)),
-        )
-      )
-        for (const item of result.items)
-          item.state =
-            item.user_id === noah
-              ? "online"
-              : item.user_id === sofia
-                ? "away"
-                : "offline";
-      return result;
-    };
-  }, data);
+  const server = await installCommsLiveApi(page);
+  const noah = server.members.find(
+    (member) => member.display_name === "Noah Tan",
+  )!;
+  const sofia = server.members.find(
+    (member) => member.display_name === "Sofia Garcia",
+  )!;
+  server.setPresence(noah.user_id, "online");
+  server.setPresence(sofia.user_id, "away");
   const reads: string[] = [];
   await page.route("**/api/users/*/card", (route) => {
     reads.push(new URL(route.request().url()).pathname);
     return route.fulfill({ status: 403, json: { detail: "Forbidden" } });
   });
-  await page.goto("/comms?panel=members");
-  const members = page.getByRole("region", {
-    name: "Members with access",
-    exact: true,
-  });
-  await expect(
-    members.getByRole("region", { name: "Online members", exact: true }),
-  ).toContainText("Noah Tan");
-  await expect(
-    members.getByRole("region", { name: "Away members", exact: true }),
-  ).toContainText("Sofia Garcia");
-  await expect(
-    members.getByRole("region", { name: "Offline members", exact: true }),
-  ).toContainText("Mara Santos");
-  await expect(
-    members.getByRole("region", { name: "Away members", exact: true }),
-  ).toContainText("Operations · Away");
-  await members
-    .getByRole("button", { name: "View profile for Noah Tan", exact: true })
-    .click();
-  await expect(
-    page.getByRole("dialog", { name: "Noah Tan", exact: true }),
-  ).toContainText("Online");
-  expect(reads).toEqual([]);
-  await page.keyboard.press("Escape");
-  await members.getByRole("button", { name: /^Person card:/ }).click();
-  await expect(
-    page
-      .getByRole("dialog", { name: "Person card", exact: true })
-      .getByRole("alert"),
-  ).toContainText("Person unavailable");
-  expect(reads).toEqual([`/api/users/${data.owner.user_id}/card`]);
+  try {
+    await page.goto("/comms?panel=members");
+    const members = page.getByRole("region", {
+      name: "Members with access",
+      exact: true,
+    });
+    await expect(
+      members.getByRole("region", { name: "Online members", exact: true }),
+    ).toContainText("Noah Tan");
+    await expect(
+      members.getByRole("region", { name: "Away members", exact: true }),
+    ).toContainText("Sofia Garcia");
+    await expect(
+      members.getByRole("region", { name: "Offline members", exact: true }),
+    ).toContainText("Mara Santos");
+    await expect(
+      members.getByRole("region", { name: "Away members", exact: true }),
+    ).toContainText("Operations · Away");
+    await members
+      .getByRole("button", { name: "Person card: Noah Tan", exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("dialog", { name: "Person card", exact: true })
+        .getByRole("alert"),
+    ).toContainText("Person unavailable");
+    expect(reads).toEqual([`/api/users/${noah.user_id}/card`]);
+  } finally {
+    await page.close();
+    server.close();
+  }
 });
 
 test("record detail and recent linked records include thread-only references and authorized fields", async ({

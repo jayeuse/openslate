@@ -14,6 +14,9 @@ import type {
 import { defaultOrganization, defaultSignedInIdentity } from "./test";
 import { installOpenViewEventSource } from "./openview-event-source";
 
+// Two organization fixtures on one page still exercise its single socket.
+const pageSockets = new WeakMap<Page, Set<WebSocketRoute>>();
+
 /** Existing frozen fixture supplies metadata DTOs only; all browser reads/writes cross HTTP. */
 export async function installCommsLiveApi(
   page: Page,
@@ -70,12 +73,20 @@ export async function installCommsLiveApi(
   const retentionProofs: boolean[] = [];
   const heartbeats: { orgId: string; state: string }[] = [];
   const messages: LiveMessage[] = options.messageStore ?? [];
-  const sockets = new Set<WebSocketRoute>();
+  const sockets = pageSockets.get(page) ?? new Set<WebSocketRoute>();
+  pageSockets.set(page, sockets);
   let joinsPaused = false;
   let tokenStatus = 200;
   let tokenRetryAfter: number | undefined;
   let joinLimit: string | null = null;
   let tokenRequests = 0;
+  const typingRequests: string[] = [];
+  const presenceStates = new Map<string, "online" | "away" | "offline">();
+  const members = (
+    await memory.client.listMembers(room, { limit: 100, offset: 0 })
+  ).items;
+  let postAllowed = true,
+    channelLocked = false;
   const id = (seq: number) =>
     `94000000-0000-4000-8000-${String(seq).padStart(12, "0")}`;
   function append(body?: string, key?: string) {
@@ -620,10 +631,23 @@ export async function installCommsLiveApi(
           return version(memory.client.getCapabilityLocks());
         if (path.endsWith("/capabilities") || suffix === "capabilities")
           return version(memory.client.getCapabilityConfiguration(scope));
-        return version(memory.client.getSettings(scope));
+        const settings = await memory.client.getSettings(scope);
+        if (scope.kind === "channel" && scope.id === room && channelLocked)
+          settings.data.effective.locked = true;
+        return version(Promise.resolve(settings));
       }
-      if (path === `/conversations/${room}/capabilities`)
-        return reply(await memory.client.getCapabilities(room));
+      if (path === `/conversations/${room}/capabilities`) {
+        const check = await memory.client.getCapabilities(room);
+        return reply(
+          postAllowed ? check : { ...check, conversation_level: "read" },
+        );
+      }
+      if (path === `/conversations/${room}/typing`) {
+        typingRequests.push(request.headers()["x-org"]);
+        return route.fulfill({
+          status: postAllowed && !channelLocked ? 204 : 403,
+        });
+      }
       if (path === `/conversations/${room}/members`)
         return reply(
           await memory.client.listMembers(room, {
@@ -663,7 +687,16 @@ export async function installCommsLiveApi(
         });
       }
       if (path === "/presence")
-        return reply({ org_id: owner.org_id, items: [] });
+        return reply({
+          org_id: owner.org_id,
+          items: url.searchParams
+            .getAll("user_ids")
+            .filter((id) => members.some((member) => member.user_id === id))
+            .map((user_id) => ({
+              user_id,
+              state: presenceStates.get(user_id) ?? "offline",
+            })),
+        });
       if (path.endsWith("/removed-messages") && options.removedCount) {
         const limit = Number(url.searchParams.get("limit") ?? 25),
           offset = Number(url.searchParams.get("offset") ?? 0);
@@ -779,6 +812,50 @@ export async function installCommsLiveApi(
   });
   return {
     room,
+    members,
+    typingRequests,
+    setPosting(allowed: boolean, locked = false) {
+      postAllowed = allowed;
+      channelLocked = locked;
+      broadcast({
+        topic: `org:${owner.org_id}:user:${owner.user_id}`,
+        private: true,
+        event: "membership",
+        payload: { conversation_id: room },
+      });
+    },
+    publishAuthorizationChange(event: "grants" | "structure" | "membership") {
+      const topic = `org:${owner.org_id}:user:${owner.user_id}`;
+      if (event === "membership")
+        broadcast({
+          topic,
+          private: true,
+          event,
+          payload: { conversation_id: room },
+        });
+      else broadcast({ topic, private: true, event, payload: {} });
+    },
+    publishTyping(userId: string, conversationId = room, orgId = owner.org_id) {
+      broadcast({
+        topic: `org:${orgId}:conversation:${conversationId}`,
+        private: true,
+        event: "typing",
+        payload: { conversation_id: conversationId, user_id: userId },
+      });
+    },
+    setPresence(
+      userId: string,
+      state: "online" | "away" | "offline",
+      orgId = owner.org_id,
+    ) {
+      if (orgId === owner.org_id) presenceStates.set(userId, state);
+      broadcast({
+        topic: `org:${orgId}:presence`,
+        private: true,
+        event: "presence",
+        payload: { user_id: userId, state },
+      });
+    },
     histories,
     writes,
     retentionProofs,

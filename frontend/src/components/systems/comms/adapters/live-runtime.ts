@@ -24,6 +24,7 @@ export function createLiveCommsRuntime(
   const bridge = createCommsCacheBridge(cache, scope, http);
   const outbox = createCommsOutbox(http, scope.signal);
   const observers = new Set<EventObserver>();
+  const lastTyping = new Map<string, number>();
   let connection: ConnectionState = { state: "connecting" };
   let refreshing: Promise<void> | undefined;
   const refreshReads = async () => {
@@ -74,6 +75,7 @@ export function createLiveCommsRuntime(
     "abort",
     () => {
       stopRealtime?.();
+      lastTyping.clear();
       releaseAllLocalAttachments();
       observers.clear();
     },
@@ -88,6 +90,14 @@ export function createLiveCommsRuntime(
   }
   const client = {
     ...http,
+    sendTyping: async (id: string, options: RequestOptions = {}) => {
+      scope.signal.throwIfAborted();
+      options.signal?.throwIfAborted();
+      const now = Date.now();
+      if (now - (lastTyping.get(id) ?? -Infinity) < 10_000) return;
+      lastTyping.set(id, now);
+      await http.sendTyping(id, options);
+    },
     bootstrap: async (options: RequestOptions = {}) => {
       const signal = options.signal
         ? AbortSignal.any([scope.signal, options.signal])

@@ -25,6 +25,7 @@ import { useCommsHistory } from "../state/use-comms-history";
 import { useVisibleCommsRead } from "../state/use-visible-comms-read";
 import { useCommsClient } from "../state/client-context";
 import type { MessageDraft } from "./message-shared";
+import { TypingIndicator } from "./typing-indicator";
 
 export function ConversationView({
   conversation,
@@ -439,6 +440,10 @@ export function ConversationView({
             </Action>
           </Alert>
         ))}
+      <TypingIndicator
+        conversationId={selected}
+        enabled={canView && !settings.locked && !navigation.navigating}
+      />
       <MessageComposer
         key={selected}
         id={selected}
