@@ -50,10 +50,11 @@ import {
 import { formatFileSize, type MessageDraft } from "./message-shared";
 import { useCommsClient } from "../state/client-context";
 import {
-  composerFailure,
   hasMention,
+  sendRefusal,
   shouldSendMessage,
 } from "../domain/composer-input";
+import { messageFromCommsError } from "../state/runtime";
 import { useComposerUploads } from "../state/use-composer-uploads";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 
@@ -432,14 +433,9 @@ export function MessageComposer({
             scheduleAt: sendAt,
             alsoSendToChannel,
             onFailure: (error) => {
-              const failure = composerFailure(error);
-              if (
-                !signal.aborted &&
-                failure?.status === 429 &&
-                !Array.isArray(failure.body.detail) &&
-                failure.body.detail.code === "comms_slow_mode"
-              )
-                setBackoff(Date.now() + failure.retry_after_seconds * 1000);
+              const refusal = sendRefusal(error);
+              if (!signal.aborted && refusal?.code === "comms_slow_mode")
+                setBackoff(Date.now() + refusal.seconds * 1000);
             },
           });
           if (error) {
@@ -459,10 +455,15 @@ export function MessageComposer({
           setMentions([]);
           setScheduleOpen(false);
           setScheduleAt("");
-        } catch {
-          setError(
-            "The message could not be sent. Your draft is still available.",
-          );
+        } catch (failure) {
+          // Slow mode already started the countdown in onFailure; the draft stays.
+          if (sendRefusal(failure)?.code !== "comms_slow_mode")
+            setError(
+              messageFromCommsError(
+                failure,
+                "The message could not be sent. Your draft is still available.",
+              ),
+            );
         } finally {
           setSending(false);
         }

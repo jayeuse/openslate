@@ -2,6 +2,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { CommsViewClient as CommsClient } from "../contract/client";
 import type { MessageDraft } from "../components/message-shared";
+import { sendRefusal } from "../domain/composer-input";
 import type { Message } from "../domain/view-model";
 import { messageFromCommsError, type useCommsCommands } from "./runtime";
 type Run = ReturnType<typeof useCommsCommands>["run"];
@@ -178,9 +179,8 @@ export function createCommsMessageOperations({
       : null;
   }
   async function sendMessage(draft: MessageDraft) {
-    const error = await mutation(
-      `message:send:${selected}`,
-      (client, signal) =>
+    try {
+      await run(`message:send:${selected}`, (client, signal) =>
         submitCommsDraft(
           client,
           selected,
@@ -189,14 +189,23 @@ export function createCommsMessageOperations({
           undefined,
           signal,
         ),
-      "The message could not be sent. Your draft is still available.",
-    );
-    if (!error) {
-      setReplyingTo(null);
-      announce(draft.scheduleAt ? "Message scheduled." : "Message sent.");
-      if (!draft.scheduleAt) requestAnimationFrame(() => scrollToLatest());
+      );
+    } catch (error) {
+      const refusal = sendRefusal(error);
+      // The composer owns a 429 refusal: slow mode is its countdown, and a
+      // rate limit is its alert, so neither also becomes a toast.
+      if (refusal?.code === "comms_slow_mode") throw error;
+      const message = messageFromCommsError(
+        error,
+        "The message could not be sent. Your draft is still available.",
+      );
+      if (!refusal) setNotice(message);
+      return message;
     }
-    return error;
+    setReplyingTo(null);
+    announce(draft.scheduleAt ? "Message scheduled." : "Message sent.");
+    if (!draft.scheduleAt) requestAnimationFrame(() => scrollToLatest());
+    return null;
   }
   return {
     changeMessage,

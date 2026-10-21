@@ -360,10 +360,34 @@ test("composer counts down slow mode without discarding the waiting draft", asyn
     page.getByText("Send available in 3s", { exact: true }),
   ).toBeVisible();
   await expect(input).toHaveValue("Waiting draft");
+  // A reload forgets the local countdown; the server's slow-mode refusal
+  // restores it from Retry-After and is not a failed send.
+  await page.reload();
+  await expect(input).toHaveValue("Waiting draft");
+  await expect(send).toBeEnabled();
+  await input.press("Enter");
+  await expect(
+    page.getByText("Send available in 3s", { exact: true }),
+  ).toBeVisible();
+  await expect(send).toBeDisabled();
+  await expect(input).toHaveValue("Waiting draft");
+  // The refused send has settled before its absent failure surfaces are read.
+  await expect(page.getByText("Sending…", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Not sent", { exact: true })).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("form", { name: "Message composer", exact: true })
+      .getByRole("alert"),
+  ).toHaveCount(0);
+  // Neither the composer nor a status toast reports a failed send.
+  await expect(page.getByText("could not be sent")).toHaveCount(0);
   await clock.runFor(4000);
   await expect(send).toBeEnabled();
   await send.click();
   await expect(input).toHaveValue("");
+  await expect(
+    page.getByRole("article").filter({ hasText: "Waiting draft" }),
+  ).toHaveCount(1);
 });
 
 test("composer schedules a record-linked draft through the existing client", async ({

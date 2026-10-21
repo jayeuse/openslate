@@ -233,9 +233,16 @@ export function ConversationView({
   }
   async function send(draft: MessageDraft) {
     setDelivery({ id: selected, state: "sending" });
-    const error = await operations.sendMessage(draft);
-    setDelivery(error ? { id: selected, state: "failed" } : undefined);
-    return error;
+    try {
+      const error = await operations.sendMessage(draft);
+      setDelivery(error ? { id: selected, state: "failed" } : undefined);
+      return error;
+    } catch (refusal) {
+      // A slow-mode refusal is a wait, not a failed send: the composer's
+      // countdown is its only feedback.
+      setDelivery(undefined);
+      throw refusal;
+    }
   }
   return (
     <section

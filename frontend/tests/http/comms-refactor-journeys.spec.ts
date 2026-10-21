@@ -375,8 +375,12 @@ test("Comms retains a rate-limited send draft and retries once after the real se
   await draft.fill(retained);
   await send.click();
   await expect(composer.getByRole("alert")).toHaveText(
-    "The message could not be sent. Your draft is still available.",
+    "Too many attempts. Try again in 10s.",
   );
+  // The composer alone names the wait; no status toast repeats it.
+  await expect(
+    page.getByText("Too many attempts. Try again in 10s.", { exact: true }),
+  ).toHaveCount(1);
   await expect(draft).toHaveValue(retained);
   await expect(message).toHaveCount(0);
   await expect(send).toBeEnabled();

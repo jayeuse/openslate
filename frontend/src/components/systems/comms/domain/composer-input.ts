@@ -39,3 +39,10 @@ export function composerFailure(error: unknown) {
   const result = commsFailureSchema.safeParse(error.failure);
   return result.success ? result.data : undefined;
 }
+/** A typed 429 send refusal (slow mode or rate limit) and the wait it asks for. */
+export function sendRefusal(error: unknown) {
+  const failure = composerFailure(error);
+  return failure?.status === 429 && !Array.isArray(failure.body.detail)
+    ? { code: failure.body.detail.code, seconds: failure.retry_after_seconds }
+    : undefined;
+}

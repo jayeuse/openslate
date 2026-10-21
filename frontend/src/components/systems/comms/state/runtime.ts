@@ -9,6 +9,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import type { CommsViewClient as CommsClient } from "../contract/client";
+import { sendRefusal } from "../domain/composer-input";
 import { useCommsClient } from "./client-context";
 
 export function useCommsCommands() {
@@ -99,6 +100,9 @@ export function messageFromCommsError(
   )
     return "The workspace changed before this operation finished. Try again.";
   if (isCommsConflict(error)) return conflict;
+  const refusal = sendRefusal(error);
+  if (refusal?.code === "comms_rate_limited")
+    return `Too many attempts. Try again in ${Math.max(1, refusal.seconds)}s.`;
   return fallback;
 }
 /** A 412 precondition failure: the version the user saw is no longer current. */
