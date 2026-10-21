@@ -280,7 +280,7 @@ test("Comms does not substitute content for unknown or another organization's co
   await expect(page.getByRole("article")).toHaveCount(0);
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await page.goto("/comms");
   await createChannel(page);
   const foreignLink = page.url();

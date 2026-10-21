@@ -15,11 +15,15 @@ import { validateMemoryState } from "../support/comms-memory/memory/snapshot";
 
 const freshPassword = "owned-synthetic-proof";
 
-/** Seeds the fixture server world, then serves it through the live /api routes. */
+/**
+ * Seeds the fixture server world, then serves it through the live /api routes.
+ * A requester is Noah Tan, a member outside private-dispatch with no requests.
+ */
 async function seedTools(
   page: Page,
   member = false,
   scheduledAt = "2099-12-01T12:00:00Z",
+  requester = false,
 ) {
   const owner = {
     user_id: "00000000-0000-4000-8000-000000000101",
@@ -40,6 +44,7 @@ async function seedTools(
   const clock = () => Date.parse("2026-10-20T00:00:00Z") + tick++;
   const seeding = createMemoryCommsRuntime({ owner, initial }, { clock });
   let snapshot;
+  let privateId = "";
   try {
     const client = seeding.client;
     await client.reportMessage(room.id, root.id, {
@@ -94,10 +99,11 @@ async function seedTools(
       },
     );
     snapshot = seeding.exportSnapshot();
-    for (const [index, user_id] of [
-      root.author_id,
-      reply.author_id,
-    ].entries()) {
+    privateId = privateRoom.id;
+    for (const [index, user_id] of (requester
+      ? []
+      : [root.author_id, reply.author_id]
+    ).entries()) {
       const id = `78000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
       snapshot.state.admissions[id] = {
         id,
@@ -119,23 +125,22 @@ async function seedTools(
     snapshot.state.members[room.id][owner.user_id].member_role = "manager";
   }
   validateMemoryState(snapshot.state, owner.org_id);
+  const actor = requester ? root.author_id : owner.user_id;
   const runtime = createMemoryCommsRuntime(
-    { owner, initial: snapshot.state },
+    { owner: { ...owner, user_id: actor }, initial: snapshot.state },
     {
       clock,
       verifyConfirmation: async (password) => password === freshPassword,
     },
   );
   await signedInAs(page, {
-    id: owner.user_id,
-    role: member ? "member" : "admin",
+    id: actor,
+    role: member || requester ? "member" : "admin",
   });
-  const server = await installCommsLiveApi(page, {
-    userId: owner.user_id,
-    runtime,
-  });
-  return { owner, conversation: room.id, runtime, server };
+  const server = await installCommsLiveApi(page, { userId: actor, runtime });
+  return { owner, conversation: room.id, privateId, clock, runtime, server };
 }
+const seedRequester = (page: Page) => seedTools(page, false, undefined, true);
 async function openTool(page: Page, name: string) {
   await page
     .getByRole("button", { name: "OpenComms menu", exact: true })
@@ -299,6 +304,9 @@ test("scheduled messages edit in the regional timezone then send now and cancel 
     .getByLabel("Scheduled message", { exact: true })
     .fill("Updated scheduled delivery");
   await tool.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(
+    tool.getByText("Scheduled message saved.", { exact: true }),
+  ).toBeVisible();
   await page.reload();
   await tool
     .getByRole("button", { name: /Updated scheduled delivery/ })
@@ -629,6 +637,104 @@ test("join requests approve and decline without opening the invitation editor", 
     expect.stringMatching(/^"[^"]+"$/),
     expect.stringMatching(/^"[^"]+"$/),
   ]);
+});
+
+test("a member requests to join a private channel from its link and the admin queue shows the request", async ({
+  page,
+  context,
+}) => {
+  const { owner, privateId, clock, runtime } = await seedRequester(page);
+  await page.goto(`/comms?conversation=${privateId}`);
+  await expect(
+    page.getByText("This conversation is not available", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("form", { name: "Message composer", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Your role cannot post in this channel.", { exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Request to join", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "Request sent. If this channel accepts requests, its managers will see it.",
+      { exact: true },
+    ),
+  ).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Request to join", exact: true }),
+  ).toHaveCount(0);
+  const state = runtime.exportSnapshot().state;
+  expect(
+    Object.values(state.admissions).map(
+      ({ conversation_id, kind, status }) => ({
+        conversation_id,
+        kind,
+        status,
+      }),
+    ),
+  ).toEqual([
+    { conversation_id: privateId, kind: "request", status: "pending" },
+  ]);
+  await page.close();
+  const adminPage = await context.newPage();
+  await signedInAs(adminPage, { id: owner.user_id, role: "admin" });
+  await installCommsLiveApi(adminPage, {
+    userId: owner.user_id,
+    runtime: createMemoryCommsRuntime({ owner, initial: state }, { clock }),
+  });
+  await adminPage.goto("/comms");
+  const tool = await openTool(adminPage, "Join requests");
+  await expect(
+    tool.getByRole("article", { name: "Request from Noah Tan", exact: true }),
+  ).toBeVisible();
+});
+
+test("an unknown conversation link offers the same request and confirmation and retries a failed send", async ({
+  page,
+}) => {
+  const { runtime, server } = await seedRequester(page);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let sends = 0;
+  await page.route("**/api/comms/join-requests", async (route) => {
+    sends += 1;
+    if (sends === 1) return route.abort();
+    await held;
+    return route.fallback();
+  });
+  await page.goto(`/comms?conversation=${crypto.randomUUID()}`);
+  await expect(
+    page.getByText("This conversation is not available", { exact: true }),
+  ).toBeVisible();
+  const request = page.getByRole("button", {
+    name: "Request to join",
+    exact: true,
+  });
+  await request.click();
+  await expect(
+    page.getByText(
+      "The request could not be sent. Select Request to join to try again.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(request).toBeFocused();
+  await request.click();
+  await expect(request).toBeDisabled();
+  await request.press("Enter");
+  release();
+  await expect(
+    page.getByText(
+      "Request sent. If this channel accepts requests, its managers will see it.",
+      { exact: true },
+    ),
+  ).toBeFocused();
+  expect(
+    server.requests.filter((item) => item.path === "/join-requests"),
+  ).toHaveLength(1);
+  expect(runtime.exportSnapshot().state.admissions).toEqual({});
 });
 
 test("settings history shows before and after then requires an advanced versioned restore preview", async ({

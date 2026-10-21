@@ -24,8 +24,19 @@ import { threadMessages, type Message } from "../domain/view-model";
 import { useCommsHistory } from "../state/use-comms-history";
 import { useVisibleCommsRead } from "../state/use-visible-comms-read";
 import { useCommsClient } from "../state/client-context";
+import { joinRequestSubmissionSchema } from "../contract/schemas";
 import type { MessageDraft } from "./message-shared";
 import { TypingIndicator } from "./typing-indicator";
+
+/** Moves focus to an element once, when it mounts. */
+const focusOnMount = (node: HTMLElement | null) => node?.focus();
+/** An organization switch or unmount aborts a command; that is not a failure. */
+const cancelled = (error: unknown) =>
+  (error instanceof DOMException && error.name === "AbortError") ||
+  (typeof error === "object" &&
+    error !== null &&
+    "kind" in error &&
+    error.kind === "cancelled");
 
 export function ConversationView({
   conversation,
@@ -188,6 +199,38 @@ export function ConversationView({
       });
     return error;
   }
+  // Offered for any unknown id: the server answers every request the same way.
+  const joinKey = `join-request:${selected}`;
+  const joinable =
+    !channel &&
+    !direct &&
+    joinRequestSubmissionSchema.safeParse({ conversation_id: selected })
+      .success;
+  const [joinRequest, setJoinRequest] = useState<{
+    id: string;
+    state: "sent" | "failed";
+    attempt: number;
+  }>();
+  const joinResult = joinRequest?.id === selected ? joinRequest : undefined;
+  const joinOffered = joinable && joinResult?.state !== "sent";
+  async function requestJoin() {
+    if (isPending(joinKey)) return;
+    const id = selected;
+    const settle = (state: "sent" | "failed") =>
+      setJoinRequest((last) => ({
+        id,
+        state,
+        attempt: (last?.attempt ?? 0) + 1,
+      }));
+    try {
+      await run(joinKey, (commands, signal) =>
+        commands.submitJoinRequest({ conversation_id: id }, { signal }),
+      );
+      settle("sent");
+    } catch (error) {
+      if (!cancelled(error)) settle("failed");
+    }
+  }
   async function send(draft: MessageDraft) {
     setDelivery({ id: selected, state: "sending" });
     const error = await operations.sendMessage(draft);
@@ -276,11 +319,44 @@ export function ConversationView({
           }}
         >
           {!canView ? (
-            <Alert role="alert">
-              <span>This conversation is not available</span>
-              <Action onClick={selected ? history.retry : reload}>
-                Retry history
-              </Action>
+            <Alert>
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                <span>This conversation is not available</span>
+                <div className="flex flex-wrap gap-2">
+                  {joinOffered && (
+                    <Action
+                      aria-disabled={isPending(joinKey)}
+                      onClick={() => void requestJoin()}
+                    >
+                      Request to join
+                    </Action>
+                  )}
+                  <Action
+                    variant={joinOffered ? "ghost" : "outline"}
+                    onClick={selected ? history.retry : reload}
+                  >
+                    Retry history
+                  </Action>
+                </div>
+              </div>
+              {joinable &&
+                joinResult &&
+                (joinResult.state === "sent" ? (
+                  <p
+                    key={joinResult.attempt}
+                    ref={focusOnMount}
+                    tabIndex={-1}
+                    className="text-muted-foreground focus-visible:outline-ring mt-2 rounded-[var(--radius)] focus-visible:outline-2 focus-visible:outline-offset-2"
+                  >
+                    Request sent. If this channel accepts requests, its managers
+                    will see it.
+                  </p>
+                ) : (
+                  <p key={joinResult.attempt} className="text-danger-text mt-2">
+                    The request could not be sent. Select Request to join to try
+                    again.
+                  </p>
+                ))}
             </Alert>
           ) : (
             <MessageTimeline
@@ -444,35 +520,40 @@ export function ConversationView({
         conversationId={selected}
         enabled={canView && !settings.locked && !navigation.navigating}
       />
-      <MessageComposer
-        key={selected}
-        id={selected}
-        preferences={preferences}
-        settings={settings}
-        canPost={canPost}
-        replyingTo={replyingTo}
-        people={people}
-        onCancelReply={() => setReplyingTo(null)}
-        conversationName={
-          channel ? `#${channel.name}` : (direct?.user ?? "a teammate")
-        }
-        unavailableReason={
-          direct?.blocked
-            ? "Unblock this user to send a message."
-            : channel?.archived
-              ? "This channel is archived. Restore it to post."
-              : settings.locked
-                ? "This channel is locked. Unlock it in channel settings to post."
-                : "Your role cannot post in this channel."
-        }
-        records={records}
-        onSend={send}
-        onEditLast={(message) => {
-          setEditRequest(message);
-          jumpToMessage(message.id);
-        }}
-        pending={navigation.navigating || isPending(`message:send:${selected}`)}
-      />
+      {/* An unreadable conversation has no composer; a blocked direct keeps its reason. */}
+      {(canView || direct) && (
+        <MessageComposer
+          key={selected}
+          id={selected}
+          preferences={preferences}
+          settings={settings}
+          canPost={canPost}
+          replyingTo={replyingTo}
+          people={people}
+          onCancelReply={() => setReplyingTo(null)}
+          conversationName={
+            channel ? `#${channel.name}` : (direct?.user ?? "a teammate")
+          }
+          unavailableReason={
+            direct?.blocked
+              ? "Unblock this user to send a message."
+              : channel?.archived
+                ? "This channel is archived. Restore it to post."
+                : settings.locked
+                  ? "This channel is locked. Unlock it in channel settings to post."
+                  : "Your role cannot post in this channel."
+          }
+          records={records}
+          onSend={send}
+          onEditLast={(message) => {
+            setEditRequest(message);
+            jumpToMessage(message.id);
+          }}
+          pending={
+            navigation.navigating || isPending(`message:send:${selected}`)
+          }
+        />
+      )}
       <p
         role="status"
         aria-label="Message announcements"
