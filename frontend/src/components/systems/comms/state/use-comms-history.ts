@@ -14,6 +14,7 @@ import { useCommsClient } from "./client-context";
 import { useCommsWorkspaceView } from "./use-comms-workspace";
 import { useCommsRead } from "./runtime";
 import { loadQuotes, messageView } from "./message-view";
+import { useCommsMessageAuthors } from "./use-comms-message-authors";
 
 export function useCommsHistory(
   id: string,
@@ -210,6 +211,11 @@ export function useCommsHistory(
       );
     },
   );
+  const authorMessages = useMemo(
+    () => [...(page?.items ?? []), ...(quotes.data ?? [])],
+    [page, quotes.data],
+  );
+  const authors = useCommsMessageAuthors(authorMessages, workspace.people);
   const projected = useMemo(() => {
     const records = new Map(
       workspace.records.map((record) => [record.id, record]),
@@ -217,16 +223,18 @@ export function useCommsHistory(
     const people = new Map(
       workspace.people.map((person) => [person.id, person]),
     );
+    const project = (message: HistoryPage["items"][number]) => ({
+      ...messageView(message, people, records),
+      ...(authors.has(message.author_id)
+        ? { author: authors.get(message.author_id)! }
+        : {}),
+    });
     return {
-      messages: (page?.items ?? []).map((message) =>
-        messageView(message, people, records),
-      ),
-      quotes: (quotes.data ?? []).map((message) =>
-        messageView(message, people, records),
-      ),
+      messages: (page?.items ?? []).map(project),
+      quotes: (quotes.data ?? []).map(project),
       records: [...records.values()],
     };
-  }, [page, quotes.data, workspace.people, workspace.records]);
+  }, [page, quotes.data, workspace.people, workspace.records, authors]);
   return {
     ...projected,
     page,

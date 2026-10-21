@@ -149,6 +149,26 @@ test("Comms binds drafts to the admitted organization while the next organizatio
   });
   serverA.setPresence(userId, "online");
   serverB.setPresence(userId, "away");
+  const lateAuthor = "98000000-0000-4000-8000-000000000081";
+  serverA.appendQuietly().author_id = lateAuthor;
+  serverB.appendQuietly().author_id = lateAuthor;
+  const authorReads: string[] = [];
+  await page.route(`**/api/users/${lateAuthor}/card`, (route) => {
+    const org = route.request().headers()["x-org"];
+    authorReads.push(org);
+    return org === orgA.org_id
+      ? route.fulfill({
+          json: {
+            display_name: "Scoped late author",
+            job_title: null,
+            avatar_url: null,
+            email: null,
+            phone: null,
+            bio: null,
+          },
+        })
+      : route.fulfill({ status: 404, json: { detail: "Unavailable" } });
+  });
   try {
     await page.goto("/comms");
     const composer = page.getByRole("textbox", {
@@ -156,6 +176,9 @@ test("Comms binds drafts to the admitted organization while the next organizatio
       exact: true,
     });
     await composer.fill("Organization A private draft");
+    await expect(
+      page.getByRole("article", { name: /^Message 60: Scoped late author,/ }),
+    ).toBeVisible();
     const typer = serverA.members.find((member) => member.user_id !== userId)!;
     const typing = page.getByRole("status", {
       name: "Typing activity",
@@ -201,6 +224,13 @@ test("Comms binds drafts to the admitted organization while the next organizatio
     ).toBeVisible();
     await page.getByRole("link", { name: "OpenComms", exact: true }).click();
     await expect(composer).toHaveValue("");
+    await expect(
+      page.getByRole("article", { name: /^Message 60: Unavailable person,/ }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Scoped late author", { exact: true }),
+    ).toHaveCount(0);
+    expect(authorReads).toEqual([orgA.org_id, orgB.org_id]);
     await expect(typing).toBeEmpty();
     await page.getByRole("button", { name: "Members", exact: true }).click();
     await expect(

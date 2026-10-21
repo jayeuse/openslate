@@ -21,6 +21,7 @@ import {
 } from "../domain/view-model";
 import { Avatar, MessageMenu } from "./floating";
 import { PersonLink } from "./person-link";
+import { PersonCardPopover } from "@/components/person-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -361,7 +362,7 @@ const TimelineRow = memo(function TimelineRow({
   setEditing: (id: string) => void;
   setEditText: (text: string) => void;
 }) {
-  const { client } = useCommsClient();
+  const { client, scope } = useCommsClient();
   const domId =
     position !== undefined && message.parentId
       ? `channel-${message.id}`
@@ -499,21 +500,39 @@ const TimelineRow = memo(function TimelineRow({
         <MessageRow className="flex-col gap-0">
           {!grouped && (
             <MessageHeader className="text-foreground mb-1 gap-3 px-0 pr-8">
-              {preferences.avatars &&
-                (person ? (
-                  <PersonLink
-                    avatarOnly
-                    person={person}
-                    roleName={roleName}
-                    presence={presenceLabel(presence, person.id)}
-                    onMessage={onDirect}
-                  />
-                ) : (
-                  <Avatar name={authorName} />
-                ))}
-              <strong className="min-w-0 truncate text-sm">
-                <bdi>{authorName}</bdi>
-              </strong>
+              {person ? (
+                <>
+                  {preferences.avatars && (
+                    <PersonLink
+                      avatarOnly
+                      person={person}
+                      roleName={roleName}
+                      presence={presenceLabel(presence, person.id)}
+                      onMessage={onDirect}
+                    />
+                  )}
+                  <strong className="min-w-0 truncate text-sm">
+                    <bdi>{authorName}</bdi>
+                  </strong>
+                </>
+              ) : scope?.kind === "live" ? (
+                <PersonCardPopover
+                  personId={message.authorId}
+                  unavailableLabel="Unavailable person"
+                  decoration="none"
+                  className={cn(
+                    "text-foreground text-sm font-semibold",
+                    !preferences.avatars && "[&>span:first-child]:hidden",
+                  )}
+                />
+              ) : (
+                <>
+                  {preferences.avatars && <Avatar name={authorName} />}
+                  <strong className="min-w-0 truncate text-sm">
+                    <bdi>{authorName}</bdi>
+                  </strong>
+                </>
+              )}
               {preferences.timestamps !== "none" && (
                 <span className="text-muted-foreground shrink-0 text-xs">
                   {timestamp}
