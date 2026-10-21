@@ -9,7 +9,7 @@ The deployment profile is one full stack per client (micro–medium SMB, on-prem
 - `app/core/` owns cross-cutting infrastructure: typed config, database/`AuditSession`/model registry, Supabase JWT verification and Auth integration, middleware, and other integrations.
 - `app/common/` owns shared dependencies/auth, standard listing, documented exceptions, and normalization.
 - `app/systems/<page>/<capability>/` owns domain features (`models.py`, `schemas.py`, `router.py`); add `service.py` only for coordination such as locking or multi-entity invariants.
-- `sandbox` owns departments, modules, fields, records, relationships, and lifecycle; `access` owns auth and users; `openview` owns views; `boards` owns the company, department and project Boards; `manage` owns workspace and audit; `platform` owns files. `reports`, `businesses`, and `admin` remain nested placeholders, while `comms` remains reserved. This physical grouping does not restrict cross-domain audit, lifecycle, or file services. Read `migrations/AGENTS.md` before schema work.
+- `sandbox` owns departments, modules, fields, records, relationships, and lifecycle; `access` owns auth and users; `openview` owns views; `boards` owns the company, department and project Boards; `manage` owns workspace and audit; `platform` owns files; `comms` owns durable conversations/messages, settings, moderation and related jobs. `reports`, `businesses`, and `admin` remain nested placeholders. This physical grouping does not restrict cross-domain audit, lifecycle, or file services. Read `migrations/AGENTS.md` before schema work.
 
 ## Tooling and style
 

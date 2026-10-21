@@ -90,7 +90,7 @@ def print_plan(dataset: SampleDataset, preflight: Mapping[str, Any], mailpit_url
         "invitations delivered only to owned Mailpit"
     )
     print(
-        "exclusions: OpenComms; custom roles; "
+        "exclusions: custom roles; "
         "service identities/metadata; access rules/defaults; "
         "saved chart preferences; direct database writes other than creating the pack "
         "organization; provider-admin user creation"
