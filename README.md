@@ -263,12 +263,12 @@ contracts.
 
 ## OpenComms status and entrypoints
 
-Core Comms conversations/messages, scoped files/settings, moderation, admissions
-and durable jobs have implemented FastAPI contracts. Private Realtime events do
-not grant content access. Remaining explicitly labeled browser-local example
-tools are temporary S31 UI scope, not live writes to an organization's settings
-or evidence that the corresponding backend APIs are absent. Complete integrated
-browser and performance acceptance remains separate.
+Comms conversations/messages, scoped files/settings, administrator tools,
+moderation, admissions and durable jobs have implemented FastAPI contracts. The
+`/comms` page reads and changes them only through those APIs and receives private
+Realtime notifications; no part of it runs on browser-local example data. Private
+Realtime events do not grant content access. Complete integrated browser,
+provider-load and release acceptance remains separate.
 
 Use the existing [Supabase operator guide](infra/supabase/README.md#opencomms-ingress-and-private-publication)
 for ingress/publication and startup boundaries, and the

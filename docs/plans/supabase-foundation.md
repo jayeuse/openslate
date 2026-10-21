@@ -17,7 +17,7 @@ The integration work has four phases. This plan covers Phase 1 only.
 | Phase | Content |
 |---|---|
 | **1. Foundation (this plan)** | Image upgrade, authentication hardening (H1, H2), multi-organization tenancy, organization scope in every subsystem, Storage buckets and avatars, the Realtime service with one authenticated private channel |
-| 2. OpenComms | Backend chat/presence/typing/attachment and private Realtime contracts implemented under the separate OpenComms plan; remaining frontend cutover and S32 integrated/performance acceptance are pending |
+| 2. OpenComms | Backend chat/presence/typing/attachment and private Realtime contracts and the live `/comms` frontend implemented under the separate [OpenComms plan](opencomms.md); integrated browser/provider, load and performance acceptance is pending |
 | 3. Cloud launch | Supabase Cloud target, self-serve signup, plans and limits, operator console, Google and Microsoft sign-in, platform metrics |
 | 4. Installer hardening | Passkeys and the local CA, Supabase Logs on-premise, the higher host specification, the Docker-or-native runtime test |
 
@@ -513,7 +513,7 @@ The owner answered the S07 checkpoint on 2026-10-16. The priority stays on-premi
 
 The design must allow these without schema changes to the Phase 1 tables. None of them adds a column in Phase 1.
 
-- **Phase 2 (OpenComms):** organization-scoped chat tables, D24 private topics, HTTP-authorized presence/typing and private `openslate-ready` attachments are implemented. SSE remains for other application invalidations. Ordinary private readability, report-only moderation and privileged export are distinct purposes; Realtime grants do not bypass current content reads. Remaining S31 labeled memory tools are temporary UI scope, not absent backend APIs. S32 full browser/provider-pack/load proof and final JS acceptance after that tools removal are still pending; service implementation is not completion of those measurements.
+- **Phase 2 (OpenComms):** organization-scoped chat tables, D24 private topics, HTTP-authorized presence/typing and private `openslate-ready` attachments are implemented. SSE remains for other application invalidations. Ordinary private readability, report-only moderation and privileged export are distinct purposes; Realtime grants do not bypass current content reads. The `/comms` page and its administrator tools use those APIs; no browser-local example tools remain. Full browser/provider-pack/load proof and the deferred capacity, purge-timing and timeline-opening measurements are still pending; service implementation is not completion of those measurements.
 - **Phase 3 (Cloud launch):** signup that creates an account with no membership (D06); organization creation by users; plans and limits per organization; the operator console on `platform_operators`; Google and Microsoft identities linked to one account; the Cloud target and its test matrix; organization-branded email (D36).
 - **Phase 4 (installer):** passkeys and the local CA; Supabase Logs on-premise; the host specification from the D30 figures; the Docker-or-native runtime test.
 

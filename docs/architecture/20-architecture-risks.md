@@ -4,7 +4,7 @@
 
 | Risk | Current state | Mitigation required |
 | --- | --- | --- |
-| OpenComms integration acceptance is incomplete | Durable backend/live conversation contracts exist; remaining explicitly labeled example tools are browser-local. Source and mocked HTTP coverage do not establish integrated browser/provider behavior | Keep example state separate from live authority; verify compatible frontend/backend artifacts with real owned-account journeys before declaring the integration accepted |
+| OpenComms integration acceptance is incomplete | Durable backend contracts exist, and the `/comms` page uses them through HTTP and private Realtime. Source and mocked HTTP coverage do not establish integrated browser/provider, load or release behavior | Verify compatible frontend/backend artifacts with real owned-account journeys and the planned capacity and purge measurements before declaring the integration accepted |
 | Static UI and API must ship together | FastAPI serves the generated frontend export from the server image | Build the export into the matching server artifact and fail startup when `WEB_ASSETS_ROOT` is missing or invalid |
 | Single-organization trust boundary | Each Compose installation serves one client; shared multi-tenant isolation is not implemented | Keep mutually untrusted organizations in separate deployments |
 | Provider identity can be confused with application access | Supabase Auth authenticates; it does not assign OpenSlate roles or resource access | Require an explicit provider-subject/profile binding and evaluate current application eligibility and authorization in FastAPI on each request |

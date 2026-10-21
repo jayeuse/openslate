@@ -36,9 +36,9 @@ The normal error shape remains route-local `HTTPException` detail. Authenticatio
 organization (`X-Org`, else the session's active organization), then the current
 conversation/capability/source policy. A client DTO, role label, stream event or
 cached grants row is not permission to read content. Private responses use the
-route's `private, no-store` policy. Remaining explicitly labeled S31 example
-tools are browser-local; they do not make the corresponding implemented backend
-template/history/admission APIs absent or exempt from authorization.
+route's `private, no-store` policy. The `/comms` page, including its templates,
+settings history and admission tools, calls these routes; server responses, not
+browser state, decide what an actor may read or change.
 
 | Family | Contract and source |
 | --- | --- |
@@ -127,7 +127,7 @@ expires, at most five minutes. This is not an immediate socket-disconnect promis
 These contracts describe implemented services, not completed S32 native browser,
 full provider-pack/load, release-gate or Linux/Windows acceptance. The 15-second
 purge timing target remains a deferred S32 measurement, not a reason to weaken
-audited mutation or confirmation guards. Final frontend JS acceptance belongs
-after S31's temporary memory/example tools are removed; backend/API evidence does
-not satisfy that budget. The operating procedure remains in the
+audited mutation or confirmation guards. The cold `/comms` JavaScript budget is
+measured on a production frontend build; backend/API evidence does not satisfy
+it. The operating procedure remains in the
 [Supabase guide](../../infra/supabase/README.md), not duplicated here.

@@ -130,9 +130,10 @@ owner-authorized Cloud evidence; candidate B is a future option, not a configure
 
 Database row-change subscriptions stay off. SSE continues to carry opaque invalidations for
 other pages, while Comms uses the private topics above. Browser connection coordination does not
-change HTTP authorization. Remaining S31 browser-local example tools are not live service proof;
-their backend routes remain implemented and protected. Native Linux/Windows acceptance and full
-S32 measurements remain deferred; see [acceptance status](README.md#acceptance-status).
+change HTTP authorization. The `/comms` page and its administrator tools call the protected
+backend routes; no browser-local example tools remain. Native Linux/Windows acceptance and the
+full integrated browser/provider, load and purge-timing measurements remain deferred; see
+[acceptance status](README.md#acceptance-status).
 
 ## 4. Delivery sequence
 

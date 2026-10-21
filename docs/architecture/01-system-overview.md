@@ -28,8 +28,9 @@ The browser does not write application rows or read private objects directly. Fa
 
 OpenComms has implemented conversation/message, settings, file, moderation,
 admission and job APIs, composed in
-[`comms/router.py`](../../backend/app/systems/comms/router.py). Remaining explicitly
-labeled example tools use browser-local state, not organization data or authority.
+[`comms/router.py`](../../backend/app/systems/comms/router.py). The `/comms` page,
+its settings and its administrator tools use these APIs; no OpenComms surface runs on
+browser-local example data.
 Ordinary private-conversation reads, report-bound moderation and privileged export
 are distinct purposes; neither cached UI state nor a Realtime grant replaces a
 current authorized content read. See the [API purpose boundaries](07-api-architecture.md#ordinary-private-reads-versus-privileged-purposes).

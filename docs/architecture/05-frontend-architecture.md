@@ -20,7 +20,7 @@ Workspace pages are `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/m
 
 The public [`/` page](../../frontend/src/app/page.tsx) checks session status before showing sign-in actions. A signed-in person is sent through [`workspaceStartRoute`](../../frontend/src/components/workspace-start.ts), which honors a confirmed, accessible start-page preference. Automatic selects OpenView when published sources exist, otherwise Sandbox when the person can open it; failed checks fall back to OpenView. This is a client-side static-page redirect, not a second application authorization gate.
 
-[`AppHeaderActions`](../../frontend/src/components/app-shell.tsx) mounts the common [`HelpPanel`](../../frontend/src/components/help/help-panel.tsx) Sheet. It contains This page, Keyboard shortcuts, and Contact your administrator. [`PAGE_GUIDES`](../../frontend/src/components/help/page-guides.ts) covers the seven workspace pages plus Profile, including OpenComms' example-only boundary. [`SANDBOX_SHORTCUTS`](../../frontend/src/lib/shortcuts.ts) supplies both Help's list and the existing Sandbox Build owners: `?`, `0`, Delete and F2 require a confirmed enabled preference; standard undo/redo and essential keyboard activation remain available. Help's Profile link uses the existing dirty-draft guard.
+[`AppHeaderActions`](../../frontend/src/components/app-shell.tsx) mounts the common [`HelpPanel`](../../frontend/src/components/help/help-panel.tsx) Sheet. It contains This page, Keyboard shortcuts, and Contact your administrator. [`PAGE_GUIDES`](../../frontend/src/components/help/page-guides.ts) covers the seven workspace pages plus Profile, including how OpenComms sends, retries and reaches its administrator tools. [`SANDBOX_SHORTCUTS`](../../frontend/src/lib/shortcuts.ts) supplies both Help's list and the existing Sandbox Build owners: `?`, `0`, Delete and F2 require a confirmed enabled preference; standard undo/redo and essential keyboard activation remain available. Help's Profile link uses the existing dirty-draft guard.
 
 Administrator contacts are a fresh account-scoped projection from `/api/workspace` only while Help is open and interaction is not suspended. [`helpWorkspaceContactsOptions`](../../frontend/src/components/systems/manage/adapters/manage-queries.ts) bypasses Manage's revision fallback and retains no contact cache after close. Rereads/refusals hide previous contacts, guests receive the invitation-person guidance, and final 401 handling still hands off globally to login. Branding never supplies contacts.
 
@@ -45,20 +45,35 @@ corresponding form action. Logout reports server failure rather than silently
 discarding browser state. See [authentication and authorization](08-authentication-authorization.md)
 for session admission and account eligibility.
 
-Sandbox, Boards, Access, OpenView, Manage, and Platform use authenticated
-FastAPI adapters for their implemented data and actions. Sandbox's Build,
+Sandbox, Boards, Access, OpenView, Manage, Platform, and OpenComms use
+authenticated FastAPI adapters for their implemented data and actions. Sandbox's Build,
 Triggers, Test, History, and Review & Publish workflow uses PostgreSQL; temporary
 Test inputs never create operational records. API adapters preserve loading,
 retry, denial, revision-conflict, and unsaved-draft protection.
 
-OpenComms alone uses browser-local sample data. Its [route layout](../../frontend/src/app/(app)/(workspace)/comms/layout.tsx)
-mounts `SampleProvider`; live routes do not inherit sample snapshot recovery or
-storage state. The authenticated [application gate](../../frontend/src/components/app-page.tsx)
+The OpenComms [route layout](../../frontend/src/app/(app)/(workspace)/comms/layout.tsx)
+mounts [`CommsClientProvider`](../../frontend/src/components/systems/comms/state/client-context.tsx).
+It creates one [live runtime](../../frontend/src/components/systems/comms/adapters/live-runtime.ts)
+for the verified account and organization: typed HTTP adapters over `apiFetch`, a
+TanStack Query scope with a read-refusal latch
+([`comms-queries.ts`](../../frontend/src/components/systems/comms/adapters/comms-queries.ts)),
+a [cache bridge](../../frontend/src/components/systems/comms/adapters/cache-bridge.ts)
+that repairs only already-loaded data through current-authorized HTTP reads when
+a Realtime notification arrives, and an
+[outbox](../../frontend/src/components/systems/comms/adapters/outbox.ts) for
+unacknowledged sends. The shared
+[connection set](../../frontend/src/components/systems/shared/adapters/connection-set.ts)
+owns both the SSE stream and the Comms Realtime connection for one account and
+organization. Where the browser supports Web Locks, one leader tab holds the
+connections and shares events with the other tabs; otherwise each tab connects on
+its own. The authenticated [application gate](../../frontend/src/components/app-page.tsx)
 retains the verified-account identity and [query/theme providers](../../frontend/src/components/query-provider.tsx)
-across route changes. Account-owned Comms snapshots and drafts are cleared by
-[shared session cleanup](../../frontend/src/components/systems/shared/runtime/workspace-identity.tsx),
-including when the Comms layout is unmounted. Comms sample roles, permissions,
-and messages are not authoritative application authorization or durable data.
+across route changes. [Shared session cleanup](../../frontend/src/components/systems/shared/runtime/workspace-identity.tsx)
+disposes the Comms runtime and clears account-owned Comms drafts; leaving the
+Comms layout clears drafts only when the tab's organization changed. Browser
+state never grants Comms access: the server decides each read and command. The
+in-memory Comms engine survives only as a test fake under
+`frontend/tests/support/comms-memory/`.
 
 SSE consumers treat events as cache invalidations and never as row data.
 OpenView Views, Dashboards, Charts, saved-chart management/source editors, and Reports consume invalidations; Boards widgets/record
@@ -67,6 +82,11 @@ links, Manage audit/jobs/maintenance and workspace branding, Platform Files, and
 The persistent shell's [notification bell](../../frontend/src/components/systems/platform/components/notification-bell.tsx)
 subscribes to unread-count invalidations and reads server-backed notifications;
 the server rechecks recipient and source access before returning them.
+[`CommsAttention`](../../frontend/src/components/systems/comms/components/comms-attention.tsx)
+adds the OpenComms link badge and tab-title prefix for the current organization,
+and only the connection-owner tab raises desktop alerts and sound. Alerts name the
+activity kind and, for channels, the channel name, never message text; personal
+alert preferences can narrow but never widen the shared policy.
 
 OpenView's live Record inspector displays field values read-only until an
 authorized writer opens Edit. Its Details, linked-record, and Files actions
