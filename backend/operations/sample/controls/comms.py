@@ -110,6 +110,13 @@ def execute_comms_control(
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
     if action.values.get("operation") in (
+        "link_preview_default_off",
+        "partner_link_preview_default_off",
+    ):
+        from operations.sample.controls.comms_previews import execute_preview_control
+
+        return execute_preview_control(action, dataset, context, on_substep=on_substep)
+    if action.values.get("operation") in (
         "configuration_roundtrip",
         "partner_configuration_roundtrip",
     ):

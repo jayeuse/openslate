@@ -23,6 +23,7 @@ from app.systems.comms.messages.schemas import (
     LiveMessage,
     Tombstone,
 )
+from app.systems.comms.previews.cache import cached_previews
 
 
 def message_query(conversation_id: UUID) -> Select[tuple[CommsMessage]]:
@@ -76,6 +77,7 @@ def project_messages(
     live_rows = [row for row in rows if row.id in live]
     attachments = links.attachments(db, live_rows)
     records = links.message_records(db, user_id, live_rows)
+    previews = cached_previews(db, live_rows)
     result: list[LiveMessage | Tombstone] = []
     for row in rows:
         identity: dict[str, Any] = {
@@ -113,7 +115,7 @@ def project_messages(
                     ],
                     attachments=attachments[row.id],
                     record_references=records[row.id],
-                    link_previews=[],
+                    link_previews=previews.get(row.id, []),
                 )
             )
     return result

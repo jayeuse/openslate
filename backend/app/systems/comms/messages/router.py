@@ -227,6 +227,9 @@ def _change_message(
     else:
         message.is_deleted, message.deleted_at, message.deleted_by = True, utc_now(), user.id
     advance_generation(message)
+    from app.systems.comms.previews.jobs import stage_preview
+
+    stage_preview(db, message)
     message_event(db, conversation_id, message.seq, "edited" if request is not None else "deleted")
     db.commit()
     db.refresh(message)

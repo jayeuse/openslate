@@ -459,6 +459,9 @@ def send_message(
         message_event(db, conversation_id, message.seq, "created")
         if root is not None:
             message_event(db, conversation_id, root.seq, "thread")
+        from app.systems.comms.previews.jobs import stage_preview
+
+        stage_preview(db, message)
         if finalize is not None:
             finalize(message)
         db.commit()

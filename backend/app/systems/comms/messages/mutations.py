@@ -42,3 +42,5 @@ def advance_generation(message: CommsMessage) -> None:
     if message.mutation_generation >= 9007199254740991:
         raise error("comms_conflict", "Message version exhausted", 409)
     message.mutation_generation += 1
+    message.link_previews = []
+    message.link_preview_generation = None

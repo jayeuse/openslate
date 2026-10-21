@@ -15,6 +15,7 @@ from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.post_models import BoardPost
 from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.comms.jobs.models import CommsExport, CommsSchedule
+from app.systems.comms.messages.models import CommsMessage
 from app.systems.manage.backups import service as backups
 from app.systems.manage.backups.models import BackupRun
 from app.systems.manage.backups.schemas import RunState
@@ -38,6 +39,7 @@ FAILURE_LABELS = {
     "readiness_failed": "The server was not ready after the backup.",
     "result_unconfirmed": "The backup result could not be confirmed.",
     "retention_failed": "Backup retention cleanup failed.",
+    "preview_unavailable": "Optional link preview was unavailable.",
 }
 
 
@@ -269,6 +271,18 @@ def _comms_exports(_instance: str) -> Select[Any]:
     )
 
 
+def _comms_previews(_instance: str) -> Select[Any]:
+    return (
+        select(*_work_columns("Link preview", literal("Link preview"), cast(null(), String)))
+        .join(
+            CommsMessage,
+            (CommsMessage.org_id == ScheduledWork.org_id)
+            & (CommsMessage.id == ScheduledWork.comms_preview_message_id),
+        )
+        .where(ScheduledWork.kind == "comms-link-preview")
+    )
+
+
 REGISTRY = {
     "report-run": JobKind("Report run", _reports, _subject, _retry_work, _WORK_STATES),
     "post-publish": JobKind("Post publication", _posts, _subject, _retry_work, _WORK_STATES),
@@ -278,6 +292,7 @@ REGISTRY = {
         "Scheduled Comms message", _comms_schedules, _subject, None, _WORK_STATES
     ),
     "comms-export": JobKind("Comms export", _comms_exports, _subject, None, _WORK_STATES),
+    "comms-link-preview": JobKind("Link preview", _comms_previews, _subject, None, _WORK_STATES),
 }
 
 

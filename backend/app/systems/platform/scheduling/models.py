@@ -6,6 +6,7 @@ from typing import ClassVar
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -38,6 +39,7 @@ class WorkKind(StrEnum):
     EVENT_REMINDER = "event-reminder"
     COMMS_SCHEDULED_MESSAGE = "comms-scheduled-message"
     COMMS_EXPORT = "comms-export"
+    COMMS_LINK_PREVIEW = "comms-link-preview"
 
 
 class ScheduledWork(Base):
@@ -47,6 +49,12 @@ class ScheduledWork(Base):
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
         UniqueConstraint("org_id", "id", name="uq_scheduled_work_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "comms_preview_message_id"],
+            ["comms_messages.org_id", "comms_messages.id"],
+            name="fk_scheduled_work_comms_preview_message",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "comms_schedule_id"],
             ["comms_schedules.org_id", "comms_schedules.id"],
@@ -97,10 +105,11 @@ class ScheduledWork(Base):
         ),
         CheckConstraint(
             "kind IN ('report-run', 'post-publish', 'event-reminder', "
-            "'comms-scheduled-message', 'comms-export')",
+            "'comms-scheduled-message', 'comms-export', 'comms-link-preview')",
             name="ck_scheduled_work_kind",
         ),
         CheckConstraint(
+            "(("
             "(((kind = 'report-run' AND report_id IS NOT NULL AND post_id IS NULL "
             "AND reminder_id IS NULL AND occurrence_start_at IS NULL "
             "AND source_revision IS NULL AND scheduling_actor_id IS NULL "
@@ -124,7 +133,15 @@ class ScheduledWork(Base):
             "AND comms_message_id IS NULL AND report_id IS NULL AND post_id IS NULL "
             "AND reminder_id IS NULL AND occurrence_start_at IS NULL AND run_id IS NULL "
             "AND publication_result_id IS NULL AND scheduling_actor_id IS NOT NULL "
-            "AND source_revision IS NULL)",
+            "AND source_revision IS NULL)"
+            ") AND comms_preview_message_id IS NULL AND comms_preview_generation IS NULL) OR "
+            "(kind = 'comms-link-preview' AND comms_preview_message_id IS NOT NULL "
+            "AND comms_preview_generation IS NOT NULL "
+            "AND comms_preview_generation BETWEEN 0 AND 9007199254740991 "
+            "AND scheduling_actor_id IS NOT NULL AND report_id IS NULL AND post_id IS NULL "
+            "AND reminder_id IS NULL AND occurrence_start_at IS NULL AND source_revision IS NULL "
+            "AND publication_result_id IS NULL AND run_id IS NULL AND comms_schedule_id IS NULL "
+            "AND comms_export_id IS NULL AND comms_message_id IS NULL)",
             name="ck_scheduled_work_source",
         ),
         CheckConstraint(
@@ -145,7 +162,7 @@ class ScheduledWork(Base):
             "(kind = 'post-publish' AND "
             "((state = 'succeeded' AND publication_result_id IS NOT NULL) "
             "OR (state <> 'succeeded' AND publication_result_id IS NULL))) OR "
-            "(kind IN ('event-reminder','comms-export') AND run_id IS NULL "
+            "(kind IN ('event-reminder','comms-export','comms-link-preview') AND run_id IS NULL "
             "AND publication_result_id IS NULL) OR "
             "(kind = 'comms-scheduled-message' AND ((state = 'succeeded' "
             "AND comms_message_id IS NOT NULL) "
@@ -158,6 +175,19 @@ class ScheduledWork(Base):
         UniqueConstraint("run_id", name="uq_scheduled_work_run"),
         UniqueConstraint("comms_schedule_id", name="uq_scheduled_work_comms_schedule"),
         UniqueConstraint("comms_export_id", name="uq_scheduled_work_comms_export"),
+        UniqueConstraint(
+            "org_id",
+            "comms_preview_message_id",
+            "comms_preview_generation",
+            name="uq_scheduled_work_comms_preview_generation",
+        ),
+        Index(
+            "uq_scheduled_work_active_comms_preview",
+            "org_id",
+            "comms_preview_message_id",
+            unique=True,
+            postgresql_where=text("kind = 'comms-link-preview' AND state IN ('pending','running')"),
+        ),
         Index("ix_scheduled_work_comms_message", "org_id", "comms_message_id"),
         Index("ix_scheduled_work_due", "kind", "state", "next_attempt_at", "id"),
         Index("ix_scheduled_work_expired", "kind", "state", "lease_expires_at", "id"),
@@ -176,6 +206,8 @@ class ScheduledWork(Base):
     comms_schedule_id: Mapped[UUID | None] = mapped_column(nullable=True)
     comms_export_id: Mapped[UUID | None] = mapped_column(nullable=True)
     comms_message_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    comms_preview_message_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    comms_preview_generation: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     post_id: Mapped[UUID | None] = mapped_column(nullable=True)
     reminder_id: Mapped[UUID | None] = mapped_column(nullable=True)
     occurrence_start_at: Mapped[datetime | None] = mapped_column(

@@ -45,6 +45,7 @@ from app.systems.comms.messages.models import (
 )
 from app.systems.comms.messages.mutations import lock_counter
 from app.systems.comms.moderation.models import CommsReport
+from app.systems.comms.previews.jobs import discard_preview_work
 from app.systems.comms.realtime.events import user_event
 from app.systems.comms.realtime.models import CommsRealtimeGrant, CommsTyping
 from app.systems.comms.settings.models import (
@@ -318,6 +319,7 @@ def delete_graph(db: Session, actor: User, identity: UUID, expected: str, name: 
         CommsMessage.org_id == org,
         CommsMessage.conversation_id == identity,
     )
+    discard_preview_work(db, messages)
     _delete_batches(
         db,
         InAppNotification,

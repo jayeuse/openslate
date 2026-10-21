@@ -152,6 +152,9 @@ def tombstone(db: Session, message: CommsMessage, actor: User, *, restore: bool)
     advance_generation(message)
     message.is_deleted, message.deleted_at = not restore, None if restore else utc_now()
     message.deleted_by = None if restore else actor.id
+    from app.systems.comms.previews.jobs import stage_preview
+
+    stage_preview(db, message)
     message_event(db, message.conversation_id, message.seq, "edited" if restore else "deleted")
 
 

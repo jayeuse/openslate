@@ -35,6 +35,7 @@ from app.systems.comms.messages.models import CommsMessage, CommsMessageRevision
 from app.systems.comms.messages.mutations import advance_generation, lock_counter
 from app.systems.comms.moderation.models import CommsReport
 from app.systems.comms.moderation.purge import _delete_batches
+from app.systems.comms.previews.jobs import discard_preview_work
 from app.systems.comms.realtime.events import message_event, user_event
 from app.systems.comms.realtime.publication import request_events, take_committed_events
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
@@ -107,6 +108,7 @@ def _erase(
         )
     )
     ids = [message.id for message in messages]
+    discard_preview_work(db, ids)
     attachments = select(CommsMessageAttachment.file_id).where(
         CommsMessageAttachment.org_id == room.org_id,
         CommsMessageAttachment.message_id.in_(ids),

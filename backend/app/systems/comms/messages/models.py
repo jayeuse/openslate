@@ -18,7 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import TSVECTOR
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.base_model import BaseModel
@@ -32,7 +32,7 @@ class CommsMessage(BaseModel):
 
     __tablename__ = "comms_messages"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset(
-        {"body", "body_tsv", "send_fingerprint"}
+        {"body", "body_tsv", "send_fingerprint", "link_previews"}
     )
     __table_args__ = (
         UniqueConstraint("org_id", "id", name="uq_comms_messages_org_id_id"),
@@ -71,6 +71,18 @@ class CommsMessage(BaseModel):
             name="ck_comms_messages_retention_erased",
         ),
         CheckConstraint("char_length(body) <= 4000", name="ck_comms_messages_body_length"),
+        CheckConstraint(
+            "jsonb_typeof(link_previews) = 'array' AND jsonb_array_length(link_previews) <= 1",
+            name="ck_comms_messages_link_previews_shape",
+        ),
+        CheckConstraint(
+            "(link_preview_generation IS NULL AND link_previews = '[]'::jsonb) OR "
+            "(link_preview_generation IS NOT NULL "
+            "AND link_preview_generation = mutation_generation "
+            "AND jsonb_array_length(link_previews) = 1 "
+            "AND is_deleted = false AND deleted_at IS NULL AND retention_erased_at IS NULL)",
+            name="ck_comms_messages_link_previews_source",
+        ),
         CheckConstraint(
             "send_fingerprint ~ '^[0-9a-f]{64}$'", name="ck_comms_messages_send_fingerprint"
         ),
@@ -119,6 +131,13 @@ class CommsMessage(BaseModel):
     )
     client_key: Mapped[UUID] = mapped_column(nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    link_previews: Mapped[list[dict[str, str]]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+        nullable=False,
+    )
+    link_preview_generation: Mapped[int | None] = mapped_column(BigInteger)
     body_tsv: Mapped[str] = mapped_column(
         TSVECTOR, Computed("to_tsvector('simple'::regconfig, body)", persisted=True), nullable=False
     )
