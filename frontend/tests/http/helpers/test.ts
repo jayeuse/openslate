@@ -285,6 +285,44 @@ export const test = base.extend({
     await context.route("**/api/notifications/unread-count", (route) =>
       route.fulfill({ json: { unread_count: 0 } }),
     );
+    // The shell's Comms badge and the leader tab's alert check read these on
+    // every signed-in route; journeys that vary them override at page level.
+    await context.route(
+      (url) => url.pathname === "/api/notifications",
+      (route) => {
+        const url = new URL(route.request().url());
+        return route.request().method() === "GET"
+          ? route.fulfill({
+              json: {
+                items: [],
+                pagination: {
+                  limit: Number(url.searchParams.get("limit") ?? 25),
+                  offset: Number(url.searchParams.get("offset") ?? 0),
+                  count: 0,
+                  total: 0,
+                  has_more: false,
+                },
+              },
+            })
+          : route.fallback();
+      },
+    );
+    // Only off Comms: there an unmocked bootstrap selects the sample runtime.
+    await context.route("**/api/comms/bootstrap", (route) =>
+      new URL(route.request().frame().url()).pathname.startsWith("/comms")
+        ? route.fallback()
+        : route.fulfill({
+            headers: { "Cache-Control": "no-store" },
+            json: {
+              org_id:
+                route.request().headers()["x-org"] ??
+                defaultOrganization.org_id,
+              user_id: defaultSignedInIdentity.id,
+              categories: [],
+              conversations: [],
+            },
+          }),
+    );
     // The synthetic server has no event stream: proxied, it fails at a random
     // moment and the resync reloads whatever the journey is doing. Holding the
     // request keeps it connecting; specs that drive the stream override it.

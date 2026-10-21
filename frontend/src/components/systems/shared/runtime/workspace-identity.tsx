@@ -83,6 +83,16 @@ export function useWorkspaceInteractionSuspended(): boolean {
   return useContext(WorkspaceInteractionSuspendedContext);
 }
 
+/** The admitted account and organization, or null while either is pending. */
+export function useAdmittedWorkspaceScope(): {
+  user_id: string;
+  org_id: string;
+} | null {
+  const user_id = useContext(VerifiedWorkspaceIdentityContext);
+  const org_id = useContext(VerifiedWorkspaceOrganizationContext);
+  return user_id && org_id ? { user_id, org_id } : null;
+}
+
 export function useVerifiedWorkspaceUserId(): string {
   const userId = useContext(VerifiedWorkspaceIdentityContext);
   if (userId === null)

@@ -134,15 +134,15 @@ export function NotificationPreview({ settings }: { settings: CommsSettings }) {
       <CardHeader className="p-4">
         <CardTitle>Notification preview</CardTitle>
         <CardDescription>
-          Appearance only. Desktop alerts and sounds are not emitted in this
-          local example; live delivery remains deferred.
+          Desktop alerts show the kind of activity and, for channels, the
+          channel name. They never show message text.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 p-4">
         <Alert>
           {settings.notificationPreview
-            ? "A person mentioned you in a conversation."
-            : "New activity in a conversation."}
+            ? "Mention in operations"
+            : "New activity in OpenComms"}
         </Alert>
         <p className="text-muted-foreground text-xs">
           {settings.notificationSound

@@ -474,9 +474,10 @@ test("Comms inbox opens a current-organization message through the shell's unsav
   });
   await expect(guard).toBeVisible();
   await expect(page).toHaveURL(/\/manage/);
-  expect([...new Set(state.sourceReads)]).toEqual([
-    `/api/comms/conversations/${id(730)}`,
-  ]);
+  // The shell's Comms unread badge reads the bootstrap; no other Comms source.
+  expect(new Set(state.sourceReads)).toEqual(
+    new Set(["/api/comms/bootstrap", `/api/comms/conversations/${id(730)}`]),
+  );
   const destinationBootstrap = page.waitForResponse("**/api/comms/bootstrap");
   await guard
     .getByRole("button", { name: "Discard changes", exact: true })
@@ -492,10 +493,9 @@ test("Comms inbox opens a current-organization message through the shell's unsav
     }),
   ).toBeVisible();
   expect(state.selectedOrganizations).toEqual([id(702)]);
-  expect([...new Set(state.sourceReads)]).toEqual([
-    `/api/comms/conversations/${id(730)}`,
-    "/api/comms/bootstrap",
-  ]);
+  expect(new Set(state.sourceReads)).toEqual(
+    new Set([`/api/comms/conversations/${id(730)}`, "/api/comms/bootstrap"]),
+  );
 });
 
 test("Comms metadata failures hide cached titles and destinations and foreign inbox rows are refused", async ({

@@ -949,8 +949,8 @@ function LoadedCommsSettingsDialog({
                         {region?.timezone ??
                           "your regional time zone (loading…)"}
                         . Preferences belong to this organization; browser
-                        permission applies to this site. Desktop alerts and
-                        sounds are not emitted in this local example.
+                        permission applies to this site. One open tab shows
+                        desktop alerts and plays sounds.
                       </p>
                       <p role="status" className="text-sm">
                         {browserPermission.message}

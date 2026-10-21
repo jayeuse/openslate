@@ -32,6 +32,10 @@ import { OrganizationMenu } from "@/components/organization-menu";
 import { PersonAvatar } from "@/components/person-avatar";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { NotificationBell } from "@/components/systems/platform/components/notification-bell";
+import {
+  CommsAttention,
+  useCommsUnreadCount,
+} from "@/components/systems/comms/components/comms-attention";
 import { AppNavigation } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { HelpPanel } from "@/components/help/help-panel";
@@ -671,6 +675,8 @@ function AppCommsLink({ collapsed }: { collapsed: boolean }) {
   const router = useRouter();
   const active = pathname === "/comms" || pathname.startsWith("/comms/");
   const descriptionId = useId();
+  const unread = useCommsUnreadCount();
+  const label = unread ? `OpenComms, ${unread} unread` : "OpenComms";
 
   return (
     <SidebarMenu>
@@ -686,10 +692,10 @@ function AppCommsLink({ collapsed }: { collapsed: boolean }) {
           }
           isActive={active}
           aria-current={active ? "page" : undefined}
-          aria-label="OpenComms"
+          aria-label={label}
           aria-describedby={collapsed ? undefined : descriptionId}
-          title={collapsed ? `OpenComms — ${commsDescription}` : undefined}
-          className={cn("min-h-11", !collapsed && "h-auto py-1.5")}
+          title={collapsed ? `${label} — ${commsDescription}` : undefined}
+          className={cn("relative min-h-11", !collapsed && "h-auto py-1.5")}
         >
           <MessageSquare aria-hidden="true" />
           <span className="flex min-w-0 flex-col">
@@ -703,6 +709,19 @@ function AppCommsLink({ collapsed }: { collapsed: boolean }) {
               </span>
             ) : null}
           </span>
+          {unread && collapsed ? (
+            <span
+              aria-hidden="true"
+              className="bg-primary ring-sidebar absolute top-1 right-1 size-2 rounded-full ring-2"
+            />
+          ) : unread ? (
+            <span
+              aria-hidden="true"
+              className="bg-primary text-primary-foreground ml-auto min-w-4 shrink-0 rounded-full px-1 text-center text-xs leading-4 tabular-nums"
+            >
+              {unread > 99 ? "99+" : unread}
+            </span>
+          ) : null}
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>
@@ -808,6 +827,7 @@ function AppHeaderActions({
         <span className="hidden sm:inline">Search workspace…</span>
       </GuardedWorkspaceLink>
       <NotificationBell accountId={verifiedUserId} />
+      <CommsAttention />
       <HelpPanel />
       <DropdownMenu open={accountOpen} onOpenChange={onAccountOpenChange}>
         <DropdownMenuTrigger
