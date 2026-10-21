@@ -639,6 +639,103 @@ test("join requests approve and decline without opening the invitation editor", 
   ]);
 });
 
+test("join requests name a requester outside every loaded conversation through the authorized person card", async ({
+  page,
+  context,
+}) => {
+  const { owner, privateId, clock, runtime } = await seedTools(page);
+  const state = runtime.exportSnapshot().state;
+  await page.close();
+  const outsider = "78000000-0000-4000-8000-000000000081";
+  const refused = "78000000-0000-4000-8000-000000000082";
+  for (const [index, user_id] of [outsider, refused].entries()) {
+    state.people[user_id] = {
+      user_id,
+      org_id: owner.org_id,
+      display_name: "Not from the card",
+      role: "member",
+      active: true,
+      group_ids: [],
+      department_levels: {},
+      readable_module_ids: [],
+    };
+    state.users[user_id] = {
+      personal: structuredClone(state.users[owner.user_id].personal),
+      conversations: {},
+      categories: {},
+      last_read_seq: {},
+      followed_thread_ids: [],
+      notifications: [],
+    };
+    const id = `78000000-0000-4000-8000-00000000009${index}`;
+    state.admissions[id] = {
+      id,
+      org_id: owner.org_id,
+      created_at: "2026-10-19T02:00:00Z",
+      updated_at: "2026-10-19T02:00:00Z",
+      conversation_id: privateId,
+      user_id,
+      kind: "request",
+      status: "pending",
+      resolved_at: null,
+    };
+  }
+  validateMemoryState(state, owner.org_id);
+  const adminPage = await context.newPage();
+  await signedInAs(adminPage, { id: owner.user_id, role: "admin" });
+  await installCommsLiveApi(adminPage, {
+    userId: owner.user_id,
+    runtime: createMemoryCommsRuntime({ owner, initial: state }, { clock }),
+  });
+  const reads: { id: string; org: string | undefined }[] = [];
+  const directory: string[] = [];
+  adminPage.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/users")
+      directory.push(request.url());
+  });
+  await adminPage.route("**/api/users/*/card", (route) => {
+    const id = new URL(route.request().url()).pathname.split("/")[3];
+    reads.push({ id, org: route.request().headers()["x-org"] });
+    if (id !== outsider)
+      return route.fulfill({ status: 404, json: { detail: "Not found" } });
+    return route.fulfill({
+      headers: { "Cache-Control": "private, no-store" },
+      json: {
+        display_name: "Ines Valdez",
+        job_title: null,
+        avatar_url: null,
+        email: null,
+        phone: null,
+        bio: null,
+      },
+    });
+  });
+  await adminPage.goto("/comms");
+  const tool = await openTool(adminPage, "Join requests");
+  await expect(
+    tool
+      .getByRole("article", { name: "Request from Ines Valdez", exact: true })
+      .filter({ hasText: "#private-dispatch" }),
+  ).toBeVisible();
+  await expect(
+    tool.getByRole("article", {
+      name: "Request from Unavailable person",
+      exact: true,
+    }),
+  ).toBeVisible();
+  // Loaded members keep their names without a card read.
+  await expect(
+    tool.getByRole("article", { name: "Request from Noah Tan", exact: true }),
+  ).toBeVisible();
+  await expect(tool.getByText(/Not from the card/)).toHaveCount(0);
+  expect([...new Set(reads.map((read) => read.id))].sort()).toEqual([
+    outsider,
+    refused,
+  ]);
+  expect(reads.every((read) => read.org === owner.org_id)).toBe(true);
+  expect(directory).toEqual([]);
+});
+
 test("a member requests to join a private channel from its link and the admin queue shows the request", async ({
   page,
   context,

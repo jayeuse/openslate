@@ -43,9 +43,12 @@ function clearCards(
   }
 }
 
-/** Resolve only absent, already-known author IDs through the shared D36 card cache. */
+/**
+ * Resolve only absent, already-known author IDs through the shared D36 card cache.
+ * Any org-bound row that names a person (a message author, an admission user) fits.
+ */
 export function useCommsMessageAuthors(
-  messages: readonly Message[],
+  messages: readonly Pick<Message, "org_id" | "author_id">[],
   people: readonly Person[],
 ) {
   const { client, scope } = useCommsClient();

@@ -6,6 +6,7 @@ import { FieldGroup } from "@/components/ui/field";
 import { NativeSelectOption } from "@/components/ui/native-select";
 import { Choice } from "../../shared/components/ui";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
+import { useCommsMessageAuthors } from "../state/use-comms-message-authors";
 import { complete } from "../state/workspace-view";
 import {
   messageFromCommsError,
@@ -49,6 +50,13 @@ export function AdmissionTools({
           ),
         )
       ).flat(),
+  );
+  // Requesters are not members yet: name them through the authorized person card.
+  const requesters = useCommsMessageAuthors(
+    (resource.data ?? [])
+      .filter((row) => row.kind === "request" && row.status === "pending")
+      .map((row) => ({ org_id: row.org_id, author_id: row.user_id })),
+    people,
   );
   async function decide(row: Admission, decision: "accept" | "decline") {
     setError("");
@@ -121,6 +129,7 @@ export function AdmissionTools({
           .map((row) => {
             const name =
               people.find((person) => person.id === row.user_id)?.name ??
+              requesters.get(row.user_id) ??
               "Unavailable person";
             return (
               <article

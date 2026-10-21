@@ -1,11 +1,14 @@
 """D36 delta; existing card/PII/avatar route tests stay intact."""
 
+from datetime import UTC, datetime
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import event
 
 from app.systems.access.users.person_visibility import visible_person, visible_person_ids
 from app.systems.boards.models import Board
+from app.systems.comms.admissions.models import CommsAdmission
 from tests.rbac.support import add_module, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -130,3 +133,57 @@ def test_bounded_person_set_filters_candidates_without_per_person_policy_queries
     c.actor.status = "disabled"
     db.flush()
     assert visible_person_ids(db, c.actor, {c.peer.id}) == set()
+
+
+def test_pending_admission_shows_the_person_only_to_current_managers_of_that_channel(policy_case):
+    c, db = policy_case, policy_case.db
+    channel = c.conversation()
+    manager = c.member(channel, c.actor, role="manager")
+    plain = c.person("Plain channel member")
+    c.member(channel, plain)
+    other = c.person("Other channel manager")
+    c.member(c.conversation(), other, role="manager")
+    hidden(db, c.actor, c.peer)
+
+    def admission(kind="request"):
+        row = CommsAdmission(
+            org_id=c.org.id, conversation_id=channel.id, user_id=c.peer.id, kind=kind,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    def resolve(row, status):
+        row.status, row.resolved_at = status, datetime.now(UTC)
+        db.flush()
+
+    request = admission()
+    assert visible_person(db, c.actor, c.peer.id).id == c.peer.id
+    assert visible_person_ids(db, c.actor, {c.peer.id, c.world.second.peer}) == {c.peer.id}
+    # Plain members, managers of another channel and the requester gain nothing.
+    hidden(db, plain, c.peer)
+    hidden(db, other, c.peer)
+    hidden(db, c.peer, c.actor)
+    manager.role = "member"
+    db.flush()
+    hidden(db, c.actor, c.peer)
+    manager.role = "manager"
+    db.flush()
+    resolve(request, "declined")
+    hidden(db, c.actor, c.peer)
+    accepted = admission()
+    resolve(accepted, "accepted")
+    joined = c.member(channel, c.peer)
+    assert visible_person(db, c.actor, c.peer.id).id == c.peer.id
+    joined.is_deleted = True
+    db.flush()
+    hidden(db, c.actor, c.peer)
+    # A manager invites any member, so an invitation must not reveal them.
+    invited = admission(kind="invitation")
+    hidden(db, c.actor, c.peer)
+    resolve(invited, "declined")
+    admission()
+    assert visible_person(db, c.actor, c.peer.id).id == c.peer.id
+    channel.is_deleted = True
+    db.flush()
+    hidden(db, c.actor, c.peer)
