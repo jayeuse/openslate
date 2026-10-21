@@ -17,7 +17,7 @@ The integration work has four phases. This plan covers Phase 1 only.
 | Phase | Content |
 |---|---|
 | **1. Foundation (this plan)** | Image upgrade, authentication hardening (H1, H2), multi-organization tenancy, organization scope in every subsystem, Storage buckets and avatars, the Realtime service with one authenticated private channel |
-| 2. OpenComms | Chat, presence, typing, chat attachments (separate plan, on hold) |
+| 2. OpenComms | Backend chat/presence/typing/attachment and private Realtime contracts implemented under the separate OpenComms plan; remaining frontend cutover and S32 integrated/performance acceptance are pending |
 | 3. Cloud launch | Supabase Cloud target, self-serve signup, plans and limits, operator console, Google and Microsoft sign-in, platform metrics |
 | 4. Installer hardening | Passkeys and the local CA, Supabase Logs on-premise, the higher host specification, the Docker-or-native runtime test |
 
@@ -318,6 +318,23 @@ Acceptance: a file from organization A cannot be read with a request in organiza
 
 ### 5.8 W8. Realtime (S11, S12)
 
+**Current OpenComms extension:** the steps below preserve the foundation spike's
+history, not the complete current browser contract. Self-hosted candidate A is
+implemented. Production Caddy and the development frontend launcher now provide
+the exact-origin WebSocket-only path and inject the gateway key server-side;
+the browser supplies no `apikey` URL parameter. FastAPI maintains expiring
+conversation grants and validates private publication envelopes. Request-buffered
+notifications publish after commit and response completion; resource-owned durable
+jobs submit committed events after closing their own SQL session, independently of
+a triggering HTTP response, including manual Send Now. Neither path retains a
+session or pooled connection through HTTP publication. Both use the separate
+private listener.
+Comms topics are browser read-only; the foundation probe-write exception is not
+an application messaging permission. See the [current Realtime boundary](../../infra/supabase/PLAN.md#realtime-boundary)
+and [API contracts](../architecture/07-api-architecture.md). Complete S32
+browser/provider-pack/capacity and Linux/Windows/release acceptance are still
+deferred; this addendum does not mark the original final acceptance complete.
+
 **S11 — service.**
 1. Add the `realtime` service to `compose.yaml` at the D29 version. Follow the upstream service definition (`SECRET_KEY_BASE`, `DB_ENC_KEY`, `SEED_SELF_HOST`), with one change: do not copy the fixed `container_name` that upstream uses to encode the tenant. A fixed name is global on the Docker host, so the 3 local and 5 CI disposable stacks would collide. Set the tenant host name with a host rewrite on the Envoy route instead. Prove it against the `PROVIDER_IMAGES` and `compose ps` exact-match check (`disposable_instance.py:290-301`). Generate the new secrets in `supabase_keys.py`, and add their names to `PROVIDER_KEYS` (`scripts/environment.py:65-94`).
 2. Add a gateway route `/realtime/v1/` with the WebSocket upgrade. Add it to the Lua apikey check (`lds:402-404`), the RBAC apikey policy (`:504-525`), and `cds.yaml`.
@@ -436,15 +453,15 @@ Source values: **Owner** (answers of 2026-10-15), **Default** (proposed, stands 
 | D13 | Migration root | New single root replaces 20 revisions; documented exception in `migrations/AGENTS.md`; revision tests retired with consolidation evidence | Owner (resets allowed) | S04 |
 | D14 | Admin lock and last admin | Per organization: advisory lock `pg_advisory_xact_lock(0x4F534144, hashtext(org_id))`; the last-admin count is per organization | Amended (S07) | S07 |
 | D15 | Mixed and per-user tables | `security_events.org_id` nullable for pre-organization events; avatars are account files; `backup-failed` notifications go to operators; lifecycle buckets keyed by organization and actor; identity buckets stay account-level | Exploration | S04, S08 |
-| D16 | SSE | One stream per tab bound to one organization; payload and viewer carry `org_id`; a switch reconnects | Default | S09 |
+| D16 | SSE | Foundation streams bind one organization; payload/viewer carry `org_id`. OpenComms S27 consolidates connection ownership per verified account/organization through Web Locks/BroadcastChannel, with per-tab fallback when unavailable; this grants no content authority | Foundation default; extended by OpenComms S27 | S09 |
 | D17 | Buckets | `openslate-ready` with `org/<org_id>/<uuid>`; `openslate-avatars` with `user/<user_id>/<uuid>`; no `storage.objects` policies for `anon` or `authenticated` | Default | S10 |
 | D18 | Upload limit | 10 MiB in validation, middleware, and bucket limit; logos and avatars 2 MiB; global Storage limit 50 MiB. Done in S10 | Owner (10 MB) | S10 |
 | D19 | Thumbnails | FastAPI makes 64 and 256 pixel thumbnails with Pillow. Digest verification stays on the original bytes. No dependency on Storage image transformation, so the Cloud free plan works | Amended (S10) | S10 |
 | D20 | PostgREST | Remove; if storage does not start without it, keep it internal and blocked | Exploration | S01 |
 | D21 | Vault | Not in this phase: GoTrue reads SMTP from its environment, and no SQL consumer exists; keep Fernet for provider tokens | Exploration (changes the earlier default) | — |
-| D22 | Realtime service | Upstream definition at the D29 version; tenant seeded for self-hosting; gateway route `/realtime/v1/` | Default | S11 |
-| D23 | Realtime token | Spike: A first (FastAPI ES256 key in `JWT_JWKS`, 5-minute token, `purpose: realtime`), then B; Cloud check is an owner action, else unverified | Exploration | S12 |
-| D24 | Realtime topic names | `org:<org_id>:<kind>:<id>`; Phase 2 adds kinds | Default | S12 |
+| D22 | Realtime service | Pinned self-hosted tenant; current browser ingress is the exact `/realtime/v1/websocket` upgrade through Caddy/development launcher. Private server publication is a separate listener, not a public Realtime REST route | Implemented boundary; acceptance remains separate | S11, OpenComms |
+| D23 | Realtime token | Self-hosted candidate A implemented: FastAPI ES256, five-minute `purpose: realtime` token bound to local user/org; public verification key in `JWT_JWKS`. Cloud imported-key compatibility remains unverified; no automatic switch to candidate B | Implemented self-hosted; Cloud deferred | S12 |
+| D24 | Realtime topic names | `org:<org>:conversation:<id>` uses FastAPI's expiring grants projection; `org:<org>:user:<id>` is own-user only; `org:<org>:presence` is organization-bound. Comms topics are private/browser read-only; the foundation `probe` remains separate | Extended by OpenComms | S12, OpenComms |
 | D25 | Sample packs | One organization per pack; Harbor and School in one install | Default | S16 |
 | D26 | Theme before sign-in | Slate, or the last organization theme cached in the browser | Default | S13 |
 | D27 | H1 budget | 5 wrong codes in 15 minutes per account, then 15 minutes cooldown; per-source budget 20 in 15 minutes; each failure committed in its own transaction | Default | S02 |
@@ -496,7 +513,7 @@ The owner answered the S07 checkpoint on 2026-10-16. The priority stays on-premi
 
 The design must allow these without schema changes to the Phase 1 tables. None of them adds a column in Phase 1.
 
-- **Phase 2 (OpenComms):** chat tables with `org_id`, Realtime topics under D24, presence on `org:<id>:presence`, chat attachments in `openslate-ready`. Re-check OpenComms decisions D6, D7, D20, and slices S20 and S27 against D23.
+- **Phase 2 (OpenComms):** organization-scoped chat tables, D24 private topics, HTTP-authorized presence/typing and private `openslate-ready` attachments are implemented. SSE remains for other application invalidations. Ordinary private readability, report-only moderation and privileged export are distinct purposes; Realtime grants do not bypass current content reads. Remaining S31 labeled memory tools are temporary UI scope, not absent backend APIs. S32 full browser/provider-pack/load proof and final JS acceptance after that tools removal are still pending; service implementation is not completion of those measurements.
 - **Phase 3 (Cloud launch):** signup that creates an account with no membership (D06); organization creation by users; plans and limits per organization; the operator console on `platform_operators`; Google and Microsoft identities linked to one account; the Cloud target and its test matrix; organization-branded email (D36).
 - **Phase 4 (installer):** passkeys and the local CA; Supabase Logs on-premise; the host specification from the D30 figures; the Docker-or-native runtime test.
 

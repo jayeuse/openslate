@@ -79,7 +79,7 @@ Examples of in-scope problems: a login or session bypass; access to a module or 
 | Behavior that needs `ENVIRONMENT=development` with a loopback bind | Development removes some limits on purpose. See `docs/architecture/14-security-architecture.md`. |
 | Attacks from another process or user on the developer's own machine | Development trusts the local host. |
 | Malware detection in uploaded files | Content scanning is not a feature of OpenSlate. |
-| Simulated OpenComms templates, settings history and join-request tools | These explicitly labeled tools use an isolated browser-local example workspace. Live conversations, messages, profiles and file access remain in scope. |
+| Explicitly labeled OpenComms example tools remaining during the S31 cutover | Only their isolated browser-local example state is excluded. Implemented template/history/admission APIs, live conversations, messages, profiles, exports and file access remain in scope even when a UI tool is still simulated. |
 | Attacks that need the installation owner or host access | That person already controls the installation. An administrator of one organization who reaches another organization's data is in scope. |
 | Infrastructure that the operator changes or runs: host, Docker, network, TLS certificates | The operator owns these. A flaw in the shipped default configuration is in scope. |
 | Problems in Supabase, PostgreSQL, or another upstream project | Report them to that project. |
@@ -88,6 +88,32 @@ Examples of in-scope problems: a login or session bypass; access to a module or 
 | Server operation on Windows or macOS | These are not supported server targets yet. |
 | Older commits, forks, and modified code | Only `main` is supported. |
 | Denial of service by volume | Report it only if one small request causes large damage. |
+
+### Current OpenComms runtime boundary
+
+FastAPI owns Comms content and current organization/conversation authorization.
+Ordinary private-conversation readability is not granted by administrator status
+alone (D43). Report-bound removal/restoration accepts no request body and returns
+only report metadata, not a private message projection. Export is a separate
+exact-administrator purpose (D31), with fresh password confirmation and a recorded
+reason for private sources; it does not confer ordinary conversation read access.
+
+Comms uses private Realtime topics for opaque invalidations and minimal
+presence/typing signals; other application pages retain authenticated SSE.
+Browsers receive Comms events but cannot publish authoritative messages or track
+presence directly through those topics. Application changes still use authorized
+HTTP routes. Server publication is bounded, best effort and post-commit.
+Request-buffered events wait for response completion. Resource-owned durable
+jobs submit their committed events after closing their own SQL session, without
+waiting for a triggering HTTP response, including manual Send Now. Neither path
+retains a session or pooled connection through HTTP publication; this is not a
+database-atomic delivery guarantee.
+
+These are implemented boundaries, not a claim of complete S32 browser/provider,
+capacity, release-gate or Linux/Windows acceptance. The remaining labeled example
+tools do not narrow the security scope of their implemented backend counterparts.
+See [API contracts](docs/architecture/07-api-architecture.md) and
+[operator ingress/publication boundaries](infra/supabase/README.md#opencomms-ingress-and-private-publication).
 
 ## Good faith
 
@@ -201,6 +227,11 @@ last-reviewed: 2026-10-17
 | Private bucket; downloads as attachments with `nosniff` | `docs/architecture/14-security-architecture.md` |
 | `AuditSession` for every application mutation; no bulk or raw ORM changes | `docs/architecture/10-audit-and-history.md` |
 | Organization isolation: `org_id` on organization tables; membership of the bound organization (`resolve_membership`, `get_current_membership`, `bound_membership_join`); row-level security on `openslate.org_id` | `backend/app/common/dependencies/auth.py`, `backend/app/core/database/organization_scope.py`, migration `f5a100021193`, `backend/tests/access/test_membership_join_guard.py` |
-| Realtime: only `/realtime/v1/websocket` with a header `apikey`; 5-minute ES256 token (`purpose: realtime`) that Supabase Auth, FastAPI, and Storage refuse; RLS on `realtime.messages` through `can_join_realtime_topic` | `backend/app/systems/platform/realtime/`, migration `071607de0f40`, `backend/operations/provision_database_role.py`, `infra/supabase/PLAN.md` |
+| Comms ordinary content uses current organization/conversation authority; report-bound moderation is bodyless/report-only; privileged export never grants ordinary private readability | `backend/app/systems/comms/access.py`, `backend/app/systems/comms/moderation/{router,schemas}.py`, `backend/app/systems/comms/jobs/{protected,export_service,exports}.py` |
+| Realtime tokens: five-minute ES256 `purpose: realtime`, bound to the local account and organization; not application/Auth/Storage content credentials | `backend/app/systems/platform/realtime/`, `backend/operations/provision_database_role.py` |
+| Private topic joins: current membership plus expiring FastAPI grants projection for `org:<org>:conversation:<id>`; own `org:<org>:user:<id>` and organization `presence`; no arbitrary suffixes. Content revocation is immediate; existing ID-only subscriptions are bounded by token expiry | `backend/app/systems/comms/realtime/grants.py`, migrations `071607de0f40`, `8410bb7874ff` |
+| Browser Comms topics are read-only; the retained foundation `probe` write policy is not a Comms send/typing/presence permission | `backend/operations/provision_database_role.py`, `backend/app/systems/comms/realtime/router.py` |
+| Private publish wrapper validates bound actor/org and opaque envelopes and discards rollbacks. Request-buffered events publish after the response; durable jobs submit after their own commit/session close without waiting for a triggering HTTP response. Neither retains a session/pooled connection through HTTP publication; never send message bodies or credentials | `backend/app/systems/comms/realtime/{envelopes,publication,publisher}.py`, `backend/app/systems/comms/jobs/schedule_worker.py` |
+| Browser ingress is exact-origin `/realtime/v1/websocket` only, with the gateway key injected as a header, never supplied in the URL. Private publisher listener 8001 is separate and unpublished in production; its development loopback mapping still requires the server key | `infra/caddy/Caddyfile.template`, `frontend/tooling/run-next.mjs`, `infra/supabase/upstream/envoy/lds.template.yaml`, `infra/supabase/compose.{dev,production}.yaml` |
 | No secret reaches the browser bundle; provider bootstrap secrets (`DATABASE_BOOTSTRAP_URL`, `POSTGRES_PASSWORD`, the JWT signing keys) stay out of the API env | `docs/architecture/17-configuration.md` |
 | SHA-pinned Actions; least-privilege token permissions; no checkout of pull-request code under `pull_request_target` | `.github/workflows/` |
