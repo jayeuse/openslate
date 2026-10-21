@@ -8,10 +8,11 @@ import {
 } from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
 import { createMemorySeed } from "../support/comms-memory/memory/seed";
-import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
-import type { MemorySnapshot } from "../support/comms-memory/memory/store-types";
-import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
-import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
+import {
+  createMemoryCommsRuntime,
+  type MemoryCommsRuntime,
+} from "../support/comms-memory/memory-client";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
 
 async function setup(
   page: Page,
@@ -28,15 +29,14 @@ async function setup(
   });
   state.users[owner.user_id].personal.notifications.desktop_notifications =
     false;
-  const key = workspaceSessionSnapshotStorageKey(owner.user_id, owner.org_id);
-  const value = serializeSampleSessionSnapshot(
-    owner.user_id,
-    { "comms-memory-v1": { format: 1, owner, state } },
-    owner.org_id,
-  );
+  const runtime = createMemoryCommsRuntime({ owner, initial: state });
+  await installCommsLiveApi(page, {
+    userId: owner.user_id,
+    organizationId: owner.org_id,
+    runtime,
+  });
   await page.addInitScript(
-    ({ key, value, permission }) => {
-      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, value);
+    ({ permission }) => {
       const count = (name: string) =>
         sessionStorage.setItem(
           name,
@@ -69,7 +69,7 @@ async function setup(
         count("sound-emissions");
       };
     },
-    { key, value, permission },
+    { permission },
   );
   const prefs = profilePreferences(owner.user_id);
   await page.route(`**/api/users/${owner.user_id}/preferences`, (route) =>
@@ -81,7 +81,11 @@ async function setup(
       },
     }),
   );
-  return { owner, key, conversation: Object.keys(state.conversations)[0] };
+  return {
+    owner,
+    runtime,
+    conversation: Object.keys(state.conversations)[0],
+  };
 }
 async function openPreferences(page: Page) {
   await page
@@ -106,13 +110,11 @@ const requests = (page: Page) =>
   page.evaluate(() =>
     Number(sessionStorage.getItem("permission-requests") ?? 0),
   );
-const snapshot = (page: Page, key: string): Promise<MemorySnapshot> =>
-  page.evaluate(
-    (key) => JSON.parse(sessionStorage.getItem(key)!).values["comms-memory-v1"],
-    key,
-  );
-async function keywordCount(page: Page, key: string) {
-  const saved = await snapshot(page, key);
+/** The server's saved Comms world, read back after the browser's commands. */
+const snapshot = (data: { runtime: MemoryCommsRuntime }) =>
+  data.runtime.exportSnapshot();
+async function keywordCount(data: { runtime: MemoryCommsRuntime }) {
+  const saved = snapshot(data);
   const sender = Object.values(saved.state.people).find(
     (person) => person.display_name === "Noah Tan",
   )!;
@@ -165,8 +167,8 @@ test("desktop permission is requested only by explicit enable and never emits al
     .click();
   await expect(dialog).toBeHidden();
   expect(
-    (await snapshot(page, data.key)).state.users[data.owner.user_id].personal
-      .notifications.desktop_notifications,
+    snapshot(data).state.users[data.owner.user_id].personal.notifications
+      .desktop_notifications,
   ).toBe(true);
   await page.reload();
   await openPreferences(page);
@@ -207,8 +209,8 @@ for (const permission of ["denied", "error", "unavailable"] as const)
       .click();
     await expect(dialog).toBeHidden();
     expect(
-      (await snapshot(page, data.key)).state.users[data.owner.user_id].personal
-        .notifications.desktop_notifications,
+      snapshot(data).state.users[data.owner.user_id].personal.notifications
+        .desktop_notifications,
     ).toBe(true);
   });
 
@@ -241,8 +243,7 @@ test("regional quiet hours and keyword preferences persist while conversation no
     .click();
   await expect(dialog).toBeHidden();
   expect(
-    (await snapshot(page, data.key)).state.users[data.owner.user_id].personal
-      .notifications,
+    snapshot(data).state.users[data.owner.user_id].personal.notifications,
   ).toMatchObject({
     notification_mode: "mentions",
     keywords: ["dispatch"],
@@ -253,7 +254,7 @@ test("regional quiet hours and keyword preferences persist while conversation no
     notification_preview: false,
     notify_followed_threads: false,
   });
-  expect(await keywordCount(page, data.key)).toBe(1);
+  expect(await keywordCount(data)).toBe(1);
   for (const [label, value] of [
     ["Mentions", "mentions"],
     ["Mute", "mute"],
@@ -267,11 +268,12 @@ test("regional quiet hours and keyword preferences persist while conversation no
     await expect
       .poll(
         async () =>
-          (await snapshot(page, data.key)).state.users[data.owner.user_id]
-            .conversations[data.conversation]?.notify,
+          snapshot(data).state.users[data.owner.user_id].conversations[
+            data.conversation
+          ]?.notify,
       )
       .toBe(value);
-    if (value === "mute") expect(await keywordCount(page, data.key)).toBe(0);
+    if (value === "mute") expect(await keywordCount(data)).toBe(0);
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
     await expect(

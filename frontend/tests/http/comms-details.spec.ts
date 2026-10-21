@@ -245,7 +245,15 @@ test("thread follow copy resolve reopen and also-send use the existing client", 
 test("jump to first unread follows a crossposted reply into its one-level thread", async ({
   page,
 }) => {
-  await seedDetails(page, { long: true, crosspostUnread: true });
+  const data = await seedDetails(page, { long: true, crosspostUnread: true });
+  await installCommsLiveApi(page, {
+    userId: data.owner.user_id,
+    organizationId: data.owner.org_id,
+    runtime: createMemoryCommsRuntime({
+      owner: data.owner,
+      initial: data.initial,
+    }),
+  });
   await page.goto("/comms");
   await page
     .getByRole("button", { name: "Jump to first unread", exact: true })
@@ -265,6 +273,14 @@ test("thread settings keep the draft while locked and show archived state indepe
   page,
 }) => {
   const data = await seedDetails(page);
+  await installCommsLiveApi(page, {
+    userId: data.owner.user_id,
+    organizationId: data.owner.org_id,
+    runtime: createMemoryCommsRuntime({
+      owner: data.owner,
+      initial: data.initial,
+    }),
+  });
   await page.goto(
     `/comms?conversation=${data.conversation}&thread=${data.thread}`,
   );

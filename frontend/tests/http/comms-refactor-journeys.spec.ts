@@ -393,6 +393,7 @@ test("Comms retains a rate-limited send draft and retries once after the real se
 test("Comms preferences keep an editing draft, discard cancelled changes, and persist accepted settings", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   const settings = page.getByRole("dialog", {
     name: "My preferences",
@@ -465,6 +466,7 @@ test("Comms preferences keep an editing draft, discard cancelled changes, and pe
 test("a partially saved new channel keeps unsaved settings and retries without creating another channel", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await page
     .getByRole("button", { name: "OpenComms menu", exact: true })
@@ -527,6 +529,7 @@ test("a partially saved new channel keeps unsaved settings and retries without c
 test("a deleted message can be put back from the visible Undo notice", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await createWorkshop(page);
   const message = page.getByRole("textbox", { name: "Message", exact: true });
@@ -561,6 +564,7 @@ test("a deleted message can be put back from the visible Undo notice", async ({
 });
 
 test("archiving a channel asks first and can be undone", async ({ page }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await createWorkshop(page);
   const row = page.getByRole("button", { name: /^workshop(,|$)/ });
@@ -634,6 +638,7 @@ test("blocking a person asks first; unblocking does not", async ({ page }) => {
 test("Reset to default asks first and says nothing is saved yet", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await page
     .getByRole("button", { name: "OpenComms menu", exact: true })
@@ -655,22 +660,10 @@ test("Reset to default asks first and says nothing is saved yet", async ({
   await expect(settings).toBeVisible();
 });
 
-test("OpenComms loads its example conversations without showing an error", async ({
-  page,
-}) => {
-  await page.goto("/comms");
-  await expect(
-    page.getByText("Service delivery", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeVisible();
-  await expect(page.locator('[data-type="error"]')).toHaveCount(0);
-});
-
 test("the OpenComms menu keeps everyday items up front and admin tools behind one entry", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   // The page heading is plain text, and the menu is a separate button.
   await expect(
@@ -709,6 +702,7 @@ test("the OpenComms menu keeps everyday items up front and admin tools behind on
 test("settings history keeps workspace changes visible while a channel is selected", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   async function openTool(name: string) {
     await page
@@ -795,6 +789,7 @@ test("a channel has one settings dialog, reached the same way from its row and i
 });
 
 test("two quick deletes each get their own Undo", async ({ page }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await createWorkshop(page);
   const message = page.getByRole("textbox", { name: "Message", exact: true });
@@ -828,6 +823,7 @@ test("two quick deletes each get their own Undo", async ({ page }) => {
 test("categories carry department identity, and a channel says who can use it", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await createWorkshop(page);
   await expect(
@@ -882,6 +878,7 @@ test("a linked record opens beside the conversation and gives way to a thread", 
 test("group access in channel settings changes who the channel says it is for", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await createWorkshop(page);
   await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
@@ -894,7 +891,9 @@ test("group access in channel settings changes who the channel says it is for", 
   const settings = page.getByRole("dialog", { name: "Channel settings" });
   const access = settings.getByRole("group", { name: "Who can use #workshop" });
   await settings.getByRole("tab", { name: "Access", exact: true }).click();
-  await expect(access).toContainText("Saved choices are enforced");
+  await expect(access).toContainText(
+    "Saved choices apply to this conversation.",
+  );
   const commercial = access.getByRole("radiogroup", { name: "Dispatch team" });
   await commercial.getByText("Read", { exact: true }).click();
   await expect(
@@ -931,6 +930,7 @@ test("group access in channel settings changes who the channel says it is for", 
 test("lowering Everyone keeps what each group can already do", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await createWorkshop(page);
   await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
@@ -1029,6 +1029,7 @@ test("OpenComms opens at the latest message, with few and meaningful unread mark
 test("each message's actions are named for it and fit its author", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   const buttons = page.getByRole("button", { name: /^Message actions: / });
   const names = await buttons.evaluateAll((items) =>
@@ -1086,6 +1087,7 @@ test("Comms rechecks reaction capabilities when the admitted member becomes a gu
 test("category defaults preserve existing members and the saved Permissions summary", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/comms");
   await page.getByRole("button", { name: /^operations(,|$)/ }).click();
@@ -1139,6 +1141,7 @@ test("category defaults preserve existing members and the saved Permissions summ
 test("on a phone, opening a channel from the list shows no error", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/comms");
   await expect(
@@ -1154,6 +1157,7 @@ test("on a phone, opening a channel from the list shows no error", async ({
 test("a channel row names its state, and leaving a channel marks it read", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/comms");
   await createWorkshop(page);

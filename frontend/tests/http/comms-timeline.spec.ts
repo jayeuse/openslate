@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/test";
+import { expect, heldResponse, test } from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
 import {
   readTimelineSnapshot,
@@ -9,32 +9,19 @@ import {
 test("Comms shows Sending until its real send receipt is released", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    const race = Promise.race.bind(Promise);
-    Promise.race = <T>(values: Iterable<T | PromiseLike<T>>) =>
-      race<T>(values).then((result) => {
-        const receipt =
-          result && typeof result === "object" && "value" in result
-            ? result.value
-            : result;
-        if (
-          receipt &&
-          typeof receipt === "object" &&
-          "message" in receipt &&
-          receipt.message &&
-          typeof receipt.message === "object" &&
-          "body" in receipt.message &&
-          receipt.message.body === "Held send receipt"
-        )
-          return new Promise<Awaited<T>>((resolve) =>
-            window.addEventListener(
-              "release-comms-receipt",
-              () => resolve(result),
-              { once: true },
-            ),
-          );
-        return result;
-      });
+  await seedTimeline(page, 5);
+  // Hold the server's answer to this one send: the receipt the composer awaits.
+  const receipt = heldResponse();
+  await page.route("**/api/comms/conversations/*/messages", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "POST" &&
+      request.postDataJSON().body === "Held send receipt"
+    ) {
+      receipt.enter();
+      await receipt.released;
+    }
+    await route.fallback();
   });
   await page.goto("/comms");
   const input = page.getByRole("textbox", { name: "Message", exact: true });
@@ -42,9 +29,7 @@ test("Comms shows Sending until its real send receipt is released", async ({
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(page.getByText("Sending…", { exact: true })).toBeVisible();
   await expect(input).toHaveValue("Held send receipt");
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("release-comms-receipt")),
-  );
+  receipt.release();
   await expect(input).toHaveValue("");
   await expect(page.getByText("Sending…", { exact: true })).toHaveCount(0);
 });
@@ -90,6 +75,7 @@ test("Comms sparse history puts the unread divider at the actual first unread se
 test("Comms edit Save and Cancel restore focus to the message action", async ({
   page,
 }) => {
+  await seedTimeline(page, 5);
   await page.goto("/comms");
   await page
     .getByRole("textbox", { name: "Message", exact: true })

@@ -272,6 +272,9 @@ for (const surface of ["direct", "switcher"] as const) {
       await dialog
         .getByRole("combobox", { name: "Add person", exact: true })
         .click();
+      await page
+        .getByRole("combobox", { name: "Search add person", exact: true })
+        .fill("Noah Tan");
       await page.getByRole("option", { name: "Noah Tan", exact: true }).click();
     }
     const sizes = await dialog
@@ -508,6 +511,9 @@ test("Comms starts a group from visible people, keeps the actor, and persists ca
     await dialog
       .getByRole("combobox", { name: "Add person", exact: true })
       .click();
+    await page
+      .getByRole("combobox", { name: "Search add person", exact: true })
+      .fill(name);
     await page.getByRole("option", { name, exact: true }).click();
   }
   await dialog
@@ -527,10 +533,12 @@ test("Comms starts a group from visible people, keeps the actor, and persists ca
   await page
     .getByRole("menuitem", { name: "Move category up", exact: true })
     .click();
-  await page.reload();
   const categories = page
     .getByRole("complementary", { name: "Conversations", exact: true })
     .getByRole("button", { name: /^(Planning|Service delivery).*Operations/ });
+  // The move saves over HTTP; reload only after the saved order is shown.
+  await expect(categories).toHaveText([/Planning/, /Service delivery/]);
+  await page.reload();
   await expect(categories).toHaveText([/Planning/, /Service delivery/]);
   await expect(
     page.getByRole("heading", { name: "Dispatch planning", exact: true }),

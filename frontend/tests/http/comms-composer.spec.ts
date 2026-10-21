@@ -8,7 +8,8 @@ import {
 } from "./helpers/test";
 import { createMemorySeed } from "../support/comms-memory/memory/seed";
 import { validateMemoryState } from "../support/comms-memory/memory/snapshot";
-import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
+import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 import type { Settings } from "../../src/components/systems/comms/contract/types";
 import { profilePreferences } from "./helpers/profile-api";
@@ -46,19 +47,18 @@ async function seedComposer(
     },
   };
   validateMemoryState(state, owner.org_id);
-  const key = workspaceSessionSnapshotStorageKey(owner.user_id, owner.org_id);
-  const value = serializeSampleSessionSnapshot(
-    owner.user_id,
-    { "comms-memory-v1": { format: 1, owner, state } },
-    owner.org_id,
-  );
-  await page.addInitScript(
-    ({ key, value }) => {
-      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, value);
-    },
-    { key, value },
-  );
-  return { key, noah: noah.user_id };
+  const runtime = createMemoryCommsRuntime({ owner, initial: state });
+  await installCommsLiveApi(page, {
+    userId: owner.user_id,
+    organizationId: owner.org_id,
+    runtime,
+  });
+  return {
+    runtime,
+    // Read only by the scheduled-draft journey until it reads the runtime.
+    key: workspaceSessionSnapshotStorageKey(owner.user_id, owner.org_id),
+    noah: noah.user_id,
+  };
 }
 
 test("composer mentions only current members and keeps the draft above the mention limit", async ({
@@ -94,25 +94,18 @@ test("composer mentions only current members and keeps the draft above the menti
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(input).toHaveValue("");
   const mentionsFor = (body: string) =>
-    page.evaluate(
-      ({ key, body }) => {
-        const messages: { body: string; mention_user_ids: string[] }[] =
-          Object.values(
-            JSON.parse(sessionStorage.getItem(key)!).values["comms-memory-v1"]
-              .state.messages,
-          );
-        return messages.find((message) => message.body === body)
-          ?.mention_user_ids;
-      },
-      { key: fixture.key, body },
-    );
-  expect(await mentionsFor("Hello @Noah Tan")).toEqual([fixture.noah]);
+    Object.values(fixture.runtime.exportSnapshot().state.messages).find(
+      (message) => message.body === body,
+    )?.mention_user_ids;
+  await expect
+    .poll(() => mentionsFor("Hello @Noah Tan"))
+    .toEqual([fixture.noah]);
   await input.fill("@Noah");
   await page.getByRole("option", { name: "Noah Tan", exact: true }).click();
   await input.fill("@Noah Tancredi");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(input).toHaveValue("");
-  expect(await mentionsFor("@Noah Tancredi")).toEqual([]);
+  await expect.poll(() => mentionsFor("@Noah Tancredi")).toEqual([]);
 });
 
 test("composer inserts emoji at the caret, edits its last message and cancels a quote without losing text", async ({

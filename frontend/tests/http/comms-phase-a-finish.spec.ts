@@ -14,8 +14,7 @@ import { profilePreferences } from "./helpers/profile-api";
 import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
 import { createMemorySeed } from "../support/comms-memory/memory/seed";
 import { validateMemoryState } from "../support/comms-memory/memory/snapshot";
-import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
-import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
 
 // The rectangle regression below runs normally. Visual capture tasks alone are
 // opt-in and refuse existing directories so they cannot overwrite reviewed images.
@@ -152,18 +151,15 @@ async function seedFinish(page: Page) {
     runtime.dispose();
   }
   validateMemoryState(snapshot.state, owner.org_id);
-  const key = workspaceSessionSnapshotStorageKey(owner.user_id, owner.org_id);
-  const value = serializeSampleSessionSnapshot(
-    owner.user_id,
-    { "comms-memory-v1": snapshot },
-    owner.org_id,
-  );
-  await page.addInitScript(
-    ({ key, value }) => {
-      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, value);
-    },
-    { key, value },
-  );
+  const server = createMemoryCommsRuntime({ owner, initial, snapshot });
+  // A refused snapshot falls back to the bare seed; never test that silently.
+  if (server.restoration !== "restored")
+    throw new Error(`Finish snapshot was ${server.restoration}`);
+  await installCommsLiveApi(page, {
+    userId: owner.user_id,
+    organizationId: owner.org_id,
+    runtime: server,
+  });
   return { conversation, thread, record, root: root.id, removed };
 }
 
