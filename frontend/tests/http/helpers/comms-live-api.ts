@@ -29,6 +29,8 @@ export async function installCommsLiveApi(
     runtime?: MemoryCommsRuntime;
     workspaceEvents?: boolean;
     messageStore?: LiveMessage[];
+    empty?: boolean;
+    uncategorized?: boolean;
   } = {},
 ) {
   if (options.workspaceEvents !== false)
@@ -54,18 +56,27 @@ export async function installCommsLiveApi(
     summary?.conversation.id ?? "94000000-0000-4000-8000-000000000000";
   const context = {
     ...owner,
-    categories: initial.categories,
-    conversations: summary
-      ? [
-          {
-            ...summary,
-            conversation: {
-              ...summary.conversation,
-              name: options.channelName ?? "live-operations",
+    categories:
+      options.empty || options.uncategorized ? [] : initial.categories,
+    conversations:
+      summary && !options.empty
+        ? [
+            {
+              ...summary,
+              conversation: {
+                ...summary.conversation,
+                name: options.channelName ?? "live-operations",
+                ...(options.uncategorized &&
+                summary.conversation.kind === "channel"
+                  ? { category_id: null }
+                  : {}),
+              },
+              ...(options.uncategorized
+                ? { preferences: { ...summary.preferences, starred: false } }
+                : {}),
             },
-          },
-        ]
-      : [],
+          ]
+        : [],
   };
   const histories: URL[] = [];
   const writes: string[] = [];
@@ -82,9 +93,9 @@ export async function installCommsLiveApi(
   let tokenRequests = 0;
   const typingRequests: string[] = [];
   const presenceStates = new Map<string, "online" | "away" | "offline">();
-  const members = (
-    await memory.client.listMembers(room, { limit: 100, offset: 0 })
-  ).items;
+  const members = summary
+    ? (await memory.client.listMembers(room, { limit: 100, offset: 0 })).items
+    : [];
   let postAllowed = true,
     channelLocked = false;
   const id = (seq: number) =>
@@ -315,6 +326,16 @@ export async function installCommsLiveApi(
     };
     if (request.headers()["x-org"] !== owner.org_id) return route.fallback();
     try {
+      if (path === "/capabilities/channel-creation") {
+        const kind = url.searchParams.get("scope_kind");
+        return reply(
+          await memory.client.getChannelCreationCheck(
+            kind === "category"
+              ? { kind, id: url.searchParams.get("category_id")! }
+              : { kind: "workspace" },
+          ),
+        );
+      }
       if (options.runtime) {
         const client = memory.client,
           method = request.method();
@@ -430,16 +451,6 @@ export async function installCommsLiveApi(
             201,
             result.etag,
             `/api/comms/conversations/${result.data.id}`,
-          );
-        }
-        if (path === "/capabilities/channel-creation") {
-          const kind = url.searchParams.get("scope_kind");
-          return reply(
-            await client.getChannelCreationCheck(
-              kind === "category"
-                ? { kind, id: url.searchParams.get("category_id")! }
-                : { kind: "workspace" },
-            ),
           );
         }
         const scoped = path.match(/^\/conversations\/([^/]+)(.*)$/);

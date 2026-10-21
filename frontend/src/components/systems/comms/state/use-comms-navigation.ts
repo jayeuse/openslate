@@ -28,6 +28,11 @@ export function useCommsNavigationState(
   const requestNavigation = useWorkspaceNavigationRequest();
   const { client } = useCommsClient();
   const [navigating, startNavigation] = useTransition();
+  // A refused row is unavailable, not an empty workspace. Keep only its id.
+  const [lastImplicit, setLastImplicit] = useState(firstConversation);
+  useEffect(() => {
+    if (firstConversation) setLastImplicit(firstConversation);
+  }, [firstConversation]);
   const query = useSearchParams();
   const view = ["threads", "activity", "inbox", "browse"].includes(
     query.get("view") ?? "",
@@ -71,7 +76,7 @@ export function useCommsNavigationState(
     linkedMessage?.conversation ??
     linked.data?.conversation_id ??
     linkedThread?.conversation ??
-    (messageId || query.has("thread") ? "" : firstConversation);
+    (messageId || query.has("thread") ? "" : firstConversation || lastImplicit);
   const threadId =
     query.get("thread") ??
     (linkedMessage?.parentId

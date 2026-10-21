@@ -6,10 +6,16 @@ import {
 } from "../domain/configuration";
 import { useCommsWorkspaceView } from "./use-comms-workspace";
 import { useCommsClient } from "./client-context";
+import { useCommsRead } from "./runtime";
 
 export function useCommsConversation(selected: string) {
   const workspace = useCommsWorkspaceView();
   const { client } = useCommsClient();
+  const creation = useCommsRead(
+    "channel-creation:workspace",
+    (client, signal) =>
+      client.getChannelCreationCheck({ kind: "workspace" }, { signal }),
+  );
   const viewerId = useVerifiedWorkspaceUserId();
   const channel = workspace.channels.find((item) => item.id === selected);
   const direct = workspace.directs.find((item) => item.id === selected);
@@ -46,8 +52,12 @@ export function useCommsConversation(selected: string) {
     canPost,
     menuAccess: {
       canManageChannel: check?.capabilities.manageChannel.allowed ?? false,
-      canCreate: check?.capabilities.createChannel.allowed ?? false,
-      canAdminister: check?.capabilities.manageWorkspace.allowed ?? false,
+      canCreate:
+        creation.data?.decision.allowed === true ||
+        (check?.capabilities.createChannel.allowed ?? false),
+      canAdminister:
+        creation.data?.membership_role === "admin" ||
+        (check?.capabilities.manageWorkspace.allowed ?? false),
     },
     identity: {
       people: workspace.people,

@@ -2,6 +2,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useUserPreferences } from "@/components/theme-provider";
+import { Empty, EmptyDescription } from "@/components/ui/empty";
 import { commsShortcutAction } from "@/lib/shortcuts";
 import {
   useWorkspaceNavigationGuard,
@@ -197,6 +198,19 @@ function CommsScreen({
             select={actions.select}
             openThread={actions.openThread}
           />
+        ) : !navigation.selected &&
+          !navigation.messageId &&
+          !navigation.threadId ? (
+          <Empty
+            role="region"
+            aria-label="Choose a conversation"
+            className="h-full"
+          >
+            <h2 className="text-sm font-semibold">Choose a conversation</h2>
+            <EmptyDescription>
+              Select a channel or start a direct conversation.
+            </EmptyDescription>
+          </Empty>
         ) : (
           <ConversationView
             conversation={conversation}

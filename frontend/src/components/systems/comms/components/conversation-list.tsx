@@ -58,6 +58,12 @@ export function ConversationList({
       row.name.toLowerCase().includes(search.toLowerCase()),
   );
   const starred = visible.filter((row) => row.preferences.starred);
+  const uncategorized = visible.filter(
+    (item) =>
+      item.conversation.kind === "channel" &&
+      !item.conversation.category_id &&
+      !item.preferences.starred,
+  );
   const row = (item: SidebarRow) => (
     <ConversationRow
       key={item.conversation.id}
@@ -299,14 +305,14 @@ export function ConversationList({
               </Collapsible>
             );
           })}
-          {visible
-            .filter(
-              (item) =>
-                item.conversation.kind === "channel" &&
-                !item.conversation.category_id &&
-                !item.preferences.starred,
-            )
-            .map(row)}
+          {uncategorized.length > 0 && (
+            <section aria-label="Channels" className="mb-4">
+              <h2 className="text-muted-foreground px-2 py-2 text-xs font-semibold">
+                Channels
+              </h2>
+              {uncategorized.map(row)}
+            </section>
+          )}
           {menuAccess.canCreate && (
             <Action
               variant="ghost"
