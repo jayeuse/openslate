@@ -1,5 +1,11 @@
 "use client";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { useNotificationPermission } from "../state/use-notification-permission";
@@ -87,7 +93,103 @@ export interface CommsSettingsDialogProps {
   initialTab?: string;
 }
 
-export function CommsSettingsDialog({
+export function CommsSettingsDialog(props: CommsSettingsDialogProps) {
+  const { requestCatalog, retryCatalog, catalogStatus } = useCommsClient();
+  const personal = props.scope === "personal";
+  const target: CommsScope =
+    props.scope === "personal"
+      ? { kind: "workspace", id: "workspace" }
+      : props.scope;
+  const [initialLocks, setInitialLocks] = useState<C.Capability[] | null>(null);
+  const admission = useCommsRead(
+    `settings-admission:${personal ? "personal" : `${target.kind}:${target.id}`}`,
+    async (client, signal) => {
+      if (personal || props.onSaveMetadata || target.kind === "category")
+        return true;
+      return target.kind === "channel"
+        ? (await client.getCapabilities(target.id, { signal })).capabilities
+            .manageChannel.allowed
+        : (
+            await client.getChannelCreationCheck(
+              { kind: "workspace" },
+              { signal },
+            )
+          ).membership_role === "admin";
+    },
+  );
+  const locks = useCommsRead(
+    "capability-locks",
+    (client, signal) => client.getCapabilityLocks({ signal }),
+    !personal && admission.data === true && initialLocks === null,
+  );
+  useEffect(() => {
+    if (!personal && admission.data && initialLocks === null)
+      requestCatalog?.();
+  }, [personal, admission.data, initialLocks, requestCatalog]);
+  useLayoutEffect(() => {
+    if (initialLocks !== null || !admission.data) return;
+    if (personal) setInitialLocks([]);
+    else if (
+      locks.data &&
+      (catalogStatus === undefined || catalogStatus === "ready")
+    )
+      setInitialLocks(locks.data.data.capabilities);
+  }, [initialLocks, admission.data, personal, locks.data, catalogStatus]);
+  if (initialLocks === null) {
+    const error = admission.error || locks.error || catalogStatus === "error";
+    return (
+      <ConfigurationFrame
+        title={
+          props.title ??
+          (personal
+            ? "My preferences"
+            : target.kind === "workspace"
+              ? "Workspace settings"
+              : `${target.kind === "channel" ? "Channel" : "Category"} settings`)
+        }
+        opener={props.opener}
+        onClose={props.onClose}
+      >
+        <div className="p-5">
+          <Alert
+            role={error || admission.data === false ? "alert" : "status"}
+            variant={
+              error || admission.data === false ? "destructive" : "default"
+            }
+          >
+            {error
+              ? "Settings data could not be loaded. Try again."
+              : admission.data === false
+                ? "You cannot manage settings for this scope."
+                : "Loading settings data…"}
+          </Alert>
+          {error && (
+            <Action
+              onClick={() => {
+                admission.reload();
+                if (!personal && admission.data) {
+                  if (locks.error) locks.reload();
+                  if (catalogStatus === "error") retryCatalog?.();
+                }
+              }}
+            >
+              Try again
+            </Action>
+          )}
+        </div>
+      </ConfigurationFrame>
+    );
+  }
+  return (
+    <LoadedCommsSettingsDialog
+      {...props}
+      admission={admission}
+      initialCapabilityLocks={initialLocks}
+    />
+  );
+}
+
+function LoadedCommsSettingsDialog({
   scope,
   channels,
   categories,
@@ -105,7 +207,12 @@ export function CommsSettingsDialog({
   onAfterSave,
   saveLabel,
   initialTab,
-}: CommsSettingsDialogProps) {
+  admission,
+  initialCapabilityLocks,
+}: CommsSettingsDialogProps & {
+  admission: ReturnType<typeof useCommsRead<boolean>>;
+  initialCapabilityLocks: C.Capability[];
+}) {
   const userId = useVerifiedWorkspaceUserId();
   const region = useWorkspaceDisplayRegion();
   const browserPermission = useNotificationPermission();
@@ -116,23 +223,6 @@ export function CommsSettingsDialog({
   const target: CommsScope = personal
     ? { kind: "workspace", id: "workspace" }
     : scope;
-  const admission = useCommsRead(
-    `settings-admission:${personal ? "personal" : `${target.kind}:${target.id}`}`,
-    async (client, signal) => {
-      // Editors retain their existing entry checks and per-command admission.
-      // URL-only settings must not expose write controls from a readable scope.
-      if (personal || onSaveMetadata || target.kind === "category") return true;
-      return target.kind === "channel"
-        ? (await client.getCapabilities(target.id, { signal })).capabilities
-            .manageChannel.allowed
-        : (
-            await client.getChannelCreationCheck(
-              { kind: "workspace" },
-              { signal },
-            )
-          ).membership_role === "admin";
-    },
-  );
   const [baseline] = useState(() =>
     structuredClone(getCommsScope(config, target)),
   );
@@ -143,7 +233,7 @@ export function CommsSettingsDialog({
   const [preferences, setPreferences] = useState(initialPreferences);
   const [initialLocks] = useState({
     settings: config.lockedSettings,
-    capabilities: config.lockedCapabilities,
+    capabilities: initialCapabilityLocks,
   });
   const [lockedSettings, setLockedSettings] = useState(initialLocks.settings);
   const [lockedCapabilities, setLockedCapabilities] = useState(

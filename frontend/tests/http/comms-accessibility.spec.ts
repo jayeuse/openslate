@@ -13,6 +13,10 @@ test("connection feedback delays reconnecting and recovers without losing a draf
 }) => {
   await seedTimeline(page, 12);
   const server = timelineServer(page);
+  // The long fake-clock journey exercises normal activity renewal as well.
+  await page.route("**/api/auth/refresh", (route) =>
+    route.fulfill({ status: 204 }),
+  );
   await page.clock.install();
   await page.goto("/comms");
   await expect(

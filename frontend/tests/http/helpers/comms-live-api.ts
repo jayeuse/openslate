@@ -31,6 +31,7 @@ export async function installCommsLiveApi(
     messageStore?: LiveMessage[];
     empty?: boolean;
     uncategorized?: boolean;
+    role?: "admin" | "member" | "guest";
   } = {},
 ) {
   if (options.workspaceEvents !== false)
@@ -44,7 +45,7 @@ export async function installCommsLiveApi(
     createMemoryCommsRuntime({
       owner,
       initial: createMemorySeed(owner, {
-        role: "admin",
+        role: options.role ?? "admin",
         display_name: "HTTP fixture owner",
       }),
     });

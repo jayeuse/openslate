@@ -26,6 +26,18 @@ export function createLiveCommsRuntime(
   const observers = new Set<EventObserver>();
   const lastTyping = new Map<string, number>();
   let connection: ConnectionState = { state: "connecting" };
+  let connectedOnce = false,
+    receivedHeartbeat = false;
+  const hasReadModel = () =>
+    cache
+      .getQueryCache()
+      .findAll({ queryKey: scope.keys.all })
+      .some(
+        (query) =>
+          query.queryKey[5] === "read" &&
+          String(query.queryKey[4]).startsWith("workspace") &&
+          query.state.data !== undefined,
+      );
   let refreshing: Promise<void> | undefined;
   const refreshReads = async () => {
     scope.signal.throwIfAborted();
@@ -61,9 +73,13 @@ export function createLiveCommsRuntime(
     on_connection(state) {
       if (scope.signal.aborted) return;
       const recovered = state.state === "live" && connection.state !== "live";
+      // Before the initial read completes there is no displayed snapshot to
+      // repair. Late first connections and every reconnect still resynchronize.
+      const repair = recovered && (connectedOnce || hasReadModel());
       connection = state;
+      if (state.state === "live") connectedOnce = true;
       observers.forEach((observer) => observer.on_connection(state));
-      if (recovered) void refresh().catch(failure);
+      if (repair) void refresh().catch(failure);
     },
     on_error(error) {
       if (!scope.signal.aborted)
@@ -145,7 +161,9 @@ export function createLiveCommsRuntime(
         scope.context,
         observer,
         (receipt) => {
-          void bridge.heartbeat(receipt).catch(failure);
+          const repair = receivedHeartbeat || hasReadModel();
+          receivedHeartbeat = true;
+          if (repair) void bridge.heartbeat(receipt).catch(failure);
         },
       );
     },

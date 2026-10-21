@@ -2,7 +2,6 @@ import type { CommsViewClient as CommsClient } from "../contract/client";
 import type * as C from "../contract/types";
 import type { Person } from "../../shared/data/sample-people";
 import type { SampleRecord } from "../../shared/data/sample-data";
-import type { CommsGroup } from "../domain/groups";
 import { loadQuotes, messageView } from "./message-view";
 import {
   type Category,
@@ -36,7 +35,7 @@ export async function complete<T>(
 export async function loadWorkspace(
   client: CommsClient,
   signal: AbortSignal,
-  groups: CommsGroup[],
+  includeRecords: boolean,
 ) {
   const options = { signal };
   const bootstrap = await client.bootstrap(options);
@@ -56,9 +55,6 @@ export async function loadWorkspace(
   config.workspace.capabilities = (
     await client.getCapabilityConfiguration({ kind: "workspace" }, options)
   ).data;
-  config.lockedCapabilities = (
-    await client.getCapabilityLocks(options)
-  ).data.capabilities;
   function resolved(response: C.SettingsResponse) {
     return {
       values: {
@@ -188,12 +184,9 @@ export async function loadWorkspace(
           return undefined;
         throw error;
       }),
-      client.getSettings(
-        room.kind === "channel"
-          ? { kind: "channel", id: room.id }
-          : { kind: "workspace" },
-        options,
-      ),
+      room.kind === "channel"
+        ? client.getSettings({ kind: "channel", id: room.id }, options)
+        : Promise.resolve(workspaceSettings),
     ]);
     members[room.id] = roomMembers;
     if (check) checks[room.id] = check;
@@ -210,9 +203,7 @@ export async function loadWorkspace(
             : "conversation-member",
         departments: member.departments.map((department) => department.name),
         primary: member.departments[0]?.name ?? "",
-        groupIds: groups
-          .filter((group) => group.memberIds.includes(member.user_id))
-          .map((group) => group.id),
+        groupIds: [],
         title: "",
         activity: [],
       });
@@ -281,9 +272,13 @@ export async function loadWorkspace(
     ).items)
       presence[item.user_id] = item.state;
   }
-  const blocks = await complete((offset) =>
-    client.listDirectBlocks({ limit: 100, offset }, options),
-  );
+  const blocks = bootstrap.conversations.some(
+    (row) => row.conversation.kind === "direct",
+  )
+    ? await complete((offset) =>
+        client.listDirectBlocks({ limit: 100, offset }, options),
+      )
+    : [];
   for (const direct of directs) {
     const source = bootstrap.conversations.find(
       (row) => row.conversation.id === direct.id,
@@ -295,9 +290,11 @@ export async function loadWorkspace(
       );
   }
   // These complete metadata consumers must not silently become a timeline page.
-  for (const hit of await complete((offset) =>
-    client.search({ has: "record", limit: 100, offset }, options),
-  )) {
+  for (const hit of includeRecords
+    ? await complete((offset) =>
+        client.search({ has: "record", limit: 100, offset }, options),
+      )
+    : []) {
     const message = await client.getMessage(
       hit.conversation_id,
       hit.message_id,

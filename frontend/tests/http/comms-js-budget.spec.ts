@@ -24,9 +24,9 @@ const gzip = {
   memLevel: 8,
   strategy: constants.Z_DEFAULT_STRATEGY,
 };
-// The strict S04 target stays deferred to S31; this fix uses committed S28's baseline.
+// The strict S04 target stays deferred to S31; this group uses the shell fix's baseline.
 const s04BaselineColdGzipBytes = 546_979;
-const baselineColdGzipBytes = 578_534;
+const baselineColdGzipBytes = 578_709;
 const maximumColdGzipBytes = Math.floor(baselineColdGzipBytes * 1.05);
 
 function manifestChunks(value: unknown): string[] {
@@ -202,10 +202,10 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
     const growthPercent = (growthBytes / baselineColdGzipBytes) * 100;
 
     const report = {
-      budget_slice: "live-cutover-shell",
-      previous_committed_slice: "S28@cd6ea7c8",
+      budget_slice: "live-cutover-query",
+      previous_committed_slice: "shell-fix@10ea057b",
       comparison:
-        "Recorded S28 closure measurement, not a newly measured baseline",
+        "Recorded shell-fix closure measurement, not a newly measured baseline",
       strict_cap_deferred_to: "S31",
       strict_cap_met: cold.gzip_bytes < s04BaselineColdGzipBytes,
       s04_baseline_cold_gzip_bytes: s04BaselineColdGzipBytes,

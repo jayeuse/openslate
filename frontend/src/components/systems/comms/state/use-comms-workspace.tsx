@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { createCommsConfiguration } from "../domain/configuration-model";
 import type {
@@ -47,18 +48,22 @@ const empty = {
 
 export function useCommsWorkspace() {
   const binding = useCommsClient();
+  const params = useSearchParams();
+  const includeRecords =
+    binding.scope?.kind === "example-tools" ||
+    params.get("panel")?.startsWith("record:") === true;
   const requiredRead = useRef(0);
   const acceptedRead = useRef<{
     client: CommsWorkspace["client"];
     epoch: number;
   } | null>(null);
   const [lastGood, setLastGood] = useState<CommsWorkspace>();
-  const key = `workspace:${binding.groups.map((group) => group.id).join(",")}`;
+  const key = includeRecords ? "workspace:records" : "workspace";
   const resource = useCommsRead(key, async (client, signal) => {
     // Capture at start: a read already in flight cannot admit a later change.
     const readEpoch = requiredRead.current;
     return {
-      ...(await loadWorkspace(client, signal, binding.groups)),
+      ...(await loadWorkspace(client, signal, includeRecords)),
       readEpoch,
     };
   });
@@ -104,6 +109,17 @@ export function useCommsWorkspace() {
       on_error() {},
     });
   }, [data, binding.client, binding.scope, resource.reload]);
+  const displayed = data ?? lastGood ?? empty;
+  const people = useMemo(
+    () =>
+      displayed.people.map((person) => ({
+        ...person,
+        groupIds: binding.groups
+          .filter((group) => group.memberIds.includes(person.id))
+          .map((group) => group.id),
+      })),
+    [displayed.people, binding.groups],
+  );
   return {
     commsResource: {
       ...resource,
@@ -120,7 +136,8 @@ export function useCommsWorkspace() {
     // Retained only to preserve mounted drafts. The page conceals this tree
     // until the current binding has produced an authorized read model.
     workspace: {
-      ...(data ?? lastGood ?? empty),
+      ...displayed,
+      people,
       invalidateTypingRead,
       isTypingReadCurrent,
     },

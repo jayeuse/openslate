@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authMeOptions } from "../../openview/adapters/openview-queries";
 import {
   listAccessGroups,
@@ -31,6 +31,7 @@ import type { Bootstrap } from "../contract/types";
 import type { CommsGroup } from "../domain/groups";
 import { complete } from "./workspace-view";
 import { clearCommsDraftTextStore } from "./draft-text";
+import { managedDepartmentIds } from "../../openview/domain/manage-access";
 
 export type CommsClientState = {
   organizationName: string | undefined;
@@ -47,6 +48,9 @@ export type CommsClientState = {
   bootstrap: Bootstrap | undefined;
   error: string;
   reload: () => void;
+  requestCatalog?: () => void;
+  retryCatalog?: () => void;
+  catalogStatus?: "idle" | "loading" | "error" | "ready";
 };
 const ClientContext = createContext<CommsClientState | null>(null);
 export const CommsClientStateProvider = ClientContext.Provider;
@@ -80,6 +84,9 @@ function OwnedClient({
   const [runtime, setRuntime] = useState<LiveCommsRuntime | null>(null);
   const [error, setError] = useState("");
   const [generation, setGeneration] = useState(0);
+  const [catalogOwner, setCatalogOwner] = useState<CommsViewClient | null>(
+    null,
+  );
   const reload = useCallback(() => setGeneration((value) => value + 1), []);
   const role = identity.data?.currentOrganization?.role;
   const organization = identity.data?.currentOrganization?.orgId;
@@ -148,21 +155,22 @@ function OwnedClient({
       ? runtime
       : null;
   const bootstrap = useQuery({
-    queryKey: admitted?.scope.keys.bootstrap ?? [
-      "comms",
-      userId,
-      orgId,
-      "bootstrap",
-    ],
-    queryFn: admitted?.scope.bootstrapOptions().queryFn,
+    ...(admitted?.scope.bootstrapOptions() ?? {
+      queryKey: ["comms", "unadmitted", "unadmitted", "bootstrap"] as const,
+      queryFn: skipToken,
+    }),
     enabled: !!admitted,
   });
+  const catalogRequested = !!admitted && catalogOwner === admitted.client;
+  const requestCatalog = useCallback(() => {
+    if (admitted) setCatalogOwner(admitted.client);
+  }, [admitted]);
   const catalog = useQuery({
     queryKey: [
       ...(admitted?.scope.keys.all ?? ["comms-unadmitted", userId, orgId]),
       "catalog",
     ],
-    enabled: !!admitted && !!bootstrap.data,
+    enabled: catalogRequested,
     queryFn: ({ signal }) => {
       if (!admitted) throw new Error("Organization is not admitted");
       return admitted.scope.read(
@@ -170,10 +178,13 @@ function OwnedClient({
         async (signal) => {
           if (currentOrganizationId() !== orgId)
             throw new DOMException("Organization changed", "AbortError");
+          const managed = managedDepartmentIds(identity.data);
           const [groups, departments, modules] = await Promise.all([
-            complete((offset) =>
-              listAccessGroups({ limit: 100, offset, signal }),
-            ),
+            managed === "all" || managed.size > 0
+              ? complete((offset) =>
+                  listAccessGroups({ limit: 100, offset, signal }),
+                )
+              : [],
             complete((offset) =>
               listAccessDepartments({ limit: 100, offset, signal }),
             ),
@@ -214,8 +225,8 @@ function OwnedClient({
           identity.data?.currentOrganization?.orgId === orgId
             ? identity.data.currentOrganization.name
             : undefined,
-        groups: admitted ? (catalog.data?.groups ?? []) : [],
-        catalog: admitted
+        groups: catalogRequested ? (catalog.data?.groups ?? []) : [],
+        catalog: catalogRequested
           ? (catalog.data?.catalog ?? emptyCatalog)
           : emptyCatalog,
         generation,
@@ -229,6 +240,17 @@ function OwnedClient({
             ? "Conversations could not be loaded. Try again."
             : ""),
         reload,
+        requestCatalog,
+        retryCatalog: () => {
+          void catalog.refetch();
+        },
+        catalogStatus: !catalogRequested
+          ? "idle"
+          : catalog.isError
+            ? "error"
+            : catalog.data
+              ? "ready"
+              : "loading",
       }}
     >
       {children}
