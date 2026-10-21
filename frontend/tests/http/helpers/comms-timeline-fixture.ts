@@ -3,8 +3,6 @@ import { createMemorySeed } from "../../support/comms-memory/memory/seed";
 import { validateMemoryState } from "../../support/comms-memory/memory/snapshot";
 import { createMemoryCommsRuntime } from "../../support/comms-memory/memory-client";
 import type { MemorySnapshot } from "../../support/comms-memory/memory/store-types";
-import { serializeSampleSessionSnapshot } from "../../../src/components/systems/shared/runtime/sample-state";
-import { workspaceSessionSnapshotStorageKey } from "../../../src/components/systems/shared/runtime/workspace-identity";
 import { defaultOrganization, signedInAs } from "./test";
 import { installCommsLiveApi } from "./comms-live-api";
 
@@ -122,18 +120,6 @@ export async function seedTimeline(
       runtime.dispose();
     }
   }
-  const key = workspaceSessionSnapshotStorageKey(owner.user_id, owner.org_id);
-  const value = serializeSampleSessionSnapshot(
-    owner.user_id,
-    { "comms-memory-v1": snapshot },
-    owner.org_id,
-  );
-  await page.addInitScript(
-    ({ key, value }) => {
-      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, value);
-    },
-    { key, value },
-  );
   const server = createMemoryCommsRuntime({ owner, initial, snapshot });
   liveFixtures.set(page, server);
   liveServers.set(
@@ -152,7 +138,5 @@ export async function seedTimeline(
     newest50: Array.from({ length: Math.min(50, count) }, (_, index) =>
       timelineId(count - Math.min(50, count) + index + 1),
     ),
-    serializedCharacters: value.length,
-    storageKey: key,
   };
 }

@@ -5,12 +5,16 @@ import {
   signedInAs,
   defaultOrganization,
   expectNoHorizontalScroll,
+  heldResponse,
 } from "./helpers/test";
 import { createMemorySeed } from "../support/comms-memory/memory/seed";
 import { validateMemoryState } from "../support/comms-memory/memory/snapshot";
 import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
-import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
+import {
+  createCommsTestClock,
+  type CommsTestClock,
+} from "./helpers/comms-world";
 import type { Settings } from "../../src/components/systems/comms/contract/types";
 import { profilePreferences } from "./helpers/profile-api";
 
@@ -20,6 +24,7 @@ async function seedComposer(
   page: Page,
   settings: Partial<Settings> = {},
   role: "admin" | "member" = "admin",
+  clock?: CommsTestClock,
 ) {
   const owner = {
     user_id: "00000000-0000-4000-8000-000000000101",
@@ -47,18 +52,17 @@ async function seedComposer(
     },
   };
   validateMemoryState(state, owner.org_id);
-  const runtime = createMemoryCommsRuntime({ owner, initial: state });
-  await installCommsLiveApi(page, {
+  const runtime = createMemoryCommsRuntime(
+    { owner, initial: state },
+    clock ? { clock: clock.now } : {},
+  );
+  const server = await installCommsLiveApi(page, {
     userId: owner.user_id,
     organizationId: owner.org_id,
     runtime,
+    clock: clock?.now,
   });
-  return {
-    runtime,
-    // Read only by the scheduled-draft journey until it reads the runtime.
-    key: workspaceSessionSnapshotStorageKey(owner.user_id, owner.org_id),
-    noah: noah.user_id,
-  };
+  return { runtime, server, noah: noah.user_id };
 }
 
 test("composer mentions only current members and keeps the draft above the mention limit", async ({
@@ -234,22 +238,18 @@ test("composer pastes a file with real per-file progress and rejects an unsuppor
   page,
 }) => {
   await seedComposer(page);
-  await page.addInitScript(() => {
-    const read = Blob.prototype.arrayBuffer;
-    Blob.prototype.arrayBuffer = function (this: Blob) {
-      if (this instanceof File && this.name === "clipboard.png")
-        return new Promise<ArrayBuffer>((resolve, reject) =>
-          window.addEventListener(
-            "release-upload",
-            () => {
-              void read.call(this).then(resolve, reject);
-            },
-            { once: true },
-          ),
-        );
-      return read.call(this);
-    };
-  });
+  // Hold the file bytes upload so its in-flight progress is observable.
+  const upload = heldResponse();
+  await page.route(
+    "**/api/comms/conversations/*/files/*/content",
+    async (route) => {
+      if (route.request().method() === "PUT") {
+        upload.enter();
+        await upload.released;
+      }
+      await route.fallback();
+    },
+  );
   await page.goto("/comms");
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   await input.fill("Keep upload draft");
@@ -279,7 +279,7 @@ test("composer pastes a file with real per-file progress and rejects an unsuppor
   await expect(
     page.getByRole("button", { name: "Send message", exact: true }),
   ).toBeDisabled();
-  await page.evaluate(() => window.dispatchEvent(new Event("release-upload")));
+  upload.release();
   await expect(
     page.getByRole("button", { name: "Remove clipboard.png", exact: true }),
   ).toBeVisible();
@@ -307,37 +307,13 @@ for (const [status, code, copy] of [
   test(`composer preserves its draft after upload ${code}`, async ({
     page,
   }) => {
-    await seedComposer(page);
-    await page.addInitScript(
-      ({ status, code }) => {
-        const race = Promise.race.bind(Promise);
-        let refused = false;
-        Promise.race = <T>(values: Iterable<T | PromiseLike<T>>) =>
-          race<T>(values).then((result) => {
-            const value =
-              result && typeof result === "object" && "value" in result
-                ? result.value
-                : null;
-            if (
-              !refused &&
-              value &&
-              typeof value === "object" &&
-              "filename" in value &&
-              value.filename === "blocked.png"
-            ) {
-              refused = true;
-              throw Object.assign(new Error("Owned upload refusal"), {
-                kind: "http",
-                failure: {
-                  status,
-                  body: { detail: { code, message: "Owned upload refusal" } },
-                },
-              });
-            }
-            return result;
-          });
-      },
-      { status, code },
+    const { server } = await seedComposer(page);
+    // The server refuses the first file reservation; the retry reserves again.
+    server.failNext(
+      /^\/conversations\/[^/]+\/files$/,
+      status,
+      { detail: { code, message: "Owned upload refusal" } },
+      "POST",
     );
     await page.goto("/comms");
     const input = page.getByRole("textbox", { name: "Message", exact: true });
@@ -363,11 +339,15 @@ test("composer counts down slow mode without discarding the waiting draft", asyn
   page,
 }) => {
   await page.clock.install({ time: new Date("2026-10-20T12:00:00Z") });
-  await seedComposer(page, { slow_mode_seconds: 6 });
+  // The fake server stamps and checks slow mode on this clock, not Node's.
+  const clock = createCommsTestClock(page, "2026-10-20T12:00:00Z");
+  await seedComposer(page, { slow_mode_seconds: 6 }, "admin", clock);
   await page.goto("/comms");
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   const send = page.getByRole("button", { name: "Send message", exact: true });
   await input.fill("First accepted message");
+  // Page time flows after install; the server clock moves only when told.
+  clock.set(await page.evaluate(() => Date.now()));
   await send.click();
   await expect(input).toHaveValue("");
   await input.fill("Waiting draft");
@@ -375,12 +355,12 @@ test("composer counts down slow mode without discarding the waiting draft", asyn
     page.getByText("Send available in 6s", { exact: true }),
   ).toBeVisible();
   await expect(send).toBeDisabled();
-  await page.clock.runFor(3000);
+  await clock.runFor(3000);
   await expect(
     page.getByText("Send available in 3s", { exact: true }),
   ).toBeVisible();
   await expect(input).toHaveValue("Waiting draft");
-  await page.clock.runFor(4000);
+  await clock.runFor(4000);
   await expect(send).toBeEnabled();
   await send.click();
   await expect(input).toHaveValue("");
@@ -390,7 +370,12 @@ test("composer schedules a record-linked draft through the existing client", asy
   page,
 }) => {
   await page.clock.setFixedTime(new Date("2026-10-20T12:00:00Z"));
-  const fixture = await seedComposer(page);
+  const fixture = await seedComposer(
+    page,
+    {},
+    "admin",
+    createCommsTestClock(page, "2026-10-20T12:00:00Z"),
+  );
   await page.goto("/comms");
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   await input.fill("Scheduled from the composer");
@@ -414,21 +399,15 @@ test("composer schedules a record-linked draft through the existing client", asy
     .getByRole("button", { name: "Schedule message", exact: true })
     .click();
   await expect(input).toHaveValue("");
-  const scheduled = await page.evaluate(({ key }) => {
-    const rows: {
-      status: string;
-      request: { body: string; record_ids: string[]; send_at: string };
-    }[] = Object.values(
-      JSON.parse(sessionStorage.getItem(key)!).values["comms-memory-v1"].state
-        .schedules,
-    );
-    return rows.map(({ status, request }) => ({
+  // The input clears only after the server accepted and stored the schedule.
+  const scheduled = Object.values(fixture.server.snapshot().schedules).map(
+    ({ status, request }) => ({
       status,
       body: request.body,
       records: request.record_ids.length,
       send_at: request.send_at,
-    }));
-  }, fixture);
+    }),
+  );
   expect(scheduled).toEqual([
     {
       status: "pending",

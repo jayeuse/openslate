@@ -11,8 +11,10 @@ import type { Page } from "@playwright/test";
 import { createMemorySeed } from "../support/comms-memory/memory/seed";
 import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
-import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
-import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
+import {
+  createCommsTestClock,
+  type CommsTestClock,
+} from "./helpers/comms-world";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 async function seedSidebar(
@@ -20,6 +22,7 @@ async function seedSidebar(
   role: "admin" | "member" | "guest" = "admin",
   directAllowed = true,
   scenario?: "nonmembers" | "empty",
+  options: { clock?: CommsTestClock; notifications?: boolean } = {},
 ) {
   await signedInAs(page, { id: userId, role });
   const owner = { user_id: userId, org_id: defaultOrganization.org_id };
@@ -109,24 +112,17 @@ async function seedSidebar(
     initial.high_water_seq = {};
     initial.users[userId].notifications = [];
   }
-  const key = workspaceSessionSnapshotStorageKey(userId, owner.org_id);
-  const value = serializeSampleSessionSnapshot(
-    userId,
-    { "comms-memory-v1": { format: 1, owner, state: initial } },
-    owner.org_id,
-  );
-  await page.addInitScript(
-    ({ key, value }) => {
-      if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, value);
-    },
-    { key, value },
-  );
-  await installCommsLiveApi(page, {
+  const server = await installCommsLiveApi(page, {
     userId,
     organizationId: owner.org_id,
-    runtime: createMemoryCommsRuntime({ owner, initial }),
+    runtime: createMemoryCommsRuntime(
+      { owner, initial },
+      options.clock ? { clock: options.clock.now } : {},
+    ),
+    clock: options.clock?.now,
+    notifications: options.notifications,
   });
-  return { channel: channel.id, second };
+  return { channel: channel.id, second, server };
 }
 async function rowAction(page: Page, name: string, action: string) {
   await page
@@ -194,7 +190,9 @@ for (const scenario of ["nonmembers", "empty"] as const) {
 test("S06 correction tomorrow mute uses organization midnight rather than device or personal zone", async ({
   page,
 }) => {
-  await seedSidebar(page);
+  // The fake server reads mutes on the same fixed time as the page.
+  const clock = createCommsTestClock(page, "2026-10-19T12:00:00Z");
+  await seedSidebar(page, "admin", true, undefined, { clock });
   await page.clock.setFixedTime(new Date("2026-10-19T12:00:00Z"));
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
@@ -231,6 +229,7 @@ test("S06 correction tomorrow mute uses organization midnight rather than device
     .click();
   for (const instant of ["2026-10-19T15:59:00Z", "2026-10-19T16:01:00Z"]) {
     await page.clock.setFixedTime(new Date(instant));
+    clock.set(instant);
     await page.reload();
     for (const name of ["operations", "deliveries"]) {
       const row = page.getByRole("button", { name: new RegExp(`^${name},`) });
@@ -548,7 +547,7 @@ test("Comms starts a group from visible people, keeps the actor, and persists ca
 test("Comms Activity reads real stored notifications and removes a deleted source", async ({
   page,
 }) => {
-  await seedSidebar(page);
+  await seedSidebar(page, "admin", true, undefined, { notifications: true });
   await page.goto("/comms");
   await page.getByRole("button", { name: "Activity", exact: true }).click();
   const activity = page.getByRole("region", { name: "Activity", exact: true });
@@ -575,7 +574,7 @@ test("Comms Activity reads real stored notifications and removes a deleted sourc
 test("Comms keeps a refused group draft and applies a newly admitted guest role", async ({
   page,
 }) => {
-  await seedSidebar(page, "admin", true, "empty");
+  const { server } = await seedSidebar(page, "admin", true, "empty");
   await page.goto("/comms");
   await page
     .getByRole("button", { name: "Start direct message", exact: true })
@@ -594,14 +593,19 @@ test("Comms keeps a refused group draft and applies a newly admitted guest role"
     await dialog
       .getByRole("combobox", { name: "Add person", exact: true })
       .click();
+    await page
+      .getByRole("combobox", { name: "Search add person", exact: true })
+      .fill(name);
     await page.getByRole("option", { name, exact: true }).click();
   }
   // An administrator can choose these people without shared conversations.
-  // Fresh member admission removes that eligibility while preserving the draft.
+  // Fresh member admission removes that eligibility while preserving the draft;
+  // the search-first picker keeps the names it showed at selection.
   await signedInAs(page, { id: userId, role: "member" });
+  server.setRole("member");
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   await expect(
-    dialog.getByRole("button", { name: "Remove person", exact: true }),
+    dialog.getByRole("button", { name: /^Remove (Noah Tan|Sofia Garcia)$/ }),
   ).toHaveCount(2);
   await dialog
     .getByRole("button", { name: "Start conversation", exact: true })
@@ -611,12 +615,13 @@ test("Comms keeps a refused group draft and applies a newly admitted guest role"
     dialog.getByRole("textbox", { name: "Group name", exact: true }),
   ).toHaveValue("Keep this group draft");
   await expect(
-    dialog.getByRole("button", { name: "Remove person", exact: true }),
+    dialog.getByRole("button", { name: /^Remove (Noah Tan|Sofia Garcia)$/ }),
   ).toHaveCount(2);
   await expect(
     page.getByRole("heading", { name: "Keep this group draft", exact: true }),
   ).toHaveCount(0);
   await signedInAs(page, { id: userId, role: "admin" });
+  server.setRole("admin");
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   await expect(
     dialog.getByRole("button", { name: "Remove Noah Tan", exact: true }),
@@ -626,6 +631,7 @@ test("Comms keeps a refused group draft and applies a newly admitted guest role"
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await signedInAs(page, { id: userId, role: "guest" });
+  server.setRole("guest");
   await page.reload();
   await page
     .getByRole("button", { name: "Start direct message", exact: true })

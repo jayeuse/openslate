@@ -44,15 +44,29 @@ test("Comms Mark unread on fully read history survives refresh until new engagem
   await page
     .getByRole("button", { name: "Channel actions: operations", exact: true })
     .click();
-  await page
-    .getByRole("menuitem", { name: "Mark unread", exact: true })
-    .click();
+  // The reminder is saved over HTTP; wait for that save, not for timers.
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "PATCH" &&
+        /^\/api\/comms\/conversations\/[^/]+\/preferences$/.test(
+          new URL(response.url()).pathname,
+        ),
+    ),
+    page.getByRole("menuitem", { name: "Mark unread", exact: true }).click(),
+  ]);
   await page.clock.runFor(500);
   const reminder = () =>
     readTimelineSnapshot(page).state.users[fixture.owner.user_id].conversations[
       fixture.conversationId
     ].manual_unread;
   expect(await reminder()).toBe(true);
+  // Engagement clears the reminder only once the page shows it.
+  await expect(
+    page
+      .getByRole("complementary", { name: "Conversations", exact: true })
+      .getByRole("button", { name: /^operations, marked unread/ }),
+  ).toBeVisible();
   await page.getByLabel("Messages", { exact: true }).press("PageUp");
   await page.clock.runFor(32);
   await expect.poll(reminder).toBe(false);

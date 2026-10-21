@@ -6,9 +6,6 @@ import { seedTimeline } from "./helpers/comms-timeline-fixture";
 type Metrics = {
   dataAt: number | null;
   readyAt: number | null;
-  cloneMs: number;
-  clones: number;
-  setupCloneMs: number;
   renderedRows: number;
   newestVisible: boolean;
   tasks: { start: number; duration: number }[];
@@ -148,9 +145,6 @@ for (const mode of openingDiagnostic
       const metrics: Metrics = {
         dataAt: null,
         readyAt: null,
-        cloneMs: 0,
-        clones: 0,
-        setupCloneMs: 0,
         renderedRows: 0,
         newestVisible: false,
         tasks: [],
@@ -204,25 +198,16 @@ for (const mode of openingDiagnostic
         requestAnimationFrame(painted);
       }
       // Transparent test-only native timing, not a fake client or product hook.
-      // The first detached history response containing the latest message is the
+      // The first parsed history response containing the latest message is the
       // actual public data-arrival boundary, before consumer projection/rendering.
-      const clone = window.structuredClone.bind(window);
-      window.structuredClone = (value, options) => {
-        const start = performance.now();
-        const result = clone(value, options);
-        const elapsed = performance.now() - start;
-        if (metrics.dataAt === null) metrics.setupCloneMs += elapsed;
-        else {
-          metrics.cloneMs += elapsed;
-          metrics.clones++;
-          if (metrics.clones % 20 === 0)
-            console.info(
-              "S07-PROFILE " +
-                JSON.stringify({ at: performance.now(), ...metrics }),
-            );
-        }
+      const json = Response.prototype.json;
+      Response.prototype.json = async function (this: Response) {
+        const result: unknown = await json.call(this);
         if (
           metrics.dataAt === null &&
+          /\/api\/comms\/conversations\/[^/]+\/messages$/.test(
+            new URL(this.url, location.href).pathname,
+          ) &&
           result &&
           typeof result === "object" &&
           "pagination" in result &&
@@ -332,10 +317,9 @@ for (const mode of openingDiagnostic
           cpu_rate: 4,
           viewport: "1440x900",
           browser: browser.version(),
-          source: "owned canonical memory snapshot through normal restoration",
+          source: "live Comms fake history over the mocked /api routes",
           data_boundary:
-            "first actual cloned public history response containing newest message",
-          serialized_characters: fixture.serializedCharacters,
+            "first parsed public history response containing newest message",
         },
         opening,
         newest50_ms: opening.readyAt! - opening.dataAt!,
