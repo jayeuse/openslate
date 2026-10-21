@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   ArrowLeft,
   Hash,
@@ -29,6 +30,65 @@ import { useCommsClient } from "../state/client-context";
 import type { NavigationState } from "../state/use-comms-navigation";
 import type { CommsConversation } from "../state/use-comms-conversation";
 import type { CommsDialogsState } from "./comms-dialogs";
+
+const CommsSearch = dynamic(() => import("./comms-search"), { ssr: false });
+
+function SearchEntry({ navigation }: { navigation: NavigationState }) {
+  const { client, scope, error } = useCommsClient();
+  const entry = useRef<HTMLDivElement>(null);
+  const [state, setState] = useState<{
+    owner: typeof client;
+    query: string;
+    open: boolean;
+  } | null>(null);
+  const owned = state?.owner === client ? state : null;
+  const available = !!client && !!scope && !scope.signal.aborted && !error;
+  function prepare(open: boolean, query = owned?.query ?? "") {
+    if (available) setState({ owner: client, query, open });
+  }
+  return (
+    <div ref={entry} className="order-last w-full sm:w-40 lg:w-48">
+      <Input
+        aria-label="Search messages"
+        aria-haspopup="dialog"
+        aria-expanded={owned?.open ?? false}
+        placeholder="Search messages"
+        value={owned?.query ?? ""}
+        disabled={!available}
+        onFocus={() => prepare(false)}
+        onClick={() => prepare(true)}
+        onChange={(event) => prepare(true, event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === "ArrowDown") {
+            event.preventDefault();
+            prepare(true);
+          }
+        }}
+        className="h-9 max-sm:min-h-11"
+      />
+      {owned && available && (
+        <CommsSearch
+          open={owned.open}
+          onOpenChange={(open) => prepare(open)}
+          query={owned.query}
+          onQueryChange={(query) => prepare(true, query)}
+          returnFocus={() => {
+            const input = entry.current?.querySelector("input");
+            if (input?.getClientRects().length) return input;
+            return (
+              entry.current
+                ?.closest("header")
+                ?.querySelector<HTMLElement>(
+                  '[aria-controls="comms-details"]',
+                ) ?? false
+            );
+          }}
+          navigation={navigation}
+        />
+      )}
+    </div>
+  );
+}
 
 function AccessChip({
   label,
@@ -277,16 +337,7 @@ export function ConversationHeader({
             <Settings2 className="size-4" />
           </Action>
         )}
-        <Input
-          aria-label="Search messages"
-          placeholder="Search messages"
-          value={navigation.search}
-          onChange={(event) => {
-            navigation.setSearch(event.target.value);
-            navigation.setHighlightedId("");
-          }}
-          className="order-last h-9 w-full sm:w-40 lg:w-48"
-        />
+        <SearchEntry navigation={navigation} />
       </div>
     </header>
   );

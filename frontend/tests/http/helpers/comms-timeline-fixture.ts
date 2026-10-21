@@ -36,6 +36,7 @@ export async function seedTimeline(
   decorated = false,
   arrival = false,
   sparse = false,
+  options: { pinnedRecord?: boolean } = {},
 ) {
   const owner = {
     user_id: "00000000-0000-4000-8000-000000000101",
@@ -84,6 +85,19 @@ export async function seedTimeline(
     initial.messages[timelineId(count - 1)].deleted_at = "2026-01-02T00:00:00Z";
   }
   initial.users[owner.user_id].last_read_seq[room.id] = lastRead;
+  const pinnedRecordId = options.pinnedRecord
+    ? Object.values(initial.records)[0].id
+    : null;
+  if (pinnedRecordId) {
+    initial.configuration.workspace = {
+      settings: { pinned_record_id: pinnedRecordId },
+      capabilities: {
+        scope: { kind: "workspace" },
+        everyone: {},
+        group_grants: [],
+      },
+    };
+  }
   validateMemoryState(initial, owner.org_id);
   let snapshot: MemorySnapshot = { format: 1, owner, state: initial };
   if (arrival) {
@@ -133,6 +147,7 @@ export async function seedTimeline(
   return {
     owner,
     conversationId: room.id,
+    pinnedRecordId,
     newest: timelineId(count),
     newest50: Array.from({ length: Math.min(50, count) }, (_, index) =>
       timelineId(count - Math.min(50, count) + index + 1),

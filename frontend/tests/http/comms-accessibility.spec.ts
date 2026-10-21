@@ -5,9 +5,6 @@ import {
   timelineServer,
 } from "./helpers/comms-timeline-fixture";
 import { profilePreferences } from "./helpers/profile-api";
-import type { MemorySnapshot } from "../../src/components/systems/comms/memory/store-types";
-import { validateMemoryState } from "../../src/components/systems/comms/memory/snapshot";
-import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
 test("connection feedback delays reconnecting and recovers without losing a draft or bypassing a limit", async ({
   page,
 }) => {
@@ -153,27 +150,9 @@ test("message announcements are throttled rather than repeated for a send burst"
 test("phone conversation keeps Back title and Details with reachable controls in light and dark", async ({
   page,
 }, testInfo) => {
-  const data = await seedTimeline(page, 12);
-  await page.goto("/comms");
-  const snapshot: MemorySnapshot = await page.evaluate(
-    (key) => JSON.parse(sessionStorage.getItem(key)!).values["comms-memory-v1"],
-    data.storageKey,
-  );
-  const record = Object.values(snapshot.state.records)[0];
-  snapshot.state.configuration.workspace = {
-    settings: { pinned_record_id: record.id },
-    capabilities: {
-      scope: { kind: "workspace" },
-      everyone: {},
-      group_grants: [],
-    },
-  };
-  validateMemoryState(snapshot.state, data.owner.org_id);
-  const pinnedState = serializeSampleSessionSnapshot(
-    data.owner.user_id,
-    { "comms-memory-v1": snapshot },
-    data.owner.org_id,
-  );
+  const data = await seedTimeline(page, 12, 12, false, false, false, {
+    pinnedRecord: true,
+  });
   await page.route(`**/api/users/${data.owner.user_id}/preferences`, (route) =>
     route.fulfill({
       json: { ...profilePreferences(data.owner.user_id), theme: "system" },
@@ -183,13 +162,6 @@ test("phone conversation keeps Back title and Details with reachable controls in
     for (const theme of ["light", "dark"] as const) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
       await page.emulateMedia({ colorScheme: theme });
-      await page.evaluate(
-        ({ key, value }) => sessionStorage.setItem(key, value),
-        {
-          key: data.storageKey,
-          value: pinnedState,
-        },
-      );
       await page.goto(`/comms?conversation=${data.conversationId}`);
       const conversation = page.getByRole("region", {
         name: "Conversation",
@@ -204,7 +176,7 @@ test("phone conversation keeps Back title and Details with reachable controls in
       await expect(pinned).toBeVisible();
       await expect(pinned).toHaveAttribute(
         "href",
-        `/openview?record=${record.id}`,
+        `/openview?record=${data.pinnedRecordId}`,
       );
       if (process.env.S13_CAPTURE)
         await page.screenshot({
@@ -255,7 +227,7 @@ test("phone conversation keeps Back title and Details with reachable controls in
       await pinned.focus();
       await expect(pinned).toBeFocused();
       await pinned.press("Enter");
-      await expect(page).toHaveURL(`/openview?record=${record.id}`);
+      await expect(page).toHaveURL(`/openview?record=${data.pinnedRecordId}`);
     }
 });
 

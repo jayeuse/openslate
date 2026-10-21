@@ -12,7 +12,28 @@ import {
   ownedCommsDraftTextId,
 } from "../../src/components/systems/comms/state/draft-text";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
+import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
+import { createMemoryCommsRuntime } from "../../src/components/systems/comms/adapters/memory-client";
 import type { Page } from "@playwright/test";
+
+async function installOwnedJourneyApi(page: Page) {
+  const owner = {
+    user_id: "00000000-0000-4000-8000-000000000101",
+    org_id: defaultOrganization.org_id,
+  };
+  const runtime = createMemoryCommsRuntime({
+    owner,
+    initial: createMemorySeed(owner, {
+      role: "admin",
+      display_name: "Journey owner",
+    }),
+  });
+  return installCommsLiveApi(page, {
+    userId: owner.user_id,
+    organizationId: owner.org_id,
+    runtime,
+  });
+}
 
 async function createWorkshop(page: Page) {
   await page
@@ -217,6 +238,7 @@ test("Comms keeps separate conversation drafts and clears only a successfully se
 }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await createWorkshop(page);
   await populateHistory(page);
@@ -697,6 +719,7 @@ test("settings history keeps workspace changes visible while a channel is select
 test("a channel has one settings dialog, reached the same way from its row and its header", async ({
   page,
 }) => {
+  await installOwnedJourneyApi(page);
   await page.goto("/comms");
   await createWorkshop(page);
   await page

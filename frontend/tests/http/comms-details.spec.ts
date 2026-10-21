@@ -8,6 +8,7 @@ import {
 } from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
 import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
+import { createMemoryCommsRuntime } from "../../src/components/systems/comms/adapters/memory-client";
 import { validateMemoryState } from "../../src/components/systems/comms/memory/snapshot";
 import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
@@ -96,6 +97,7 @@ async function seedDetails(
   );
   return {
     owner,
+    initial: state,
     key,
     thread: thread.id,
     root: root.id,
@@ -110,24 +112,39 @@ test("thread focus returns to its older virtualized parent after close", async (
   page,
 }) => {
   const data = await seedDetails(page, { long: true });
-  await page.goto("/comms");
-  await expect(page.locator(`[id="${data.root}"]`)).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Thread: Morning handover", exact: true })
-    .click();
-  const thread = page.getByRole("region", {
-    name: "Thread conversation",
-    exact: true,
+  const server = await installCommsLiveApi(page, {
+    userId: data.owner.user_id,
+    organizationId: data.owner.org_id,
+    runtime: createMemoryCommsRuntime({
+      owner: data.owner,
+      initial: data.initial,
+    }),
   });
-  await expect(
-    thread.getByRole("heading", { name: "Morning handover", exact: true }),
-  ).toBeFocused();
-  await thread
-    .getByRole("button", { name: "Back to messages", exact: true })
-    .click();
-  await expect(thread).toHaveCount(0);
-  await expect(page.locator(`[id="${data.root}"]`)).toBeFocused();
-  await expect(page.locator(`[id="${data.root}"]`)).toBeInViewport();
+  try {
+    await page.goto("/comms");
+    await expect(
+      page.getByRole("article").filter({ hasText: "Later message 140." }),
+    ).toBeVisible();
+    await expect(page.locator(`[id="${data.root}"]`)).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Thread: Morning handover", exact: true })
+      .click();
+    const thread = page.getByRole("region", {
+      name: "Thread conversation",
+      exact: true,
+    });
+    await expect(
+      thread.getByRole("heading", { name: "Morning handover", exact: true }),
+    ).toBeFocused();
+    await thread
+      .getByRole("button", { name: "Back to messages", exact: true })
+      .click();
+    await expect(thread).toHaveCount(0);
+    await expect(page.locator(`[id="${data.root}"]`)).toBeFocused();
+    await expect(page.locator(`[id="${data.root}"]`)).toBeInViewport();
+  } finally {
+    server.close();
+  }
 });
 
 test("thread follow copy resolve reopen and also-send use the existing client", async ({
