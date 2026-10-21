@@ -32,11 +32,10 @@ export async function complete<T>(
   }
 }
 
-export async function loadWorkspace(
-  client: CommsClient,
-  signal: AbortSignal,
-  includeRecords: boolean,
-) {
+// Record-linked messages read together; small enough to stay polite to the API.
+const RECORD_READS = 6;
+
+export async function loadWorkspace(client: CommsClient, signal: AbortSignal) {
   const options = { signal };
   const bootstrap = await client.bootstrap(options);
   const config = createCommsConfiguration();
@@ -290,17 +289,24 @@ export async function loadWorkspace(
       );
   }
   // These complete metadata consumers must not silently become a timeline page.
-  for (const hit of includeRecords
-    ? await complete((offset) =>
-        client.search({ has: "record", limit: 100, offset }, options),
-      )
-    : []) {
-    const message = await client.getMessage(
-      hit.conversation_id,
-      hit.message_id,
-      options,
+  // Records you follow include links made only in thread replies, which no
+  // channel history or thread root carries, so every load reads them once.
+  // Messages already loaded from history or thread roots are not read again,
+  // and the rest load a few at a time instead of one after another.
+  const missing = (
+    await complete((offset) =>
+      client.search({ has: "record", limit: 100, offset }, options),
+    )
+  ).filter((hit) => !rawMessages.has(hit.message_id));
+  for (let index = 0; index < missing.length; index += RECORD_READS) {
+    const batch = await Promise.all(
+      missing
+        .slice(index, index + RECORD_READS)
+        .map((hit) =>
+          client.getMessage(hit.conversation_id, hit.message_id, options),
+        ),
     );
-    rawMessages.set(message.data.id, message.data);
+    for (const message of batch) rawMessages.set(message.data.id, message.data);
   }
   await loadQuotes(client, rawMessages, signal);
   const projected = new Map<string, Message>();

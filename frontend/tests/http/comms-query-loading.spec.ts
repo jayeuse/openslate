@@ -196,18 +196,23 @@ test("cold Comms reads are deduplicated and configuration catalogs wait for inte
       .map((call) => call.path + call.query);
     expect(new Set(commsGets).size).toBe(commsGets.length);
     expect(
-      gets.filter(
-        (call) =>
-          [
-            "/api/access/groups",
-            "/api/modules",
-            "/api/comms/settings/workspace/capability-locks",
-            "/api/comms/direct-blocks",
-          ].includes(call.path) ||
-          (call.path === "/api/comms/search" &&
-            new URLSearchParams(call.query).get("has") === "record"),
+      gets.filter((call) =>
+        [
+          "/api/access/groups",
+          "/api/modules",
+          "/api/comms/settings/workspace/capability-locks",
+          "/api/comms/direct-blocks",
+        ].includes(call.path),
       ),
     ).toEqual([]);
+    // Records you follow need record links from thread replies on first paint.
+    const recordSearches = () =>
+      api.calls.filter(
+        (call) =>
+          call.path === "/api/comms/search" &&
+          new URLSearchParams(call.query).get("has") === "record",
+      );
+    expect(recordSearches()).toHaveLength(1);
     await page
       .getByRole("button", { name: "Create channel", exact: true })
       .click();
@@ -252,9 +257,11 @@ test("cold Comms reads are deduplicated and configuration catalogs wait for inte
       }),
     ).toBeVisible();
     await expect(record.getByText("High", { exact: true })).toBeVisible();
-    expect(api.calls.some((call) => call.path === "/api/comms/search")).toBe(
-      true,
-    );
+    // Opening the dialog and the record panel reuses the cold record read.
+    expect(recordSearches()).toHaveLength(1);
+    expect(
+      api.calls.filter((call) => call.path === "/api/comms/search"),
+    ).toHaveLength(1);
     expect(
       api.calls.filter((call) => call.path === "/api/departments"),
     ).toHaveLength(1);

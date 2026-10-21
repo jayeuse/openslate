@@ -10,7 +10,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "next/navigation";
 
 import { createCommsConfiguration } from "../domain/configuration-model";
 import type {
@@ -48,20 +47,18 @@ const empty = {
 
 export function useCommsWorkspace() {
   const binding = useCommsClient();
-  const params = useSearchParams();
-  const includeRecords = params.get("panel")?.startsWith("record:") === true;
   const requiredRead = useRef(0);
   const acceptedRead = useRef<{
     client: CommsWorkspace["client"];
     epoch: number;
   } | null>(null);
   const [lastGood, setLastGood] = useState<CommsWorkspace>();
-  const key = includeRecords ? "workspace:records" : "workspace";
+  const key = "workspace";
   const resource = useCommsRead(key, async (client, signal) => {
     // Capture at start: a read already in flight cannot admit a later change.
     const readEpoch = requiredRead.current;
     return {
-      ...(await loadWorkspace(client, signal, includeRecords)),
+      ...(await loadWorkspace(client, signal)),
       readEpoch,
     };
   });
