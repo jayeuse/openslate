@@ -1,4 +1,4 @@
-import type { Page, WebSocketRoute } from "@playwright/test";
+import type { Page, Route, WebSocketRoute } from "@playwright/test";
 import { createMemorySeed } from "../../support/comms-memory/memory/seed";
 import {
   createMemoryCommsRuntime,
@@ -18,7 +18,27 @@ import { commsToolRoute } from "./comms-tool-routes";
 // Two organization fixtures on one page still exercise its single socket.
 const pageSockets = new WeakMap<Page, Set<WebSocketRoute>>();
 
-/** Existing frozen fixture supplies metadata DTOs only; all browser reads/writes cross HTTP. */
+type RouteMatcher = Parameters<Page["route"]>[0];
+type RouteHandler = (route: Route) => unknown;
+/** One queued refusal; `body` is sent as JSON unless the status is 204. */
+type QueuedFailure = {
+  pattern: RegExp;
+  status: number;
+  body: unknown;
+  method?: string;
+};
+
+/**
+ * Existing frozen fixture supplies metadata DTOs only; all browser reads/writes cross HTTP.
+ *
+ * With `runtime`, every Comms route answers from that memory runtime, including
+ * thread follow, reactions, pins, record references, direct blocks and the
+ * attachment reserve/upload/download routes. `notifications: true` also serves
+ * `/api/notifications` from the runtime's stored notices (opt-in, so existing
+ * callers keep the base fixture's empty list). `clock` stamps notification
+ * reads and the runtime this helper builds when no `runtime` is passed; a
+ * caller-built runtime must receive the same clock itself.
+ */
 export async function installCommsLiveApi(
   page: Page,
   options: {
@@ -33,6 +53,8 @@ export async function installCommsLiveApi(
     empty?: boolean;
     uncategorized?: boolean;
     role?: "admin" | "member" | "guest";
+    notifications?: boolean;
+    clock?: () => number;
   } = {},
 ) {
   if (options.workspaceEvents !== false)
@@ -41,15 +63,34 @@ export async function installCommsLiveApi(
     user_id: options.userId ?? defaultSignedInIdentity.id,
     org_id: options.organizationId ?? defaultOrganization.org_id,
   };
+  const now = options.clock ?? Date.now;
   const memory =
     options.runtime ??
-    createMemoryCommsRuntime({
-      owner,
-      initial: createMemorySeed(owner, {
-        role: options.role ?? "admin",
-        display_name: "HTTP fixture owner",
-      }),
-    });
+    createMemoryCommsRuntime(
+      {
+        owner,
+        initial: createMemorySeed(owner, {
+          role: options.role ?? "admin",
+          display_name: "HTTP fixture owner",
+        }),
+      },
+      options.clock ? { clock: options.clock } : {},
+    );
+  // Every page route this install adds, so `uninstall()` can remove exactly these.
+  const owned: [RouteMatcher, RouteHandler][] = [];
+  const own = (matcher: RouteMatcher, handler: RouteHandler) => {
+    owned.push([matcher, handler]);
+    return page.route(matcher, handler);
+  };
+  const failures: QueuedFailure[] = [];
+  const takeFailure = (method: string, path: string) => {
+    const index = failures.findIndex(
+      (failure) =>
+        failure.pattern.test(path) &&
+        (!failure.method || failure.method === method),
+    );
+    return index < 0 ? undefined : failures.splice(index, 1)[0];
+  };
   const initial = await memory.client.bootstrap();
   const summary = initial.conversations.find(
     (row) => row.conversation.kind === "channel",
@@ -149,11 +190,14 @@ export async function installCommsLiveApi(
         }),
       );
   };
-  const stopEvents = memory.client.events.subscribe({
-    on_event: broadcast,
-    on_connection: () => {},
-    on_error: () => {},
-  });
+  const subscribeEvents = () =>
+    memory.client.events.subscribe({
+      on_event: broadcast,
+      on_connection: () => {},
+      on_error: () => {},
+    });
+  // A role change rebinds the runtime's owner handle, which ends this subscription.
+  let stopEvents = subscribeEvents();
   const close = () => {
     stopEvents();
     memory.dispose();
@@ -187,7 +231,7 @@ export async function installCommsLiveApi(
       sockets.delete(socket);
     });
   });
-  await page.route("**/api/realtime/token", async (route) => {
+  await own("**/api/realtime/token", async (route) => {
     if (route.request().headers()["x-org"] !== owner.org_id)
       return route.fallback();
     tokenRequests += 1;
@@ -229,7 +273,7 @@ export async function installCommsLiveApi(
       has_more: false,
     },
   });
-  await page.route(
+  await own(
     (url) =>
       ["/api/access/groups", "/api/departments", "/api/modules"].includes(
         url.pathname,
@@ -294,7 +338,7 @@ export async function installCommsLiveApi(
   let refuseHistory = false;
   const requests: { method: string; path: string; ifMatch?: string }[] = [];
   const conflicts: RegExp[] = [];
-  await page.route("**/api/comms/**", async (route) => {
+  await own("**/api/comms/**", async (route) => {
     const request = route.request(),
       url = new URL(request.url()),
       path = url.pathname.replace("/api/comms", "");
@@ -350,6 +394,8 @@ export async function installCommsLiveApi(
         412,
       );
     }
+    const failure = takeFailure(request.method(), path);
+    if (failure) return reply(failure.body, failure.status);
     try {
       if (path === "/capabilities/channel-creation") {
         const kind = url.searchParams.get("scope_kind");
@@ -448,6 +494,15 @@ export async function installCommsLiveApi(
           );
         if (path === "/search")
           return reply(await client.search(S.searchRequestSchema.parse(query)));
+        if (path === "/direct-blocks" && method === "POST") {
+          await client.blockDirect(body());
+          return reply(null, 204);
+        }
+        const unblock = path.match(/^\/direct-blocks\/([^/]+)$/);
+        if (unblock && method === "DELETE") {
+          await client.unblockDirect(unblock[1]);
+          return reply(null, 204);
+        }
         if (path === "/direct-blocks")
           return reply(
             await client.listDirectBlocks(S.timeListRequestSchema.parse(query)),
@@ -542,6 +597,78 @@ export async function installCommsLiveApi(
                 conversationId,
                 S.timeListRequestSchema.parse(query),
               ),
+            );
+          // The fixture room keeps its own typing switch (setPosting) below.
+          if (
+            tail === "/typing" &&
+            method === "POST" &&
+            conversationId !== room
+          ) {
+            await client.sendTyping(conversationId);
+            return reply(null, 204);
+          }
+          const reference = tail.match(/^\/record-references\/([^/]+)$/);
+          if (reference && method === "GET")
+            return reply(
+              await client.getRecordReference(conversationId, reference[1]),
+            );
+          if (tail === "/files" && method === "POST") {
+            const file = await client.reserveAttachment(conversationId, body());
+            return reply(
+              file,
+              201,
+              '"fixture-1"',
+              `/api/comms/conversations/${conversationId}/files/${file.id}`,
+            );
+          }
+          const content = tail.match(/^\/files\/([^/]+)\/content$/);
+          if (content && method === "PUT")
+            return reply(
+              await client.uploadAttachment(
+                conversationId,
+                content[1],
+                new Blob([new Uint8Array(request.postDataBuffer() ?? [])]),
+              ),
+            );
+          if (content && method === "GET") {
+            const file = await client.downloadAttachment(
+              conversationId,
+              content[1],
+            );
+            // The backend's exact download headers; the adapter checks each one.
+            return route.fulfill({
+              status: 200,
+              body: Buffer.from(await file.bytes.arrayBuffer()),
+              headers: {
+                "Content-Type": file.media_type,
+                "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "private, no-store",
+              },
+            });
+          }
+          const interaction = tail.match(
+            /^\/messages\/([^/]+)\/(reactions|pin)$/,
+          );
+          if (interaction) {
+            const [, messageId, kind] = interaction;
+            if (kind === "pin" && method === "PUT")
+              return reply(
+                await client.setPin(conversationId, messageId, body()),
+              );
+            if (kind === "reactions" && method === "POST")
+              return reply(
+                await client.addReaction(conversationId, messageId, body()),
+              );
+            if (kind === "reactions" && method === "DELETE")
+              return reply(
+                await client.removeReaction(conversationId, messageId, body()),
+              );
+          }
+          const follow = tail.match(/^\/threads\/([^/]+)\/follow$/);
+          if (follow && method === "PUT")
+            return reply(
+              await client.followThread(conversationId, follow[1], body()),
             );
           if (tail === "/messages") {
             if (method === "GET") {
@@ -867,10 +994,193 @@ export async function installCommsLiveApi(
       return refused(error);
     }
   });
+  // Notices the page marked read; the runtime itself only marks them read by sequence.
+  const noticeReads = new Map<string, string>();
+  async function storedNotices() {
+    const rows: C.CommsNotification[] = [];
+    // listActivity keeps only notices whose source message is still live.
+    for (let offset = 0; ; offset += 100) {
+      const result = await memory.client.listActivity({ limit: 100, offset });
+      rows.push(...result.items);
+      if (!result.pagination.has_more) break;
+    }
+    return rows.map((row) =>
+      row.status === "unread" && noticeReads.has(row.id)
+        ? { ...row, status: "read" as const, read_at: noticeReads.get(row.id)! }
+        : row,
+    );
+  }
+  if (options.notifications)
+    await own(
+      (url) => /^\/api\/notifications(\/|$)/.test(url.pathname),
+      async (route) => {
+        const request = route.request(),
+          url = new URL(request.url()),
+          method = request.method();
+        if (request.headers()["x-org"] !== owner.org_id)
+          return route.fallback();
+        const failure = takeFailure(method, url.pathname);
+        if (failure)
+          return route.fulfill({
+            status: failure.status,
+            ...(failure.status === 204 ? {} : { json: failure.body }),
+          });
+        const rows = await storedNotices().catch((error: unknown) => {
+          if (page.isClosed()) return null;
+          throw error;
+        });
+        if (!rows) return;
+        const markRead = /^\/api\/notifications\/([^/]+)\/read$/.exec(
+          url.pathname,
+        );
+        if (method === "GET" && url.pathname === "/api/notifications") {
+          const limit = Number(url.searchParams.get("limit") ?? 25),
+            offset = Number(url.searchParams.get("offset") ?? 0);
+          const matching =
+            url.searchParams.get("status") === "unread"
+              ? rows.filter((row) => row.status === "unread")
+              : rows;
+          const items = matching.slice(offset, offset + limit);
+          return route.fulfill({
+            json: {
+              items,
+              pagination: {
+                limit,
+                offset,
+                count: items.length,
+                total: matching.length,
+                has_more: offset + items.length < matching.length,
+              },
+            },
+          });
+        }
+        if (
+          method === "GET" &&
+          url.pathname === "/api/notifications/unread-count"
+        )
+          return route.fulfill({
+            json: {
+              unread_count: rows.filter((row) => row.status === "unread")
+                .length,
+            },
+          });
+        if (method === "POST" && markRead) {
+          const row = rows.find((item) => item.id === markRead[1]);
+          if (!row)
+            return route.fulfill({
+              status: 404,
+              json: { detail: "Notification not found" },
+            });
+          const read_at = row.read_at ?? new Date(now()).toISOString();
+          noticeReads.set(row.id, read_at);
+          return route.fulfill({ json: { ...row, status: "read", read_at } });
+        }
+        if (
+          method === "POST" &&
+          url.pathname === "/api/notifications/read-all"
+        ) {
+          const unread = rows.filter((row) => row.status === "unread");
+          const read_at = new Date(now()).toISOString();
+          for (const row of unread) noticeReads.set(row.id, read_at);
+          return route.fulfill({ json: { updated_count: unread.length } });
+        }
+        return route.fallback();
+      },
+    );
+  const publishAuthorizationChange = (
+    event: "grants" | "structure" | "membership",
+    conversationId = room,
+  ) => {
+    const topic = `org:${owner.org_id}:user:${owner.user_id}`;
+    if (event === "membership")
+      broadcast({
+        topic,
+        private: true,
+        event,
+        payload: { conversation_id: conversationId },
+      });
+    else broadcast({ topic, private: true, event, payload: {} });
+  };
+  let uninstalled: Promise<void> | undefined;
   return {
     room,
     members,
     typingRequests,
+    /** The memory runtime behind every route; its client reads the same world. */
+    runtime: memory,
+    /**
+     * A copy of the current world, for asserting what the page changed. It
+     * throws after `close()` or `uninstall()`: read it before a swap.
+     */
+    snapshot: () => memory.exportSnapshot().state,
+    /**
+     * Admits the signed-in owner again with `role`, as the server does after a
+     * membership change, and tells the page with a `grants` event (or
+     * `membership` for `conversationId`, or no event with `"none"`). The page's
+     * own session role is separate: change it with `signedInAs` when the
+     * journey needs the shell to agree. Call it at a quiet point: a Comms
+     * request still in flight is cancelled with the old admission.
+     */
+    setRole(
+      role: "admin" | "member" | "guest",
+      change: {
+        event?: "grants" | "membership" | "none";
+        conversationId?: string;
+      } = {},
+    ) {
+      const person = memory.exportSnapshot().state.people[owner.user_id];
+      if (!person) throw new Error("The world has no owner person");
+      const ticket = memory.suspendAdmission();
+      if (
+        !memory.acceptAdmission(ticket, {
+          context: owner,
+          role,
+          display_name: person.display_name,
+        })
+      )
+        throw new Error("The role change was not admitted");
+      stopEvents();
+      stopEvents = subscribeEvents();
+      const event = change.event ?? "grants";
+      if (event !== "none")
+        publishAuthorizationChange(event, change.conversationId);
+    },
+    /**
+     * Answers the next matching request with `status` and `body` instead of
+     * the world, once. The pattern is tested against the Comms path without
+     * `/api/comms` (and, with `notifications`, the full `/api/notifications…`
+     * path); `method` limits it to one HTTP method.
+     */
+    failNext(
+      pattern: RegExp,
+      status: number,
+      body: unknown = { detail: "Unavailable" },
+      method?: string,
+    ) {
+      failures.push({ pattern, status, body, method });
+    },
+    /**
+     * Stops this world and removes every page route it added, so a later
+     * install (another account or world) answers alone. The realtime socket
+     * route cannot be removed: the newest install's socket route wins, and
+     * open sockets stay shared by the page. The OpenView event-source route
+     * (`workspaceEvents`) is not this install's and stays installed.
+     */
+    uninstall() {
+      uninstalled ??= (async () => {
+        page.off("close", close);
+        if (!page.isClosed())
+          await Promise.all(
+            owned.map(([matcher, handler]) =>
+              page.unroute(matcher, handler).catch((error: unknown) => {
+                if (!page.isClosed()) throw error;
+              }),
+            ),
+          );
+        close();
+      })();
+      return uninstalled;
+    },
     setPosting(allowed: boolean, locked = false) {
       postAllowed = allowed;
       channelLocked = locked;
@@ -881,17 +1191,7 @@ export async function installCommsLiveApi(
         payload: { conversation_id: room },
       });
     },
-    publishAuthorizationChange(event: "grants" | "structure" | "membership") {
-      const topic = `org:${owner.org_id}:user:${owner.user_id}`;
-      if (event === "membership")
-        broadcast({
-          topic,
-          private: true,
-          event,
-          payload: { conversation_id: room },
-        });
-      else broadcast({ topic, private: true, event, payload: {} });
-    },
+    publishAuthorizationChange,
     publishTyping(userId: string, conversationId = room, orgId = owner.org_id) {
       broadcast({
         topic: `org:${orgId}:conversation:${conversationId}`,
