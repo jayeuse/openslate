@@ -2,14 +2,14 @@
 
 > **Scope:** OpenSlate's self-hosted server contract, ownership boundaries, and implementation status.
 
-OpenSlate is a self-hosted web application installed separately for each client. One installation holds one or more organizations, and one account can belong to several of them. The selected deployment topology is Docker Compose with Linux containers on Linux servers or Windows through Docker Desktop and WSL2. The checked-in Supabase Compose stack supplies PostgreSQL, Auth, Storage, and Studio. FastAPI remains the application API and authorization authority. It serves a statically exported Next.js frontend, uses SQLAlchemy for application data, and mediates private file access. The production Compose overlay adds Caddy. Production and Windows runtime acceptance remain pending.
+OpenSlate is a self-hosted web application installed separately for each client. One installation holds one or more organizations, and one account can belong to several of them. The selected deployment topology is Docker Compose with Linux containers on Linux servers or Windows through Docker Desktop and WSL2. The checked-in Supabase Compose stack supplies PostgreSQL, Auth, Storage, Studio, and Realtime. FastAPI remains the application API and authorization authority. It serves a statically exported Next.js frontend, uses SQLAlchemy for application data, and mediates private file access. The production Compose overlay adds Caddy. Production and target-platform runtime acceptance remain separate requirements, not implied by the checked-in topology.
 
 ## Server runtime contract
 
 | Concern | Owner |
 | --- | --- |
 | Browser UI | Static Next.js export and React, delivered by FastAPI |
-| HTTPS ingress | Caddy in the production Compose overlay, with one FastAPI application upstream |
+| HTTPS ingress | Caddy in production: application HTTP/SSE to one FastAPI upstream, plus a separate WebSocket-only route to the provider gateway |
 | Browser routes, assets, and 404s | FastAPI static-site delivery |
 | Business API and application authorization | FastAPI with synchronous SQLAlchemy and OpenSlate roles, groups, permissions, and domain policies |
 | Relational database | Supabase Database (PostgreSQL), with separate Supabase-owned and OpenSlate-owned schemas |
@@ -19,27 +19,36 @@ OpenSlate is a self-hosted web application installed separately for each client.
 | Organization context | The `X-Org` request header, else the session's active organization; FastAPI binds each transaction to that organization |
 | Files | PostgreSQL file metadata; private Supabase Storage buckets `openslate-ready` (organization files) and `openslate-avatars` (account avatars), mediated by FastAPI |
 | File-type validation | FastAPI allowlist and bounded parser subprocess before the Storage write |
-| Invalidation | Authenticated SSE using PostgreSQL `LISTEN`/`NOTIFY` |
-| Realtime channels | Supabase Realtime private channels `org:<org_id>:…`, joined with a 5-minute token from `POST /api/realtime/token`; OpenComms (Phase 2) is the first user |
+| Invalidation | Other application pages retain authenticated SSE using PostgreSQL `LISTEN`/`NOTIFY`; OpenComms uses private Realtime notifications |
+| Realtime channels | Private OpenComms conversation topics backed by expiring FastAPI grants, own-user topics and organization presence; joined with a five-minute purpose-specific token from `POST /api/realtime/token` |
+| Background work | Existing FastAPI-owned workers and durable database work/progress state; OpenComms schedules, exports, retention and optional previews use the organization-bound scheduling worker |
 | Operator database UI | Supabase Studio, loopback-bound behind gateway Basic Auth |
 
 The browser does not write application rows or read private objects directly. FastAPI verifies provider JWTs against the configured issuer and JWKS, confirms provider subject/session liveness, resolves an explicitly bound OpenSlate user, and checks the application's session and current authorization state. The backend never derives application roles from provider metadata. Normal application mutations use `AuditSession`; Alembic and provider-managed Auth/Storage operations remain outside that application ORM audit boundary.
+
+OpenComms has implemented conversation/message, settings, file, moderation,
+admission and job APIs, composed in
+[`comms/router.py`](../../backend/app/systems/comms/router.py). Remaining explicitly
+labeled example tools use browser-local state, not organization data or authority.
+Ordinary private-conversation reads, report-bound moderation and privileged export
+are distinct purposes; neither cached UI state nor a Realtime grant replaces a
+current authorized content read. See the [API purpose boundaries](07-api-architecture.md#ordinary-private-reads-versus-privileged-purposes).
 
 The application runtime role has normal application-table privileges needed by FastAPI. Its provider-schema exception is deliberately narrow: an operator provisions `openslate_app` for read-only access to `auth.sessions.id` and `auth.sessions.user_id` through the `openslate_session_liveness` SELECT policy. It has no Auth mutation access. PostgreSQL row-level security on organization tables refuses rows of other organizations as a backstop to FastAPI's explicit filters. OpenSlate does not duplicate its roles, groups, or domain authorization model in PostgreSQL row policies. Provider APIs for Auth and Storage use server-only credentials, and provider Data API routes for application tables are blocked.
 
 ## Development boundary
 
-The pinned self-hosted provider stack is also the Compose-based development and test database/Auth/Storage environment. Its development overlay publishes the database and provider gateway on loopback and adds Mailpit; host-run FastAPI and `next dev` can remain the daily application workflow. Installation-specific environment, project names, ports, and volumes keep each instance isolated.
+The pinned self-hosted provider stack is also the Compose-based development and test database/Auth/Storage/Realtime environment. Its development overlay publishes the database, provider gateway and separate authenticated publisher listener on loopback and adds Mailpit. Host-run FastAPI and Next.js are the daily application workflow: HTTP `/api` is proxied to loopback FastAPI, while the frontend launcher handles the exact-origin Realtime WebSocket upgrade. Installation-specific environment, project names, ports, and volumes keep each instance isolated. See the [operator ingress boundary](../../infra/supabase/README.md#opencomms-ingress-and-private-publication).
 
 Production uses `infra/supabase/compose.production.yaml` to add the unified FastAPI/static-UI image and Caddy. The database is not published to the host; Studio's provider gateway remains loopback-only. This Compose path is documented and implemented in configuration, while production TLS, complete operator acceptance, Windows startup/restart, and restore on Windows remain unverified release work. No Node.js or Next.js process runs as a production application service.
 
 ## Status boundaries
 
-- The repository contains a per-installation self-hosted Supabase Compose stack for PostgreSQL, Auth, Storage, and Studio, plus OpenSlate's PostgreSQL, Auth, and Storage adapters.
+- The repository contains a per-installation self-hosted Supabase Compose stack for PostgreSQL, Auth, Storage, Studio, and Realtime, plus OpenSlate's application/provider adapters and private event publisher.
 - Supabase Auth owns password verification, provider tokens, invitations, and password-recovery email actions. FastAPI owns application identity binding, sessions, authorization, and session revocation.
 - A private Supabase Storage bucket replaces the former local-filesystem file adapter. FastAPI validates each upload's file type, and the file is ready when its upload request finishes. File authorization stays in OpenSlate.
 - Alembic owns only OpenSlate's application schema. The prior Supabase/schema-redesign and vanilla PostgreSQL chains are retained as history; the active root is for fresh installations and does not import an existing database.
-- The OpenSlate event endpoint remains authenticated SSE over PostgreSQL notifications. Supabase Realtime carries private organization channels only; it never carries invalidations.
+- Other application pages retain authenticated SSE over PostgreSQL notifications. OpenComms private Realtime topics carry opaque invalidations and transient presence/typing signals, not application row snapshots or message bodies; browser commands and content reads remain FastAPI-authorized HTTP operations.
 - The selected server target is Linux and Windows with Linux containers. Windows acceptance remains pending; macOS is a workstation platform, not a server target.
 - `/api/ready` reports Database, Auth, Storage, and SMTP configuration states. All four are required. These probes do not establish mail delivery, backup integrity, or complete deployment acceptance.
 
