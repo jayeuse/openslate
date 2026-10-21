@@ -54,7 +54,12 @@ export function visibleToLabel(
   const names = groups
     .filter((group) => (access[group.id] ?? "none") !== "none")
     .map((group) => group.name);
-  if (!names.length) return "Private conversation";
+  // Group names load only for managers who open an editor; a group row with
+  // access still means the channel is not private.
+  if (!names.length)
+    return Object.values(access).some((level) => level !== "none")
+      ? "Visible to selected groups"
+      : "Private conversation";
   return `Visible to ${new Intl.ListFormat("en", { type: "conjunction" }).format(names)}`;
 }
 

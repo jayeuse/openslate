@@ -692,6 +692,83 @@ test("a member requests to join a private channel from its link and the admin qu
   ).toBeVisible();
 });
 
+test("a channel created with no group access takes join requests that its managers see", async ({
+  page,
+  context,
+}) => {
+  const { owner, clock, runtime } = await seedTools(page);
+  await page.goto("/comms");
+  await page
+    .getByRole("button", { name: "Create channel", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Create channel",
+    exact: true,
+  });
+  await dialog
+    .getByRole("textbox", { name: "Channel name", exact: true })
+    .fill("request-room");
+  await dialog.getByRole("tab", { name: "Access", exact: true }).click();
+  for (const row of ["Everyone", "Dispatch team"])
+    await dialog
+      .getByRole("radiogroup", { name: row, exact: true })
+      .getByText("No access", { exact: true })
+      .click();
+  await dialog
+    .getByRole("searchbox", { name: "Search settings", exact: true })
+    .fill("Channel joining");
+  await dialog
+    .getByRole("combobox", { name: "Channel joining", exact: true })
+    .selectOption("request");
+  await dialog
+    .getByRole("button", { name: "Create channel", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  const created = runtime.exportSnapshot().state;
+  const roomId = Object.values(created.conversations).find(
+    (row) => row.kind === "channel" && row.name === "request-room",
+  )!.id;
+  const noah = Object.values(created.people).find(
+    (person) => person.display_name === "Noah Tan",
+  )!.user_id;
+  await page.close();
+  const requesterPage = await context.newPage();
+  await signedInAs(requesterPage, { id: noah, role: "member" });
+  const requester = createMemoryCommsRuntime(
+    { owner: { ...owner, user_id: noah }, initial: created },
+    { clock },
+  );
+  await installCommsLiveApi(requesterPage, {
+    userId: noah,
+    runtime: requester,
+  });
+  await requesterPage.goto(`/comms?conversation=${roomId}`);
+  await requesterPage
+    .getByRole("button", { name: "Request to join", exact: true })
+    .click();
+  await expect(
+    requesterPage.getByText(
+      "Request sent. If this channel accepts requests, its managers will see it.",
+      { exact: true },
+    ),
+  ).toBeFocused();
+  const requested = requester.exportSnapshot().state;
+  await requesterPage.close();
+  const adminPage = await context.newPage();
+  await signedInAs(adminPage, { id: owner.user_id, role: "admin" });
+  await installCommsLiveApi(adminPage, {
+    userId: owner.user_id,
+    runtime: createMemoryCommsRuntime({ owner, initial: requested }, { clock }),
+  });
+  await adminPage.goto("/comms");
+  const tool = await openTool(adminPage, "Join requests");
+  await expect(
+    tool
+      .getByRole("article", { name: "Request from Noah Tan", exact: true })
+      .filter({ hasText: "#request-room" }),
+  ).toBeVisible();
+});
+
 test("an unknown conversation link offers the same request and confirmation and retries a failed send", async ({
   page,
 }) => {

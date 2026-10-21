@@ -764,6 +764,8 @@ export function createOperationalFamily(
             !row ||
             row.org_id !== execution.context.org_id ||
             row.kind !== "channel" ||
+            // Like the API, only private (members-scope) channels take requests.
+            row.scope !== "members" ||
             row.archived_at ||
             draft.members[id]?.[execution.context.user_id] ||
             pendingAdmission(draft, id, execution.context.user_id) ||

@@ -137,10 +137,15 @@ export function ChannelDialog(props: EditorProps) {
         const defaults = value.categoryId
           ? (await client.getCategory(value.categoryId)).data.default_access
           : [{ subject: "everyone" as const, level: "post" as const }];
+        const rows = value.groupAccess ? access(value.groupAccess) : defaults;
+        // No group and not Everyone may use it: a private channel that
+        // only its members can use, and the only kind that takes join
+        // requests. The API adds the creator as a member.
         const created = await client.createChannel({
           ...details,
-          scope: "groups",
-          access: value.groupAccess ? access(value.groupAccess) : defaults,
+          ...(rows.length
+            ? { scope: "groups" as const, access: rows }
+            : { scope: "members" as const, member_ids: [] }),
           position: props.channels.length,
         });
         savedId.current = created.data.id;
