@@ -369,200 +369,210 @@ function LoadedCommsSettingsDialog({
       return false;
     }
     try {
-      await run("settings:save", async () => {
-        if (onSaveMetadata)
-          savedTarget.current = await onSaveMetadata((accepted) => {
-            savedTarget.current = accepted;
-            savedAnything.current = true;
-          });
-        if (personal) {
-          const desired = { ...preferences, settings: cleaned };
-          if (
-            changed(
-              wirePreferences(confirmedPersonal.current),
-              wirePreferences(desired),
-            )
-          ) {
-            const current = await client.getPersonalPreferences();
-            await client.setPersonalPreferences(wirePreferences(desired), {
-              if_match: current.etag,
+      await run(
+        "settings:save",
+        async () => {
+          if (onSaveMetadata)
+            savedTarget.current = await onSaveMetadata((accepted) => {
+              savedTarget.current = accepted;
+              savedAnything.current = true;
             });
-            confirmedPersonal.current = {
-              ...desired,
-              favorites: confirmedPersonal.current.favorites,
-              hiddenChannels: confirmedPersonal.current.hiddenChannels,
-            };
-            savedAnything.current = true;
-          }
-          for (const id of new Set([
-            ...confirmedPersonal.current.favorites,
-            ...preferences.favorites,
-            ...confirmedPersonal.current.hiddenChannels,
-            ...preferences.hiddenChannels,
-          ])) {
-            const starred = preferences.favorites.includes(id),
-              hidden = preferences.hiddenChannels.includes(id);
+          if (personal) {
+            const desired = { ...preferences, settings: cleaned };
             if (
-              confirmedPersonal.current.favorites.includes(id) === starred &&
-              confirmedPersonal.current.hiddenChannels.includes(id) === hidden
-            )
-              continue;
-            const current = await client.getMemberPreferences(id);
-            await client.updateMemberPreferences(
-              id,
-              { starred, hidden },
-              { if_match: current.etag },
-            );
-            for (const [key, enabled] of [
-              ["favorites", starred],
-              ["hiddenChannels", hidden],
-            ] as const)
-              confirmedPersonal.current[key] = enabled
-                ? [...new Set([...confirmedPersonal.current[key], id])]
-                : confirmedPersonal.current[key].filter((item) => item !== id);
-            savedAnything.current = true;
-          }
-        } else {
-          const actualScope = wireScope(savedTarget.current);
-          if (actualScope.kind === "channel")
-            for (const [userId, role] of Object.entries(memberRoles)) {
-              if (confirmedRoles.current[userId] === role) continue;
-              const current = await client.getConversation(actualScope.id);
-              await client.setMemberRole(
-                actualScope.id,
-                userId,
-                { role },
-                { if_match: current.etag },
-              );
-              confirmedRoles.current[userId] = role;
+              changed(
+                wirePreferences(confirmedPersonal.current),
+                wirePreferences(desired),
+              )
+            ) {
+              const current = await client.getPersonalPreferences();
+              await client.setPersonalPreferences(wirePreferences(desired), {
+                if_match: current.etag,
+              });
+              confirmedPersonal.current = {
+                ...desired,
+                favorites: confirmedPersonal.current.favorites,
+                hiddenChannels: confirmedPersonal.current.hiddenChannels,
+              };
               savedAnything.current = true;
             }
-          const removed = Object.keys(confirmed.current.settings).filter(
-            (key) => key !== "dmRule" && !Object.hasOwn(cleaned, key),
-          );
-          let current = await client.getSettings(actualScope);
-          if (removed.length) {
-            current = await client.resetSettings(
-              actualScope,
-              { keys: removed.map(wireSettingKey) },
-              { if_match: current.etag },
-            );
-            for (const key of removed)
-              delete confirmed.current.settings[key as CommsSettingKey];
-            savedAnything.current = true;
-          }
-          const remaining = Object.fromEntries(
-            Object.entries(cleaned).filter(
-              ([key, value]) =>
-                key !== "dmRule" &&
-                changed(
-                  value,
-                  confirmed.current.settings[key as CommsSettingKey],
-                ),
-            ),
-          );
-          if (Object.keys(remaining).length) {
-            await client.updateSettings(actualScope, wireSettings(remaining), {
-              if_match: current.etag,
-            });
-            confirmed.current.settings = {
-              ...confirmed.current.settings,
-              ...remaining,
-            };
-            savedAnything.current = true;
-          }
-          if (
-            actualScope.kind === "workspace" &&
-            changed(confirmed.current.settings.dmRule, cleaned.dmRule)
-          ) {
-            const policy = await client.getDirectPolicy();
-            await client.setDirectPolicy(
-              { dm_rule: cleaned.dmRule ?? "everyone" },
-              { if_match: policy.etag },
-            );
-            confirmed.current.settings.dmRule = cleaned.dmRule;
-            savedAnything.current = true;
-          }
-          const before = confirmed.current.capabilities,
-            wanted = draft.capabilities;
-          if (
-            changed(before.everyone, wanted.everyone) ||
-            changed(before.group_grants, wanted.group_grants)
-          ) {
-            const current =
-              await client.getCapabilityConfiguration(actualScope);
-            const everyone = { ...current.data.everyone };
-            for (const key of new Set([
-              ...Object.keys(before.everyone),
-              ...Object.keys(wanted.everyone),
-            ]) as Set<keyof C.CapabilityConfiguration["everyone"]>) {
-              if (!changed(before.everyone[key], wanted.everyone[key]))
-                continue;
-              if (Object.hasOwn(wanted.everyone, key))
-                everyone[key] = wanted.everyone[key];
-              else delete everyone[key];
-            }
-            const identity = (
-              row: C.CapabilityConfiguration["group_grants"][number],
-            ) => `${row.group_id}:${row.capability}`;
-            const removed = new Set(
-              before.group_grants
-                .filter(
-                  (row) =>
-                    !wanted.group_grants.some(
-                      (next) => identity(next) === identity(row),
-                    ),
-                )
-                .map(identity),
-            );
-            const grants = current.data.group_grants.filter(
-              (row) => !removed.has(identity(row)),
-            );
-            for (const row of wanted.group_grants)
+            for (const id of new Set([
+              ...confirmedPersonal.current.favorites,
+              ...preferences.favorites,
+              ...confirmedPersonal.current.hiddenChannels,
+              ...preferences.hiddenChannels,
+            ])) {
+              const starred = preferences.favorites.includes(id),
+                hidden = preferences.hiddenChannels.includes(id);
               if (
-                !before.group_grants.some(
-                  (old) => identity(old) === identity(row),
-                ) &&
-                !grants.some((old) => identity(old) === identity(row))
+                confirmedPersonal.current.favorites.includes(id) === starred &&
+                confirmedPersonal.current.hiddenChannels.includes(id) === hidden
               )
-                grants.push(row);
-            await client.setCapabilityConfiguration(
-              { scope: actualScope, everyone, group_grants: grants },
-              { if_match: current.etag },
+                continue;
+              const current = await client.getMemberPreferences(id);
+              await client.updateMemberPreferences(
+                id,
+                { starred, hidden },
+                { if_match: current.etag },
+              );
+              for (const [key, enabled] of [
+                ["favorites", starred],
+                ["hiddenChannels", hidden],
+              ] as const)
+                confirmedPersonal.current[key] = enabled
+                  ? [...new Set([...confirmedPersonal.current[key], id])]
+                  : confirmedPersonal.current[key].filter(
+                      (item) => item !== id,
+                    );
+              savedAnything.current = true;
+            }
+          } else {
+            const actualScope = wireScope(savedTarget.current);
+            if (actualScope.kind === "channel")
+              for (const [userId, role] of Object.entries(memberRoles)) {
+                if (confirmedRoles.current[userId] === role) continue;
+                const current = await client.getConversation(actualScope.id);
+                await client.setMemberRole(
+                  actualScope.id,
+                  userId,
+                  { role },
+                  { if_match: current.etag },
+                );
+                confirmedRoles.current[userId] = role;
+                savedAnything.current = true;
+              }
+            const removed = Object.keys(confirmed.current.settings).filter(
+              (key) => key !== "dmRule" && !Object.hasOwn(cleaned, key),
             );
-            confirmed.current.capabilities = structuredClone(wanted);
-            savedAnything.current = true;
-          }
-          if (
-            actualScope.kind === "workspace" &&
-            changed(confirmedLocks.current.settings, lockedSettings)
-          ) {
-            const current = await client.getSettings(actualScope);
-            await client.setSettingsLocks(
-              { keys: lockedSettings.map(wireSettingKey) },
-              { if_match: current.etag },
+            let current = await client.getSettings(actualScope);
+            if (removed.length) {
+              current = await client.resetSettings(
+                actualScope,
+                { keys: removed.map(wireSettingKey) },
+                { if_match: current.etag },
+              );
+              for (const key of removed)
+                delete confirmed.current.settings[key as CommsSettingKey];
+              savedAnything.current = true;
+            }
+            const remaining = Object.fromEntries(
+              Object.entries(cleaned).filter(
+                ([key, value]) =>
+                  key !== "dmRule" &&
+                  changed(
+                    value,
+                    confirmed.current.settings[key as CommsSettingKey],
+                  ),
+              ),
             );
-            confirmedLocks.current.settings = [...lockedSettings];
-            savedAnything.current = true;
+            if (Object.keys(remaining).length) {
+              await client.updateSettings(
+                actualScope,
+                wireSettings(remaining),
+                {
+                  if_match: current.etag,
+                },
+              );
+              confirmed.current.settings = {
+                ...confirmed.current.settings,
+                ...remaining,
+              };
+              savedAnything.current = true;
+            }
+            if (
+              actualScope.kind === "workspace" &&
+              changed(confirmed.current.settings.dmRule, cleaned.dmRule)
+            ) {
+              const policy = await client.getDirectPolicy();
+              await client.setDirectPolicy(
+                { dm_rule: cleaned.dmRule ?? "everyone" },
+                { if_match: policy.etag },
+              );
+              confirmed.current.settings.dmRule = cleaned.dmRule;
+              savedAnything.current = true;
+            }
+            const before = confirmed.current.capabilities,
+              wanted = draft.capabilities;
+            if (
+              changed(before.everyone, wanted.everyone) ||
+              changed(before.group_grants, wanted.group_grants)
+            ) {
+              const current =
+                await client.getCapabilityConfiguration(actualScope);
+              const everyone = { ...current.data.everyone };
+              for (const key of new Set([
+                ...Object.keys(before.everyone),
+                ...Object.keys(wanted.everyone),
+              ]) as Set<keyof C.CapabilityConfiguration["everyone"]>) {
+                if (!changed(before.everyone[key], wanted.everyone[key]))
+                  continue;
+                if (Object.hasOwn(wanted.everyone, key))
+                  everyone[key] = wanted.everyone[key];
+                else delete everyone[key];
+              }
+              const identity = (
+                row: C.CapabilityConfiguration["group_grants"][number],
+              ) => `${row.group_id}:${row.capability}`;
+              const removed = new Set(
+                before.group_grants
+                  .filter(
+                    (row) =>
+                      !wanted.group_grants.some(
+                        (next) => identity(next) === identity(row),
+                      ),
+                  )
+                  .map(identity),
+              );
+              const grants = current.data.group_grants.filter(
+                (row) => !removed.has(identity(row)),
+              );
+              for (const row of wanted.group_grants)
+                if (
+                  !before.group_grants.some(
+                    (old) => identity(old) === identity(row),
+                  ) &&
+                  !grants.some((old) => identity(old) === identity(row))
+                )
+                  grants.push(row);
+              await client.setCapabilityConfiguration(
+                { scope: actualScope, everyone, group_grants: grants },
+                { if_match: current.etag },
+              );
+              confirmed.current.capabilities = structuredClone(wanted);
+              savedAnything.current = true;
+            }
+            if (
+              actualScope.kind === "workspace" &&
+              changed(confirmedLocks.current.settings, lockedSettings)
+            ) {
+              const current = await client.getSettings(actualScope);
+              await client.setSettingsLocks(
+                { keys: lockedSettings.map(wireSettingKey) },
+                { if_match: current.etag },
+              );
+              confirmedLocks.current.settings = [...lockedSettings];
+              savedAnything.current = true;
+            }
+            if (
+              actualScope.kind === "workspace" &&
+              changed(confirmedLocks.current.capabilities, lockedCapabilities)
+            ) {
+              const current = await client.getCapabilityLocks();
+              await client.setCapabilityLocks(
+                {
+                  capabilities: lockableCapabilitySchema
+                    .array()
+                    .parse(lockedCapabilities),
+                },
+                { if_match: current.etag },
+              );
+              confirmedLocks.current.capabilities = [...lockedCapabilities];
+              savedAnything.current = true;
+            }
           }
-          if (
-            actualScope.kind === "workspace" &&
-            changed(confirmedLocks.current.capabilities, lockedCapabilities)
-          ) {
-            const current = await client.getCapabilityLocks();
-            await client.setCapabilityLocks(
-              {
-                capabilities: lockableCapabilitySchema
-                  .array()
-                  .parse(lockedCapabilities),
-              },
-              { if_match: current.etag },
-            );
-            confirmedLocks.current.capabilities = [...lockedCapabilities];
-            savedAnything.current = true;
-          }
-        }
-      });
+        },
+        { hold: true },
+      );
     } catch (failure) {
       try {
         if (personal) await client.getPersonalPreferences();
@@ -583,8 +593,9 @@ function LoadedCommsSettingsDialog({
       return false;
     }
     // Join the follow-up read that run() started, so the next dialog opens on
-    // the saved locks instead of the previous read model.
-    await live?.refresh().catch(() => {});
+    // the saved locks instead of the previous read model. Joining never asks
+    // for a second read.
+    await live?.settled().catch(() => {});
     onAfterSave?.();
     onClose();
     return true;

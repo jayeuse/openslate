@@ -38,7 +38,6 @@ export function createLiveCommsRuntime(
           String(query.queryKey[4]).startsWith("workspace") &&
           query.state.data !== undefined,
       );
-  let refreshing: Promise<void> | undefined;
   const refreshReads = async () => {
     scope.signal.throwIfAborted();
     await cache.invalidateQueries({
@@ -46,13 +45,31 @@ export function createLiveCommsRuntime(
       predicate: (query) => query.queryKey[5] === "read",
     });
   };
-  const refresh = () =>
-    (refreshing ??= bridge
-      .recover()
-      .then(refreshReads)
-      .finally(() => {
-        refreshing = undefined;
-      }));
+  // One read repair at a time. A change seen while a repair runs is folded
+  // into one more repair, and a change seen while a command is still writing
+  // waits for that command: its own structure and grants events then cost no
+  // second bootstrap or workspace read (and no restarted one).
+  let changes = 0,
+    repaired = 0,
+    holds = 0;
+  let repairing: Promise<void> | undefined;
+  const repair = () =>
+    (repairing ??= (async () => {
+      try {
+        do {
+          repaired = changes;
+          await bridge.recover();
+          await refreshReads();
+        } while (changes > repaired && holds === 0);
+      } finally {
+        repairing = undefined;
+      }
+    })());
+  /** Repairs the read model after a change, now or when the running commands finish. */
+  const refresh = () => {
+    changes += 1;
+    return holds ? Promise.resolve() : repair();
+  };
   const failure = () => {
     if (!scope.signal.aborted)
       observers.forEach((observer) => observer.on_error({ kind: "network" }));
@@ -64,6 +81,8 @@ export function createLiveCommsRuntime(
       void bridge
         .event(event)
         .then(() => {
+          if (["grants", "membership", "structure"].includes(event.event))
+            return refresh();
           if (!["typing", "presence"].includes(event.event))
             return refreshReads();
         })
@@ -168,6 +187,23 @@ export function createLiveCommsRuntime(
       );
     },
     refresh,
+    /**
+     * Holds event-driven repairs while a command writes; the returned release
+     * (safe to call twice) repairs once for every change seen meanwhile.
+     */
+    hold() {
+      holds += 1;
+      let held = true;
+      return () => {
+        if (!held) return;
+        held = false;
+        holds -= 1;
+        if (!holds && changes > repaired && !scope.signal.aborted)
+          void repair().catch(failure);
+      };
+    },
+    /** The repair now running, if any: join it without asking for another. */
+    settled: () => repairing ?? Promise.resolve(),
     applyMessage: (message: Message) => bridge.accept(message),
     dispose: () => scope.dispose(),
   };

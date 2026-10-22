@@ -94,8 +94,8 @@ async function seedDepartments(
         : [],
   });
   const runtime = createMemoryCommsRuntime({ owner, initial: state });
-  await installCommsLiveApi(page, { userId: ownerId, runtime });
-  return { runtime, operations, serviceDelivery, room, person };
+  const api = await installCommsLiveApi(page, { userId: ownerId, runtime });
+  return { api, runtime, operations, serviceDelivery, room, person };
 }
 
 function channelNamed(
@@ -110,7 +110,7 @@ function channelNamed(
 test("an admin creates an organization channel, and a category that cannot hold it is reset with a note", async ({
   page,
 }) => {
-  const { runtime, operations, serviceDelivery } = await seedDepartments(
+  const { api, runtime, operations, serviceDelivery } = await seedDepartments(
     page,
     "admin",
   );
@@ -167,10 +167,24 @@ test("an admin creates an organization channel, and a category that cannot hold 
   await dialog
     .getByRole("textbox", { name: "Channel name", exact: true })
     .fill("announcements");
+  const bootstrapReads = () =>
+    api.requests.filter(
+      (request) => request.method === "GET" && request.path === "/bootstrap",
+    ).length;
+  const readsBefore = bootstrapReads();
+  const tokensBefore = api.tokenRequests();
   await dialog
     .getByRole("button", { name: "Create channel", exact: true })
     .click();
   await expect(dialog).toBeHidden();
+  // The accepted save opens the new channel after one coalesced read: its own
+  // structure and grants events add no bootstrap read and no Realtime reconnect.
+  await expect(
+    page.getByRole("heading", { name: "announcements", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/[?&]conversation=/);
+  expect(bootstrapReads() - readsBefore).toBe(1);
+  expect(api.tokenRequests()).toBe(tokensBefore);
   await expect
     .poll(() => channelNamed(runtime, "announcements"))
     .toMatchObject({ scope: "organization", category_id: null });
@@ -178,19 +192,37 @@ test("an admin creates an organization channel, and a category that cannot hold 
     "department_id",
   );
   expect(serviceDelivery.department_id).toBe(operations.id);
-  await page.getByRole("button", { name: /^announcements(,|$)/ }).click();
   await expect(
     page.getByRole("button", {
       name: /^Organization\s?\. Open channel settings\./,
     }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
   const settings = page.getByRole("dialog", {
     name: "Channel settings",
     exact: true,
   });
+  // Department roles decide only department channels, so only they link there.
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await settings.getByRole("tab", { name: "Access", exact: true }).click();
+  await expect(
+    settings.getByText("This channel is open to the whole organization.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    settings.getByRole("link", { name: /^Change department roles/ }),
+  ).toHaveCount(0);
+  await settings.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(settings).toBeHidden();
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "operations", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   await settings.getByRole("tab", { name: "Access", exact: true }).click();
   await expect(
     settings.getByRole("link", {
@@ -198,6 +230,54 @@ test("an admin creates an organization channel, and a category that cannot hold 
       exact: true,
     }),
   ).toHaveAttribute("href", "/access?view=groups");
+});
+
+test("an admin creates a category for one department or for none", async ({
+  page,
+}) => {
+  const { runtime } = await seedDepartments(page, "admin");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/comms");
+  await page
+    .getByRole("button", { name: "Create category", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Create category",
+    exact: true,
+  });
+  const department = dialog.getByRole("combobox", {
+    name: "Department",
+    exact: true,
+  });
+  await expect(department.getByRole("option")).toHaveText([
+    "No department",
+    "Operations",
+    "Finance",
+  ]);
+  await expect(department).toHaveValue("");
+  await department.selectOption({ label: "Finance" });
+  await dialog
+    .getByRole("textbox", { name: "Category name", exact: true })
+    .fill("Payroll");
+  await dialog
+    .getByRole("button", { name: "Create category", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect
+    .poll(
+      () =>
+        Object.values(runtime.exportSnapshot().state.categories).find(
+          (row) => row.name === "Payroll",
+        )?.department_id,
+    )
+    .toBe(financeId);
+  // The empty department category shows in the sidebar with its department.
+  await expect(
+    page.getByRole("button", {
+      name: "Category actions: Payroll",
+      exact: true,
+    }),
+  ).toBeVisible();
 });
 
 test("a department manager creates a channel only in a department they manage, in that department's categories", async ({
@@ -223,6 +303,15 @@ test("a department manager creates a channel only in a department they manage, i
   const organization = scope.getByRole("radio", { name: /^Organization/ });
   await expect(organization).toHaveAttribute("aria-disabled", "true");
   await expect(organization).not.toBeChecked();
+  // The visible reason is the description: announced once, present once.
+  await expect(organization).toHaveAccessibleDescription(
+    "Everyone in the organization can post. Guests can read. Only admins can create organization channels.",
+  );
+  await expect(
+    dialog.getByText("Only admins can create organization channels.", {
+      exact: true,
+    }),
+  ).toHaveCount(1);
   await expect(
     scope
       .getByRole("paragraph")

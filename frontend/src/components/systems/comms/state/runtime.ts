@@ -38,6 +38,7 @@ export function useCommsCommands() {
     async <T>(
       key: string,
       action: (client: CommsClient, signal: AbortSignal) => Promise<T>,
+      options?: { hold?: boolean },
     ): Promise<T> => {
       const { client, scope, live } = binding;
       const local = lifetime.current;
@@ -48,6 +49,10 @@ export function useCommsCommands() {
       const existing = pending.get(key);
       if (existing) return existing as Promise<T>;
       const task = Promise.resolve().then(async () => {
+        // A multi-step save opts in: the changes it causes arrive as events
+        // while it still writes and wait for its own follow-up refresh. Other
+        // commands (uploads, exports, sends) never delay a resync or revocation.
+        const release = options?.hold ? live?.hold() : undefined;
         try {
           signal.throwIfAborted();
           const result = await action(client, signal);
@@ -66,6 +71,7 @@ export function useCommsCommands() {
           }
           return result;
         } finally {
+          release?.();
           if (!local.signal.aborted) {
             pending.delete(key);
             setPendingKeys([...pending.keys()]);

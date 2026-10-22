@@ -9,11 +9,13 @@ import { Textarea } from "@/components/ui/textarea";
 import type { Person, Role } from "../../shared/data/sample-people";
 import { CommsSettingsDialog } from "./settings-dialog";
 import {
+  CategoryDepartmentChoice,
   ChannelScopeChoice,
   ChannelScopeSummary,
   categoryNote as noteForCategory,
   compatibleCategories,
   creationCategories,
+  useCategoryDepartments,
   useChannelDepartments,
   withDefaultDepartment,
 } from "./channel-scope";
@@ -63,6 +65,7 @@ export function ChannelDialog(props: EditorProps) {
   const departmentErrorId = useId();
   const categoryNoteId = useId();
   const departments = useChannelDepartments();
+  const categoryDepartments = useCategoryDepartments();
   const pendingSave = useRef<
     | { kind: "channel"; value: Channel; beforeId: string }
     | { kind: "category"; value: Category; beforeId: string }
@@ -140,18 +143,28 @@ export function ChannelDialog(props: EditorProps) {
     (resetFrom && channel
       ? noteForCategory(resetFrom, channel, catalog.departments)
       : "");
+  // A new category of a member who manages one department starts in it.
+  const category =
+    !("categoryId" in draft) &&
+    creating &&
+    !draft.departmentId &&
+    !categoryDepartments.admin &&
+    categoryDepartments.options.length === 1
+      ? { ...draft, departmentId: categoryDepartments.options[0].id }
+      : draft;
   const channels = channel
     ? [...props.channels.filter((item) => item.id !== channel.id), channel]
     : props.channels;
   const categories = channel
     ? props.categories
-    : [...props.categories.filter((item) => item.id !== draft.id), draft];
+    : [...props.categories.filter((item) => item.id !== draft.id), category];
   function saveMetadata() {
     const name = draft.name.trim();
     if (!name) {
       setError("Enter a name.");
       return false;
     }
+    // A category may have no department; it then holds organization channels.
     if (channel?.scope === "department" && !channel.departmentId) {
       setDepartmentError("Choose a department.");
       return false;
@@ -170,7 +183,7 @@ export function ChannelDialog(props: EditorProps) {
       setError("This name is already in use.");
       return false;
     }
-    const saved = channel ? { ...channel, name } : { ...draft, name };
+    const saved = channel ? { ...channel, name } : { ...category, name };
     if (props.kind === "channel" && "categoryId" in saved)
       pendingSave.current = { kind: "channel", value: saved, beforeId };
     else if (props.kind === "category" && !("categoryId" in saved))
@@ -245,7 +258,10 @@ export function ChannelDialog(props: EditorProps) {
             ? value.name
             : current.data.name,
         position: current?.data.position ?? props.categories.length,
-        department_id: current?.data.department_id ?? null,
+        // The department is chosen once, when the category is created.
+        department_id: current
+          ? current.data.department_id
+          : value.departmentId || null,
       };
       if (!current) {
         savedId.current = (await client.createCategory(details)).data.id;
@@ -408,6 +424,17 @@ export function ChannelDialog(props: EditorProps) {
               setDraft({ ...draft, name: event.target.value });
             }}
           />
+          {!channel && creating && (
+            <CategoryDepartmentChoice
+              category={category}
+              error={departmentError}
+              errorId={departmentErrorId}
+              onChange={(departmentId) => {
+                setDepartmentError("");
+                setDraft({ ...category, departmentId });
+              }}
+            />
+          )}
           {channel && (
             <>
               {creating ? (

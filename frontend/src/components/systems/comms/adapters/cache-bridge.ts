@@ -219,6 +219,9 @@ export function createCommsCacheBridge(
     accept: (message: Message) => enqueue(() => accept(message)),
     async event(input: CommsEvent) {
       const event = events.parse(input);
+      // The runtime repairs grants, membership and structure changes in its
+      // one coalesced refresh, which recovers histories and the bootstrap.
+      if (["grants", "membership", "structure"].includes(event.event)) return;
       await enqueue(async () => {
         if (event.event === "message") {
           const { conversation_id: id, seq, kind } = event.payload;
@@ -265,9 +268,7 @@ export function createCommsCacheBridge(
               ...scope.bootstrapOptions(),
               staleTime: 0,
             });
-        } else if (["grants", "membership", "structure"].includes(event.event))
-          await recover();
-        else if (event.event === "read" || event.event === "notification")
+        } else if (event.event === "read" || event.event === "notification")
           await cache.fetchQuery({ ...scope.bootstrapOptions(), staleTime: 0 });
       });
     },

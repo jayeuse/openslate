@@ -67,6 +67,11 @@ export function useCommsConversation(selected: string) {
         managedDepartmentIds === "all" ||
         (!creationLocked(creation.data) && managedDepartmentIds.size > 0) ||
         granted,
+      // The API creates categories only for admins and holders of a
+      // workspace-level createChannel grant; department managers cannot.
+      canCreateCategory:
+        managedDepartmentIds === "all" ||
+        creation.data?.decision.allowed === true,
       canAdminister:
         creation.data?.membership_role === "admin" ||
         (check?.capabilities.manageWorkspace.allowed ?? false),

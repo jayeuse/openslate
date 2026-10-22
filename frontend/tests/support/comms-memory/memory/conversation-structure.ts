@@ -643,7 +643,11 @@ export function createConversationStructure(
             kind: "commit",
             value: row,
             version_keys: [conversationKey(row.id)],
-            publications: structurePublications(draft),
+            // Like the backend's create_channel: structure, then grants.
+            publications: [
+              ...structurePublications(draft),
+              ...structurePublications(draft, "grants"),
+            ],
           };
         },
       });

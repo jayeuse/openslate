@@ -277,6 +277,16 @@ test("Comms does not substitute content for unknown or another organization's co
   await expect(
     page.getByText("This conversation is not available.", { exact: true }),
   ).toBeVisible();
+  // The header stays neutral too: no hint that a private conversation exists.
+  await expect(
+    page.getByRole("heading", {
+      name: "Conversation not available",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Private conversation", { exact: true }),
+  ).toHaveCount(0);
   await expect(page.getByRole("article")).toHaveCount(0);
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),

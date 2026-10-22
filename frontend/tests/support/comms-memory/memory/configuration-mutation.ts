@@ -105,8 +105,10 @@ export function configurationVersionKeys(
   ];
 }
 
+/** An organization-wide event to every active person, like the backend's `organization_event`. */
 export function structurePublications(
   world: MemoryPolicyWorld,
+  event: "structure" | "grants" = "structure",
 ): MemoryPublication[] {
   return Object.values(world.people)
     .filter((p) => p.active && p.org_id === world.org_id)
@@ -115,7 +117,7 @@ export function structurePublications(
       event: {
         private: true,
         topic: `org:${world.org_id}:user:${p.user_id}`,
-        event: "structure",
+        event,
         payload: {},
       },
     }));

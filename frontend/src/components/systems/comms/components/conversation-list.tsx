@@ -315,7 +315,7 @@ export function ConversationList({
               {uncategorized.map(row)}
             </section>
           )}
-          {menuAccess.canCreate && (
+          {menuAccess.canCreateCategory && (
             <Action
               variant="ghost"
               className="text-muted-foreground min-h-11 w-full justify-start"

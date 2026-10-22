@@ -134,6 +134,14 @@ export function ConversationHeader({
   const { people, messages, threads } = useCommsWorkspaceView();
   const { channel, direct, menuAccess, canView } = conversation;
   const { selected, threadId } = navigation;
+  // An unavailable id gets a neutral header: it never hints that a private
+  // conversation exists (D44).
+  const title =
+    channel?.name ??
+    direct?.user ??
+    (selected ? "Conversation not available" : "Choose a conversation");
+  const description =
+    channel?.description ?? (direct ? "Private conversation" : "");
   const [detailsFor, setDetailsFor] = useState("");
   const [threadFilter, setThreadFilter] = useState<"active" | "inactive">(
     "active",
@@ -177,11 +185,13 @@ export function ConversationHeader({
           data-slot="section-title"
           className="truncate text-sm font-semibold"
         >
-          {channel?.name ?? direct?.user ?? "Choose a conversation"}
+          {title}
         </h2>
-        <p className="text-muted-foreground hidden truncate text-xs lg:block">
-          {channel?.description ?? "Private conversation"}
-        </p>
+        {description && (
+          <p className="text-muted-foreground hidden truncate text-xs lg:block">
+            {description}
+          </p>
+        )}
       </div>
       <Action
         type="button"
@@ -207,9 +217,11 @@ export function ConversationHeader({
             {...menuAccess}
             onSelect={dialogs.openSetting}
           />
-          <p className="text-muted-foreground text-xs sm:hidden">
-            {channel?.description ?? "Private conversation"}
-          </p>
+          {description && (
+            <p className="text-muted-foreground text-xs sm:hidden">
+              {description}
+            </p>
+          )}
           {channel && (
             <p className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs sm:hidden">
               <span className="truncate">

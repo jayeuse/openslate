@@ -238,8 +238,8 @@ export function ChannelScopeChoice({
   const { admin, status, options, placement, retry } = useChannelDepartments();
   const legendId = useId();
   const ids = {
-    organization: { title: useId(), note: useId() },
-    department: { title: useId(), note: useId() },
+    organization: { title: useId(), note: useId(), reason: useId() },
+    department: { title: useId(), note: useId(), reason: useId() },
   };
   const departmentDisabled = status === "ready" && options.length === 0;
   function choose(next: Channel) {
@@ -301,7 +301,7 @@ export function ChannelScopeChoice({
           const Mark = reason ? Lock : Check;
           return (
             <div key={scope} className="flex flex-col gap-1">
-              <DisabledReason reason={reason}>
+              <DisabledReason reason={reason} reasonId={ids[scope].reason}>
                 <RadioGroupItem
                   value={scope}
                   aria-labelledby={ids[scope].title}
@@ -341,7 +341,12 @@ export function ChannelScopeChoice({
                 </RadioGroupItem>
               </DisabledReason>
               {reason && (
-                <p className="text-muted-foreground px-1 text-xs">{reason}</p>
+                <p
+                  id={ids[scope].reason}
+                  className="text-muted-foreground px-1 text-xs"
+                >
+                  {reason}
+                </p>
               )}
             </div>
           );
@@ -402,6 +407,113 @@ export function ChannelScopeChoice({
             </p>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The departments a new category may belong to: an admin any department or
+ * none, anyone else a department they manage.
+ */
+export function useCategoryDepartments() {
+  const {
+    catalog,
+    managedDepartmentIds,
+    requestDepartments,
+    retryDepartments,
+    departmentsStatus,
+  } = useCommsClient();
+  useEffect(() => {
+    requestDepartments?.();
+  }, [requestDepartments]);
+  const admin = managedDepartmentIds === "all";
+  return {
+    admin,
+    status: departmentsStatus ?? "ready",
+    options: catalog.departments.filter(
+      (department) => admin || managedDepartmentIds.has(department.id),
+    ),
+    retry: () => retryDepartments?.(),
+  } as const;
+}
+
+/** A new category's department, chosen once; its channels then belong to it. */
+export function CategoryDepartmentChoice({
+  category,
+  error,
+  errorId,
+  onChange,
+}: {
+  category: Category;
+  error: string;
+  errorId: string;
+  onChange: (departmentId: string) => void;
+}) {
+  const { status, options, retry } = useCategoryDepartments();
+  const noteId = useId();
+  // Without a department a category holds organization channels; a member
+  // who must choose one sees no note until they do.
+  const note = category.departmentId ? (
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5">
+      Channels in this category belong to{" "}
+      <DepartmentName id={category.departmentId} />
+    </span>
+  ) : (
+    "Channels in this category are open to the whole organization."
+  );
+  return (
+    <div className="flex flex-col gap-2">
+      <Choice
+        label="Department"
+        value={category.departmentId}
+        disabled={status !== "ready"}
+        aria-invalid={!!error}
+        aria-describedby={
+          [note ? noteId : "", error ? errorId : ""]
+            .filter(Boolean)
+            .join(" ") || undefined
+        }
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {status === "loading" ? (
+          <NativeSelectOption value={category.departmentId}>
+            Loading departments…
+          </NativeSelectOption>
+        ) : status === "error" ? (
+          <NativeSelectOption value={category.departmentId}>
+            Departments could not be loaded
+          </NativeSelectOption>
+        ) : (
+          <>
+            <NativeSelectOption value="">No department</NativeSelectOption>
+            {options.map((department) => (
+              <NativeSelectOption key={department.id} value={department.id}>
+                {department.name}
+              </NativeSelectOption>
+            ))}
+          </>
+        )}
+      </Choice>
+      {note && (
+        <p id={noteId} className="text-muted-foreground -mt-1 text-sm">
+          {note}
+        </p>
+      )}
+      {status === "error" && (
+        <Action
+          type="button"
+          variant="ghost"
+          className="self-start px-2 underline underline-offset-4"
+          onClick={retry}
+        >
+          Try again
+        </Action>
+      )}
+      {error && (
+        <p id={errorId} role="alert" className="text-destructive text-sm">
+          {error}
+        </p>
       )}
     </div>
   );
@@ -518,15 +630,17 @@ export function AccessSummary({
           />
         </div>
       ))}
-      {managedDepartmentIds === "all" && (
-        <Link
-          href="/access?view=groups"
-          onClick={onNavigate}
-          className="self-start text-sm underline underline-offset-4"
-        >
-          Change department roles in Access → Groups
-        </Link>
-      )}
+      {/* Department roles decide only department channels. */}
+      {managedDepartmentIds === "all" &&
+        sections.some((section) => section.scope === "department") && (
+          <Link
+            href="/access?view=groups"
+            onClick={onNavigate}
+            className="self-start text-sm underline underline-offset-4"
+          >
+            Change department roles in Access → Groups
+          </Link>
+        )}
     </section>
   );
 }

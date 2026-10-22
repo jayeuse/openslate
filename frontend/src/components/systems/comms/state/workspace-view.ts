@@ -34,6 +34,24 @@ export async function complete<T>(
 
 // Record-linked messages read together; small enough to stay polite to the API.
 const RECORD_READS = 6;
+// Conversations (and categories) read together. Each one's own reads run at
+// once, so a batch keeps about ten requests in flight; a refresh then takes a
+// few round trips per batch instead of three per conversation, one after another.
+const SCOPE_READS = 2;
+
+/** Reads `items` a batch at a time and returns the results in their order. */
+async function inBatches<T, R>(
+  items: readonly T[],
+  size: number,
+  read: (item: T) => Promise<R>,
+) {
+  const results: R[] = [];
+  for (let index = 0; index < items.length; index += size)
+    results.push(
+      ...(await Promise.all(items.slice(index, index + size).map(read))),
+    );
+  return results;
+}
 
 export async function loadWorkspace(client: CommsClient, signal: AbortSignal) {
   const options = { signal };
@@ -89,19 +107,23 @@ export async function loadWorkspace(client: CommsClient, signal: AbortSignal) {
     name: category.name,
     departmentId: category.department_id ?? "",
   }));
-  for (const { category } of bootstrap.categories) {
-    const response = await client.getSettings(
-      { kind: "category", id: category.id },
-      options,
-    );
-    config.categories[category.id] = {
-      settings: settingsView(response.data.overrides),
-      capabilities: (
-        await client.getCapabilityConfiguration(
+  const categoryReads = await inBatches(
+    bootstrap.categories,
+    SCOPE_READS,
+    ({ category }) =>
+      Promise.all([
+        client.getSettings({ kind: "category", id: category.id }, options),
+        client.getCapabilityConfiguration(
           { kind: "category", id: category.id },
           options,
-        )
-      ).data,
+        ),
+      ]),
+  );
+  for (const [index, { category }] of bootstrap.categories.entries()) {
+    const [response, capabilities] = categoryReads[index];
+    config.categories[category.id] = {
+      settings: settingsView(response.data.overrides),
+      capabilities: capabilities.data,
     };
     config.resolved[`category:${category.id}`] = resolved(response.data);
   }
@@ -157,29 +179,46 @@ export async function loadWorkspace(client: CommsClient, signal: AbortSignal) {
     ),
   };
   config.preferences[client.context.user_id] = preferences;
-  for (const summary of bootstrap.conversations) {
+  const roomReads = await inBatches(
+    bootstrap.conversations,
+    SCOPE_READS,
+    ({ conversation: room }) =>
+      Promise.all([
+        complete((offset) =>
+          client.listMembers(room.id, { limit: 100, offset }, options),
+        ),
+        client.getCapabilities(room.id, options).catch((error: unknown) => {
+          if (
+            typeof error === "object" &&
+            error !== null &&
+            "failure" in error &&
+            typeof error.failure === "object" &&
+            error.failure !== null &&
+            "status" in error.failure &&
+            error.failure.status === 403
+          )
+            return undefined;
+          throw error;
+        }),
+        room.kind === "channel"
+          ? client.getSettings({ kind: "channel", id: room.id }, options)
+          : Promise.resolve(workspaceSettings),
+        room.kind === "channel"
+          ? client
+              .getCapabilityConfiguration(
+                { kind: "channel", id: room.id },
+                options,
+              )
+              .then((response) => response.data)
+          : Promise.resolve(undefined),
+        complete((offset) =>
+          client.listPins(room.id, { limit: 100, offset }, options),
+        ),
+      ]),
+  );
+  for (const [index, summary] of bootstrap.conversations.entries()) {
     const room = summary.conversation;
-    const [roomMembers, check, settings] = await Promise.all([
-      complete((offset) =>
-        client.listMembers(room.id, { limit: 100, offset }, options),
-      ),
-      client.getCapabilities(room.id, options).catch((error: unknown) => {
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "failure" in error &&
-          typeof error.failure === "object" &&
-          error.failure !== null &&
-          "status" in error.failure &&
-          error.failure.status === 403
-        )
-          return undefined;
-        throw error;
-      }),
-      room.kind === "channel"
-        ? client.getSettings({ kind: "channel", id: room.id }, options)
-        : Promise.resolve(workspaceSettings),
-    ]);
+    const [roomMembers, check, settings, capabilities, pins] = roomReads[index];
     members[room.id] = roomMembers;
     if (check) checks[room.id] = check;
     effective[room.id] = settings.data.effective;
@@ -209,14 +248,10 @@ export async function loadWorkspace(client: CommsClient, signal: AbortSignal) {
         scope: room.scope,
         departmentId: room.scope === "department" ? room.department_id : "",
       });
+      if (!capabilities) throw new Error("Channel capabilities are missing");
       config.channels[room.id] = {
         settings: settingsView(settings.data.overrides),
-        capabilities: (
-          await client.getCapabilityConfiguration(
-            { kind: "channel", id: room.id },
-            options,
-          )
-        ).data,
+        capabilities,
       };
     } else
       directs.push({
@@ -231,10 +266,7 @@ export async function loadWorkspace(client: CommsClient, signal: AbortSignal) {
         blocked: false,
       });
     config.resolved[room.id] = resolved(settings.data);
-    for (const message of await complete((offset) =>
-      client.listPins(room.id, { limit: 100, offset }, options),
-    ))
-      rawMessages.set(message.id, message);
+    for (const message of pins) rawMessages.set(message.id, message);
   }
   for (const thread of threads) {
     const root = await client.getMessage(

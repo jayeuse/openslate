@@ -43,6 +43,7 @@ export type WorkspaceSetting =
 export type CommsMenuAccess = {
   canManageChannel: boolean;
   canCreate: boolean;
+  canCreateCategory: boolean;
   canAdminister: boolean;
 };
 export type OpenWorkspaceSetting = (
@@ -65,6 +66,7 @@ export function CommsMenu({
   hasChannel,
   canManageChannel,
   canCreate,
+  canCreateCategory,
   canAdminister,
   onSelect,
 }: CommsMenuAccess & {
@@ -102,12 +104,14 @@ export function CommsMenu({
           { id: "edit-category", label: "Category settings", icon: FolderOpen },
         ]
       : [],
-    canCreate
-      ? [
-          { id: "create-channel", label: "New channel", icon: Plus },
-          { id: "create-category", label: "New category", icon: FolderPlus },
-        ]
-      : [],
+    [
+      ...(canCreate
+        ? [{ id: "create-channel", label: "New channel", icon: Plus }]
+        : []),
+      ...(canCreateCategory
+        ? [{ id: "create-category", label: "New category", icon: FolderPlus }]
+        : []),
+    ],
   ].filter((group) => group.length > 0) as {
     id: WorkspaceSetting;
     label: string;
