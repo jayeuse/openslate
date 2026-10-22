@@ -78,6 +78,7 @@ class _Pinned(http.client.HTTPConnection):
                 raise Refused()
             if self.value.scheme == "https":
                 context = tls_context()
+                context.minimum_version = ssl.TLSVersion.TLSv1_2
                 context.set_alpn_protocols(["http/1.1"])
                 stream.settimeout(remaining(self.deadline))
                 stream = context.wrap_socket(stream, server_hostname=self.value.host)

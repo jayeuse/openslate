@@ -131,6 +131,7 @@ def wire(monkeypatch):
     def wrap(context, sock, *, server_hostname, **_kwargs):
         # Real SSLContext configuration, not copied fixture booleans.
         assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
+        assert context.minimum_version == ssl.TLSVersion.TLSv1_2
         value.tls.append(server_hostname)
         value.now += value.tls_seconds
         if value.certificate_failure:
