@@ -72,8 +72,8 @@ def _comms_reference_blockers(
 ) -> list[LifecycleBlocker]:
     if not records and not modules:
         return []
-    links = db.execute(
-        select(CommsMessageRecordLink.record_id, CommsMessageRecordLink.module_id).where(
+    links = db.scalars(
+        select(CommsMessageRecordLink).where(
             CommsMessageRecordLink.org_id == bound_organization_column(),
             or_(CommsMessageRecordLink.record_id.in_(records),
                 CommsMessageRecordLink.module_id.in_(modules)),
@@ -81,8 +81,8 @@ def _comms_reference_blockers(
     ).all()
     # Retained links are FK dependencies even after message deletion. Report only
     # the caller's source target, never a private conversation, message or link ID.
-    targets = {("records", record) if record in records else ("modules", module)
-               for record, module in links}
+    targets = {("records", link.record_id) if link.record_id in records
+               else ("modules", link.module_id) for link in links}
     return [LifecycleBlocker(
         code=LifecycleBlockerCode.PURGE_EXTERNAL_SCHEMA_DEPENDENCY,
         entity_type=kind, entity_id=identity,

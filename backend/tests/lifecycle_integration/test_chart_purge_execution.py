@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.boards.models import Board, BoardScope, BoardWidget
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
@@ -31,6 +32,19 @@ def _context(world):
         request_method="POST",
         request_path="/api/departments/owned-chart-purge",
     )
+
+
+@contextmanager
+def _admin_request(world, context=None):
+    """A runtime session bound like an admin request: audit actor and organization.
+
+    Production binds the organization in ``get_current_identity``; lifecycle execution
+    stages Comms grant events that refuse a session without that binding.
+    """
+    with AuditSession(world.runtime) as db:
+        db.info[AUDIT_CONTEXT_KEY] = context or _context(world)
+        scope_session(db, world.organization_id)
+        yield db
 
 
 @contextmanager
@@ -76,8 +90,7 @@ def _closed_scope(world, target):
         with world.client("admin") as client:
             assert client.delete(f"/api/charts/{world.charts[1]}?revision=1").status_code == 204
         identifier = world.department_id if target == "department" else world.module_id
-        with AuditSession(world.runtime) as db:
-            db.info[AUDIT_CONTEXT_KEY] = _context(world)
+        with _admin_request(world) as db:
             close_lifecycle(db, target, identifier, world.actors["admin"])
         yield identifier, board_id, widget_id
     finally:
@@ -152,8 +165,7 @@ def test_owned_parent_purge_removes_widgets_then_all_retained_charts_and_sources
         if widget_id is not None:
             assert widget_id in plan.scope_ids["board_widgets"]
         context = _context(world)
-        with AuditSession(world.runtime) as db:
-            db.info[AUDIT_CONTEXT_KEY] = context
+        with _admin_request(world, context) as db:
             execute_lifecycle(db, plan)
         with AuditSession(world.runtime) as observer:
             for model, ids in (
@@ -196,8 +208,7 @@ def test_late_chart_flush_failure_rolls_back_complete_owned_graph_and_audit(
     with _closed_scope(world, "department") as (identifier, board_id, _widget_id):
         plan = _plan(world, "department", identifier)
         before = _snapshot(world, board_id)
-        with AuditSession(world.runtime) as db:
-            db.info[AUDIT_CONTEXT_KEY] = _context(world)
+        with _admin_request(world) as db:
             original = db.flush
             failed = []
 
@@ -232,8 +243,7 @@ def test_busy_scope_refuses_without_partial_write_and_releases_earlier_locks(
         with world.runtime.connect() as holder:
             holder_pid = holder.scalar(text("SELECT pg_backend_pid()"))
             holder.execute(select(model).where(model.id == row_id).with_for_update())
-            with AuditSession(world.runtime) as db:
-                db.info[AUDIT_CONTEXT_KEY] = _context(world)
+            with _admin_request(world) as db:
                 request_pid = db.connection().scalar(text("SELECT pg_backend_pid()"))
                 assert request_pid != holder_pid
                 with pytest.raises(LifecycleUnavailable):
@@ -270,8 +280,7 @@ def test_busy_scope_refuses_without_partial_write_and_releases_earlier_locks(
                 ]
             )
             holder.rollback()
-        with AuditSession(world.runtime) as db:
-            db.info[AUDIT_CONTEXT_KEY] = _context(world)
+        with _admin_request(world) as db:
             execute_lifecycle(db, _plan(world, "department", identifier))
 
 
@@ -279,11 +288,9 @@ def test_disappeared_scope_after_real_purge_releases_earlier_parent_locks(refere
     world = reference_race_world
     with _closed_scope(world, "module") as (identifier, _board_id, _widget_id):
         stale = _plan(world, "module", identifier)
-        with AuditSession(world.runtime) as winner:
-            winner.info[AUDIT_CONTEXT_KEY] = _context(world)
+        with _admin_request(world) as winner:
             execute_lifecycle(winner, stale)
-        with AuditSession(world.runtime) as late:
-            late.info[AUDIT_CONTEXT_KEY] = _context(world)
+        with _admin_request(world) as late:
             with pytest.raises(LifecycleUnavailable):
                 execute_lifecycle(late, stale)
             assert not late.in_transaction()

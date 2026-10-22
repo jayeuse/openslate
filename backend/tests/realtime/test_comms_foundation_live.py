@@ -1,6 +1,7 @@
 """Guarded S20A actual FastAPI → private Envoy → Realtime socket proofs, not the S02 prototype."""
 
 import json
+import os
 import socket
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -12,7 +13,7 @@ import pytest
 from fastapi import Depends
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, SecretStr
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -26,7 +27,9 @@ from app.systems.comms.conversations.models import CommsConversation, CommsMembe
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
 from app.systems.comms.realtime.models import CommsRealtimeGrant
 from app.systems.comms.realtime.publication import stage_comms_event
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.realtime.tokens import mint_realtime_token
+from tests.conftest import create_member, guarded_create_engine
 from tests.realtime.test_realtime_channel_acceptance import (
     _assert_refused,
     _channel_token,
@@ -52,6 +55,13 @@ class PublicationCommand(BaseModel):
 def live_case(organizations):
     org, conversation = organizations.org_a, uuid7()
     engine = get_engine()
+    # A group keeps at least three participants after a removal, so removing the guest
+    # needs two more members beside the creator.
+    owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
+    with Session(owner) as db:
+        organization = db.get(WorkspaceProfile, org)
+        extra = [create_member(db, organization, "member")[0].id for _ in range(2)]
+        db.commit()
     with AuditSession(engine) as db:
         scope_session(db, org)
         db.add(
@@ -67,7 +77,7 @@ def live_case(organizations):
         )
         db.flush()
         db.add(CommsConversationCounter(org_id=org, conversation_id=conversation, last_seq=0))
-        for user in (organizations.member.user_id, organizations.outsider.user_id):
+        for user in (organizations.member.user_id, organizations.outsider.user_id, *extra):
             db.add(CommsMember(org_id=org, conversation_id=conversation, user_id=user))
         db.add(
             Membership(
@@ -191,6 +201,13 @@ def live_case(organizations):
                     db.delete(row)
                 db.flush()
             db.commit()
+        with owner.begin() as connection:
+            for statement in (
+                "DELETE FROM public.memberships WHERE user_id = ANY(:users)",
+                "DELETE FROM public.users WHERE id = ANY(:users)",
+            ):
+                connection.execute(text(statement), {"users": extra})
+        owner.dispose()
 
 
 def test_committed_events_use_the_private_listener_after_response_and_rollback_delivers_nothing(

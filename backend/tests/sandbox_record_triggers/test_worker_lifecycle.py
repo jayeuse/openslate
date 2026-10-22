@@ -174,6 +174,8 @@ def test_lifespan_keeps_database_pool_when_trigger_worker_is_alive(monkeypatch) 
     app.state.events_listener = SimpleNamespace(start=lambda: None, stop=lambda: None)
     app.state.smtp_outbox_worker = SimpleNamespace(start=lambda: None, stop=lambda: None)
     app.state.trigger_worker = SimpleNamespace(start=lambda: None, stop=lambda: False)
+    # create_app() always installs the Comms publisher; the lifespan starts and stops it.
+    app.state.comms_publisher = SimpleNamespace(start=lambda: None, stop=lambda: True)
     dispose_database = Mock()
     dispose_readiness = Mock()
     monkeypatch.setattr(main, "configure_observability_logging", lambda: None)

@@ -96,8 +96,11 @@ def test_attachment_upload_authorizes_before_the_file_lock(monkeypatch: pytest.M
             raise StopAtFileLock
         return candidate
 
-    def authorize_contextual_file(_db, _user, file, *, board_id=None, write=False):
+    def authorize_contextual_file(
+        _db, _user, file, *, board_id=None, write=False, conversation_id=None
+    ):
         assert file.purpose == "record_attachment" and board_id is None and write is True
+        assert conversation_id is None
         events.append("policy")
         return actor
 

@@ -48,7 +48,8 @@ def _start_until_create(tmp_path: Path, monkeypatch, block: int, **options) -> D
     with pytest.raises(_StopAfterCreate):
         runtime.start()
     log.close()
-    assert len(calls) == 3  # db, gateway, and mail; never a free port for templates
+    # db, gateway, mail, and the private Comms publisher; never a free port for templates
+    assert len(calls) == 4
     return runtime
 
 
