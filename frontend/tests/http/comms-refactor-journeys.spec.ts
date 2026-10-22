@@ -796,6 +796,11 @@ test("a channel has one settings dialog, reached the same way from its row and i
   await expect(settings.getByLabel("Category")).toBeVisible();
   await settings.getByRole("button", { name: "Cancel", exact: true }).click();
   await row.click();
+  // The header's settings button belongs to the open channel, so wait for the
+  // switch to land before using it.
+  await expect(
+    page.getByRole("heading", { level: 2, name: "workshop", exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
