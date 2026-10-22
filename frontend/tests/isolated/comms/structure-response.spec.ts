@@ -99,17 +99,6 @@ test("structure resource mutations and reads retain strict identity and target b
     },
     {
       call: () =>
-        api.setChannelAccess(
-          context,
-          conversationId,
-          { access: [] },
-          conditional,
-        ),
-      body: { ...channel, id: other },
-      status: 200,
-    },
-    {
-      call: () =>
         api.setMemberRole(
           context,
           conversationId,

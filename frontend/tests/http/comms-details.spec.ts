@@ -380,7 +380,7 @@ test("member presence has three named groups and verified person cards stay scop
     ).toContainText("Mara Santos");
     await expect(
       members.getByRole("region", { name: "Away members", exact: true }),
-    ).toContainText("Operations · Away");
+    ).toContainText("Operations");
     await members
       .getByRole("button", { name: "Person card: Noah Tan", exact: true })
       .click();

@@ -2,7 +2,6 @@ import { z } from "zod";
 import { commsContextSchema } from "@/components/systems/comms/contract/schemas";
 import type {
   CommsContext,
-  GroupAccess,
   Settings,
   SettingsScope,
 } from "@/components/systems/comms/contract/types";
@@ -25,10 +24,6 @@ function validateRelationships(state: MemoryCommsState) {
   const { people, conversations, messages } = state;
   const person = (id: string) => ensure(Object.hasOwn(people, id));
   const conversation = (id: string) => ensure(Object.hasOwn(conversations, id));
-  const groupAccess = (rows: GroupAccess[]) => {
-    for (const row of rows)
-      if (row.subject === "group") ensure(state.groups[row.group_id]);
-  };
   function entityMap(rows: Record<string, { id: string; org_id: string }>) {
     for (const [key, row] of Object.entries(rows))
       ensure(row.id === key && row.org_id === state.org_id);
@@ -45,7 +40,6 @@ function validateRelationships(state: MemoryCommsState) {
     state.threads,
     state.files,
     state.reports,
-    state.admissions,
     state.schedules,
     state.exports,
     state.templates,
@@ -74,7 +68,6 @@ function validateRelationships(state: MemoryCommsState) {
   for (const category of Object.values(state.categories)) {
     if (category.department_id !== null)
       ensure(state.departments[category.department_id]);
-    groupAccess(category.default_access);
   }
   for (const row of Object.values(conversations)) {
     person(row.creator_id);
@@ -87,7 +80,6 @@ function validateRelationships(state: MemoryCommsState) {
       if (row.category_id !== null) ensure(state.categories[row.category_id]);
       if (row.scope === "department")
         ensure(state.departments[row.department_id]);
-      if (row.scope === "groups") groupAccess(row.access);
     }
   }
   for (const [conversationId, members] of Object.entries(state.members)) {
@@ -104,11 +96,7 @@ function validateRelationships(state: MemoryCommsState) {
       ensure(conversations[scope.id]?.kind === "channel");
   }
   function settingsReferences(settings: Partial<Settings>) {
-    for (const id of [
-      ...(settings.default_member_ids ?? []),
-      ...(settings.restricted_person_ids ?? []),
-    ])
-      person(id);
+    for (const id of [...(settings.restricted_person_ids ?? [])]) person(id);
     for (const id of settings.allowed_record_modules ?? [])
       ensure(state.modules[id]);
     for (const id of settings.record_card_fields ?? [])
@@ -246,10 +234,6 @@ function validateRelationships(state: MemoryCommsState) {
     ensure(
       messages[report.message_id]?.conversation_id === report.conversation_id,
     );
-  }
-  for (const admission of Object.values(state.admissions)) {
-    person(admission.user_id);
-    ensure(conversations[admission.conversation_id]?.kind === "channel");
   }
   for (const schedule of Object.values(state.schedules)) {
     person(schedule.author_id);

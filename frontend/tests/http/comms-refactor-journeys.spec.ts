@@ -709,7 +709,6 @@ test("the OpenComms menu keeps everyday items up front and admin tools behind on
     "Export messages",
     "Workspace settings",
     "Channel templates",
-    "Join requests",
     "Settings history",
   ]);
   await tools.getByRole("menuitem", { name: "Moderation" }).click();
@@ -846,14 +845,11 @@ test("categories carry department identity, and a channel says who can use it", 
   await expect(
     page.getByRole("button", { name: /^Service delivery/ }),
   ).toContainText("Operations");
+  // Created from the department's category, the channel is that department's.
   await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await expect(
-    page.getByRole("button", { name: /^Visible to Dispatch team \./ }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
-  await expect(
     page.getByRole("button", {
-      name: /^Visible to everyone \./,
+      name: /^Department ·\s*Operations\s?\. Open channel settings\./,
     }),
   ).toBeVisible();
 });
@@ -891,91 +887,6 @@ test("a linked record opens beside the conversation and gives way to a thread", 
     .first()
     .click();
   await expect(panel).toBeVisible();
-});
-
-test("group access in channel settings changes who the channel says it is for", async ({
-  page,
-}) => {
-  await installOwnedJourneyApi(page);
-  await page.goto("/comms");
-  await createWorkshop(page);
-  await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
-  await expect(
-    page.getByRole("heading", { name: "workshop", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
-  const settings = page.getByRole("dialog", { name: "Channel settings" });
-  const access = settings.getByRole("group", { name: "Who can use #workshop" });
-  await settings.getByRole("tab", { name: "Access", exact: true }).click();
-  await expect(access).toContainText(
-    "Saved choices apply to this conversation.",
-  );
-  const commercial = access.getByRole("radiogroup", { name: "Dispatch team" });
-  await commercial.getByText("Read", { exact: true }).click();
-  await expect(
-    commercial.getByRole("radio", { name: "Read", exact: true }),
-  ).toBeChecked();
-  await expect(access).toContainText("Guests can only read");
-  await settings
-    .getByRole("button", { name: "Save changes", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", {
-      name: /^Visible to Dispatch team \./,
-    }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
-  await settings.getByRole("tab", { name: "Access", exact: true }).click();
-  await settings
-    .getByRole("button", { name: "Check one person", exact: true })
-    .click();
-  const inspector = page.getByRole("dialog", {
-    name: "Effective access",
-    exact: true,
-  });
-  await inspector
-    .getByLabel("Check access for", { exact: true })
-    .selectOption({ label: "Noah Tan" });
-  await expect(inspector.getByRole("status")).toContainText(
-    "Conversation access: read",
-  );
-});
-
-test("lowering Everyone keeps what each group can already do", async ({
-  page,
-}) => {
-  await installOwnedJourneyApi(page);
-  await page.goto("/comms");
-  await createWorkshop(page);
-  await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
-  await expect(
-    page.getByRole("heading", { name: "workshop", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
-  const access = page
-    .getByRole("dialog", { name: "Channel settings" })
-    .getByRole("group", { name: "Who can use #workshop" });
-  await page
-    .getByRole("dialog", { name: "Channel settings" })
-    .getByRole("tab", { name: "Access", exact: true })
-    .click();
-  const everyone = access.getByRole("radiogroup", { name: "Everyone" });
-  await everyone.getByText("Read and post", { exact: true }).click();
-  await everyone.getByText("Read", { exact: true }).click();
-  await expect(
-    access
-      .getByRole("radiogroup", { name: "Dispatch team" })
-      .getByRole("radio", { name: "Read and post" }),
-  ).toBeChecked();
-  await expect(
-    everyone.getByRole("radio", { name: "Read", exact: true }),
-  ).toBeChecked();
 });
 
 test("on a phone, a record's mention closes the record and shows the message", async ({
@@ -1105,7 +1016,7 @@ test("Comms rechecks reaction capabilities when the admitted member becomes a gu
   ).toBeDisabled();
 });
 
-test("category defaults preserve existing members and the saved Permissions summary", async ({
+test("category and channel Access tabs summarize department roles and fold capability exceptions away", async ({
   page,
 }) => {
   await installOwnedJourneyApi(page);
@@ -1116,7 +1027,6 @@ test("category defaults preserve existing members and the saved Permissions summ
   await expect(
     page.getByRole("complementary", { name: "Channel members" }),
   ).toContainText("Members 4");
-  // A category's group is chosen in its settings.
   await page
     .getByRole("button", { name: "Category actions: Service delivery" })
     .click();
@@ -1125,35 +1035,19 @@ test("category defaults preserve existing members and the saved Permissions summ
     .click();
   const category = page.getByRole("dialog", { name: "Category settings" });
   await category.getByRole("tab", { name: "Access", exact: true }).click();
-  await category
-    .getByRole("radiogroup", { name: "Everyone", exact: true })
-    .getByText("Read and post", { exact: true })
-    .click();
-  await category
-    .getByRole("button", { name: "Save changes", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Category actions: Service delivery" })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Category settings", exact: true })
-    .click();
-  await category.getByRole("tab", { name: "Access", exact: true }).click();
   await expect(
-    category
-      .getByRole("radiogroup", { name: "Everyone", exact: true })
-      .getByRole("radio", { name: "Read and post", exact: true }),
-  ).toBeChecked();
+    category.getByRole("region", { name: "Who can use it", exact: true }),
+  ).toContainText("Channels in this category belong to Operations");
+  await expect(category.getByRole("radiogroup")).toHaveCount(0);
   await category.getByRole("button", { name: "Cancel", exact: true }).click();
-  // Permissions start from groups; exceptions are folded away.
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
   const settings = page.getByRole("dialog", { name: "Channel settings" });
   await settings.getByRole("tab", { name: "Access" }).click();
   await expect(
-    settings.getByRole("list", { name: "Access by group" }),
-  ).toContainText("Everyone");
+    settings.getByRole("region", { name: "Who can use it", exact: true }),
+  ).toContainText("This channel belongs to Operations");
   await expect(
     settings.getByText("Capabilities for", { exact: true }),
   ).toBeHidden();

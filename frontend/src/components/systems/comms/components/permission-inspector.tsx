@@ -277,7 +277,7 @@ export function PermissionInspector({
                                   : source.kind === "everyone"
                                     ? "The most specific Everyone setting determines this default."
                                     : source.kind === "department_manager"
-                                      ? "Department management grants this capability in the linked category."
+                                      ? "Department management grants this capability for that department's channels."
                                       : source.reason.replaceAll("_", " ")}
                     </p>
                     {index < capabilitySchema.options.length - 1 && (

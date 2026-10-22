@@ -87,14 +87,7 @@ export async function loadWorkspace(client: CommsClient, signal: AbortSignal) {
   const categories: Category[] = bootstrap.categories.map(({ category }) => ({
     id: category.id,
     name: category.name,
-    groupId: category.default_access.find((row) => row.subject === "group")
-      ?.group_id,
-    groupAccess: Object.fromEntries(
-      category.default_access.map((row) => [
-        row.subject === "everyone" ? "everyone" : row.group_id,
-        row.level,
-      ]),
-    ),
+    departmentId: category.department_id ?? "",
   }));
   for (const { category } of bootstrap.categories) {
     const response = await client.getSettings(
@@ -214,16 +207,7 @@ export async function loadWorkspace(client: CommsClient, signal: AbortSignal) {
         categoryId: room.category_id ?? "",
         archived: room.archived_at !== null,
         scope: room.scope,
-        groupAccess: Object.fromEntries(
-          room.scope === "groups"
-            ? room.access.map((row) => [
-                row.subject === "everyone" ? "everyone" : row.group_id,
-                row.level,
-              ])
-            : room.scope === "organization"
-              ? [["everyone", "post"]]
-              : [],
-        ),
+        departmentId: room.scope === "department" ? room.department_id : "",
       });
       config.channels[room.id] = {
         settings: settingsView(settings.data.overrides),

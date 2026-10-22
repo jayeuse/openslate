@@ -9,7 +9,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import type { CommsViewClient as CommsClient } from "../contract/client";
-import { sendRefusal } from "../domain/composer-input";
+import { composerFailure, sendRefusal } from "../domain/composer-input";
 import { useCommsClient } from "./client-context";
 
 export function useCommsCommands() {
@@ -100,6 +100,17 @@ export function messageFromCommsError(
   )
     return "The workspace changed before this operation finished. Try again.";
   if (isCommsConflict(error)) return conflict;
+  // D44 A8: the server refuses a channel its category cannot hold.
+  const failure = composerFailure(error);
+  if (
+    failure?.status === 422 &&
+    typeof failure.body.detail === "object" &&
+    !Array.isArray(failure.body.detail) &&
+    failure.body.detail.code === "comms_invalid"
+  )
+    return /categor/i.test(failure.body.detail.message)
+      ? "This category is for another department's channels."
+      : "Check the channel details and try again.";
   const refusal = sendRefusal(error);
   if (refusal?.code === "comms_rate_limited")
     return `Too many attempts. Try again in ${Math.max(1, refusal.seconds)}s.`;

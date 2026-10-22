@@ -13,7 +13,7 @@ import {
   channelCreationCheck,
   scopeManagementDecision,
 } from "../domain/capabilities";
-import { invalidInput, resolveSettings } from "../domain/settings";
+import { invalidInput } from "../domain/settings";
 import type { MemoryCommsState, MemoryPolicyWorld } from "./model";
 import type { MemoryExecution } from "./store-types";
 import {
@@ -54,6 +54,21 @@ export function projectChannel(
   return row;
 }
 
+/** A person's current level in a conversation, or "none". */
+function readerLevel(world: MemoryPolicyWorld, id: string, userId: string) {
+  const person = world.people[userId];
+  if (!person?.active || person.org_id !== world.org_id) return "none";
+  return conversationAccess(
+    world,
+    { org_id: world.org_id, user_id: userId },
+    id,
+  ).level;
+}
+
+/**
+ * A channel's members are its readers (D44): `member_role` is "manager"
+ * exactly when the level is manage. Direct and group messages keep their rows.
+ */
 export function projectMember(
   world: MemoryPolicyWorld,
   id: string,
@@ -61,30 +76,64 @@ export function projectMember(
 ): C.Member {
   const row = world.members[id]?.[userId];
   const person = world.people[userId];
-  if (!row || !person?.active || person.org_id !== world.org_id)
+  const conversation = world.conversations[id];
+  const level = readerLevel(world, id, userId);
+  if (
+    !person?.active ||
+    person.org_id !== world.org_id ||
+    level === "none" ||
+    (conversation.kind !== "channel" && !row)
+  )
     return notFound();
   return {
-    ...row,
+    user_id: userId,
     display_name: person.display_name,
+    member_role:
+      conversation.kind === "channel"
+        ? level === "manage"
+          ? "manager"
+          : "member"
+        : row!.member_role,
+    level,
+    joined_at: row?.joined_at ?? conversation.created_at,
     departments: Object.keys(person.department_levels)
       .sort()
       .map((id) => ({ id, name: world.departments[id].name })),
   };
 }
 
+/** Everyone who can read the conversation: readers for a channel, rows otherwise. */
+function memberIds(world: MemoryPolicyWorld, id: string) {
+  return world.conversations[id].kind === "channel"
+    ? Object.values(world.people)
+        .filter((person) => readerLevel(world, id, person.user_id) !== "none")
+        .map((person) => person.user_id)
+    : Object.keys(world.members[id] ?? {}).filter(
+        (userId) => world.people[userId]?.active,
+      );
+}
+
 export function compare(left: string | number, right: string | number) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function validateAccess(world: MemoryPolicyWorld, rows: C.GroupAccess[]) {
-  if (
-    rows.some(
-      (r) =>
-        r.subject === "group" &&
-        world.groups[r.group_id]?.org_id !== world.org_id,
-    )
-  )
-    invalidInput();
+/** D44 A8: a department's category holds only that department's channels. */
+function requireCategoryFits(
+  world: MemoryPolicyWorld,
+  categoryId: string | null,
+  departmentId: string | null,
+) {
+  if (!categoryId) return;
+  if ((world.categories[categoryId]?.department_id ?? null) !== departmentId)
+    policyFailure({
+      status: 422,
+      body: {
+        detail: {
+          code: "comms_invalid",
+          message: "The channel does not match its category's department",
+        },
+      },
+    });
 }
 
 function validateCategory(
@@ -96,7 +145,6 @@ function validateCategory(
     world.departments[request.department_id]?.org_id !== world.org_id
   )
     notFound();
-  validateAccess(world, request.default_access);
 }
 
 function creationScope(categoryId: string | null): C.ChannelCreationScope {
@@ -110,17 +158,19 @@ function requireCreation(
   world: MemoryPolicyWorld,
   context: C.CommsContext,
   categoryId: string | null,
+  departmentId: string | null = null,
+  channel = true,
 ) {
   const scope = creationScope(categoryId);
   requireAvailable(
     binding,
     context,
     { scope, capability: "createChannel" },
-    channelCreationCheck(world, context, scope).decision,
+    channelCreationCheck(world, context, scope, departmentId, channel).decision,
   );
 }
 
-/** New canonical room, with explicit membership rows and no copied content. */
+/** New canonical room with only the creator's row (D44); no copied content. */
 function stageChannel(
   draft: MemoryCommsState,
   execution: MemoryExecution,
@@ -133,18 +183,13 @@ function stageChannel(
     draft.departments[request.department_id]?.org_id !== draft.org_id
   )
     notFound();
-  if (request.scope === "groups") validateAccess(draft, request.access);
-  const defaults = resolveSettings(draft, creationScope(request.category_id))
-    .effective.default_member_ids;
-  const members = [
-    ...new Set([
-      execution.context.user_id,
-      ...defaults,
-      ...(request.scope === "members" ? request.member_ids : []),
-    ]),
-  ];
-  for (const user_id of members)
-    activePerson(draft, { ...execution.context, user_id });
+  requireCategoryFits(
+    draft,
+    request.category_id,
+    request.scope === "department" ? request.department_id : null,
+  );
+  const members = [execution.context.user_id];
+  activePerson(draft, execution.context);
   const id = execution.uuid();
   const timestamp = new Date(execution.now).toISOString();
   const fields = {
@@ -160,9 +205,7 @@ function stageChannel(
     category_id: request.category_id,
     position: request.position,
   };
-  if (request.scope === "members") {
-    draft.conversations[id] = { ...fields, scope: "members" };
-  } else draft.conversations[id] = { ...fields, ...request };
+  draft.conversations[id] = { ...fields, ...request };
   draft.members[id] = Object.fromEntries(
     members.map((user_id) => [
       user_id,
@@ -189,8 +232,13 @@ export function projectConversation(
     updated_at: stored.updated_at,
     archived_at: stored.archived_at,
     level: access.level,
-    member_count: Object.keys(members).length,
-    member_role: members[context.user_id]?.member_role ?? null,
+    member_count: memberIds(world, id).length,
+    member_role:
+      stored.kind === "channel"
+        ? access.level === "manage"
+          ? ("manager" as const)
+          : ("member" as const)
+        : (members[context.user_id]?.member_role ?? null),
   };
   if (stored.kind === "direct")
     return {
@@ -213,8 +261,6 @@ export function projectConversation(
     category_id: stored.category_id,
     position: stored.position,
   };
-  if (stored.scope === "groups")
-    return { ...channel, scope: "groups", access: stored.access };
   if (stored.scope === "department")
     return {
       ...channel,
@@ -267,7 +313,6 @@ type ConversationStructure = Pick<
   | "createChannel"
   | "updateChannel"
   | "listMembers"
-  | "setChannelAccess"
   | "setMemberRole"
   | "removeMember"
   | "duplicateChannel"
@@ -305,46 +350,6 @@ export function createConversationStructure(
     return { data: result.value, etag: result.versions[key] };
   }
   return {
-    async setChannelAccess(id, request, options) {
-      const parsed = S.accessRequestSchema.safeParse(request);
-      if (!parsed.success) return invalidInput();
-      const key = conversationKey(id);
-      const result = await handle.command({
-        signal: options?.signal,
-        conditions: [{ key, if_match: options?.if_match }],
-        authorize(world, execution) {
-          requireConversationManagement(binding, world, execution.context, id);
-          const row = projectChannel(world, execution.context, id);
-          if (row.scope !== "groups") invalidInput();
-        },
-        apply(draft, execution) {
-          validateAccess(draft, parsed.data.access);
-          const row = draft.conversations[id];
-          if (row.kind !== "channel" || row.scope !== "groups")
-            return invalidInput();
-          row.access = parsed.data.access;
-          row.updated_at = new Date(execution.now).toISOString();
-          if (conversationAccess(draft, execution.context, id).level === "none")
-            policyFailure({
-              status: 409,
-              body: {
-                detail: {
-                  code: "comms_conflict",
-                  message:
-                    "This change would remove your read access. No changes were saved.",
-                },
-              },
-            });
-          return {
-            kind: "commit",
-            value: projectChannel(draft, execution.context, id),
-            version_keys: conversationVersionKeys(draft, [id]),
-            publications: structurePublications(draft),
-          };
-        },
-      });
-      return { data: result.value, etag: result.versions[key] };
-    },
     async setMemberRole(id, userId, request, options) {
       const parsed = S.memberRoleRequestSchema.safeParse(request);
       if (!parsed.success) return invalidInput();
@@ -362,10 +367,25 @@ export function createConversationStructure(
             capabilityDenied();
         },
         apply(draft, execution) {
-          draft.members[id][userId].member_role = parsed.data.role;
-          draft.conversations[id].updated_at = new Date(
-            execution.now,
-          ).toISOString();
+          const timestamp = new Date(execution.now).toISOString();
+          const rows = draft.members[id];
+          // On a channel the rows are a manager roster (D44 decision 3): a
+          // reader gains a manager row; "member" drops it, except the creator's.
+          if (draft.conversations[id].kind !== "channel")
+            rows[userId].member_role = parsed.data.role;
+          else if (parsed.data.role === "manager")
+            rows[userId] = {
+              user_id: userId,
+              member_role: "manager",
+              joined_at: rows[userId]?.joined_at ?? timestamp,
+            };
+          else if (
+            draft.conversations[id].creator_id === userId &&
+            rows[userId]
+          )
+            rows[userId].member_role = "member";
+          else delete rows[userId];
+          draft.conversations[id].updated_at = timestamp;
           return {
             kind: "commit",
             value: projectMember(draft, id, userId),
@@ -385,6 +405,13 @@ export function createConversationStructure(
           const row = world.conversations[id];
           if (row.kind === "direct") invalidInput();
           if (!Object.hasOwn(world.members[id], userId)) notFound();
+          // D44 decision 3: on a channel only a manager row is removable; the
+          // creator's manager row turns back into a member row.
+          if (
+            row.kind === "channel" &&
+            world.members[id][userId].member_role !== "manager"
+          )
+            notFound();
           if (
             row.kind === "group" &&
             Object.keys(world.members[id]).length <= 3
@@ -400,7 +427,12 @@ export function createConversationStructure(
             });
         },
         apply(draft, execution) {
-          delete draft.members[id][userId];
+          if (
+            draft.conversations[id].kind === "channel" &&
+            draft.conversations[id].creator_id === userId
+          )
+            draft.members[id][userId].member_role = "member";
+          else delete draft.members[id][userId];
           draft.conversations[id].updated_at = new Date(
             execution.now,
           ).toISOString();
@@ -421,12 +453,13 @@ export function createConversationStructure(
         conditions: [{ key: conversationKey(id), if_match: options?.if_match }],
         authorize(world, execution) {
           requireConversationManagement(binding, world, execution.context, id);
-          projectChannel(world, execution.context, id);
+          const source = projectChannel(world, execution.context, id);
           requireCreation(
             binding,
             world,
             execution.context,
             parsed.data.category_id,
+            source.scope === "department" ? source.department_id : null,
           );
         },
         apply(draft, execution) {
@@ -438,21 +471,13 @@ export function createConversationStructure(
             position: source.position,
           };
           const access: C.ChannelRequest =
-            source.scope === "members"
+            source.scope === "department"
               ? {
                   ...fields,
-                  scope: "members",
-                  member_ids: Object.keys(draft.members[id]),
+                  scope: "department",
+                  department_id: source.department_id,
                 }
-              : source.scope === "groups"
-                ? { ...fields, scope: "groups", access: source.access }
-                : source.scope === "department"
-                  ? {
-                      ...fields,
-                      scope: "department",
-                      department_id: source.department_id,
-                    }
-                  : { ...fields, scope: "organization" };
+              : { ...fields, scope: "organization" };
           const copy = stageChannel(draft, execution, access);
           const scope = { kind: "channel", id: copy.id } as const;
           const next = configurationSnapshot(draft, { kind: "channel", id });
@@ -514,7 +539,7 @@ export function createConversationStructure(
       const result = await handle.command({
         signal: options?.signal,
         authorize(world, execution) {
-          requireCreation(binding, world, execution.context, null);
+          requireCreation(binding, world, execution.context, null, null, false);
         },
         apply(draft, execution) {
           validateCategory(draft, parsed.data);
@@ -558,6 +583,28 @@ export function createConversationStructure(
         },
         apply(draft, execution) {
           validateCategory(draft, parsed.data);
+          // D44 A8 rebind: a category changes department only while every
+          // live channel in it already belongs to the new department.
+          if (
+            parsed.data.department_id !== draft.categories[id].department_id &&
+            Object.values(draft.conversations).some(
+              (room) =>
+                room.kind === "channel" &&
+                room.category_id === id &&
+                (room.scope === "department" ? room.department_id : null) !==
+                  parsed.data.department_id,
+            )
+          )
+            policyFailure({
+              status: 422,
+              body: {
+                detail: {
+                  code: "comms_invalid",
+                  message:
+                    "The category's channels belong to another department",
+                },
+              },
+            });
           const row = {
             ...draft.categories[id],
             ...parsed.data,
@@ -585,6 +632,9 @@ export function createConversationStructure(
             world,
             execution.context,
             parsed.data.category_id,
+            parsed.data.scope === "department"
+              ? parsed.data.department_id
+              : null,
           );
         },
         apply(draft, execution) {
@@ -618,6 +668,12 @@ export function createConversationStructure(
         apply(draft, execution) {
           const row = draft.conversations[id];
           if (row.kind !== "channel") return invalidInput();
+          if (parsed.data.category_id !== undefined)
+            requireCategoryFits(
+              draft,
+              parsed.data.category_id,
+              row.scope === "department" ? row.department_id : null,
+            );
           draft.conversations[id] = {
             ...row,
             ...parsed.data,
@@ -653,8 +709,7 @@ export function createConversationStructure(
       if (!parsed.success) return invalidInput();
       return handle.read((world, context) => {
         projectConversation(world, context, id);
-        const items = Object.keys(world.members[id] ?? {})
-          .filter((userId) => world.people[userId]?.active)
+        const items = memberIds(world, id)
           .map((userId) => projectMember(world, id, userId))
           .filter(
             (m) =>

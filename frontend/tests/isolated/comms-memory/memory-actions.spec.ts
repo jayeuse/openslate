@@ -7,6 +7,7 @@ import {
 } from "../../support/comms-memory/domain/posting";
 import { notificationDecision } from "../../support/comms-memory/domain/notifications";
 import { resolveSettings } from "../../support/comms-memory/domain/settings";
+import { hideInNewDepartment } from "../../support/comms-memory/memory/seed";
 import { caughtFailure, configure, policyFixture } from "./memory-fixture";
 
 const now = Date.parse("2026-09-11T02:00:00Z");
@@ -41,7 +42,11 @@ test("empty messages and hidden resources retain distinct safe failure contracts
     kind: "http",
     failure: { status: 422, body: { detail: { code: "comms_message_empty" } } },
   });
-  world.conversations[channel.id] = { ...channel, scope: "groups", access: [] };
+  hideInNewDepartment(
+    world,
+    channel.id,
+    "71000000-0000-4000-8000-0000000000aa",
+  );
   expect(
     caughtFailure(() => admitSend(world, context, channel.id, send, { now })),
   ).toMatchObject({
@@ -244,19 +249,26 @@ test("mentions and slow mode use structured recipients and all successful sends 
   ).toBe(send.body);
 });
 
-test("person mentions require a member row even for an active organization-channel reader", () => {
-  const { world, channel, context, peers } = policyFixture();
+test("person mentions follow channel readers, not member rows", () => {
+  const { world, channel, context, peers, person } = policyFixture();
   const recipient = peers[1];
-  const membership = world.members[channel.id][recipient.user_id];
   delete world.members[channel.id][recipient.user_id];
+  const mentioned = { ...send, mention_user_ids: [recipient.user_id] };
+  // D44 A4: a reader without a row is mentionable.
+  expect(
+    admitSend(world, context, channel.id, mentioned, { now }).mention_user_ids,
+  ).toEqual([recipient.user_id]);
+  // A department channel where only the sender holds a role.
+  const desk = "71000000-0000-4000-8000-0000000000ab";
+  hideInNewDepartment(world, channel.id, desk);
+  person.department_levels[desk] = "write";
   expect(
     conversationAccess(
       world,
       { ...context, user_id: recipient.user_id },
       channel.id,
     ).level,
-  ).toBe("post");
-  const mentioned = { ...send, mention_user_ids: [recipient.user_id] };
+  ).toBe("none");
   const before = structuredClone(world);
   expect(
     caughtFailure(() =>
@@ -267,10 +279,6 @@ test("person mentions require a member row even for an active organization-chann
     failure: { status: 422, body: { detail: { code: "comms_invalid_input" } } },
   });
   expect(world).toEqual(before);
-  world.members[channel.id][recipient.user_id] = membership;
-  expect(
-    admitSend(world, context, channel.id, mentioned, { now }).mention_user_ids,
-  ).toEqual([recipient.user_id]);
 });
 
 test("direct messages ignore channel modes but not blocks; org send rate includes other conversations", () => {
@@ -344,7 +352,11 @@ test("own edits obey windows and other-person removal requires capability; react
   expect(() =>
     assertMessageChange(world, context, message.id, "delete", now),
   ).toThrow("refused");
-  world.members[channel.id][context.user_id].member_role = "manager";
+  world.members[channel.id][context.user_id] = {
+    user_id: context.user_id,
+    member_role: "manager",
+    joined_at: "2026-09-11T01:00:00Z",
+  };
   expect(() =>
     assertMessageChange(world, context, message.id, "delete", now),
   ).not.toThrow();

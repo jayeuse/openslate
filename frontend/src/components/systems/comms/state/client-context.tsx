@@ -28,7 +28,6 @@ import {
 import type { createCommsQueryScope } from "../adapters/comms-queries";
 import type { CommsViewClient } from "../contract/client";
 import type { Bootstrap } from "../contract/types";
-import type { CommsGroup } from "../domain/groups";
 import { complete } from "./workspace-view";
 import {
   clearCommsDraftTextStore,
@@ -36,9 +35,20 @@ import {
 } from "./draft-text";
 import { managedDepartmentIds } from "../../openview/domain/manage-access";
 
+/** An access group, named in D27 capability grants. */
+export interface CommsGroup {
+  id: string;
+  name: string;
+  tone: 0;
+  memberIds: string[];
+}
 export type CommsClientState = {
   organizationName: string | undefined;
   groups: CommsGroup[];
+  /** Departments whose roles the viewer manages ("all" for an admin), from the account's access. */
+  managedDepartmentIds: Set<string> | "all";
+  /** Departments where the viewer holds any department role (department rows only). */
+  departmentRoleIds: Set<string>;
   catalog: {
     departments: { id: string; name: string }[];
     modules: { id: string; name: string }[];
@@ -54,6 +64,10 @@ export type CommsClientState = {
   requestCatalog?: () => void;
   retryCatalog?: () => void;
   catalogStatus?: "idle" | "loading" | "error" | "ready";
+  /** Loads the readable department names when no category has asked for them yet. */
+  requestDepartments?: () => void;
+  departmentsStatus?: "loading" | "error" | "ready";
+  retryDepartments?: () => void;
 };
 const ClientContext = createContext<CommsClientState | null>(null);
 export const CommsClientStateProvider = ClientContext.Provider;
@@ -90,6 +104,8 @@ function OwnedClient({
   const [catalogOwner, setCatalogOwner] = useState<CommsViewClient | null>(
     null,
   );
+  const [departmentsOwner, setDepartmentsOwner] =
+    useState<CommsViewClient | null>(null);
   const reload = useCallback(() => setGeneration((value) => value + 1), []);
   const role = identity.data?.currentOrganization?.role;
   const organization = identity.data?.currentOrganization?.orgId;
@@ -164,16 +180,26 @@ function OwnedClient({
     }),
     enabled: !!admitted,
   });
-  const departmentCategory = !!bootstrap.data?.categories.some(
-    ({ category }) => category.department_id !== null,
-  );
-  // Category headers name their department on first paint; the list holds only readable departments.
+  const departmentCategory =
+    !!bootstrap.data?.categories.some(
+      ({ category }) => category.department_id !== null,
+    ) ||
+    !!bootstrap.data?.conversations.some(
+      ({ conversation }) =>
+        conversation.kind === "channel" && conversation.scope === "department",
+    );
+  const departmentsRequested =
+    !!admitted && departmentsOwner === admitted.client;
+  const requestDepartments = useCallback(() => {
+    if (admitted) setDepartmentsOwner(admitted.client);
+  }, [admitted]);
+  // Category headers and department channels name their department on first paint; the list holds only readable departments.
   const departments = useQuery({
     queryKey: [
       ...(admitted?.scope.keys.all ?? ["comms-unadmitted", userId, orgId]),
       "departments",
     ],
-    enabled: !!admitted && departmentCategory,
+    enabled: !!admitted && (departmentCategory || departmentsRequested),
     queryFn: ({ signal }) => {
       if (!admitted) throw new Error("Organization is not admitted");
       return admitted.scope.read(
@@ -251,6 +277,18 @@ function OwnedClient({
             ? identity.data.currentOrganization.name
             : undefined,
         groups: catalogRequested ? (catalog.data?.groups ?? []) : [],
+        managedDepartmentIds:
+          identity.data?.currentOrganization?.orgId === orgId
+            ? managedDepartmentIds(identity.data)
+            : new Set(),
+        departmentRoleIds: new Set(
+          identity.data?.currentOrganization?.orgId === orgId &&
+            identity.data.role !== "guest"
+            ? identity.data.access
+                .filter((entry) => entry.moduleId === null)
+                .map((entry) => entry.departmentId)
+            : [],
+        ),
         catalog: {
           ...(catalogRequested
             ? (catalog.data?.catalog ?? emptyCatalog)
@@ -271,6 +309,15 @@ function OwnedClient({
         requestCatalog,
         retryCatalog: () => {
           void catalog.refetch();
+        },
+        requestDepartments,
+        departmentsStatus: departments.isError
+          ? "error"
+          : departments.data
+            ? "ready"
+            : "loading",
+        retryDepartments: () => {
+          void departments.refetch();
         },
         catalogStatus: !catalogRequested
           ? "idle"

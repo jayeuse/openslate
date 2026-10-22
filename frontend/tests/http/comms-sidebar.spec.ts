@@ -81,21 +81,12 @@ async function seedSidebar(
     },
   ];
   if (scenario === "nonmembers") {
-    for (const [id, room] of Object.entries(initial.conversations)) {
-      if (room.kind === "channel")
-        initial.conversations[id] = {
-          ...room,
-          scope: "groups",
-          access: [
-            {
-              subject: "group",
-              group_id: Object.keys(initial.groups)[0],
-              level: "read",
-            },
-          ],
-        };
+    // Department channels whose read roles alone make readers (D44).
+    for (const person of Object.values(initial.people))
+      for (const department of Object.keys(person.department_levels))
+        person.department_levels[department] = "read";
+    for (const id of Object.keys(initial.conversations))
       initial.members[id] = {};
-    }
     const hiddenId = "76000000-0000-4000-8000-000000000090";
     initial.people[hiddenId] = {
       ...initial.people[userId],

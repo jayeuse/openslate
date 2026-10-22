@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { hideInNewDepartment } from "../../support/comms-memory/memory/seed";
 import { createMemorySeed } from "../../support/comms-memory/memory/seed";
 import {
   conversationAccess,
@@ -54,7 +55,11 @@ test("seed identities are UUID-owned, deterministic and independent of display n
 test("category configuration needs its own authority, never a child's manager or grant", () => {
   const f = policyFixture();
   const scope = { kind: "category", id: f.category.id } as const;
-  f.world.members[f.channel.id][context.user_id].member_role = "manager";
+  f.world.members[f.channel.id][context.user_id] = {
+    user_id: context.user_id,
+    member_role: "manager",
+    joined_at: "2026-09-11T01:00:00Z",
+  };
   expect(scopeManagementDecision(f.world, context, scope).allowed).toBe(false);
   configure(f, {
     scope: { kind: "channel", id: f.channel.id },
@@ -139,14 +144,6 @@ test("equal access and capability grants explain deterministically regardless of
   const id = "71000000-0000-4000-8000-000000000099";
   f.world.groups[id] = { id, org_id: context.org_id, name: "Second" };
   f.person.group_ids.push(id);
-  f.world.conversations[f.channel.id] = {
-    ...f.channel,
-    scope: "groups",
-    access: [
-      { subject: "group", group_id: f.group.id, level: "post" },
-      { subject: "group", group_id: id, level: "read" },
-    ],
-  };
   const config = {
     scope: { kind: "workspace" as const },
     everyone: {},
@@ -158,9 +155,6 @@ test("equal access and capability grants explain deterministically regardless of
   configure(f, config);
   const first = capabilityCheck(f.world, context, f.channel.id);
   config.group_grants.reverse();
-  const stored = f.world.conversations[f.channel.id];
-  if (stored.kind === "channel" && stored.scope === "groups")
-    stored.access.reverse();
   expect(capabilityCheck(f.world, context, f.channel.id)).toEqual(first);
   expect(first.conversation_level).toBe("post");
   expect(first.capabilities.pin.source).toMatchObject({
@@ -195,7 +189,11 @@ test("inspection cannot reveal foreign or inactive people and a capability grant
   expect(() =>
     inspectCapabilities(world, context, channel.id, peers[1].user_id),
   ).toThrow("refused");
-  world.conversations[channel.id] = { ...channel, scope: "groups", access: [] };
+  hideInNewDepartment(
+    world,
+    channel.id,
+    "71000000-0000-4000-8000-0000000000aa",
+  );
   expect(
     capabilityCheck(world, context, channel.id).capabilities.manageChannel,
   ).toEqual({
@@ -208,7 +206,7 @@ test("inspection cannot reveal foreign or inactive people and a capability grant
 });
 
 test("D36 eligibility follows shared readers; direct starts recheck guest, blocks and workspace rule", () => {
-  const { world, channel, peers } = policyFixture();
+  const { world, channel, peers, person } = policyFixture();
   const peer = peers[1];
   expect(eligiblePersonIds(world, context)).toContain(peer.user_id);
   expect(canStartDirect(world, context, peer.user_id)).toBe(true);
@@ -223,8 +221,13 @@ test("D36 eligibility follows shared readers; direct starts recheck guest, block
   peer.role = "guest";
   expect(canStartDirect(world, context, peer.user_id)).toBe(false);
   peer.role = "member";
-  world.conversations[channel.id] = { ...channel, scope: "members" };
-  delete world.members[channel.id][peer.user_id];
+  // The only channel moves to a department where only the actor has a role.
+  hideInNewDepartment(
+    world,
+    channel.id,
+    "71000000-0000-4000-8000-0000000000aa",
+  );
+  person.department_levels["71000000-0000-4000-8000-0000000000aa"] = "write";
   expect(eligiblePersonIds(world, context)).not.toContain(peer.user_id);
   expect(canStartDirect(world, context, peer.user_id)).toBe(false);
   expect(canStartDirect(world, context, context.user_id)).toBe(false);
@@ -232,11 +235,13 @@ test("D36 eligibility follows shared readers; direct starts recheck guest, block
 
 test("Everyone inheritance, additive reader grants and person-specific workspace locks share one explanation", () => {
   const f = policyFixture();
-  const { world, channel, group, person, category } = f;
+  const { world, channel, group, person, category, department } = f;
+  // A read role in the channel's department is the actor's only access.
+  person.department_levels = { [department.id]: "read" };
   world.conversations[channel.id] = {
     ...channel,
-    scope: "groups",
-    access: [{ subject: "everyone", level: "read" }],
+    scope: "department",
+    department_id: department.id,
   };
   configure(f, {
     scope: { kind: "workspace" },
@@ -301,7 +306,11 @@ test("Everyone inheritance, additive reader grants and person-specific workspace
   expect(
     capabilityCheck(world, context, channel.id).capabilities.react.allowed,
   ).toBe(false);
-  world.members[channel.id][context.user_id].member_role = "manager";
+  world.members[channel.id][context.user_id] = {
+    user_id: context.user_id,
+    member_role: "manager",
+    joined_at: channel.created_at,
+  };
   expect(
     capabilityCheck(world, context, channel.id).capabilities.react.source,
   ).toEqual({ kind: "manager", reason: "membership_manager" });
@@ -310,6 +319,8 @@ test("Everyone inheritance, additive reader grants and person-specific workspace
 test("creation follows the destination category and locks never manufacture a global grant", () => {
   const f = policyFixture();
   const { world, category, group, department, person } = f;
+  // The grant holder has a write role in the category's department.
+  category.department_id = department.id;
   configure(f, {
     scope: { kind: "category", id: category.id },
     everyone: {},
@@ -319,6 +330,12 @@ test("creation follows the destination category and locks never manufacture a gl
   expect(channelCreationCheck(world, context, target).decision.allowed).toBe(
     true,
   );
+  // A grant never creates an organization channel (owner decision 2026-10-22).
+  category.department_id = null;
+  expect(channelCreationCheck(world, context, target).decision.allowed).toBe(
+    false,
+  );
+  category.department_id = department.id;
   expect(
     channelCreationCheck(world, context, { kind: "workspace" }).decision
       .allowed,
@@ -352,7 +369,11 @@ test("D27 defaults give posters five, managers eleven, admins thirteen and guest
     "react",
     "reply",
   ]);
-  world.members[channel.id][context.user_id].member_role = "manager";
+  world.members[channel.id][context.user_id] = {
+    user_id: context.user_id,
+    member_role: "manager",
+    joined_at: "2026-09-11T01:00:00Z",
+  };
   expect(allowed()).toHaveLength(11);
   expect(
     channelCreationCheck(world, context, { kind: "workspace" }).decision
@@ -374,26 +395,15 @@ test("D27 defaults give posters five, managers eleven, admins thirteen and guest
   });
 });
 
-test("access composes groups and department levels but never ordinary rows on group channels", () => {
+test("department roles alone decide a department channel; a category's department never links an organization channel", () => {
   const f = policyFixture();
-  const { world, channel, person, group, department, category } = f;
+  const { world, channel, person, department, category } = f;
   category.department_id = department.id;
-  person.department_levels[department.id] = "write";
-  world.conversations[channel.id] = {
-    ...channel,
-    scope: "groups",
-    access: [{ subject: "group", group_id: group.id, level: "read" }],
-  };
-  expect(conversationAccess(world, context, channel.id)).toMatchObject({
-    level: "read",
-    source: { kind: "group", group_id: group.id },
-  });
-  person.group_ids = [];
-  expect(conversationAccess(world, context, channel.id).level).toBe("none");
   person.department_levels[department.id] = "manage";
   expect(conversationAccess(world, context, channel.id)).toMatchObject({
-    level: "manage",
-    manager_source: "department_manager",
+    level: "post",
+    source: { kind: "organization" },
+    manager_source: null,
   });
   world.conversations[channel.id] = {
     ...channel,
@@ -420,13 +430,14 @@ test("access composes groups and department levels but never ordinary rows on gr
   });
 });
 
-test("creator and explicit managers manage; direct and private membership loss hides content", () => {
+test("creator and manager rows manage a channel without deciding read; direct membership loss hides content", () => {
   const { world, channel, person, category, department } = policyFixture();
   category.department_id = department.id;
   person.department_levels[department.id] = "write";
   world.conversations[channel.id] = {
     ...channel,
-    scope: "members",
+    scope: "department",
+    department_id: department.id,
     creator_id: context.user_id,
   };
   expect(conversationAccess(world, context, channel.id)).toMatchObject({
@@ -434,13 +445,18 @@ test("creator and explicit managers manage; direct and private membership loss h
     manager_source: "creator",
   });
   world.conversations[channel.id].creator_id = Object.keys(world.people)[1];
-  world.members[channel.id][context.user_id].member_role = "manager";
+  world.members[channel.id][context.user_id] = {
+    user_id: context.user_id,
+    member_role: "manager",
+    joined_at: channel.created_at,
+  };
   expect(conversationAccess(world, context, channel.id).manager_source).toBe(
     "membership_manager",
   );
   world.members[channel.id][context.user_id].member_role = "member";
   delete world.members[channel.id][context.user_id];
-  expect(conversationAccess(world, context, channel.id).level).toBe("none");
+  // D44: the row was a manager roster entry; the department role still reads.
+  expect(conversationAccess(world, context, channel.id).level).toBe("post");
   person.department_levels[department.id] = "manage";
   expect(conversationAccess(world, context, channel.id)).toMatchObject({
     level: "manage",

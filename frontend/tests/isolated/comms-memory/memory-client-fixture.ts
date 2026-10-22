@@ -3,6 +3,7 @@ import { expect, test as base } from "@playwright/test";
 import type { CommsClient } from "@/components/systems/comms/contract/client";
 import type * as C from "@/components/systems/comms/contract/types";
 import { createMemoryCommsRuntime } from "../../support/comms-memory/memory-client";
+import { hideInNewDepartment } from "../../support/comms-memory/memory/seed";
 import { seedFixture, now, foreignOrg } from "./memory-family-fixture";
 import { png } from "./memory-message-fixture";
 import { barrier } from "./memory-operational-fixture";
@@ -46,7 +47,17 @@ export function observe(client: CommsClient) {
 function fixture(options: Options = {}, incarnation = 1) {
   const s = seedFixture(options.orgId);
   s.initial.people[s.context.user_id].role = options.role ?? "admin";
-  s.initial.members[s.channel.id][s.context.user_id].member_role = "manager";
+  s.initial.members[s.channel.id][s.context.user_id] = {
+    user_id: s.context.user_id,
+    member_role: "manager",
+    joined_at: "2026-09-11T01:00:00Z",
+  };
+  // A createChannel grant creates channels only in a department where the
+  // actor holds a role (owner decision 2026-10-22).
+  const department = Object.values(s.initial.departments)[0];
+  s.initial.people[s.context.user_id].department_levels = {
+    [department.id]: "write",
+  };
   // A data-only current grant for J1 creation; no fixture permission evaluator.
   s.initial.configuration.workspace = {
     settings: {},
@@ -77,9 +88,11 @@ function fixture(options: Options = {}, incarnation = 1) {
     ...s.channel,
     id: hiddenId,
     name: "Private sibling",
-    scope: "members",
     position: 2,
   };
+  // Only the peer holds a role in the sibling's department (D44).
+  hideInNewDepartment(s.initial, hiddenId, id(92));
+  s.initial.people[s.peer.user_id].department_levels[id(92)] = "write";
   s.initial.members[hiddenId] = {
     [s.peer.user_id]: {
       user_id: s.peer.user_id,
@@ -129,6 +142,7 @@ function fixture(options: Options = {}, incarnation = 1) {
     context: s.context,
     channelId: s.channel.id,
     categoryId: s.category.id,
+    departmentId: department.id,
     rootId: root.id,
     replyId: reply.id,
     peerId: s.peer.user_id,
@@ -182,14 +196,17 @@ export const edit = (body: string): C.EditMessageRequest => ({
 export function channelRequest(
   categoryId: string | null,
   name = "Created through the client",
+  departmentId?: string,
 ): C.ChannelRequest {
-  return {
+  const fields = {
     name,
     topic: "Owned example",
     category_id: categoryId,
     position: 100,
-    scope: "organization",
   };
+  return departmentId
+    ? { ...fields, scope: "department", department_id: departmentId }
+    : { ...fields, scope: "organization" };
 }
 export const schedule = (f: Fixture, key: number): C.ScheduleRequest => ({
   ...send("Scheduled from the full client", key),

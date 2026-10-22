@@ -30,9 +30,6 @@ import {
   capabilityConfigurationSchema,
   capabilityLocksSchema,
   capabilityCheckSchemaFor,
-  admissionDecisionRequestSchema,
-  invitationRequestSchema,
-  admissionSchema,
   configurationHistorySchema,
   configurationRestoreRequestSchema,
   templateApplyRequestSchema,
@@ -1089,50 +1086,6 @@ test("C6 accepts the D43 nonreading admin representation unchanged", () => {
   expect(schema.parse(check)).toEqual(check);
 });
 
-test("D27 managed admission does not accept self-authored authority or resolved-state contradictions", () => {
-  expect(
-    invitationRequestSchema.safeParse({ user_id: otherUser }).success,
-  ).toBe(true);
-  expect(
-    admissionDecisionRequestSchema.safeParse({ decision: "accept" }).success,
-  ).toBe(true);
-  expect(
-    admissionDecisionRequestSchema.safeParse({ decision: "decline" }).success,
-  ).toBe(true);
-  expect(
-    invitationRequestSchema.safeParse({ user_id: otherUser, role: "manager" })
-      .success,
-  ).toBe(false);
-  expect(
-    admissionDecisionRequestSchema.safeParse({
-      decision: "accept",
-      actor_id: user,
-    }).success,
-  ).toBe(false);
-  const pending = {
-    id: messageId,
-    org_id: org,
-    created_at: timestamp,
-    updated_at: timestamp,
-    conversation_id: conversation,
-    user_id: otherUser,
-    kind: "request",
-    status: "pending",
-    resolved_at: null,
-  };
-  expect(admissionSchema.safeParse(pending).success).toBe(true);
-  expect(
-    admissionSchema.safeParse({
-      ...pending,
-      status: "accepted",
-      resolved_at: timestamp,
-    }).success,
-  ).toBe(true);
-  expect(
-    admissionSchema.safeParse({ ...pending, status: "accepted" }).success,
-  ).toBe(false);
-});
-
 test("D27 templates and protected history carry scoped capabilities, not legacy permission or retention bypasses", () => {
   const template = {
     name: "Shift",
@@ -1248,12 +1201,11 @@ test("C6 access explanations validate source shape rather than infer access", ()
   const schema = capabilityCheckSchemaFor(context, conversation, otherUser);
   const explained = {
     ...readerCheck,
-    access_source: { kind: "group", group_id: groupId, group_name: "Shift" },
+    access_source: { kind: "department", department_id: thirdUser },
   };
   expect(schema.safeParse(explained).success).toBe(true);
   for (const access_source of [
     { kind: "organization" },
-    { kind: "department", department_id: thirdUser },
     explained.access_source,
     { kind: "membership" },
     { kind: "none", reason: "no_access" },
@@ -1269,10 +1221,11 @@ test("C6 access explanations validate source shape rather than infer access", ()
       true,
     );
   }
+  // D44: a channel shared with an access group no longer exists.
   expect(
     schema.safeParse({
       ...explained,
-      access_source: { kind: "group", user_id: user },
+      access_source: { kind: "group", group_id: groupId, group_name: "Shift" },
     }).success,
   ).toBe(false);
 });

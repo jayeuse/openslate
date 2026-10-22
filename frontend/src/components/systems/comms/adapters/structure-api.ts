@@ -292,27 +292,6 @@ export async function listMembers(
   );
 }
 
-export async function setChannelAccess(
-  context: C.CommsContext,
-  conversationId: string,
-  input: C.AccessRequest,
-  options: C.ConditionalOptions,
-): Promise<C.Versioned<C.Channel>> {
-  const bound = S.commsContextSchema.parse(context);
-  const request = S.accessRequestSchema.parse(input);
-  return versioned(
-    await apiFetchWithMetadata(
-      `${conversationPath(conversationId)}/access`,
-      S.channelSchema.refine(inContext(bound, conversationId)),
-      {
-        ...conditionalOptions(bound, options),
-        method: "PUT",
-        body: JSON.stringify(request),
-      },
-    ),
-  );
-}
-
 export async function setMemberRole(
   context: C.CommsContext,
   conversationId: string,

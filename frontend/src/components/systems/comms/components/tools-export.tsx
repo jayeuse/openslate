@@ -32,10 +32,7 @@ export function ExportTools({
   const { run, isPending } = useCommsCommands();
   const rooms = bootstrap?.conversations.map((row) => row.conversation) ?? [];
   const privateRoom = (id: string) =>
-    rooms.some(
-      (room) =>
-        room.id === id && (room.kind !== "channel" || room.scope === "members"),
-    );
+    rooms.some((room) => room.id === id && room.kind !== "channel");
   const [selected, setSelected] = useState<string[]>(
     channelId && !privateRoom(channelId) ? [channelId] : [],
   );

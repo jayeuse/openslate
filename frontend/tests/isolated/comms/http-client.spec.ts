@@ -119,7 +119,7 @@ test("bound HTTP heartbeat keeps the canonical 200 result rather than a void or 
   }
 });
 
-test("bound client sends templates, settings history and join requests to their live routes", async () => {
+test("bound client sends templates and settings history to their live routes", async () => {
   const lifetime = new AbortController();
   const client = createReadyHttpCommsClient(context, lifetime.signal);
   const fetch = installFetch((input) => {
@@ -139,9 +139,6 @@ test("bound client sends templates, settings history and join requests to their 
     await expect(
       client.listConfigurationHistory({ kind: "workspace" }),
     ).resolves.toMatchObject({ items: [] });
-    await expect(client.listAdmissions(conversationId)).resolves.toMatchObject({
-      items: [],
-    });
     expect(
       fetch.requests.map((request) => ({
         path: new URL(String(request.input), "http://localhost").pathname,
@@ -150,10 +147,6 @@ test("bound client sends templates, settings history and join requests to their 
     ).toEqual([
       { path: "/api/comms/templates", org: context.org_id },
       { path: "/api/comms/settings/workspace/history", org: context.org_id },
-      {
-        path: `/api/comms/conversations/${conversationId}/admissions`,
-        org: context.org_id,
-      },
     ]);
   } finally {
     lifetime.abort();

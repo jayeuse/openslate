@@ -156,10 +156,6 @@ export async function commsToolRoute({
       );
     return undefined;
   }
-  if (root === "join-requests") {
-    await client.submitJoinRequest(body() as C.JoinRequestSubmission);
-    return { status: 204 };
-  }
   if (root === "scheduled-messages") {
     const [, id, action] = parts;
     if (!id)
@@ -249,40 +245,6 @@ export async function commsToolRoute({
   if (root === "conversations" && parts[1]) {
     const conversationId = parts[1];
     const tail = parts.slice(2);
-    if (tail[0] === "admissions") {
-      const id = tail[1];
-      if (!id)
-        return {
-          status: 200,
-          json: await client.listAdmissions(conversationId, page(url)),
-        };
-      return versioned(
-        tail[2] === "decision"
-          ? await client.decideAdmission(
-              conversationId,
-              id,
-              body() as C.AdmissionDecisionRequest,
-              condition,
-            )
-          : await client.getAdmission(conversationId, id),
-      );
-    }
-    if (tail[0] === "invitations")
-      return created(
-        await client.invitePerson(
-          conversationId,
-          body() as C.InvitationRequest,
-        ),
-        `conversations/${conversationId}/admissions`,
-      );
-    if (tail[0] === "access" && method === "PUT")
-      return versioned(
-        await client.setChannelAccess(
-          conversationId,
-          body() as C.AccessRequest,
-          condition,
-        ),
-      );
     if (tail[0] === "members" && tail[1] && method === "PUT")
       return {
         status: 200,

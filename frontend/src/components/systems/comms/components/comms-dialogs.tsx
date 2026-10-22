@@ -154,13 +154,17 @@ export function useCommsDialogs(navigation: NavigationState) {
       if (setting === "create-channel")
         setEditor({
           kind: "channel",
-          value: newChannel(category?.id ?? categories[0]?.id ?? ""),
+          value: newChannel(category),
           opener,
         });
       else if (setting === "edit-channel" && channel)
         setEditor({ kind: "channel", value: channel, opener });
       else if (setting === "create-category")
-        setEditor({ kind: "category", value: { id: "", name: "" }, opener });
+        setEditor({
+          kind: "category",
+          value: { id: "", name: "", departmentId: "" },
+          opener,
+        });
       else if (setting === "edit-category" && category)
         setEditor({ kind: "category", value: category, opener });
     }

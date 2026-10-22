@@ -55,8 +55,8 @@ export const SETTINGS_SECTIONS: {
   {
     id: "members",
     label: "Members",
-    description: "Assign responsibility and set membership rules.",
-    keys: ["joinRule", "defaultMemberIds", "dmRule"],
+    description: "See who can take part and who manages each conversation.",
+    keys: ["dmRule"],
     common: [],
   },
   {
@@ -121,8 +121,6 @@ export const SETTINGS_LABELS: Record<CommsSettingKey, string> = {
   autoArchiveDays: "Auto-archive after (days)",
   defaultThreadSubscription: "Follow threads by default",
   threadBranches: "Thread branches in sidebar",
-  joinRule: "Channel joining",
-  defaultMemberIds: "Default members",
   dmRule: "Direct message access",
   notificationMode: "Notify me about",
   keywords: "Notification keywords",
@@ -178,11 +176,6 @@ const choices: Partial<Record<CommsSettingKey, [string, string][]>> = {
     ["all", "All threads"],
     ["followed", "Followed threads"],
     ["none", "Hide thread branches"],
-  ],
-  joinRule: [
-    ["open", "Open joining"],
-    ["request", "Request approval"],
-    ["invite", "Invite only"],
   ],
   dmRule: [
     ["everyone", "Everyone"],
@@ -289,7 +282,7 @@ export function SettingsFields({
                   />
                 ))}
               </FieldSet>
-            ) : ["defaultMemberIds", "restrictedPersonIds"].includes(key) ? (
+            ) : key === "restrictedPersonIds" ? (
               <FieldSet disabled={disabled} className="rounded-md border px-3">
                 <FieldLegend className="px-1 text-sm font-medium">
                   {label}

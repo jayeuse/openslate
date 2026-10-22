@@ -95,7 +95,6 @@ export interface MemoryCommsState extends MemoryPolicyWorld {
   resource_versions: Record<string, number>;
   idempotency: Record<string, { payload: string; message_id: string }>;
   reports: Record<string, C.Report>;
-  admissions: Record<string, C.Admission>;
   schedules: Record<string, C.Schedule>;
   exports: Record<string, C.ExportJob>;
   templates: Record<string, C.Template>;

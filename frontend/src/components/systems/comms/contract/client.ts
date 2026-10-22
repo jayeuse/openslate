@@ -93,11 +93,6 @@ export interface CommsClient {
     request?: C.MemberListRequest,
     options?: C.RequestOptions,
   ): Promise<C.Page<C.Member>>;
-  setChannelAccess(
-    conversationId: string,
-    request: C.AccessRequest,
-    options: C.ConditionalOptions,
-  ): Promise<C.Versioned<C.Channel>>;
   setMemberRole(
     conversationId: string,
     userId: string,
@@ -502,31 +497,4 @@ export interface CommsClient {
     request: C.ConfigurationRestoreRequest,
     options: C.ConditionalOptions & C.FreshAdminOptions,
   ): Promise<C.Versioned<C.ConfigurationSnapshot>>;
-  listAdmissions(
-    conversationId: string,
-    request?: C.TimeListRequest,
-    options?: C.RequestOptions,
-  ): Promise<C.Page<C.Admission>>;
-  getAdmission(
-    conversationId: string,
-    admissionId: string,
-    options?: C.RequestOptions,
-  ): Promise<C.Versioned<C.Admission>>;
-  invitePerson(
-    conversationId: string,
-    request: C.InvitationRequest,
-    options?: C.RequestOptions,
-  ): Promise<C.Versioned<C.Admission>>;
-  /** manageChannel; acceptance adds member membership, never manager/capabilities. */
-  decideAdmission(
-    conversationId: string,
-    admissionId: string,
-    request: C.AdmissionDecisionRequest,
-    options: C.ConditionalOptions,
-  ): Promise<C.Versioned<C.Admission>>;
-  /** Uniform 204 even for absent/out-of-org/closed targets; reveals no metadata. */
-  submitJoinRequest(
-    request: C.JoinRequestSubmission,
-    options?: C.RequestOptions,
-  ): Promise<void>;
 }

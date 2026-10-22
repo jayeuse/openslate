@@ -1,5 +1,4 @@
 import * as configuration from "../../../src/components/systems/comms/adapters/configuration-api";
-import * as admissions from "../../../src/components/systems/comms/adapters/admissions-api";
 import type * as C from "../../../src/components/systems/comms/contract/types";
 import {
   context,
@@ -14,7 +13,6 @@ import {
 } from "./s18-fixtures";
 export {
   configuration,
-  admissions,
   context,
   org,
   user,
@@ -113,14 +111,6 @@ export const restoreInput = {
 // Synthetic exact proof, never a real account credential.
 export const password = " synthetic-history-proof ";
 export const proof = { ...conditional, password };
-export const admission = {
-  ...identity,
-  conversation_id: conversationId,
-  user_id: other,
-  kind: "invitation",
-  status: "pending",
-  resolved_at: null,
-};
 
 type Call = {
   name: string;
@@ -278,79 +268,5 @@ export function calls(signal?: AbortSignal): Call[] {
         },
       ];
     }),
-    {
-      name: "list admissions",
-      invoke: () =>
-        admissions.listAdmissions(context, conversationId, {}, options),
-      path: `/api/comms/conversations/${conversationId}/admissions`,
-      method: "GET",
-      wire: page([admission]),
-      expected: page([admission]),
-      query,
-    },
-    {
-      name: "get admission",
-      invoke: () =>
-        admissions.getAdmission(context, conversationId, id, options),
-      path: `/api/comms/conversations/${conversationId}/admissions/${id}`,
-      method: "GET",
-      wire: admission,
-      expected: { data: admission, etag },
-      versioned: true,
-    },
-    {
-      name: "invite person",
-      invoke: () =>
-        admissions.invitePerson(
-          context,
-          conversationId,
-          { user_id: other },
-          options,
-        ),
-      path: `/api/comms/conversations/${conversationId}/invitations`,
-      method: "POST",
-      wire: admission,
-      expected: { data: admission, etag },
-      status: 201,
-      location: `/api/comms/conversations/${conversationId}/admissions/${id}`,
-      body: { user_id: other },
-      versioned: true,
-    },
-    {
-      name: "decide admission",
-      invoke: () =>
-        admissions.decideAdmission(
-          context,
-          conversationId,
-          id,
-          { decision: "accept" },
-          conditions,
-        ),
-      path: `/api/comms/conversations/${conversationId}/admissions/${id}/decision`,
-      method: "POST",
-      wire: { ...admission, status: "accepted", resolved_at: timestamp },
-      expected: {
-        data: { ...admission, status: "accepted", resolved_at: timestamp },
-        etag,
-      },
-      body: { decision: "accept" },
-      conditional: true,
-      versioned: true,
-    },
-    {
-      name: "submit join request",
-      invoke: () =>
-        admissions.submitJoinRequest(
-          context,
-          { conversation_id: conversationId },
-          options,
-        ),
-      path: "/api/comms/join-requests",
-      method: "POST",
-      wire: null,
-      expected: undefined,
-      status: 204,
-      body: { conversation_id: conversationId },
-    },
   ];
 }

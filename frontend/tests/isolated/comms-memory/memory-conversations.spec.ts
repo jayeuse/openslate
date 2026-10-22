@@ -5,7 +5,7 @@ import {
   expect,
   refuses,
   grant,
-  privateChannel,
+  secondOrganizationChannel,
   foreignOrg,
   absentId,
   now,
@@ -61,15 +61,13 @@ test("foreign resource IDs cannot be read, inspected or mutated through an org-l
     name: "B only",
     position: 1,
     department_id: null,
-    default_access: [],
   });
   const channel = await b.admin.createChannel({
     name: "B channel",
     topic: "Private B",
     position: 0,
     category_id: category.data.id,
-    scope: "members",
-    member_ids: [b.actorId],
+    scope: "organization",
   });
   const foreignBefore = structuredClone(b.store.exportSnapshot());
   await refuses(
@@ -126,7 +124,6 @@ test("category changes and channel moves recompute inheritance; conditional patc
     name: "Destination",
     position: 2,
     department_id: null,
-    default_access: [],
   });
   const renamed = await f.admin.updateCategory(
     created.data.id,
@@ -134,7 +131,6 @@ test("category changes and channel moves recompute inheritance; conditional patc
       name: "A destination",
       position: 0,
       department_id: null,
-      default_access: [],
     },
     { if_match: created.etag },
   );
@@ -291,24 +287,45 @@ test("direct creation refuses self and guest participants; shared-channel is nar
     () => f.actor.findOrCreateDirect({ recipient_id: f.guestId }),
     403,
   );
-  // Remove the only shared channel through a real command. Their direct still
-  // supplies D36 visibility, but is not a shared channel under dm_rule.
+  // The only channel belongs to a department the peer has no role in. Their
+  // existing direct still supplies D36 visibility, but is not a shared channel.
+  const directId = "73000000-0000-4000-b000-000000000001";
   const scoped = make((seed) => {
+    const department = Object.values(seed.initial.departments)[0];
+    seed.initial.people[seed.context.user_id].department_levels = {
+      [department.id]: "write",
+    };
     seed.initial.conversations[seed.channel.id] = {
       ...seed.channel,
-      scope: "groups",
-      access: [{ subject: "everyone", level: "post" }],
+      category_id: null,
+      scope: "department",
+      department_id: department.id,
     };
+    seed.initial.conversations[directId] = {
+      id: directId,
+      org_id: seed.context.org_id,
+      created_at: seed.channel.created_at,
+      updated_at: seed.channel.created_at,
+      archived_at: null,
+      creator_id: seed.context.user_id,
+      kind: "direct",
+    };
+    seed.initial.members[directId] = Object.fromEntries(
+      [seed.context.user_id, seed.peer.user_id].map((user_id) => [
+        user_id,
+        {
+          user_id,
+          member_role: "member" as const,
+          joined_at: seed.channel.created_at,
+        },
+      ]),
+    );
+    seed.initial.high_water_seq[directId] = 0;
   });
   const existing = await scoped.actor.findOrCreateDirect({
     recipient_id: scoped.peerId,
   });
-  const source = await scoped.admin.getConversation(scoped.channelId);
-  await scoped.admin.setChannelAccess(
-    scoped.channelId,
-    { access: [] },
-    { if_match: source.etag },
-  );
+  expect(existing.data.id).toBe(directId);
   const policy = await scoped.admin.getDirectPolicy();
   await scoped.admin.setDirectPolicy(
     { dm_rule: "shared-channel" },
@@ -412,11 +429,11 @@ test("group admission validates the participant set and removal cannot cross its
   );
 });
 
-test("explicit membership roles do not grant workspace powers and removal immediately hides a private channel", async ({
+test("explicit manager rows do not grant workspace powers and removing one leaves the reader", async ({
   make,
 }) => {
   const f = make();
-  const room = await privateChannel(f);
+  const room = await secondOrganizationChannel(f);
   await refuses(
     f,
     () =>
@@ -469,15 +486,16 @@ test("explicit membership roles do not grant workspace powers and removal immedi
   await f.actor.removeMember(room.data.id, f.peerId, {
     if_match: current.etag,
   });
-  await refuses(
-    f,
-    () => f.peer.getConversation(room.data.id),
-    404,
-    "comms_not_found",
-  );
+  // D44: a removed manager stays a reader through the channel's scope.
+  expect((await f.peer.getConversation(room.data.id)).data).toMatchObject({
+    level: "post",
+    member_role: "member",
+  });
   expect(
-    (await f.actor.listMembers(room.data.id)).items.map((m) => m.user_id),
-  ).not.toContain(f.peerId);
+    (await f.actor.listMembers(room.data.id)).items.find(
+      (m) => m.user_id === f.peerId,
+    ),
+  ).toMatchObject({ member_role: "member", level: "post" });
   expect(f.store.exportSnapshot().state.people[f.peerId].role).toBe("member");
 });
 
@@ -485,10 +503,16 @@ test("duplicate requires source management plus destination creation and never c
   make,
 }) => {
   const f = make((seed) => {
+    // D44: a createChannel grant creates department channels only, in a
+    // department where the actor holds a role.
+    const department = Object.values(seed.initial.departments)[0];
+    seed.initial.people[seed.context.user_id].department_levels = {
+      [department.id]: "write",
+    };
     seed.initial.conversations[seed.channel.id] = {
       ...seed.channel,
-      scope: "groups",
-      access: [{ subject: "everyone", level: "read" }],
+      scope: "department",
+      department_id: department.id,
     };
     seed.initial.configuration[`channel:${seed.channel.id}`] = {
       settings: { formatting: false },
@@ -529,11 +553,13 @@ test("duplicate requires source management plus destination creation and never c
       file_days: 7,
     };
   });
+  const departmentId = Object.keys(
+    f.store.exportSnapshot().state.departments,
+  )[0];
   const target = await f.admin.createCategory({
     name: "Copies",
     position: 3,
-    department_id: null,
-    default_access: [],
+    department_id: departmentId,
   });
   const targetScope = { kind: "category", id: target.data.id } as const;
   const request = { name: "Copy", category_id: target.data.id };
@@ -541,7 +567,8 @@ test("duplicate requires source management plus destination creation and never c
     name: "Cannot create yet",
     topic: "",
     position: 0,
-    scope: "organization" as const,
+    scope: "department" as const,
+    department_id: departmentId,
     category_id: target.data.id,
   };
   await refuses(
@@ -600,8 +627,8 @@ test("duplicate requires source management plus destination creation and never c
   });
   expect(copy.data).toMatchObject({
     kind: "channel",
-    scope: "groups",
-    access: [{ subject: "everyone", level: "read" }],
+    scope: "department",
+    department_id: departmentId,
     name: "Copy",
     category_id: target.data.id,
   });
@@ -636,175 +663,4 @@ test("duplicate requires source management plus destination creation and never c
   expect((await f.actor.getConversation(f.channelId)).data).toEqual(
     source.data,
   );
-  // An additive capability does not create source visibility. Use the real
-  // access command rather than mutating the fixture after binding.
-  const hidden = await f.admin.setChannelAccess(
-    f.channelId,
-    { access: [] },
-    { if_match: source.etag },
-  );
-  await refuses(
-    f,
-    () =>
-      f.actor.duplicateChannel(f.channelId, request, { if_match: hidden.etag }),
-    404,
-    "comms_not_found",
-  );
-});
-
-test("ID27 refuses clearing the caller's only group read after current authorization and preconditions", async ({
-  make,
-}) => {
-  const f = make((seed) => {
-    seed.initial.conversations[seed.channel.id] = {
-      ...seed.channel,
-      scope: "groups",
-      access: [{ subject: "group", group_id: seed.group.id, level: "read" }],
-    };
-  });
-  const original = await f.actor.getConversation(f.channelId);
-  // Proposed-state conflicts must not replace current authorization failures.
-  await refuses(
-    f,
-    () =>
-      f.actor.setChannelAccess(
-        f.channelId,
-        { access: [] },
-        { if_match: original.etag },
-      ),
-    403,
-    "comms_capability_denied",
-  );
-  const granted = await grant(f, f.channelScope, "manageChannel");
-  expect(await f.actor.getCapabilities(f.channelId)).toMatchObject({
-    conversation_level: "read",
-    manager_source: null,
-    capabilities: { manageChannel: { allowed: true } },
-  });
-  const current = await f.actor.getConversation(f.channelId);
-  await refuses(
-    f,
-    () =>
-      f.actor.setChannelAccess(
-        f.channelId,
-        { access: [] },
-        { if_match: original.etag },
-      ),
-    412,
-    "comms_precondition_failed",
-  );
-  await refuses(
-    f,
-    () =>
-      f.actor.setChannelAccess(
-        f.channelId,
-        { access: [] },
-        { if_match: current.etag },
-      ),
-    409,
-    "comms_conflict",
-    "This change would remove your read access. No changes were saved.",
-  );
-  expect(await f.actor.getConversation(f.channelId)).toEqual(current);
-  expect(await f.actor.getCapabilityConfiguration(f.channelScope)).toEqual(
-    granted,
-  );
-});
-
-test("ID27 moves commit a readable management downgrade but refuse losing the category manager's only read", async ({
-  make,
-}) => {
-  const f = make((seed) => {
-    const department = Object.values(seed.initial.departments)[0];
-    seed.category.department_id = department.id;
-    seed.initial.people[seed.context.user_id].department_levels[department.id] =
-      "manage";
-    // The category supplies the link; an explicit department scope would keep it.
-    seed.initial.conversations[seed.channel.id] = {
-      ...seed.channel,
-      scope: "groups",
-      access: [{ subject: "group", group_id: seed.group.id, level: "read" }],
-    };
-  });
-  const target = await f.admin.createCategory({
-    name: "Unlinked destination",
-    position: 2,
-    department_id: null,
-    default_access: [],
-  });
-  const original = await f.actor.getConversation(f.channelId);
-  expect(await f.actor.getCapabilities(f.channelId)).toMatchObject({
-    conversation_level: "manage",
-    manager_source: "department_manager",
-    capabilities: { manageChannel: { allowed: true } },
-  });
-  // Readable downgrade control: losing management alone must not block the move.
-  const moved = await f.actor.updateChannel(
-    f.channelId,
-    { category_id: target.data.id, topic: "Readable without management" },
-    { if_match: original.etag },
-  );
-  expect(moved.data).toMatchObject({
-    category_id: target.data.id,
-    topic: "Readable without management",
-    level: "read",
-  });
-  expect(moved.etag).not.toBe(original.etag);
-  expect(await f.actor.getConversation(f.channelId)).toEqual(moved);
-  expect(await f.actor.getCapabilities(f.channelId)).toMatchObject({
-    conversation_level: "read",
-    manager_source: null,
-    capabilities: { manageChannel: { allowed: false } },
-  });
-  await refuses(
-    f,
-    () =>
-      f.actor.updateChannel(
-        f.channelId,
-        { topic: "No longer authorized" },
-        { if_match: moved.etag },
-      ),
-    403,
-    "comms_capability_denied",
-  );
-  await refuses(
-    f,
-    () => f.actor.checkPerson(f.channelId, f.peerId),
-    403,
-    "comms_capability_denied",
-  );
-  expect(await f.actor.getConversation(f.channelId)).toEqual(moved);
-
-  // Restore category management, then remove the fallback through real commands.
-  const restored = await f.admin.updateChannel(
-    f.channelId,
-    { category_id: f.categoryId },
-    { if_match: moved.etag },
-  );
-  await f.admin.setChannelAccess(
-    f.channelId,
-    { access: [] },
-    { if_match: restored.etag },
-  );
-  const soleRead = await f.actor.getConversation(f.channelId);
-  expect(await f.actor.getCapabilities(f.channelId)).toMatchObject({
-    conversation_level: "manage",
-    manager_source: "department_manager",
-    capabilities: { manageChannel: { allowed: true } },
-  });
-  const settings = await f.actor.getSettings(f.channelScope);
-  await refuses(
-    f,
-    () =>
-      f.actor.updateChannel(
-        f.channelId,
-        { category_id: target.data.id, topic: "Must not be saved" },
-        { if_match: soleRead.etag },
-      ),
-    409,
-    "comms_conflict",
-    "This change would remove your read access. No changes were saved.",
-  );
-  expect(await f.actor.getConversation(f.channelId)).toEqual(soleRead);
-  expect(await f.actor.getSettings(f.channelScope)).toEqual(settings);
 });

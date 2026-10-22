@@ -4,7 +4,10 @@ import type {
   CommsEvent,
   SettingsScope,
 } from "@/components/systems/comms/contract/types";
-import { createMemorySeed } from "../../support/comms-memory/memory/seed";
+import {
+  createMemorySeed,
+  organizationChannel,
+} from "../../support/comms-memory/memory/seed";
 import { createMemoryStore } from "../../support/comms-memory/memory/store";
 import { createMemoryAvailability } from "../../support/comms-memory/memory/availability";
 import { createConversationOperations } from "../../support/comms-memory/memory/conversation-operations";
@@ -49,7 +52,31 @@ export function seedFixture(orgId = owner.org_id) {
     person.group_ids = person.user_id === context.user_id ? [group.id] : [];
     person.department_levels = {};
   }
-  return { initial, context, channel, category, group, admin, peer, guest };
+  // Without department roles the family's channel is an organization channel
+  // (D44), and every person keeps a row that a case may promote to manager.
+  const room = organizationChannel(channel);
+  if (room.kind !== "channel") throw new Error("The seed room is a channel");
+  initial.conversations[room.id] = room;
+  initial.members[channel.id] = Object.fromEntries(
+    Object.keys(initial.people).map((user_id) => [
+      user_id,
+      {
+        user_id,
+        member_role: "member" as const,
+        joined_at: channel.created_at,
+      },
+    ]),
+  );
+  return {
+    initial,
+    context,
+    channel: room,
+    category,
+    group,
+    admin,
+    peer,
+    guest,
+  };
 }
 export type SeedFixture = ReturnType<typeof seedFixture>;
 
@@ -165,13 +192,13 @@ export async function grant(
   );
 }
 
-export async function privateChannel(f: FamilyFixture) {
+/** A second organization channel; the admin's creator row is its only row. */
+export async function secondOrganizationChannel(f: FamilyFixture) {
   return f.admin.createChannel({
-    name: "Private dispatch",
+    name: "Dispatch",
     topic: "Owned fixture",
     position: 1,
     category_id: f.categoryId,
-    scope: "members",
-    member_ids: [f.actorId, f.peerId],
+    scope: "organization",
   });
 }

@@ -11,7 +11,6 @@ export function AdminTools(props: ComponentProps<typeof CommsToolsDialog>) {
 }
 export type ToolView = ComponentProps<typeof CommsToolsDialog>["view"];
 export const mainToolViews: readonly ToolView[] = [
-  "management",
   "templates",
   "history",
   "moderation",
@@ -20,7 +19,6 @@ export const mainToolViews: readonly ToolView[] = [
   "export",
 ];
 export const toolViews: readonly ToolView[] = [
-  "management",
   "templates",
   "history",
   "moderation",

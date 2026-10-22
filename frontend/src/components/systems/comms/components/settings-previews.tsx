@@ -9,122 +9,172 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
-import type { Person } from "../../shared/data/sample-people";
 import { Action, Choice } from "../../shared/components/ui";
 import type { Channel } from "../domain/view-model";
+import { LevelBadge } from "./member-level";
 import type { CommsSettings } from "../domain/configuration";
 import { useCommsRead } from "../state/runtime";
 import { complete } from "../state/workspace-view";
 
+/**
+ * A channel's readers with their level. Manager rows are the only rows with a
+ * role to change: a reader can become a manager, a manager row can go back to
+ * the reader's own level. Admins, department managers and the creator manage
+ * by their role, so they have no action here.
+ */
 export function MembershipPreview({
   channel,
-  people,
-  settings,
+  saved,
   roles,
   onRoleChange,
 }: {
-  channel?: Channel;
-  people: Person[];
-  settings: CommsSettings;
+  channel: Channel;
+  saved: boolean;
   roles: Record<string, "member" | "manager">;
   onRoleChange: (userId: string, role: "member" | "manager") => void;
 }) {
-  const [personId, setPersonId] = useState(people[0]?.id ?? "");
-  const resource = useCommsRead(
-    `membership:${channel?.id ?? "new"}:${personId}`,
-    async (client, signal) => {
-      if (!channel?.id) return null;
-      const [person, viewer, members] = await Promise.all([
-        client.checkPerson(channel.id, personId, { signal }),
-        client.getCapabilities(channel.id, { signal }),
-        complete((offset) =>
-          client.listMembers(channel.id, { limit: 100, offset }, { signal }),
-        ),
-      ]);
-      return {
-        person,
-        viewer,
-        member: members.find((member) => member.user_id === personId),
-      };
-    },
+  const members = useCommsRead(
+    `members:${saved ? channel.id : "new"}`,
+    async (client, signal) =>
+      saved
+        ? {
+            members: await complete((offset) =>
+              client.listMembers(
+                channel.id,
+                { limit: 100, offset },
+                { signal },
+              ),
+            ),
+            viewer: await client.getCapabilities(channel.id, { signal }),
+          }
+        : null,
   );
+  const [personId, setPersonId] = useState("");
+  const chosen =
+    members.data?.members.find((member) => member.user_id === personId) ??
+    members.data?.members[0];
+  const person = useCommsRead(
+    `membership:${saved ? channel.id : "new"}:${chosen?.user_id ?? ""}`,
+    async (client, signal) =>
+      saved && chosen && members.data?.viewer.capabilities.manageChannel.allowed
+        ? client.checkPerson(channel.id, chosen.user_id, { signal })
+        : null,
+  );
+  if (!saved)
+    return (
+      <p className="text-muted-foreground text-sm">
+        Save this channel to see who can use it.
+      </p>
+    );
+  const check = person.data;
+  const source = check?.manager_source ?? null;
+  const roleNote = !check
+    ? ""
+    : check.access_source.kind === "admin"
+      ? "Admins manage every channel."
+      : source === "creator"
+        ? "Created this channel, so manages it."
+        : source === "department_manager"
+          ? "Manages this channel through a department role."
+          : check.membership_role === "guest"
+            ? "Guests can only read."
+            : "";
+  const roleChangeable =
+    !!check &&
+    !roleNote &&
+    (source === "membership_manager" || check.conversation_level !== "manage");
   return (
-    <Card aria-label="Membership preview" className="w-full">
-      <CardHeader className="p-4">
-        <CardTitle>Membership preview</CardTitle>
-        <CardDescription>
-          Saved access is checked by the conversation client. Member-role
-          changes save with this dialog.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3 p-4">
-        <Choice
-          label="Preview membership for"
-          value={personId}
-          onChange={(event) => setPersonId(event.target.value)}
+    <section aria-label="Channel members" className="flex flex-col gap-4">
+      {members.error && (
+        <Alert role="alert" variant="destructive">
+          Members could not be loaded.{" "}
+          <Action onClick={members.reload}>Try again</Action>
+        </Alert>
+      )}
+      {members.data && (
+        <ul
+          aria-label="People who can use this channel"
+          className="border-card-edge divide-y overflow-hidden rounded-lg border"
         >
-          {people.map((person) => (
-            <NativeSelectOption key={person.id} value={person.id}>
-              {person.name}
-            </NativeSelectOption>
+          {members.data.members.map((member) => (
+            <li
+              key={member.user_id}
+              className="flex min-h-11 items-center justify-between gap-3 px-3 py-2"
+            >
+              <span className="min-w-0">
+                <bdi className="block truncate text-sm font-medium">
+                  {member.display_name}
+                </bdi>
+                <bdi className="text-muted-foreground block truncate text-xs">
+                  {member.departments.map((item) => item.name).join(", ") ||
+                    "No department"}
+                </bdi>
+              </span>
+              <LevelBadge level={member.level} />
+            </li>
           ))}
-        </Choice>
-        {resource.error && (
-          <Alert role="alert" variant="destructive">
-            Membership could not be checked.{" "}
-            <Action onClick={resource.reload}>Try again</Action>
-          </Alert>
-        )}
-        {!channel?.id && (
-          <p className="text-muted-foreground text-xs">
-            Save this channel before managing its members.
-          </p>
-        )}
-        {resource.data && (
-          <>
-            <Alert>
-              Saved access: {resource.data.person.conversation_level}.{" "}
-              {resource.data.person.membership_role === "guest"
-                ? "Guests are read-only."
-                : "Capabilities follow the saved role and group grants."}
-            </Alert>
-            {resource.data.member &&
-              resource.data.viewer.capabilities.manageChannel.allowed && (
+        </ul>
+      )}
+      {members.data?.viewer.capabilities.manageChannel.allowed &&
+        members.data.members.length > 0 && (
+          <Card aria-label="Channel managers" className="w-full">
+            <CardHeader className="p-4">
+              <CardTitle>Channel managers</CardTitle>
+              <CardDescription>
+                A manager can change this channel and its settings. Role changes
+                save with this dialog.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3 p-4">
+              <Choice
+                label="Person"
+                value={chosen?.user_id ?? ""}
+                onChange={(event) => setPersonId(event.target.value)}
+              >
+                {members.data.members.map((member) => (
+                  <NativeSelectOption
+                    key={member.user_id}
+                    value={member.user_id}
+                  >
+                    {member.display_name}
+                  </NativeSelectOption>
+                ))}
+              </Choice>
+              {person.error && (
+                <Alert role="alert" variant="destructive">
+                  This person could not be checked.{" "}
+                  <Action onClick={person.reload}>Try again</Action>
+                </Alert>
+              )}
+              {roleNote && (
+                <p className="text-muted-foreground text-sm">{roleNote}</p>
+              )}
+              {roleChangeable && chosen && (
                 <Choice
-                  label="Conversation role"
-                  value={roles[personId] ?? resource.data.member.member_role}
+                  label="Channel role"
+                  value={
+                    roles[chosen.user_id] ??
+                    (source === "membership_manager" ? "manager" : "member")
+                  }
                   onChange={(event) =>
                     onRoleChange(
-                      personId,
+                      chosen.user_id,
                       event.target.value === "manager" ? "manager" : "member",
                     )
                   }
                 >
-                  <NativeSelectOption value="member">Member</NativeSelectOption>
-                  <NativeSelectOption
-                    value="manager"
-                    disabled={resource.data.person.membership_role === "guest"}
-                  >
+                  <NativeSelectOption value="member">
+                    Not a manager
+                  </NativeSelectOption>
+                  <NativeSelectOption value="manager">
                     Manager
                   </NativeSelectOption>
                 </Choice>
               )}
-          </>
+            </CardContent>
+          </Card>
         )}
-        <div>
-          <h4 className="text-xs font-semibold">Default membership preview</h4>
-          <ul className="mt-2 flex flex-col gap-1 text-xs">
-            {people
-              .filter((person) => settings.defaultMemberIds.includes(person.id))
-              .map((person) => (
-                <li key={person.id}>
-                  {person.name} · Selected as a default member
-                </li>
-              ))}
-          </ul>
-        </div>
-      </CardContent>
-    </Card>
+    </section>
   );
 }
 

@@ -5,15 +5,12 @@ import type * as C from "../../../src/components/systems/comms/contract/types";
 import { installFetch } from "../helpers/fake-fetch";
 import {
   configuration as api,
-  admissions,
   calls,
   context,
   org,
   other,
-  user,
   conversationId,
   secondConversation,
-  timestamp,
   etag,
   conditional,
   id,
@@ -31,7 +28,6 @@ import {
   restoreInput,
   password,
   proof,
-  admission,
 } from "./configuration-fixtures";
 
 for (const row of calls())
@@ -138,42 +134,6 @@ test("configuration replies reject foreign resources, captured scopes and proof-
         { ...snapshot(scope), setting_locks: [] },
       ],
     },
-    {
-      call: () => admissions.getAdmission(context, conversationId, id),
-      wires: [
-        { ...admission, org_id: other },
-        { ...admission, id: other },
-        { ...admission, conversation_id: other },
-        { ...admission, status: "accepted" },
-      ],
-    },
-    {
-      call: () =>
-        admissions.invitePerson(context, conversationId, { user_id: other }),
-      status: 201,
-      location: `/api/comms/conversations/${conversationId}/admissions/${id}`,
-      wires: [
-        { ...admission, user_id: user },
-        { ...admission, kind: "request" },
-        { ...admission, org_id: other },
-        { ...admission, conversation_id: other },
-      ],
-    },
-    {
-      call: () =>
-        admissions.decideAdmission(
-          context,
-          conversationId,
-          id,
-          { decision: "accept" },
-          conditional,
-        ),
-      wires: [
-        admission,
-        { ...admission, status: "declined", resolved_at: timestamp },
-        { ...admission, status: "accepted", resolved_at: timestamp, id: other },
-      ],
-    },
   ])
     for (const wire of row.wires) {
       const mock = installFetch(() =>
@@ -211,11 +171,6 @@ test("configuration collections preserve offsets and reject mixed scope or incon
       call: () => api.listConfigurationHistory(context, scopes[2], request),
       item: history(scopes[2]),
       wrong: history(scopes[0]),
-    },
-    {
-      call: () => admissions.listAdmissions(context, conversationId, request),
-      item: admission,
-      wrong: { ...admission, conversation_id: other },
     },
   ]) {
     const valid = {
@@ -481,14 +436,6 @@ test("configuration writes refuse missing validators, proof and malformed target
           { ...restoreInput, password } as typeof restoreInput,
           proof,
         ),
-      () => admissions.getAdmission(context, conversationId, "invalid"),
-      () =>
-        admissions.submitJoinRequest(context, { conversation_id: "invalid" }),
-      () =>
-        admissions.invitePerson(context, conversationId, {
-          user_id: other,
-          role: "manager",
-        } as C.InvitationRequest),
       ...[{}, { if_match: 'W/"weak"' }, { if_match: "*" }].flatMap(
         (options) => [
           () =>
@@ -515,14 +462,6 @@ test("configuration writes refuse missing validators, proof and malformed target
               ...options,
               password,
             } as typeof proof),
-          () =>
-            admissions.decideAdmission(
-              context,
-              conversationId,
-              id,
-              { decision: "decline" },
-              options as typeof conditional,
-            ),
         ],
       ),
     ];
@@ -600,71 +539,6 @@ test("configuration acknowledgments require exact statuses, validators, private 
   }
 });
 
-test("join submission stays uniform and decisions never grant a role or fabricate a requester resource", async () => {
-  const empty = installFetch(
-    () =>
-      new Response(null, {
-        status: 204,
-        headers: { "Cache-Control": "private, no-store" },
-      }),
-  );
-  try {
-    await expect(
-      admissions.submitJoinRequest(context, { conversation_id: other }),
-    ).resolves.toBeUndefined();
-    expect(
-      empty.requests.map(({ input, init }) => [
-        String(input),
-        init?.method,
-        JSON.parse(String(init?.body)),
-      ]),
-    ).toEqual([
-      ["/api/comms/join-requests", "POST", { conversation_id: other }],
-    ]);
-  } finally {
-    empty.restore();
-  }
-  const leaked = installFetch(() =>
-    Response.json(admission, {
-      headers: { "Cache-Control": "private, no-store" },
-    }),
-  );
-  try {
-    await expect(
-      admissions.submitJoinRequest(context, { conversation_id: other }),
-    ).rejects.toBeInstanceOf(ApiContractError);
-  } finally {
-    leaked.restore();
-  }
-  const declined = {
-    ...admission,
-    kind: "request",
-    status: "declined",
-    resolved_at: timestamp,
-  };
-  const mock = installFetch(() =>
-    Response.json(declined, {
-      headers: { ETag: etag, "Cache-Control": "private, no-store" },
-    }),
-  );
-  try {
-    await expect(
-      admissions.decideAdmission(
-        context,
-        conversationId,
-        id,
-        { decision: "decline" },
-        conditional,
-      ),
-    ).resolves.toEqual({ data: declined, etag });
-    expect(JSON.parse(String(mock.requests[0].init?.body))).toEqual({
-      decision: "decline",
-    });
-  } finally {
-    mock.restore();
-  }
-});
-
 test("protected configuration refusals and cancellation propagate without replay or fallback reads", async () => {
   for (const status of [403, 404, 409, 412, 428, 503]) {
     const mock = installFetch(() =>
@@ -680,16 +554,7 @@ test("protected configuration refusals and cancellation propagate without replay
       await expect(
         api.restoreConfiguration(context, scopes[2], restoreInput, proof),
       ).rejects.toMatchObject({ status });
-      await expect(
-        admissions.decideAdmission(
-          context,
-          conversationId,
-          id,
-          { decision: "accept" },
-          conditional,
-        ),
-      ).rejects.toMatchObject({ status });
-      expect(mock.requests).toHaveLength(3);
+      expect(mock.requests).toHaveLength(2);
     } finally {
       mock.restore();
     }

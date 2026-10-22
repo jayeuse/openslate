@@ -144,15 +144,6 @@ test("structure requests reject invalid identities, payloads and preconditions b
           participant_ids: [peer, categoryId, conversationId],
         }),
       () =>
-        api.setChannelAccess(
-          context,
-          conversationId,
-          {
-            access: [{ subject: "group", group_id: "invalid", level: "read" }],
-          },
-          conditional,
-        ),
-      () =>
         api.setMemberRole(
           context,
           conversationId,

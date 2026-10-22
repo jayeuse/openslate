@@ -26,12 +26,10 @@ const projections = {
   member_role: true,
 } as const;
 const creator = { creator_id: uuid };
-const [organization, department, groups, members] = S.channelSchema.options;
+const [organization, department] = S.channelSchema.options;
 const conversation = z.union([
   organization.omit(projections).extend(creator),
   department.omit(projections).extend(creator),
-  groups.omit(projections).extend(creator),
-  members.omit(projections).extend(creator),
   S.directSchema
     .omit({ ...projections, participant_ids: true })
     .extend(creator),
@@ -121,7 +119,6 @@ export const memoryStateSchema = z.strictObject({
     z.strictObject({ payload: z.string(), message_id: uuid }),
   ),
   reports: z.record(uuid, S.reportSchema),
-  admissions: z.record(uuid, S.admissionSchema),
   schedules: z.record(uuid, S.scheduleSchema),
   exports: z.record(uuid, S.exportJobSchema),
   templates: z.record(uuid, S.templateSchema),

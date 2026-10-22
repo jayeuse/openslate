@@ -5,7 +5,6 @@ import {
   expect,
   refuses,
   grant,
-  privateChannel,
   absentId,
   workspace,
 } from "./memory-family-fixture";
@@ -99,7 +98,7 @@ test("strict method admission rejects a mixed invalid write without settings his
     () =>
       f.admin.updateSettings(
         f.channelScope,
-        { formatting: false, default_member_ids: [absentId] },
+        { formatting: false, restricted_person_ids: [absentId] },
         { if_match: current.etag },
       ),
     422,
@@ -122,7 +121,6 @@ test("strict method admission rejects a mixed invalid write without settings his
     f.channelScope,
     {
       formatting: false,
-      default_member_ids: [f.peerId],
       quiet_hours_start: "22:00",
       quiet_hours_end: "06:00",
     },
@@ -130,7 +128,6 @@ test("strict method admission rejects a mixed invalid write without settings his
   );
   expect(accepted.data.overrides).toEqual({
     formatting: false,
-    default_member_ids: [f.peerId],
     quiet_hours_start: "22:00",
     quiet_hours_end: "06:00",
   });
@@ -150,10 +147,7 @@ test("strict method admission rejects a mixed invalid write without settings his
     { keys: ["quiet_hours_start", "quiet_hours_end"] },
     { if_match: accepted.etag },
   );
-  expect(reset.data.overrides).toEqual({
-    formatting: false,
-    default_member_ids: [f.peerId],
-  });
+  expect(reset.data.overrides).toEqual({ formatting: false });
 });
 
 test("settings locks are admin-owned and a lower mixed patch cannot partially escape the lock", async ({
@@ -522,30 +516,22 @@ test("C6 personal conversation and category preferences are last-write-wins whil
   expect(f.store.exportSnapshot().state.users[f.actorId].last_read_seq).toEqual(
     readBefore,
   );
-  const room = await privateChannel(f);
-  await f.admin.removeMember(room.data.id, f.peerId, { if_match: room.etag });
-  await refuses(
-    f,
-    () => f.peer.getMemberPreferences(room.data.id),
-    404,
-    "comms_not_found",
-  );
-  await refuses(
-    f,
-    () => f.peer.updateMemberPreferences(room.data.id, { starred: true }),
-    404,
-    "comms_not_found",
-  );
 });
 
 test("ID27 capability self-removal commits its acknowledgement and history while read remains and inspection is denied", async ({
   make,
 }) => {
   const f = make((seed) => {
+    // A read role in the channel's department is the actor's only access (D44).
+    const department = Object.values(seed.initial.departments)[0];
+    seed.initial.people[seed.context.user_id].department_levels = {
+      [department.id]: "read",
+    };
     seed.initial.conversations[seed.channel.id] = {
       ...seed.channel,
-      scope: "groups",
-      access: [{ subject: "group", group_id: seed.group.id, level: "read" }],
+      category_id: null,
+      scope: "department",
+      department_id: department.id,
     };
   });
   const granted = await grant(f, f.channelScope, "manageChannel");

@@ -1,4 +1,7 @@
-import { createMemorySeed } from "../../support/comms-memory/memory/seed";
+import {
+  createMemorySeed,
+  organizationChannel,
+} from "../../support/comms-memory/memory/seed";
 import type {
   CapabilityConfiguration,
   CommsContext,
@@ -14,8 +17,21 @@ export function policyFixture() {
     display_name: "You",
   });
   const person = world.people[context.user_id];
-  const channel = Object.values(world.conversations)[0];
+  // Without its category's department link the seed room is an organization channel.
+  const channel = organizationChannel(Object.values(world.conversations)[0]);
   if (channel.kind !== "channel") throw new Error("Fixture needs a channel");
+  world.conversations[channel.id] = channel;
+  // Every person keeps a row a case may promote or turn into a direct message.
+  world.members[channel.id] = Object.fromEntries(
+    Object.keys(world.people).map((user_id) => [
+      user_id,
+      {
+        user_id,
+        member_role: "member" as const,
+        joined_at: channel.created_at,
+      },
+    ]),
+  );
   const category = Object.values(world.categories)[0];
   const department = Object.values(world.departments)[0];
   const group = Object.values(world.groups)[0];

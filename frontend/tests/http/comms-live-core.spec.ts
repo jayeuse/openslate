@@ -200,7 +200,7 @@ test("a history refusal conceals copied conversation content until a fresh read 
     server.refuseHistory(true);
     server.appendGap();
     await expect(
-      page.getByText("This conversation is not available", { exact: true }),
+      page.getByText("This conversation is not available.", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "live-operations", exact: true }),

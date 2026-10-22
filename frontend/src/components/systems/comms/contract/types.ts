@@ -8,7 +8,6 @@ export type Conversation = z.output<typeof schema.conversationSchema>;
 export type Channel = z.output<typeof schema.channelSchema>;
 export type DirectConversation = z.output<typeof schema.directSchema>;
 export type GroupConversation = z.output<typeof schema.groupSchema>;
-export type GroupAccess = z.output<typeof schema.groupAccessSchema>;
 export type Member = z.output<typeof schema.memberSchema>;
 export type Message = z.output<typeof schema.messageSchema>;
 export type LiveMessage = z.output<typeof schema.liveMessageSchema>;
@@ -71,7 +70,6 @@ export type TemplateApplyResult = z.output<
 export type TemplateApplyPreview = z.output<
   typeof schema.templateApplyPreviewSchema
 >;
-export type Admission = z.output<typeof schema.admissionSchema>;
 export type ConfigurationSnapshot = z.output<
   typeof schema.configurationSnapshotSchema
 >;
@@ -89,7 +87,6 @@ export type PurgeResult = z.output<typeof schema.purgeResultSchema>;
 export type CategoryRequest = z.input<typeof schema.categoryRequestSchema>;
 export type ChannelRequest = z.input<typeof schema.channelRequestSchema>;
 export type ChannelPatch = z.input<typeof schema.channelPatchSchema>;
-export type AccessRequest = z.input<typeof schema.accessRequestSchema>;
 export type DirectRequest = z.input<typeof schema.directRequestSchema>;
 export type GroupRequest = z.input<typeof schema.groupRequestSchema>;
 export type SendMessageRequest = z.input<
@@ -126,13 +123,6 @@ export type RetentionRequest = z.input<typeof schema.retentionRequestSchema>;
 export type TemplateImport = z.input<typeof schema.templateImportSchema>;
 export type TemplateApplyRequest = z.input<
   typeof schema.templateApplyRequestSchema
->;
-export type JoinRequestSubmission = z.input<
-  typeof schema.joinRequestSubmissionSchema
->;
-export type InvitationRequest = z.input<typeof schema.invitationRequestSchema>;
-export type AdmissionDecisionRequest = z.input<
-  typeof schema.admissionDecisionRequestSchema
 >;
 export type MemberRoleRequest = z.input<typeof schema.memberRoleRequestSchema>;
 export type DuplicateChannelRequest = z.input<

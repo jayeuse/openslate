@@ -188,7 +188,6 @@ export function createReadyHttpCommsClient(
     findOrCreateDirect: bind(structure.findOrCreateDirect, 1),
     createGroup: bind(structure.createGroup, 1),
     listMembers: bind(structure.listMembers, 2),
-    setChannelAccess: bind(structure.setChannelAccess, 2),
     setMemberRole: bind(structure.setMemberRole, 3),
     removeMember: bind(structure.removeMember, 2),
     duplicateChannel: bind(structure.duplicateChannel, 2),
@@ -398,26 +397,6 @@ export function createReadyHttpCommsClient(
     restoreConfiguration: deferred(
       async () => (await import("./configuration-api")).restoreConfiguration,
       2,
-    ),
-    listAdmissions: deferred(
-      async () => (await import("./admissions-api")).listAdmissions,
-      2,
-    ),
-    getAdmission: deferred(
-      async () => (await import("./admissions-api")).getAdmission,
-      2,
-    ),
-    invitePerson: deferred(
-      async () => (await import("./admissions-api")).invitePerson,
-      2,
-    ),
-    decideAdmission: deferred(
-      async () => (await import("./admissions-api")).decideAdmission,
-      3,
-    ),
-    submitJoinRequest: deferred(
-      async () => (await import("./admissions-api")).submitJoinRequest,
-      1,
     ),
   });
 }

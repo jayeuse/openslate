@@ -46,21 +46,15 @@ export type ConversationAccess = {
   manager_source: CapabilityCheck["manager_source"];
 };
 
+/** A department channel's department; organization channels and messages have none (D44). */
 export function linkedDepartment(
   world: MemoryPolicyWorld,
   conversation: MemoryConversation,
 ) {
-  if (conversation.kind !== "channel") return null;
-  const category = conversation.category_id
-    ? world.categories[conversation.category_id]
-    : undefined;
-  const id =
-    conversation.scope === "department"
-      ? conversation.department_id
-      : category?.org_id === world.org_id
-        ? category.department_id
-        : null;
-  return id && world.departments[id]?.org_id === world.org_id ? id : null;
+  if (conversation.kind !== "channel" || conversation.scope !== "department")
+    return null;
+  const id = conversation.department_id;
+  return world.departments[id]?.org_id === world.org_id ? id : null;
 }
 
 export function conversationAccess(
@@ -107,34 +101,13 @@ export function conversationAccess(
   if (conversation.kind === "channel") {
     if (conversation.scope === "organization")
       offer("post", { kind: "organization" });
+    // D44: scope and department roles alone decide a channel; member rows
+    // are a manager roster, never read access.
     if (conversation.scope === "department" && department && departmentLevel)
       offer(departmentLevel === "read" ? "read" : "post", {
         kind: "department",
         department_id: department,
       });
-    if (conversation.scope === "groups") {
-      // Highest access wins. UUID order makes equal grants explain consistently.
-      const rows = [...conversation.access].sort((a, b) => {
-        const left = a.subject === "everyone" ? "" : a.group_id;
-        const right = b.subject === "everyone" ? "" : b.group_id;
-        return left < right ? -1 : left > right ? 1 : 0;
-      });
-      for (const row of rows) {
-        if (row.subject === "everyone")
-          offer(row.level, { kind: "organization" });
-        else if (
-          person.group_ids.includes(row.group_id) &&
-          world.groups[row.group_id]?.org_id === context.org_id
-        )
-          offer(row.level, {
-            kind: "group",
-            group_id: row.group_id,
-            group_name: world.groups[row.group_id].name,
-          });
-      }
-    }
-    if (conversation.scope === "members" && membership)
-      offer("post", { kind: "membership" });
   } else if (membership) offer("post", { kind: "membership" });
   if (person.role === "guest" && result.level !== "none")
     return {
@@ -210,4 +183,16 @@ export function canStartDirect(
     (world.dm_rule !== "shared-channel" ||
       sharesConversation(world, context, userId, true))
   );
+}
+
+/**
+ * The people a conversation's member-keyed consumers consider: everyone in the
+ * organization for a channel, whose readers come from scope and department
+ * roles (D44), and the participant rows of a direct or group message. Callers
+ * still require a current read level.
+ */
+export function memberCandidateIds(world: MemoryPolicyWorld, id: string) {
+  return world.conversations[id]?.kind === "channel"
+    ? Object.keys(world.people)
+    : Object.keys(world.members[id] ?? {});
 }

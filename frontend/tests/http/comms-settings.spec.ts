@@ -40,13 +40,11 @@ async function seedSettings(
   const room = Object.values(state.conversations)[0];
   if (room.kind !== "channel") throw new Error("Expected channel fixture");
   const group = Object.values(state.groups)[0];
-  state.conversations[room.id] = {
-    ...room,
-    scope: "groups",
-    access: [{ subject: "everyone", level: "post" }],
-  };
+  // The seed room is a department channel (D44); a manager manages it through
+  // a manage role in that department.
   if (mode === "manager")
-    state.members[room.id][userId].member_role = "manager";
+    for (const department of Object.keys(state.departments))
+      state.people[userId].department_levels[department] = "manage";
   state.configuration.workspace = {
     settings: {},
     capabilities: {
@@ -330,32 +328,42 @@ test("workspace locks live in Advanced and keep lower-scope common values locked
   await expect(again.getByText(/Lock Lock channel/)).toHaveCount(0);
 });
 
-test("a manager edits group access and checks saved granting reasons without losing Advanced or its draft", async ({
+test("a manager sees the channel's department read-only and who can use it, then checks one person without losing Advanced", async ({
   page,
 }) => {
   const data = await seedSettings(page, "manager");
   await page.goto("/comms");
   await openChannel(page);
   const dialog = settings(page);
+  await expect(
+    dialog.getByText("Who can use this channel:", { exact: true }),
+  ).toBeVisible();
+  await expect(dialog.getByText("Department ·", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Operations", { exact: true })).toBeVisible();
+  // Read-only text, never a disabled scope control.
+  await expect(dialog.getByRole("radio")).toHaveCount(0);
   await dialog.getByRole("tab", { name: "Access", exact: true }).click();
-  await dialog
-    .getByRole("radiogroup", { name: "Everyone", exact: true })
-    .getByText("Read", { exact: true })
-    .click();
-  await dialog
-    .getByRole("radiogroup", { name: "Dispatch team", exact: true })
-    .getByText("Read", { exact: true })
-    .click();
-  const guests = dialog.getByRole("radiogroup", {
-    name: "Guests",
+  const access = dialog.getByRole("region", {
+    name: "Who can use it",
     exact: true,
   });
+  await expect(access.getByRole("definition")).toHaveText([
+    "can read",
+    "can post",
+    "can manage this channel",
+    "manage every channel",
+  ]);
+  await expect(access.getByRole("term")).toHaveText([
+    "Read role",
+    "Write role",
+    "Manage role",
+    "Admins",
+  ]);
+  await expect(access.getByRole("radiogroup")).toHaveCount(0);
+  // Only an admin changes department roles, in Access → Groups.
   await expect(
-    guests.getByRole("radio", { name: "Read", exact: true }),
-  ).toBeChecked();
-  await expect(
-    guests.getByRole("radio", { name: "Read and post", exact: true }),
-  ).toBeDisabled();
+    dialog.getByRole("link", { name: /Access → Groups/ }),
+  ).toHaveCount(0);
   await dialog.getByRole("button", { name: /Advanced settings/ }).click();
   await dialog
     .getByRole("button", { name: "Check one person", exact: true })
@@ -383,23 +391,6 @@ test("a manager edits group access and checks saved granting reasons without los
   await expect(
     dialog.getByRole("button", { name: /Advanced settings/ }),
   ).toHaveAttribute("aria-expanded", "true");
-  await expect(
-    dialog
-      .getByRole("radiogroup", { name: "Everyone", exact: true })
-      .getByRole("radio", { name: "Read", exact: true }),
-  ).toBeChecked();
-  await dialog
-    .getByRole("button", { name: "Save changes", exact: true })
-    .click();
-  await expect(dialog).toBeHidden();
-  await page.reload();
-  await openChannel(page);
-  await dialog.getByRole("tab", { name: "Access", exact: true }).click();
-  await expect(
-    dialog
-      .getByRole("radiogroup", { name: "Dispatch team", exact: true })
-      .getByRole("radio", { name: "Read", exact: true }),
-  ).toBeChecked();
 });
 
 test("a member has no shared settings controls even through a settings URL", async ({
@@ -500,7 +491,7 @@ test("settings content comes first with one phone footer in light and dark", asy
       else
         await dialog.getByRole("tab", { name: "Access", exact: true }).click();
       await expect(
-        dialog.getByRole("radiogroup", { name: "Guests", exact: true }),
+        dialog.getByRole("region", { name: "Who can use it", exact: true }),
       ).toBeVisible();
       await expectNoHorizontalScroll(page);
       await page.screenshot({

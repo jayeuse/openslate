@@ -1,5 +1,6 @@
 /** Promoted before implementation; local Blob/state journeys, UNRUN / UNTYPECHECKED. */
 import { expect, test } from "@playwright/test";
+import { hideInNewDepartment } from "../../support/comms-memory/memory/seed";
 import { createMemoryFileResources } from "../../support/comms-memory/memory/files";
 import { createMessageFamily } from "../../support/comms-memory/memory/messages";
 import { createOperationalResources } from "../../support/comms-memory/memory/operational-resources";
@@ -289,12 +290,10 @@ test("reserved bytes become a ready attachment and download locally, never from 
       404,
       "file_not_found",
     );
+    // D44 access loss: the owner's department role ends, the peer keeps one.
     await changeAuthority(f, (draft) => {
-      const channel = draft.conversations[f.channelId];
-      if (channel.kind !== "channel")
-        throw new Error("Fixture channel required");
-      draft.conversations[f.channelId] = { ...channel, scope: "members" };
-      delete draft.members[f.channelId][owner.user_id];
+      hideInNewDepartment(draft, f.channelId, id(1100));
+      draft.people[f.peerId].department_levels[id(1100)] = "write";
     });
     await expect(
       f.as().downloadAttachment(f.channelId, ready.id),
@@ -489,14 +488,7 @@ test("record cards recheck module access on every projection and expose only an 
       await f.as(f.peerId).getRecordReference(f.channelId, card.id),
     ).toEqual(card);
     await changeAuthority(f, (draft) => {
-      const channel = draft.conversations[f.channelId];
-      if (channel.kind !== "channel")
-        throw new Error("Fixture channel required");
-      draft.conversations[f.channelId] = {
-        ...channel,
-        scope: "groups",
-        access: [],
-      };
+      hideInNewDepartment(draft, f.channelId, id(1100));
     });
     await httpFailure(
       f.as().getRecordReference(f.channelId, card.id),

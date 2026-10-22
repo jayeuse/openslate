@@ -34,7 +34,6 @@ export type WorkspaceSetting =
   | "threads"
   | "personal"
   | "workspace"
-  | "management"
   | "templates"
   | "history"
   | "moderation"
@@ -129,7 +128,6 @@ export function CommsMenu({
       tools: [
         { id: "workspace", label: "Workspace settings" },
         { id: "templates", label: "Channel templates" },
-        { id: "management", label: "Join requests" },
         { id: "history", label: "Settings history" },
       ],
     },

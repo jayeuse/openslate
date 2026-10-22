@@ -5,12 +5,11 @@ import type {
 } from "../contract/types";
 
 /** Read-only presentation values; commands use the contract IDs and client. */
-export type GroupAccessLevel = "none" | "read" | "post";
 export interface Category {
   id: string;
   name: string;
-  groupId?: string;
-  groupAccess?: Record<string, GroupAccessLevel>;
+  /** The department whose channels this category holds; "" holds organization channels. */
+  departmentId: string;
 }
 export interface Channel {
   id: string;
@@ -19,7 +18,8 @@ export interface Channel {
   categoryId: string;
   archived: boolean;
   scope: ContractChannel["scope"];
-  groupAccess?: Record<string, GroupAccessLevel>;
+  /** The channel's department; "" for an organization channel. */
+  departmentId: string;
 }
 export interface LocalAttachment {
   id: string;
@@ -87,13 +87,18 @@ export const EMOTES = [
   { emoji: "🙏", label: "Thanks" },
   { emoji: "✅", label: "Done" },
 ];
-export function newChannel(categoryId: string): Channel {
+/**
+ * A new channel's draft. A category bound to a department holds only that
+ * department's channels, so the draft starts there.
+ */
+export function newChannel(category: Category | undefined): Channel {
   return {
     id: "",
     name: "",
     description: "",
-    categoryId,
-    scope: "groups",
+    categoryId: category?.id ?? "",
+    scope: category?.departmentId ? "department" : "organization",
+    departmentId: category?.departmentId ?? "",
     archived: false,
   };
 }

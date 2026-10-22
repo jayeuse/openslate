@@ -42,24 +42,13 @@ test("exports require current admin and private member direct and group sources 
     request: ordinary,
     failure_code: null,
   });
-  const privateRoom = await client.createChannel({
-    name: "Private records",
-    topic: "Synthetic",
-    position: 1,
-    category_id: f.category.id,
-    scope: "members",
-    member_ids: [f.actorId, f.peer.user_id],
-  });
+  // D44: every channel is a public source; direct and group messages are private.
   const direct = await client.findOrCreateDirect({ recipient_id: f.actorId });
   const group = await client.createGroup({
     name: "Private group",
     participant_ids: [f.adminId, f.actorId, f.peer.user_id],
   });
-  for (const conversationId of [
-    privateRoom.data.id,
-    direct.data.id,
-    group.data.id,
-  ]) {
+  for (const conversationId of [direct.data.id, group.data.id]) {
     const request = {
       ...ordinary,
       conversation_ids: [conversationId],
@@ -97,7 +86,7 @@ test("exports require current admin and private member direct and group sources 
     noPrivateMaterial(job);
   }
   const jobs = await client.listExports();
-  expect(jobs.items).toHaveLength(4);
+  expect(jobs.items).toHaveLength(3);
   for (const job of jobs.items)
     expect(Object.keys(job).sort()).toEqual([
       "created_at",
@@ -121,9 +110,8 @@ test("downloads return fixed sample CSV without another password and refuse lost
     name: "Export selection",
     topic: "Synthetic",
     position: 1,
-    category_id: f.category.id,
-    scope: "members",
-    member_ids: [f.actorId],
+    category_id: null,
+    scope: "organization",
   });
   await client.sendMessage(
     privateRoom.data.id,
@@ -283,7 +271,7 @@ test("template raw import and create save admission reject invalid mixed input w
     () =>
       client.createTemplate({
         ...input,
-        settings: { formatting: true, default_member_ids: [missing] },
+        settings: { formatting: true, restricted_person_ids: [missing] },
       }),
     422,
     "comms_invalid_input",

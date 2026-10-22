@@ -40,7 +40,6 @@ type ConversationOperations = Pick<
   | "archiveConversation"
   | "restoreConversation"
   | "listMembers"
-  | "setChannelAccess"
   | "setMemberRole"
   | "removeMember"
   | "duplicateChannel"

@@ -2,18 +2,26 @@
 import { NativeSelectOption } from "@/components/ui/native-select";
 
 import { useId, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Alert } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
 import type { Person, Role } from "../../shared/data/sample-people";
 import { CommsSettingsDialog } from "./settings-dialog";
-import { GroupAccessField } from "./group-access-field";
-import { GroupAccessSummary } from "./group-access-summary";
+import {
+  ChannelScopeChoice,
+  ChannelScopeSummary,
+  categoryNote as noteForCategory,
+  compatibleCategories,
+  creationCategories,
+  useChannelDepartments,
+  withDefaultDepartment,
+} from "./channel-scope";
 import { Action, Choice } from "../../shared/components/ui";
 import { TextField } from "./ui";
 import type { Category, Channel } from "../domain/view-model";
 import { useCommsClient } from "../state/client-context";
-import type { GroupAccess, ChannelPatch } from "../contract/types";
+import type { ChannelPatch } from "../contract/types";
 import type { CommsScope } from "../domain/configuration-model";
 
 type EditorProps = {
@@ -38,7 +46,7 @@ type EditorProps = {
 );
 
 export function ChannelDialog(props: EditorProps) {
-  const { client } = useCommsClient();
+  const { client, catalog } = useCommsClient();
   const [draft, setDraft] = useState(() => ({
     ...props.value,
     id: props.value.id || crypto.randomUUID(),
@@ -46,8 +54,15 @@ export function ChannelDialog(props: EditorProps) {
   const [initialDraft] = useState(draft);
   const [beforeId, setBeforeId] = useState("unchanged");
   const [error, setError] = useState("");
+  const [departmentError, setDepartmentError] = useState("");
+  const [categoryNote, setCategoryNote] = useState("");
+  const [categoryError, setCategoryError] = useState("");
+  const categoryErrorId = useId();
   const nameId = useId();
   const nameErrorId = useId();
+  const departmentErrorId = useId();
+  const categoryNoteId = useId();
+  const departments = useChannelDepartments();
   const pendingSave = useRef<
     | { kind: "channel"; value: Channel; beforeId: string }
     | { kind: "category"; value: Category; beforeId: string }
@@ -64,17 +79,67 @@ export function ChannelDialog(props: EditorProps) {
         })
       : "",
   );
-  const confirmedCategory = useRef({
-    name: props.value.name,
-    groupId: "groupId" in props.value ? props.value.groupId : undefined,
-    groupAccess: props.value.groupAccess,
-  });
-  const confirmedAccess = useRef(
-    "groupAccess" in props.value ? JSON.stringify(props.value.groupAccess) : "",
-  );
+  const confirmedCategoryName = useRef(props.value.name);
   const people = props.people;
   const creating = !props.value.id;
-  const channel = "categoryId" in draft ? draft : undefined;
+  // The derived channel is what the dialog shows and saves. A department the
+  // viewer cannot create in (a category's department they do not manage) is
+  // cleared once the offered departments are known, and a new department
+  // channel with one possible department starts in it.
+  const drafted = "categoryId" in draft ? draft : undefined;
+  const offered =
+    drafted &&
+    creating &&
+    departments.status === "ready" &&
+    drafted.departmentId &&
+    !departments.options.some((item) => item.id === drafted.departmentId)
+      ? { ...drafted, departmentId: "" }
+      : drafted;
+  const scoped =
+    offered && creating
+      ? withDefaultDepartment(offered, departments.options, departments.admin)
+      : offered;
+  // A new channel goes only where it may be created (D44 A7/A8); a saved
+  // channel keeps showing its current category even if it no longer fits.
+  const choices = !scoped
+    ? { categories: [], noCategory: true }
+    : creating
+      ? creationCategories(scoped, props.categories, departments.placement)
+      : {
+          categories: props.categories.filter(
+            (item) =>
+              item.id === scoped.categoryId ||
+              compatibleCategories(scoped, props.categories).includes(item),
+          ),
+          noCategory: true,
+        };
+  const fitted =
+    scoped &&
+    creating &&
+    scoped.categoryId &&
+    !choices.categories.some((item) => item.id === scoped.categoryId)
+      ? { ...scoped, categoryId: "" }
+      : scoped;
+  const channel =
+    fitted &&
+    creating &&
+    !fitted.categoryId &&
+    !choices.noCategory &&
+    choices.categories.length === 1
+      ? { ...fitted, categoryId: choices.categories[0].id }
+      : fitted;
+  // Opened from a category that cannot hold the new channel: say why it reset.
+  const resetFrom =
+    creating &&
+    drafted?.categoryId &&
+    channel?.categoryId !== drafted.categoryId
+      ? props.categories.find((item) => item.id === drafted.categoryId)
+      : undefined;
+  const shownCategoryNote =
+    categoryNote ||
+    (resetFrom && channel
+      ? noteForCategory(resetFrom, channel, catalog.departments)
+      : "");
   const channels = channel
     ? [...props.channels.filter((item) => item.id !== channel.id), channel]
     : props.channels;
@@ -87,6 +152,14 @@ export function ChannelDialog(props: EditorProps) {
       setError("Enter a name.");
       return false;
     }
+    if (channel?.scope === "department" && !channel.departmentId) {
+      setDepartmentError("Choose a department.");
+      return false;
+    }
+    if (channel && creating && !choices.noCategory && !channel.categoryId) {
+      setCategoryError("Choose a category.");
+      return false;
+    }
     if (
       props.existing.some(
         (item) =>
@@ -97,7 +170,7 @@ export function ChannelDialog(props: EditorProps) {
       setError("This name is already in use.");
       return false;
     }
-    const saved = { ...draft, name };
+    const saved = channel ? { ...channel, name } : { ...draft, name };
     if (props.kind === "channel" && "categoryId" in saved)
       pendingSave.current = { kind: "channel", value: saved, beforeId };
     else if (props.kind === "category" && !("categoryId" in saved))
@@ -117,16 +190,6 @@ export function ChannelDialog(props: EditorProps) {
     if (!pending) throw new Error("No editor changes prepared");
     const value = pending.value;
     const scope = () => ({ kind: pending.kind, id: savedId.current });
-    const access = (rows: Record<string, string>): GroupAccess[] =>
-      Object.entries(rows).flatMap(([group_id, level]) =>
-        level === "read" || level === "post"
-          ? [
-              group_id === "everyone"
-                ? { subject: "everyone" as const, level }
-                : { subject: "group" as const, group_id, level },
-            ]
-          : [],
-      );
     if (pending.kind === "channel" && "categoryId" in value) {
       const details = {
         name: value.name,
@@ -134,23 +197,19 @@ export function ChannelDialog(props: EditorProps) {
         category_id: value.categoryId || null,
       };
       if (!savedId.current) {
-        const defaults = value.categoryId
-          ? (await client.getCategory(value.categoryId)).data.default_access
-          : [{ subject: "everyone" as const, level: "post" as const }];
-        const rows = value.groupAccess ? access(value.groupAccess) : defaults;
-        // No group and not Everyone may use it: a private channel that
-        // only its members can use, and the only kind that takes join
-        // requests. The API adds the creator as a member.
+        // The scope is fixed at creation; the API adds the creator's row.
         const created = await client.createChannel({
           ...details,
-          ...(rows.length
-            ? { scope: "groups" as const, access: rows }
-            : { scope: "members" as const, member_ids: [] }),
+          ...(value.scope === "department"
+            ? {
+                scope: "department" as const,
+                department_id: value.departmentId,
+              }
+            : { scope: "organization" as const }),
           position: props.channels.length,
         });
         savedId.current = created.data.id;
         confirmedDetails.current = JSON.stringify(details);
-        confirmedAccess.current = JSON.stringify(value.groupAccess);
         accepted(scope());
       } else if (confirmedDetails.current !== JSON.stringify(details)) {
         const current = await client.getConversation(savedId.current);
@@ -164,19 +223,6 @@ export function ChannelDialog(props: EditorProps) {
           if_match: current.etag,
         });
         confirmedDetails.current = JSON.stringify(details);
-        accepted(scope());
-      }
-      if (
-        value.groupAccess &&
-        confirmedAccess.current !== JSON.stringify(value.groupAccess)
-      ) {
-        const current = await client.getConversation(savedId.current);
-        await client.setChannelAccess(
-          savedId.current,
-          { access: access(value.groupAccess) },
-          { if_match: current.etag },
-        );
-        confirmedAccess.current = JSON.stringify(value.groupAccess);
         accepted(scope());
       }
       const current = await client.getConversation(savedId.current);
@@ -195,51 +241,21 @@ export function ChannelDialog(props: EditorProps) {
         : null;
       const details = {
         name:
-          !current || value.name !== confirmedCategory.current.name
+          !current || value.name !== confirmedCategoryName.current
             ? value.name
             : current.data.name,
         position: current?.data.position ?? props.categories.length,
         department_id: current?.data.department_id ?? null,
-        default_access:
-          current &&
-          JSON.stringify(value.groupAccess) ===
-            JSON.stringify(confirmedCategory.current.groupAccess) &&
-          value.groupId === confirmedCategory.current.groupId
-            ? current.data.default_access
-            : value.groupAccess
-              ? access(value.groupAccess)
-              : value.groupId
-                ? [
-                    {
-                      subject: "group" as const,
-                      group_id: value.groupId,
-                      level: "post" as const,
-                    },
-                  ]
-                : [{ subject: "everyone" as const, level: "post" as const }],
       };
       if (!current) {
         savedId.current = (await client.createCategory(details)).data.id;
-        confirmedCategory.current = {
-          name: value.name,
-          groupId: value.groupId,
-          groupAccess: value.groupAccess,
-        };
+        confirmedCategoryName.current = value.name;
         accepted(scope());
-      } else if (
-        confirmedCategory.current.name !== value.name ||
-        confirmedCategory.current.groupId !== value.groupId ||
-        JSON.stringify(confirmedCategory.current.groupAccess) !==
-          JSON.stringify(value.groupAccess)
-      ) {
+      } else if (confirmedCategoryName.current !== value.name) {
         await client.updateCategory(savedId.current, details, {
           if_match: current.etag,
         });
-        confirmedCategory.current = {
-          name: value.name,
-          groupId: value.groupId,
-          groupAccess: value.groupAccess,
-        };
+        confirmedCategoryName.current = value.name;
         accepted(scope());
       }
     }
@@ -276,7 +292,6 @@ export function ChannelDialog(props: EditorProps) {
               {
                 name: latest.data.name,
                 department_id: latest.data.department_id,
-                default_access: latest.data.default_access,
                 position,
               },
               { if_match: latest.etag },
@@ -314,6 +329,7 @@ export function ChannelDialog(props: EditorProps) {
         beforeId !== "unchanged"
       }
       saveLabel={creating ? `Create ${props.kind}` : "Save changes"}
+      unsavedChannel={creating}
       advancedMetadataCount={
         Number(beforeId !== "unchanged") +
         Number(
@@ -321,22 +337,6 @@ export function ChannelDialog(props: EditorProps) {
             !creating &&
             channel.archived !==
               ("archived" in props.value && props.value.archived),
-        )
-      }
-      access={
-        channel && channel.scope !== "groups" && !creating ? (
-          <GroupAccessSummary
-            scope="channel"
-            channel={channel}
-            categories={props.categories}
-          />
-        ) : (
-          <GroupAccessField
-            subject={draft}
-            categories={props.categories}
-            people={people}
-            onChange={(groupAccess) => setDraft({ ...draft, groupAccess })}
-          />
         )
       }
       overviewAdvanced={
@@ -410,6 +410,78 @@ export function ChannelDialog(props: EditorProps) {
           />
           {channel && (
             <>
+              {creating ? (
+                <ChannelScopeChoice
+                  channel={channel}
+                  categories={props.categories}
+                  departmentError={departmentError}
+                  departmentErrorId={departmentErrorId}
+                  onChange={(next, note) => {
+                    setDepartmentError("");
+                    setCategoryError("");
+                    setCategoryNote(note);
+                    if (next.categoryId !== channel.categoryId)
+                      setBeforeId("unchanged");
+                    setDraft(next);
+                  }}
+                />
+              ) : (
+                <ChannelScopeSummary channel={channel} />
+              )}
+              <Choice
+                label="Category"
+                value={channel.categoryId}
+                aria-invalid={!!categoryError}
+                aria-describedby={
+                  [
+                    shownCategoryNote ? categoryNoteId : "",
+                    categoryError ? categoryErrorId : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined
+                }
+                onChange={(event) => {
+                  setCategoryNote("");
+                  setCategoryError("");
+                  setDraft({ ...channel, categoryId: event.target.value });
+                  setBeforeId("unchanged");
+                }}
+              >
+                {choices.noCategory ? (
+                  <NativeSelectOption value="">No category</NativeSelectOption>
+                ) : (
+                  !channel.categoryId && (
+                    <NativeSelectOption value="">
+                      Choose a category
+                    </NativeSelectOption>
+                  )
+                )}
+                {choices.categories.map((item) => (
+                  <NativeSelectOption key={item.id} value={item.id}>
+                    {item.name}
+                  </NativeSelectOption>
+                ))}
+              </Choice>
+              {categoryError && (
+                <p
+                  id={categoryErrorId}
+                  role="alert"
+                  className="text-destructive -mt-3 text-sm"
+                >
+                  {categoryError}
+                </p>
+              )}
+              {/* Always present, so a later note is announced politely. */}
+              <p
+                id={categoryNoteId}
+                role="status"
+                className={cn(
+                  "text-muted-foreground -mt-3 text-sm",
+                  !shownCategoryNote && "sr-only",
+                )}
+              >
+                {shownCategoryNote}
+              </p>
               <Field>
                 <FieldLabel htmlFor="channel-topic">Channel topic</FieldLabel>
                 <Textarea
@@ -422,20 +494,6 @@ export function ChannelDialog(props: EditorProps) {
                   className="max-h-48 min-h-24 resize-y"
                 />
               </Field>
-              <Choice
-                label="Category"
-                value={channel.categoryId}
-                onChange={(event) => {
-                  setDraft({ ...channel, categoryId: event.target.value });
-                  setBeforeId("unchanged");
-                }}
-              >
-                {props.categories.map((item) => (
-                  <NativeSelectOption key={item.id} value={item.id}>
-                    {item.name}
-                  </NativeSelectOption>
-                ))}
-              </Choice>
             </>
           )}
         </FieldGroup>

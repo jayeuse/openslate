@@ -25,6 +25,7 @@ async function seedComposer(
   settings: Partial<Settings> = {},
   role: "admin" | "member" = "admin",
   clock?: CommsTestClock,
+  prepare?: (state: ReturnType<typeof createMemorySeed>) => void,
 ) {
   const owner = {
     user_id: "00000000-0000-4000-8000-000000000101",
@@ -35,14 +36,14 @@ async function seedComposer(
     role,
     display_name: "Composer owner",
   });
-  const room = Object.values(state.conversations)[0];
   const noah = Object.values(state.people).find(
     (person) => person.display_name === "Noah Tan",
   )!;
   const sofia = Object.values(state.people).find(
     (person) => person.display_name === "Sofia Garcia",
   )!;
-  delete state.members[room.id][sofia.user_id];
+  // Sofia holds no department role, so she cannot read the channel (D44).
+  state.people[sofia.user_id].department_levels = {};
   state.configuration.workspace = {
     settings,
     capabilities: {
@@ -51,6 +52,7 @@ async function seedComposer(
       group_grants: [],
     },
   };
+  prepare?.(state);
   validateMemoryState(state, owner.org_id);
   const runtime = createMemoryCommsRuntime(
     { owner, initial: state },
@@ -80,8 +82,8 @@ test("composer mentions only current members and keeps the draft above the menti
   ).toBeVisible();
   await input.fill("Hello @Sofia");
   await expect(
-    page.getByText("No matching members.", { exact: true }),
-  ).toBeVisible();
+    page.getByRole("listbox", { name: "Mention members", exact: true }),
+  ).toBeHidden();
   await input.fill("Hello @Noah");
   await page.getByRole("option", { name: "Noah Tan", exact: true }).click();
   await input.fill("Hello @Noah Tan @Mara");
@@ -110,6 +112,47 @@ test("composer mentions only current members and keeps the draft above the menti
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(input).toHaveValue("");
   await expect.poll(() => mentionsFor("@Noah Tancredi")).toEqual([]);
+});
+
+test("a mention query keeps its list open across a space while a name matches, and closes on Escape or no match", async ({
+  page,
+}) => {
+  await seedComposer(page, {}, "admin", undefined, (state) => {
+    const rename = (from: string, to: string) => {
+      Object.values(state.people).find(
+        (person) => person.display_name === from,
+      )!.display_name = to;
+    };
+    rename("Noah Tan", "HO Manager");
+    rename("Mara Santos", "HO Manager Lead");
+  });
+  await page.goto("/comms");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const list = page.getByRole("listbox", {
+    name: "Mention members",
+    exact: true,
+  });
+  await input.fill("Ready @HO M");
+  await expect(list.getByRole("option")).toHaveText([
+    "HO Manager",
+    "HO Manager Lead",
+  ]);
+  await input.press("Escape");
+  await expect(list).toBeHidden();
+  await input.fill("Ready @HO Mx");
+  await expect(list).toBeHidden();
+  await input.fill("Ready @HO Ma");
+  await list.getByRole("option", { name: "HO Manager", exact: true }).click();
+  await expect(input).toHaveValue("Ready @HO Manager ");
+  await expect(list).toBeHidden();
+  // Text after a chosen mention never reopens it, even when it would match a
+  // longer name; Enter sends.
+  await input.press("End");
+  await input.pressSequentially("Lead");
+  await expect(input).toHaveValue("Ready @HO Manager Lead");
+  await expect(list).toBeHidden();
+  await input.press("Enter");
+  await expect(input).toHaveValue("");
 });
 
 test("composer inserts emoji at the caret, edits its last message and cancels a quote without losing text", async ({

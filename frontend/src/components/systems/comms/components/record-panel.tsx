@@ -4,7 +4,7 @@ import Link from "next/link";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { SampleRecord } from "../../shared/data/sample-data";
-import { recordContext } from "../domain/groups";
+import { recordContext } from "../domain/records";
 import { GroupMark } from "./group-mark";
 
 export type RecordMention = {

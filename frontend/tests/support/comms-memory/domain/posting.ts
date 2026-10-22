@@ -15,6 +15,7 @@ import {
   notFound,
   ownedConversation,
   policyFailure,
+  memberCandidateIds,
 } from "./access";
 import { capabilityCheck } from "./capabilities";
 import { invalidInput, resolveSettings } from "./settings";
@@ -103,7 +104,7 @@ function validateMentions(
     if (
       !target?.active ||
       target.org_id !== context.org_id ||
-      !world.members[id]?.[userId] ||
+      !memberCandidateIds(world, id).includes(userId) ||
       conversationAccess(world, { ...context, user_id: userId }, id).level ===
         "none"
     )

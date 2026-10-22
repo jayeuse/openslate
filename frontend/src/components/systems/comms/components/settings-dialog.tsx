@@ -58,7 +58,7 @@ import {
   SETTINGS_SECTIONS,
 } from "./settings-fields";
 import { PermissionFields, PermissionInspector } from "./permission-inspector";
-import { GroupAccessSummary } from "./group-access-summary";
+import { AccessSummary } from "./channel-scope";
 import {
   ConfirmActionDialog,
   type ConfirmActionRequest,
@@ -80,7 +80,6 @@ export interface CommsSettingsDialogProps {
   title?: string;
   overview?: ReactNode;
   overviewAdvanced?: ReactNode;
-  access?: ReactNode;
   advancedMetadataCount?: number;
   additionalDirty?: boolean;
   onBeforeSave?: () => boolean | Promise<boolean>;
@@ -89,6 +88,8 @@ export interface CommsSettingsDialogProps {
   ) => Promise<CommsScope>;
   onAfterSave?: () => void;
   saveLabel?: string;
+  /** A channel draft that does not exist yet: nothing to list or check. */
+  unsavedChannel?: boolean;
   initialSubject?: string;
   initialTab?: string;
 }
@@ -199,13 +200,13 @@ function LoadedCommsSettingsDialog({
   title,
   overview,
   overviewAdvanced,
-  access,
   advancedMetadataCount = 0,
   additionalDirty = false,
   onBeforeSave,
   onSaveMetadata,
   onAfterSave,
   saveLabel,
+  unsavedChannel,
   initialTab,
   admission,
   initialCapabilityLocks,
@@ -835,24 +836,42 @@ function LoadedCommsSettingsDialog({
                     ? "Search results"
                     : sections.find((item) => item.id === section)?.label}
                 </h3>
-                {!search && currentSection && (
+                {!search && (currentSection || section === "permissions") && (
                   <p className="text-muted-foreground mt-1 text-xs">
-                    {currentSection.description}
+                    {currentSection?.description ??
+                      "See who can use it and what people can do."}
                   </p>
                 )}
               </div>
               {!search && !personal && section === "overview" && overview}
-              {!search &&
-                !personal &&
-                section === "permissions" &&
-                (access ?? (
-                  <GroupAccessSummary
-                    scope={target.kind}
-                    channel={channel}
-                    category={categories.find((item) => item.id === target.id)}
-                    categories={categories}
-                  />
-                ))}
+              {!search && !personal && section === "members" && channel && (
+                <MembershipPreview
+                  channel={channel}
+                  saved={!unsavedChannel}
+                  roles={memberRoles}
+                  onRoleChange={(id, role) =>
+                    setMemberRoles((current) => ({
+                      ...current,
+                      [id]: role,
+                    }))
+                  }
+                />
+              )}
+              {!search && !personal && section === "permissions" && (
+                <AccessSummary
+                  scope={target.kind}
+                  channel={channel}
+                  category={categories.find((item) => item.id === target.id)}
+                  onNavigate={(event) => {
+                    if (dirty) {
+                      event.preventDefault();
+                      setError(
+                        "Save or cancel your changes before opening Access.",
+                      );
+                    }
+                  }}
+                />
+              )}
               {!personal && (section === "permissions" || search) && (
                 <Action className="self-start" onClick={() => setInspect(true)}>
                   Check one person
@@ -922,20 +941,6 @@ function LoadedCommsSettingsDialog({
                     !personal &&
                     section === "overview" &&
                     overviewAdvanced}
-                  {!search && !personal && section === "members" && channel && (
-                    <MembershipPreview
-                      channel={channel}
-                      people={people}
-                      settings={values}
-                      roles={memberRoles}
-                      onRoleChange={(id, role) =>
-                        setMemberRoles((current) => ({
-                          ...current,
-                          [id]: role,
-                        }))
-                      }
-                    />
-                  )}
                 </>,
               )}
               {personal && (

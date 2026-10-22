@@ -26,7 +26,6 @@ const tools = [
   ["retention", "Message retention"],
   ["export", "Export messages"],
   ["templates", "Channel templates"],
-  ["management", "Join requests"],
   ["history", "Settings history"],
 ] as const;
 
@@ -118,35 +117,7 @@ async function seedFinish(page: Page) {
       also_send_to_channel: false,
       send_at: "2099-12-01T12:00:00Z",
     });
-    const privateRoom = (
-      await client.createChannel({
-        name: "private-dispatch",
-        topic: "Dispatch coordination",
-        category_id: null,
-        position: 1,
-        scope: "members",
-        member_ids: [owner.user_id],
-      })
-    ).data;
-    const scope = { kind: "channel", id: privateRoom.id } as const;
-    await client.updateSettings(
-      scope,
-      { join_rule: "request" },
-      { if_match: (await client.getSettings(scope)).etag },
-    );
     snapshot = runtime.exportSnapshot();
-    const id = "79000000-0000-4000-8000-000000000096";
-    snapshot.state.admissions[id] = {
-      id,
-      org_id: owner.org_id,
-      created_at: "2026-10-19T01:00:00Z",
-      updated_at: "2026-10-19T01:00:00Z",
-      conversation_id: privateRoom.id,
-      user_id: root.author_id,
-      kind: "request",
-      status: "pending",
-      resolved_at: null,
-    };
   } finally {
     runtime.dispose();
   }
@@ -611,10 +582,6 @@ for (const width of widths)
               await tool
                 .getByLabel("Template", { exact: true })
                 .selectOption({ label: "Dispatch defaults" });
-            if (id === "management")
-              await expect(
-                tool.getByRole("button", { name: "Approve", exact: true }),
-              ).toBeVisible();
             if (id === "history")
               await tool
                 .getByRole("button", { name: "Before and after", exact: true })

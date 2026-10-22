@@ -53,7 +53,7 @@ import {
   type TimelinePeople,
 } from "./message-shared";
 import { reportCommsError } from "../state/comms-feedback";
-import { recordContext, type GroupTone } from "../domain/groups";
+import { recordContext, type GroupTone } from "../domain/records";
 import { useCommsClient } from "../state/client-context";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { VirtualMessageList } from "./virtual-message-list";

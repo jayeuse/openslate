@@ -178,6 +178,12 @@ export function MessageComposer({
   );
   const [caret, setCaret] = useState(0);
   const [mentionOpen, setMentionOpen] = useState(false);
+  // A chosen mention stays chosen: text after it never reopens the list on
+  // that "@" (Enter sends rather than picking a longer name). A new "@" does.
+  const [completed, setCompleted] = useState<{
+    start: number;
+    value: string;
+  } | null>(null);
   const [choice, setChoice] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [backoff, setBackoff] = useState(0);
@@ -225,8 +231,10 @@ export function MessageComposer({
         selectedMentions.length > settings.mentionLimit
       ? `This conversation allows ${settings.mentionLimit} mention${settings.mentionLimit === 1 ? "" : "s"} per message.`
       : "";
+  // The query may hold spaces ("@HO M") while a name still matches; the
+  // list closes on Escape, on a choice, or when nothing matches.
   const token = mentionOpen
-    ? /(?:^|\s)@([^\s@]*)$/.exec(text.slice(0, caret))
+    ? /(?:^|\s)@([^@\n]*)$/.exec(text.slice(0, caret))
     : null;
   const options = token
     ? candidates
@@ -237,6 +245,13 @@ export function MessageComposer({
         )
         .slice(0, 8)
     : [];
+  const tokenStart = token ? caret - token[1].length - 1 : -1;
+  const chosen =
+    !!completed &&
+    completed.start === tokenStart &&
+    text.slice(tokenStart, tokenStart + completed.value.length) ===
+      completed.value;
+  const picking = !!token && !chosen && options.length > 0;
   const lastSent = useMemo(
     () =>
       Math.max(
@@ -288,7 +303,9 @@ export function MessageComposer({
   }
   function chooseMention(person: (typeof candidates)[number]) {
     if (!token) return;
-    insert(`@${person.name} `, caret - token[1].length - 1, caret);
+    const value = `@${person.name} `;
+    insert(value, tokenStart, caret);
+    setCompleted({ start: tokenStart, value });
     setMentions((current) => [
       ...current.filter((item) => item.id !== person.id),
       person,
@@ -580,33 +597,29 @@ export function MessageComposer({
           </Button>
         </div>
       ))}
-      {token && canPost && !isPending && (
+      {picking && canPost && !isPending && (
         <div
           role="listbox"
           aria-label="Mention members"
           id={`mentions-${fileInputId}`}
           className="mb-2 max-h-40 overflow-y-auto rounded-md border p-1"
         >
-          {options.length ? (
-            options.map((person, index) => (
-              <Button
-                key={person.id}
-                id={`mention-${fileInputId}-${index}`}
-                type="button"
-                role="option"
-                aria-label={person.name}
-                aria-selected={index === choice}
-                variant={index === choice ? "secondary" : "ghost"}
-                className="min-h-11 w-full justify-start"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => chooseMention(person)}
-              >
-                <bdi>{person.name}</bdi>
-              </Button>
-            ))
-          ) : (
-            <p className="p-2 text-xs">No matching members.</p>
-          )}
+          {options.map((person, index) => (
+            <Button
+              key={person.id}
+              id={`mention-${fileInputId}-${index}`}
+              type="button"
+              role="option"
+              aria-label={person.name}
+              aria-selected={index === choice}
+              variant={index === choice ? "secondary" : "ghost"}
+              className="min-h-11 w-full justify-start"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => chooseMention(person)}
+            >
+              <bdi>{person.name}</bdi>
+            </Button>
+          ))}
         </div>
       )}
       {(files.length > 0 || recordId) && (
@@ -678,12 +691,10 @@ export function MessageComposer({
           dir="auto"
           className="max-h-40 min-h-12 resize-none"
           aria-describedby={seconds ? `cooldown-${fileInputId}` : undefined}
-          aria-controls={token ? `mentions-${fileInputId}` : undefined}
+          aria-controls={picking ? `mentions-${fileInputId}` : undefined}
           aria-autocomplete="list"
           aria-activedescendant={
-            token && options.length
-              ? `mention-${fileInputId}-${choice}`
-              : undefined
+            picking ? `mention-${fileInputId}-${choice}` : undefined
           }
           value={text}
           onChange={(event) => {
@@ -739,17 +750,17 @@ export function MessageComposer({
             )
               return;
             if (event.key === "Escape") {
-              if (token || recordPickerOpen || scheduleOpen || replyingTo) {
+              if (picking || recordPickerOpen || scheduleOpen || replyingTo) {
                 event.preventDefault();
                 event.stopPropagation();
-                if (token) setMentionOpen(false);
+                if (picking) setMentionOpen(false);
                 else if (recordPickerOpen) setRecordPickerOpen(false);
                 else if (scheduleOpen) setScheduleOpen(false);
                 else onCancelReply();
               }
               return;
             }
-            if (token && options.length) {
+            if (picking) {
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();
                 setChoice(

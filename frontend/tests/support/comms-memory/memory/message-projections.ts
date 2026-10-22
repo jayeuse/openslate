@@ -282,7 +282,9 @@ export const projectReadSummary: ProjectReadSummary = (state, context, id) => {
       unread.filter(
         (m) =>
           m.mention_user_ids.includes(context.user_id) ||
-          (m.mentions_channel && Boolean(state.members[id]?.[context.user_id])),
+          (m.mentions_channel &&
+            (state.conversations[id]?.kind === "channel" ||
+              Boolean(state.members[id]?.[context.user_id]))),
       ).length,
     ),
     first_unread_seq: unread.length

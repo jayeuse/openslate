@@ -245,23 +245,11 @@ const resourceIdentity = {
   created_at: dateTime,
   updated_at: dateTime,
 };
-export const groupAccessSchema = z.discriminatedUnion("subject", [
-  z.strictObject({
-    subject: z.literal("everyone"),
-    level: z.enum(["read", "post"]),
-  }),
-  z.strictObject({
-    subject: z.literal("group"),
-    group_id: uuid,
-    level: z.enum(["read", "post"]),
-  }),
-]);
 export const categorySchema = z.strictObject({
   ...resourceIdentity,
   name: z.string().trim().min(1),
   position: watermark,
   department_id: uuid.nullable(),
-  default_access: z.array(groupAccessSchema),
 });
 const conversationIdentity = {
   ...resourceIdentity,
@@ -285,12 +273,6 @@ export const channelSchema = z.discriminatedUnion("scope", [
     scope: z.literal("department"),
     department_id: uuid,
   }),
-  z.strictObject({
-    ...channelFields,
-    scope: z.literal("groups"),
-    access: z.array(groupAccessSchema),
-  }),
-  z.strictObject({ ...channelFields, scope: z.literal("members") }),
 ]);
 export const directSchema = z.strictObject({
   ...conversationIdentity,
@@ -442,7 +424,7 @@ export const commsFailureSchema = z.union([
   ]),
   failure(412, ["comms_precondition_failed"]),
   failure(428, ["comms_precondition_required"]),
-  failure(422, ["comms_message_empty", "comms_invalid_input"]),
+  failure(422, ["comms_message_empty", "comms_invalid_input", "comms_invalid"]),
   z.strictObject({
     status: z.literal(422),
     body: z.strictObject({
@@ -531,6 +513,7 @@ export const memberSchema = z.strictObject({
   user_id: uuid,
   display_name: z.string(),
   member_role: z.enum(["member", "manager"]),
+  level: z.enum(["read", "post", "manage"]),
   joined_at: dateTime,
   departments: z.array(z.strictObject({ id: uuid, name: z.string() })),
 });
@@ -765,7 +748,7 @@ export const capabilityDecisionSchema = z.strictObject({
     z.strictObject({
       kind: z.literal("department_manager"),
       department_id: uuid,
-      category_id: uuid,
+      category_id: uuid.nullable(),
     }),
     z.strictObject({ kind: z.literal("admin") }),
     z.strictObject({ kind: z.literal("guest_cap") }),
@@ -778,11 +761,6 @@ export const capabilityDecisionSchema = z.strictObject({
 export const conversationAccessSourceSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("organization") }),
   z.strictObject({ kind: z.literal("department"), department_id: uuid }),
-  z.strictObject({
-    kind: z.literal("group"),
-    group_id: uuid,
-    group_name: z.string().min(1),
-  }),
   z.strictObject({ kind: z.literal("membership") }),
   z.strictObject({ kind: z.literal("manager"), reason: managerSourceSchema }),
   z.strictObject({ kind: z.literal("admin") }),
@@ -877,8 +855,6 @@ export const settingsSchema = z.strictObject({
   auto_archive_days: watermark,
   default_thread_subscription: z.boolean(),
   thread_branches: z.enum(["all", "followed", "none"]),
-  join_rule: z.enum(["open", "request", "invite"]),
-  default_member_ids: ids,
   ...notificationFields,
   allowed_file_types: z
     .array(z.enum(["pdf", "png", "jpg", "jpeg", "docx", "xlsx", "pptx"]))
@@ -914,7 +890,6 @@ export const settingMetadataSchema = z.strictObject({
     "overview",
     "messaging",
     "threads",
-    "members",
     "notifications",
     "files",
     "history",
@@ -1190,26 +1165,6 @@ export const templateApplyPreviewSchema = z.strictObject({
     }),
   ),
 });
-export const joinRequestSubmissionSchema = z.strictObject({
-  conversation_id: uuid,
-});
-export const invitationRequestSchema = z.strictObject({ user_id: uuid });
-export const admissionDecisionRequestSchema = z.strictObject({
-  decision: z.enum(["accept", "decline"]),
-});
-export const admissionSchema = z
-  .strictObject({
-    ...resourceIdentity,
-    conversation_id: uuid,
-    user_id: uuid,
-    kind: z.enum(["request", "invitation"]),
-    status: z.enum(["pending", "accepted", "declined"]),
-    resolved_at: dateTime.nullable(),
-  })
-  .refine(
-    (value) => (value.status === "pending") === (value.resolved_at === null),
-    "Only resolved admissions have a resolution time",
-  );
 export const memberRoleRequestSchema = z.strictObject({
   role: z.enum(["member", "manager"]),
 });
@@ -1318,23 +1273,10 @@ export const channelRequestSchema = z.discriminatedUnion("scope", [
     scope: z.literal("department"),
     department_id: uuid,
   }),
-  z.strictObject({
-    ...channelRequestFields,
-    scope: z.literal("groups"),
-    access: z.array(groupAccessSchema),
-  }),
-  z.strictObject({
-    ...channelRequestFields,
-    scope: z.literal("members"),
-    member_ids: ids,
-  }),
 ]);
 export const channelPatchSchema = z
   .strictObject(channelRequestFields)
   .partial();
-export const accessRequestSchema = z.strictObject({
-  access: z.array(groupAccessSchema),
-});
 export const followRequestSchema = z.strictObject({ followed: z.boolean() });
 export const pinRequestSchema = z.strictObject({ pinned: z.boolean() });
 export const directBlockSchema = z.strictObject({
@@ -1404,7 +1346,6 @@ export const templatePageSchema = pageSchema(templateSchema);
 export const directBlockPageSchema = pageSchema(directBlockSchema);
 export const notificationPageSchema = pageSchema(notificationSchema);
 export const recordReferencePageSchema = pageSchema(recordReferenceSchema);
-export const admissionPageSchema = pageSchema(admissionSchema);
 export const configurationHistoryPageSchema = pageSchema(
   configurationHistorySchema,
 );

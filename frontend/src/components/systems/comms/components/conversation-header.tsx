@@ -15,16 +15,14 @@ import { Empty, EmptyDescription } from "@/components/ui/empty";
 import { cn } from "@/lib/utils";
 import { Action } from "../../shared/components/ui";
 import { CommsMenu } from "./comms-menu";
-import { GroupMark } from "./group-mark";
 import { FloatingList } from "./floating";
 import { CommsThreadList } from "./thread-list";
+import { ScopeLabel } from "./channel-scope";
 import {
-  channelGroupAccess,
-  channelTone,
-  visibleToLabel,
-  type GroupTone,
-} from "../domain/groups";
-import { messageAuthorId, threadMessages } from "../domain/view-model";
+  messageAuthorId,
+  threadMessages,
+  type Channel,
+} from "../domain/view-model";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 import { useCommsClient } from "../state/client-context";
 import type { NavigationState } from "../state/use-comms-navigation";
@@ -91,19 +89,16 @@ function SearchEntry({ navigation }: { navigation: NavigationState }) {
 }
 
 function AccessChip({
-  label,
-  tone,
+  channel,
   onOpen,
 }: {
-  label: string;
-  tone: GroupTone;
+  channel: Channel;
   onOpen?: (opener: HTMLElement) => void;
 }) {
   const body = (
-    <>
-      <GroupMark tone={tone} className="size-2" />
-      <span className="truncate">{label}</span>
-    </>
+    <span className="truncate">
+      <ScopeLabel channel={channel} />
+    </span>
   );
   const chip =
     "bg-muted text-muted-foreground hidden h-7 max-w-64 shrink-0 items-center gap-1.5 rounded-[var(--radius)] px-2 text-xs shadow-[inset_0_0_0_1px_var(--border)] sm:inline-flex";
@@ -117,7 +112,7 @@ function AccessChip({
       )}
     >
       {body}
-      <span className="sr-only">. Change who can use this channel.</span>
+      <span className="sr-only">. Open channel settings.</span>
     </button>
   ) : (
     <span className={chip}>{body}</span>
@@ -136,8 +131,7 @@ export function ConversationHeader({
   wide: boolean;
   jumpToMessage: (id: string) => void;
 }) {
-  const { people, categories, messages, threads } = useCommsWorkspaceView();
-  const { groups } = useCommsClient();
+  const { people, messages, threads } = useCommsWorkspaceView();
   const { channel, direct, menuAccess, canView } = conversation;
   const { selected, threadId } = navigation;
   const [detailsFor, setDetailsFor] = useState("");
@@ -218,29 +212,15 @@ export function ConversationHeader({
           </p>
           {channel && (
             <p className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs sm:hidden">
-              <GroupMark
-                tone={channelTone(
-                  channelGroupAccess(channel, categories),
-                  groups,
-                )}
-                className="size-2"
-              />
               <span className="truncate">
-                {visibleToLabel(
-                  channelGroupAccess(channel, categories),
-                  groups,
-                )}
+                <ScopeLabel channel={channel} />
               </span>
             </p>
           )}
         </div>
         {channel && (
           <AccessChip
-            label={visibleToLabel(
-              channelGroupAccess(channel, categories),
-              groups,
-            )}
-            tone={channelTone(channelGroupAccess(channel, categories), groups)}
+            channel={channel}
             onOpen={menuAccess.canManageChannel ? openChannel : undefined}
           />
         )}

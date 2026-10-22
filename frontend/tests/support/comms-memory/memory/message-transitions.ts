@@ -1,6 +1,11 @@
 import * as S from "@/components/systems/comms/contract/schemas";
 import type * as C from "@/components/systems/comms/contract/types";
-import { conversationAccess, notFound, policyFailure } from "../domain/access";
+import {
+  conversationAccess,
+  memberCandidateIds,
+  notFound,
+  policyFailure,
+} from "../domain/access";
 import { notificationDecision } from "../domain/notifications";
 import { admitSend, assertMessageChange } from "../domain/posting";
 import { DEFAULT_PERSONAL_PREFERENCES, invalidInput } from "../domain/settings";
@@ -170,7 +175,7 @@ function currentMembers(
   state: Readonly<MemoryCommsState>,
   conversationId: string,
 ) {
-  return Object.keys(state.members[conversationId] ?? {}).filter((userId) => {
+  return memberCandidateIds(state, conversationId).filter((userId) => {
     const person = state.people[userId];
     return (
       person?.active &&
@@ -591,11 +596,6 @@ export function stageConversationPurge(
     if (row.conversation_id !== conversationId) continue;
     delete draft.reports[row.id];
     keys.add(`report:${row.id}`);
-  }
-  for (const row of Object.values(draft.admissions)) {
-    if (row.conversation_id !== conversationId) continue;
-    delete draft.admissions[row.id];
-    keys.add(`admission:${row.id}`);
   }
   const timestamp = new Date(execution.now).toISOString();
   for (const row of Object.values(draft.schedules)) {

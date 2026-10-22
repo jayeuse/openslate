@@ -14,7 +14,6 @@ export const categoryRequest = {
   name: "Shifts",
   position: 2,
   department_id: null,
-  default_access: [],
 };
 export const channelRequest = {
   name: "Dispatch",
@@ -57,6 +56,7 @@ export const member = {
   user_id: peer,
   display_name: "Peer",
   member_role: "manager",
+  level: "manage",
   joined_at: timestamp,
   departments: [],
 };
@@ -266,23 +266,6 @@ export function calls(signal?: AbortSignal): Call[] {
       },
       wire: page([member]),
       expected: page([member]),
-    },
-    {
-      name: "set access",
-      invoke: () =>
-        api.setChannelAccess(
-          context,
-          conversationId,
-          { access: [] },
-          condition,
-        ),
-      method: "PUT",
-      path: `${conversationPath}/access`,
-      status: 200,
-      body: { access: [] },
-      conditional: true,
-      wire: { ...channel, scope: "groups", access: [] },
-      expected: { data: { ...channel, scope: "groups", access: [] }, etag },
     },
     {
       name: "set member role",

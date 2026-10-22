@@ -13,8 +13,6 @@ export const DEFAULT_SETTINGS: Settings = {
   auto_archive_days: 0,
   default_thread_subscription: true,
   thread_branches: "all",
-  join_rule: "open",
-  default_member_ids: [],
   notification_mode: "all",
   keywords: [],
   notify_followed_threads: true,

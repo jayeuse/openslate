@@ -11,21 +11,11 @@ test("direct candidate reads reuse current eligibility without membership rows a
     role: "member",
     display_name: "Reader",
   });
-  for (const [id, room] of Object.entries(initial.conversations)) {
-    if (room.kind === "channel")
-      initial.conversations[id] = {
-        ...room,
-        scope: "groups",
-        access: [
-          {
-            subject: "group",
-            group_id: Object.keys(initial.groups)[0],
-            level: "read",
-          },
-        ],
-      };
-    initial.members[id] = {};
-  }
+  // The seed's department channel; read roles alone make its readers (D44).
+  for (const person of Object.values(initial.people))
+    for (const department of Object.keys(person.department_levels))
+      person.department_levels[department] = "read";
+  for (const id of Object.keys(initial.conversations)) initial.members[id] = {};
   const hiddenId = "77000000-0000-4000-8000-000000000003";
   initial.people[hiddenId] = {
     ...initial.people[owner.user_id],

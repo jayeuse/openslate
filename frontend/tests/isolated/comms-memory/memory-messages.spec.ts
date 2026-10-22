@@ -1,5 +1,6 @@
 /** Promoted before implementation; accepted journeys plus ID25, UNRUN / UNTYPECHECKED. */
 import { expect, test } from "@playwright/test";
+import { hideInNewDepartment } from "../../support/comms-memory/memory/seed";
 import { messageRemovalCommand } from "../../support/comms-memory/memory/message-transitions";
 import {
   changeAuthority,
@@ -796,14 +797,7 @@ test("search filters before paging, is stable on ties, and drops revoked or dele
       },
     ]);
     await changeAuthority(f, (draft) => {
-      const channel = draft.conversations[f.channelId];
-      if (channel.kind !== "channel")
-        throw new Error("Fixture channel required");
-      draft.conversations[f.channelId] = {
-        ...channel,
-        scope: "groups",
-        access: [],
-      };
+      hideInNewDepartment(draft, f.channelId, id(1100));
     });
     expect((await f.as().search({ q: "needle" })).items).toEqual([]);
     await httpFailure(

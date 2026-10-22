@@ -145,9 +145,8 @@ export function RightPane({
         onClose={() => navigation.setRecordId("")}
       />
     );
-  const memberIds = new Set(
-    canView ? workspace.members[selected]?.map((member) => member.user_id) : [],
-  );
+  const memberRows = canView ? (workspace.members[selected] ?? []) : [];
+  const memberIds = new Set(memberRows.map((member) => member.user_id));
   return (
     <ScrollArea className="h-full">
       <MembersPanel
@@ -155,6 +154,13 @@ export function RightPane({
           (person) => person.active && memberIds.has(person.id),
         )}
         roles={roles}
+        levels={
+          conversation.channel
+            ? Object.fromEntries(
+                memberRows.map((member) => [member.user_id, member.level]),
+              )
+            : undefined
+        }
         viewerId={viewerId}
         viewerPresence={workspace.account.presence}
         presence={workspace.presence}

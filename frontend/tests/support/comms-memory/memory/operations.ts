@@ -1,7 +1,7 @@
 import type { CommsClient } from "@/components/systems/comms/contract/client";
 import * as S from "@/components/systems/comms/contract/schemas";
 import type * as C from "@/components/systems/comms/contract/types";
-import { activePerson, notFound, policyFailure } from "../domain/access";
+import { activePerson, notFound } from "../domain/access";
 import { capabilityCheck } from "../domain/capabilities";
 import { invalidInput, resolveSettings } from "../domain/settings";
 import {
@@ -13,14 +13,9 @@ import {
 import {
   configurationKey,
   configurationSnapshot,
-  conversationVersionKeys,
   stageConfigurationChange,
 } from "./configuration-mutation";
-import {
-  compare,
-  page,
-  requireConversationManagement,
-} from "./conversation-structure";
+import { compare, page } from "./conversation-structure";
 import {
   messageKey,
   messageRow,
@@ -40,7 +35,7 @@ import {
   type OperationalResources,
 } from "./operational-resources";
 import { invalidMemoryState } from "./snapshot";
-import type { MemoryExecution, MemoryPublication } from "./store-types";
+import type { MemoryPublication } from "./store-types";
 
 export type OperationalFamily = Pick<
   CommsClient,
@@ -61,21 +56,9 @@ export type OperationalFamily = Pick<
   | "updateSchedule"
   | "sendScheduleNow"
   | "cancelSchedule"
-  | "listAdmissions"
-  | "getAdmission"
-  | "invitePerson"
-  | "decideAdmission"
-  | "submitJoinRequest"
 >;
 
 const reportKey = (id: string) => `report:${id}`;
-const admissionKey = (id: string) => `admission:${id}`;
-function conflict(): never {
-  return policyFailure({
-    status: 409,
-    body: { detail: { code: "comms_conflict", message: "Resource changed" } },
-  });
-}
 
 function timePage<
   T extends { id: string; created_at: string; updated_at: string },
@@ -146,58 +129,6 @@ function managerPublications(
     }));
 }
 
-function admissionRow(
-  world: Readonly<MemoryCommsState>,
-  context: C.CommsContext,
-  conversationId: string,
-  id: string,
-) {
-  const row = world.admissions[id];
-  if (
-    !row ||
-    row.org_id !== context.org_id ||
-    row.conversation_id !== conversationId
-  )
-    return notFound();
-  return row;
-}
-function stageAdmission(
-  draft: MemoryCommsState,
-  execution: MemoryExecution,
-  conversationId: string,
-  userId: string,
-  kind: C.Admission["kind"],
-): C.Admission {
-  const timestamp = new Date(execution.now).toISOString();
-  const row: C.Admission = {
-    id: execution.uuid(),
-    org_id: execution.context.org_id,
-    conversation_id: conversationId,
-    user_id: userId,
-    kind,
-    status: "pending",
-    created_at: timestamp,
-    updated_at: timestamp,
-    resolved_at: null,
-  };
-  if (draft.admissions[row.id]) return invalidMemoryState();
-  draft.admissions[row.id] = row;
-  return row;
-}
-function pendingAdmission(
-  world: Readonly<MemoryCommsState>,
-  conversationId: string,
-  userId: string,
-) {
-  return Object.values(world.admissions).find(
-    (row) =>
-      row.org_id === world.org_id &&
-      row.conversation_id === conversationId &&
-      row.user_id === userId &&
-      row.status === "pending",
-  );
-}
-
 export function createOperationalFamily(
   binding: MemoryClientBinding,
   resources: OperationalResources,
@@ -218,14 +149,6 @@ export function createOperationalFamily(
     if (!row || row.org_id !== context.org_id) return notFound();
     requireCapability(binding, world, context, row.conversation_id, "moderate");
     return row;
-  }
-  function manageAdmission(
-    world: Readonly<MemoryCommsState>,
-    context: C.CommsContext,
-    id: string,
-  ) {
-    requireConversationManagement(binding, world, context, id);
-    if (world.conversations[id].kind !== "channel") invalidInput();
   }
   async function remove(
     conversationId: string,
@@ -600,194 +523,6 @@ export function createOperationalFamily(
         },
       });
       return result.value;
-    },
-
-    async listAdmissions(conversationId, request, options) {
-      active(options);
-      return handle.read((world, context) => {
-        manageAdmission(world, context, conversationId);
-        return timePage(
-          Object.values(world.admissions).filter(
-            (row) =>
-              row.org_id === context.org_id &&
-              row.conversation_id === conversationId,
-          ),
-          request,
-        );
-      });
-    },
-    async getAdmission(conversationId, id, options) {
-      active(options);
-      return handle.read((world, context) => {
-        manageAdmission(world, context, conversationId);
-        return {
-          data: admissionRow(world, context, conversationId, id),
-          etag: handle.version(admissionKey(id)),
-        };
-      });
-    },
-    async invitePerson(conversationId, request, options) {
-      active(options);
-      const parsed = S.invitationRequestSchema.safeParse(request);
-      if (!parsed.success) return invalidInput();
-      const result = await handle.command({
-        signal: options?.signal,
-        authorize(world, execution) {
-          active();
-          manageAdmission(world, execution.context, conversationId);
-          activePerson(world, {
-            ...execution.context,
-            user_id: parsed.data.user_id,
-          });
-          if (
-            world.members[conversationId]?.[parsed.data.user_id] ||
-            world.conversations[conversationId].archived_at ||
-            pendingAdmission(world, conversationId, parsed.data.user_id)
-          )
-            conflict();
-        },
-        apply(draft, execution) {
-          const row = stageAdmission(
-            draft,
-            execution,
-            conversationId,
-            parsed.data.user_id,
-            "invitation",
-          );
-          return {
-            kind: "commit",
-            value: row,
-            version_keys: [admissionKey(row.id)],
-            publications: managerPublications(
-              draft,
-              conversationId,
-              "manageChannel",
-            ),
-          };
-        },
-      });
-      return {
-        data: result.value,
-        etag: result.versions[admissionKey(result.value.id)],
-      };
-    },
-    async decideAdmission(conversationId, id, request, options) {
-      active(options);
-      const parsed = S.admissionDecisionRequestSchema.safeParse(request);
-      if (!parsed.success) return invalidInput();
-      const key = admissionKey(id);
-      const result = await handle.command({
-        signal: options?.signal,
-        conditions: [{ key, if_match: options?.if_match }],
-        authorize(world, execution) {
-          active();
-          manageAdmission(world, execution.context, conversationId);
-          admissionRow(world, execution.context, conversationId, id);
-        },
-        apply(draft, execution) {
-          const row = admissionRow(
-            draft,
-            execution.context,
-            conversationId,
-            id,
-          );
-          if (row.status !== "pending") conflict();
-          if (parsed.data.decision === "accept") {
-            activePerson(draft, { ...execution.context, user_id: row.user_id });
-            if (draft.conversations[conversationId].archived_at) conflict();
-            const settings = resolveSettings(draft, {
-              kind: "channel",
-              id: conversationId,
-            }).effective;
-            if (row.kind === "request" && settings.join_rule !== "request")
-              conflict();
-            if (!draft.members[conversationId][row.user_id]) {
-              draft.members[conversationId][row.user_id] = {
-                user_id: row.user_id,
-                member_role: "member",
-                joined_at: new Date(execution.now).toISOString(),
-              };
-            }
-          }
-          const timestamp = new Date(execution.now).toISOString();
-          row.status =
-            parsed.data.decision === "accept" ? "accepted" : "declined";
-          row.updated_at = timestamp;
-          row.resolved_at = timestamp;
-          const publications = managerPublications(
-            draft,
-            conversationId,
-            "manageChannel",
-          );
-          const accepted = row.status === "accepted";
-          if (accepted) {
-            draft.conversations[conversationId].updated_at = timestamp;
-            publications.push({
-              recipient_ids: [row.user_id],
-              event: {
-                private: true,
-                topic: `org:${draft.org_id}:user:${row.user_id}`,
-                event: "membership",
-                payload: { conversation_id: conversationId },
-              },
-            });
-          }
-          return {
-            kind: "commit",
-            value: row,
-            version_keys: [
-              key,
-              ...(accepted
-                ? conversationVersionKeys(draft, [conversationId])
-                : []),
-            ],
-            publications,
-          };
-        },
-      });
-      return { data: result.value, etag: result.versions[key] };
-    },
-    async submitJoinRequest(request, options) {
-      active(options);
-      const parsed = S.joinRequestSubmissionSchema.safeParse(request);
-      if (!parsed.success) return invalidInput();
-      const id = parsed.data.conversation_id;
-      await handle.command({
-        signal: options?.signal,
-        authorize(world, execution) {
-          active();
-          activePerson(world, execution.context);
-        },
-        apply(draft, execution) {
-          const row = draft.conversations[id];
-          if (
-            !row ||
-            row.org_id !== execution.context.org_id ||
-            row.kind !== "channel" ||
-            // Like the API, only private (members-scope) channels take requests.
-            row.scope !== "members" ||
-            row.archived_at ||
-            draft.members[id]?.[execution.context.user_id] ||
-            pendingAdmission(draft, id, execution.context.user_id) ||
-            resolveSettings(draft, { kind: "channel", id }).effective
-              .join_rule !== "request"
-          )
-            return { kind: "unchanged", value: undefined, version_keys: [] };
-          const admission = stageAdmission(
-            draft,
-            execution,
-            id,
-            execution.context.user_id,
-            "request",
-          );
-          return {
-            kind: "commit",
-            value: undefined,
-            version_keys: [admissionKey(admission.id)],
-            publications: managerPublications(draft, id, "manageChannel"),
-          };
-        },
-      });
     },
   };
 }

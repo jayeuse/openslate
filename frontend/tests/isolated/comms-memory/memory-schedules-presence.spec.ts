@@ -299,9 +299,18 @@ for (const cause of ["access_lost", "post_denied", "unavailable"] as const) {
     try {
       await gate.reached;
       if (cause === "access_lost") {
-        const current = await f.as(f.managerId).getConversation(f.channelId);
-        await f.as(f.managerId).removeMember(f.channelId, f.context.user_id, {
-          if_match: current.etag,
+        // D44 access loss: the author's department role ends in Access.
+        await f.handle(f.managerId).command({
+          authorize() {},
+          apply(draft) {
+            draft.people[f.context.user_id].department_levels = {};
+            return {
+              kind: "commit",
+              value: undefined,
+              version_keys: [],
+              publications: [],
+            };
+          },
         });
       } else if (cause === "post_denied") await settings(f, { locked: true });
       else f.store.failNextCommit();
@@ -680,11 +689,6 @@ test("typing uses current post access, refuses guests and expires without conten
       const channel = data.initial.conversations[data.channelId];
       if (channel.kind !== "channel") throw new Error("Expected channel");
       const groupId = data.initial.people[data.context.user_id].group_ids[0];
-      data.initial.conversations[data.channelId] = {
-        ...channel,
-        scope: "groups",
-        access: [{ subject: "group", group_id: groupId, level: "post" }],
-      };
       data.initial.configuration[`channel:${data.channelId}`] = {
         settings: {},
         capabilities: {
@@ -720,20 +724,23 @@ test("typing uses current post access, refuses guests and expires without conten
   expect(f.controls.typingFor(f.handle(f.peerId), f.channelId)).toEqual([]);
   expect(f.store.exportSnapshot()).toEqual(original);
   await f.as().sendTyping(f.channelId);
-  const current = await f.as(f.managerId).getConversation(f.channelId);
-  await f.as(f.managerId).setChannelAccess(
-    f.channelId,
-    {
-      access: [
-        {
-          subject: "group",
-          group_id: f.initial.people[f.context.user_id].group_ids[0],
-          level: "read",
-        },
-      ],
+  // The reporter's department role drops to read (D44: roles change in Access).
+  await f.handle(f.managerId).command({
+    authorize() {},
+    apply(draft) {
+      const room = draft.conversations[f.channelId];
+      if (room.kind !== "channel" || room.scope !== "department")
+        throw new Error("Expected a department channel");
+      draft.people[f.context.user_id].department_levels[room.department_id] =
+        "read";
+      return {
+        kind: "commit",
+        value: undefined,
+        version_keys: [],
+        publications: [],
+      };
     },
-    { if_match: current.etag },
-  );
+  });
   expect(
     (await f.as().getCapabilities(f.channelId)).capabilities.reply.allowed,
   ).toBe(true);

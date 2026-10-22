@@ -19,7 +19,9 @@ test("J1 real family writes feed one complete readonly bootstrap with owned coun
   const foreignRoom = await foreign.client.createChannel(
     channelRequest(null, "Other organization only"),
   );
-  const created = await f.client.createChannel(channelRequest(f.categoryId));
+  const created = await f.client.createChannel(
+    channelRequest(null, undefined, f.departmentId),
+  );
   const room = await f.client.getConversation(f.channelId);
   await f.client.updateChannel(
     f.channelId,

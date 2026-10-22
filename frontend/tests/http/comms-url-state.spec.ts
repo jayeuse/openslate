@@ -275,7 +275,7 @@ test("Comms does not substitute content for unknown or another organization's co
   });
   await page.goto("/comms?conversation=unknown-conversation");
   await expect(
-    page.getByText("This conversation is not available", { exact: true }),
+    page.getByText("This conversation is not available.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(0);
   await expect(
@@ -296,8 +296,17 @@ test("Comms does not substitute content for unknown or another organization's co
   ).toBeVisible();
   await page.goto(foreignLink);
   await expect(
-    page.getByText("This conversation is not available", { exact: true }),
+    page.getByText("This conversation is not available.", { exact: true }),
   ).toBeVisible();
+  // The same state for any unavailable id, with no way to ask for access (D44).
+  await expect(
+    page.getByText("It may have been removed, or you may not have access.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Request to join", exact: true }),
+  ).toHaveCount(0);
   await expect(page.getByRole("article")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "url-workshop", exact: true }),

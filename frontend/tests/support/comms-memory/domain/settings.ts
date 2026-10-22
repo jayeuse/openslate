@@ -33,8 +33,6 @@ const sections: Record<SettingKey, SettingMetadata["section"]> = {
   auto_archive_days: "threads",
   default_thread_subscription: "threads",
   thread_branches: "threads",
-  join_rule: "members",
-  default_member_ids: "members",
   notification_mode: "notifications",
   keywords: "notifications",
   notify_followed_threads: "notifications",
@@ -104,10 +102,7 @@ function validateReferences(
   world: MemoryPolicyWorld,
   settings: Partial<Settings>,
 ) {
-  for (const id of [
-    ...(settings.default_member_ids ?? []),
-    ...(settings.restricted_person_ids ?? []),
-  ])
+  for (const id of settings.restricted_person_ids ?? [])
     if (!world.people[id]?.active || world.people[id].org_id !== world.org_id)
       invalidInput();
   for (const id of settings.allowed_record_modules ?? [])

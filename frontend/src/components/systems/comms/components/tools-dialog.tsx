@@ -32,7 +32,6 @@ import {
 import { ModerationFields } from "./tools-moderation-section";
 import { ManagementTools } from "./tools-management";
 import { ExportTools } from "./tools-export";
-import { AdmissionTools } from "./tools-admissions";
 import { ToolAdvanced } from "./tool-advanced";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { datetimeInputToUtc, formatDateTimeLocal } from "@/lib/date-time";
@@ -49,7 +48,6 @@ import {
 } from "../state/runtime";
 
 export type CommsToolsView =
-  | "management"
   | "templates"
   | "history"
   | "moderation"
@@ -69,7 +67,6 @@ export interface CommsToolsDialogProps {
   onClose: () => void;
 }
 const titles: Record<CommsToolsView, string> = {
-  management: "Join requests",
   export: "Export messages",
   templates: "Channel templates",
   history: "Settings history",
@@ -83,8 +80,6 @@ const titles: Record<CommsToolsView, string> = {
 export function CommsToolsDialog(props: CommsToolsDialogProps) {
   return props.view === "export" ? (
     <ExportTools {...props} />
-  ) : props.view === "management" ? (
-    <AdmissionTools {...props} />
   ) : props.view === "templates" ? (
     <ManagementTools {...props} />
   ) : (

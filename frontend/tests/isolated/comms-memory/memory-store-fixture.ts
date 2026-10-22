@@ -39,7 +39,11 @@ export function initialWorld() {
     (c) => c.kind === "channel",
   );
   if (!channel) throw new Error("Owned fixture needs its seed channel");
-  initial.members[channel.id][owner.user_id].member_role = "manager";
+  initial.members[channel.id][owner.user_id] = {
+    user_id: owner.user_id,
+    member_role: "manager",
+    joined_at: "2026-09-11T01:00:00Z",
+  };
   const admin = Object.values(initial.people).find(
     (p) => p.user_id !== owner.user_id,
   );

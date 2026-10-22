@@ -4,7 +4,10 @@ import {
   createMemoryCommsRuntime,
 } from "../../support/comms-memory/memory-client";
 import { createLazyProtectedTools } from "../../support/comms-memory/memory/lazy-protected-tools";
-import { createMemorySeed } from "../../support/comms-memory/memory/seed";
+import {
+  createMemorySeed,
+  hideInNewDepartment,
+} from "../../support/comms-memory/memory/seed";
 import {
   changeAuthority,
   fixture,
@@ -73,14 +76,7 @@ test("Activity filters the bound user's unreadable and deleted sources before st
       id(1002),
     ]);
     await changeAuthority(f, (draft) => {
-      const room = draft.conversations[f.channelId];
-      if (room.kind === "channel") {
-        draft.conversations[f.channelId] = {
-          ...room,
-          scope: "groups",
-          access: [],
-        };
-      }
+      hideInNewDepartment(draft, f.channelId, id(1100));
     });
     expect((await client.listActivity()).items).toEqual([]);
     await changeAuthority(f, (draft) => {

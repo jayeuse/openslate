@@ -79,7 +79,7 @@ export function createExportTools() {
               compare(a.id, b.id),
           );
         const privateSources = rooms
-          .filter((row) => row.kind !== "channel" || row.scope === "members")
+          .filter((row) => row.kind !== "channel")
           .map((row) => row.id)
           .sort();
         const rows: string[][] = [
@@ -221,9 +221,7 @@ export function createExportTools() {
             const row = job(world, id);
             const current = sources(world, row.request);
             const privateSources = current
-              .filter(
-                (room) => room.kind !== "channel" || room.scope === "members",
-              )
+              .filter((room) => room.kind !== "channel")
               .map((room) => room.id)
               .sort();
             const entry = committed.get(id);

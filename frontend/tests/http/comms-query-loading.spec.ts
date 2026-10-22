@@ -11,7 +11,10 @@ import { installCommsLiveApi } from "./helpers/comms-live-api";
 import type { Page, Request } from "@playwright/test";
 import type { LiveMessage } from "../../src/components/systems/comms/contract/types";
 import { pageOf } from "../helpers/pagination";
-import { createMemorySeed } from "../support/comms-memory/memory/seed";
+import {
+  createMemorySeed,
+  organizationChannel,
+} from "../support/comms-memory/memory/seed";
 import {
   createMemoryCommsRuntime,
   type MemoryCommsRuntime,
@@ -342,6 +345,10 @@ test("a cold load without department categories reads no department names", asyn
   });
   for (const category of Object.values(initial.categories))
     category.department_id = null;
+  // No department channel either, so nothing needs a department name.
+  for (const room of Object.values(initial.conversations))
+    if (room.kind === "channel")
+      initial.conversations[room.id] = organizationChannel(room);
   const api = await prepare(
     page,
     "admin",

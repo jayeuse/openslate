@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { GroupTone } from "../domain/groups";
+import type { GroupTone } from "../domain/records";
 
 // Department colors from the Sandbox canvas, one class per tone so Tailwind
 // can see them.

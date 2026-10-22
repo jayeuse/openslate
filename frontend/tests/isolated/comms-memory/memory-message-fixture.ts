@@ -1,7 +1,11 @@
 /** Promoted before implementation; real future dependencies, UNRUN / UNTYPECHECKED. */
 import { expect } from "@playwright/test";
 import type * as C from "@/components/systems/comms/contract/types";
-import { createMemorySeed } from "../../support/comms-memory/memory/seed";
+import {
+  createMemorySeed,
+  hideInNewDepartment,
+  organizationChannel,
+} from "../../support/comms-memory/memory/seed";
 import type {
   MemoryCommsState,
   MemoryMessage,
@@ -36,9 +40,22 @@ export function setup() {
     role: "member",
     display_name: "Reader",
   });
-  const channel = Object.values(initial.conversations)[0];
+  // Without its category's department link the seed room is an organization channel.
+  const channel = organizationChannel(Object.values(initial.conversations)[0]);
   if (channel.kind !== "channel")
     throw new Error("Fixture requires seed channel");
+  initial.conversations[channel.id] = channel;
+  // Every person keeps a row a case may copy into a direct message.
+  initial.members[channel.id] = Object.fromEntries(
+    Object.keys(initial.people).map((user_id) => [
+      user_id,
+      {
+        user_id,
+        member_role: "member" as const,
+        joined_at: channel.created_at,
+      },
+    ]),
+  );
   const root = Object.values(initial.messages).find(
     (m) => m.parent_id === null,
   )!;
@@ -63,9 +80,8 @@ export function setup() {
     ...channel,
     id: hiddenId,
     name: "private",
-    scope: "groups",
-    access: [],
   };
+  hideInNewDepartment(initial, hiddenId, id(23));
   initial.members[hiddenId] = {};
   initial.high_water_seq[hiddenId] = 0;
   const otherChannelId = id(22);

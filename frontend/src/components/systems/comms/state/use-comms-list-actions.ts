@@ -24,7 +24,6 @@ export function useCommsListActions() {
           {
             name: current.data.name,
             department_id: current.data.department_id,
-            default_access: current.data.default_access,
             position,
           },
           { if_match: current.etag },

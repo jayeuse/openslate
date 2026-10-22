@@ -111,7 +111,7 @@ test("no selected conversation shows a plain chooser without errors actions or c
       page.getByText("Your role cannot post in this channel.", { exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByText("This conversation is not available", { exact: true }),
+      page.getByText("This conversation is not available.", { exact: true }),
     ).toHaveCount(0);
     await expect(
       page.getByRole("region", { name: "Choose a conversation", exact: true }),
@@ -121,7 +121,7 @@ test("no selected conversation shows a plain chooser without errors actions or c
     ).toHaveCount(0);
     await page.goto("/comms?message=98000000-0000-4000-8000-000000000001");
     await expect(
-      page.getByText("This conversation is not available", { exact: true }),
+      page.getByText("This conversation is not available.", { exact: true }),
     ).toBeVisible();
     for (const width of [1440, 390])
       for (const theme of ["light", "dark"] as const) {

@@ -1,6 +1,12 @@
 import { commsContextSchema } from "@/components/systems/comms/contract/schemas";
 import type { CommsContext } from "@/components/systems/comms/contract/types";
-import type { MemoryCommsState, MemoryMessage, MemoryPerson } from "./model";
+import type {
+  MemoryCommsState,
+  MemoryConversation,
+  MemoryMessage,
+  MemoryPerson,
+  MemoryPolicyWorld,
+} from "./model";
 import { DEFAULT_PERSONAL_PREFERENCES } from "../domain/settings";
 
 /** Fixed fictional data, never a migration of unowned legacy snapshots. */
@@ -54,14 +60,14 @@ export function createMemorySeed(
     name: "Service delivery",
     position: 0,
     department_id: department.id,
-    default_access: [
-      { subject: "group" as const, group_id: group.id, level: "post" as const },
-    ],
   };
+  // A category bound to a department holds only that department's channels
+  // (D44 A8); every seeded person has a role in it.
   const channel = {
     ...identity(),
     kind: "channel" as const,
-    scope: "organization" as const,
+    scope: "department" as const,
+    department_id: department.id,
     name: "operations",
     topic: "Daily coordination, handovers, and field updates.",
     category_id: category.id,
@@ -137,17 +143,15 @@ export function createMemorySeed(
     records: { [record.id]: record },
     categories: { [category.id]: category },
     conversations: { [channel.id]: channel },
+    // Channel rows are a manager roster: only the creator's row exists.
     members: {
-      [channel.id]: Object.fromEntries(
-        people.map((p) => [
-          p.user_id,
-          {
-            user_id: p.user_id,
-            member_role: "member",
-            joined_at: created_at,
-          },
-        ]),
-      ),
+      [channel.id]: {
+        [channel.creator_id]: {
+          user_id: channel.creator_id,
+          member_role: "member",
+          joined_at: created_at,
+        },
+      },
     },
     configuration: {},
     setting_locks: [],
@@ -175,7 +179,6 @@ export function createMemorySeed(
     resource_versions: {},
     idempotency: {},
     reports: {},
-    admissions: {},
     schedules: {},
     exports: {},
     templates: {},
@@ -187,5 +190,50 @@ export function createMemorySeed(
         file_days: 0,
       },
     },
+  };
+}
+
+/** A channel row as an organization channel: everyone posts, guests read (D44). */
+export function organizationChannel(
+  room: MemoryConversation,
+): Extract<MemoryConversation, { scope: "organization" }> {
+  if (room.kind !== "channel") throw new Error("Only a channel has a scope");
+  return {
+    id: room.id,
+    org_id: room.org_id,
+    created_at: room.created_at,
+    updated_at: room.updated_at,
+    archived_at: room.archived_at,
+    creator_id: room.creator_id,
+    kind: "channel",
+    scope: "organization",
+    name: room.name,
+    topic: room.topic,
+    category_id: room.category_id,
+    position: room.position,
+  };
+}
+
+/**
+ * Moves a channel into a new department nobody holds a role in, so only
+ * admins and its managers still read it. It replaces the retired empty
+ * group-access and private-channel scopes as the way to hide a channel.
+ */
+export function hideInNewDepartment(
+  world: MemoryPolicyWorld,
+  channelId: string,
+  departmentId: string,
+) {
+  const room = organizationChannel(world.conversations[channelId]);
+  world.departments[departmentId] = {
+    id: departmentId,
+    org_id: world.org_id,
+    name: "Records desk",
+  };
+  world.conversations[channelId] = {
+    ...room,
+    category_id: null,
+    scope: "department",
+    department_id: departmentId,
   };
 }

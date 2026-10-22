@@ -17,7 +17,7 @@ import { GroupMark } from "./group-mark";
 import { CommsMenu } from "./comms-menu";
 import { preloadChannelEditor, type CommsDialogsState } from "./comms-dialogs";
 import { newChannel, threadMessages, type Thread } from "../domain/view-model";
-import { recordContext } from "../domain/groups";
+import { recordContext } from "../domain/records";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 import { useCommsClient } from "../state/client-context";
 import type { CommsConversation } from "../state/use-comms-conversation";
@@ -113,7 +113,7 @@ export function ConversationList({
               dialogs.setEditor({
                 opener: event.currentTarget,
                 kind: "channel",
-                value: newChannel(categories[0]?.id ?? ""),
+                value: newChannel(undefined),
               })
             }
           >
@@ -241,7 +241,7 @@ export function ConversationList({
                             onSelect: (opener: HTMLElement) =>
                               dialogs.setEditor({
                                 kind: "channel" as const,
-                                value: newChannel(category.id),
+                                value: newChannel(categoryView),
                                 opener,
                               }),
                           },
@@ -323,7 +323,7 @@ export function ConversationList({
                 dialogs.setEditor({
                   opener: event.currentTarget,
                   kind: "category",
-                  value: { id: "", name: "" },
+                  value: { id: "", name: "", departmentId: "" },
                 })
               }
             >

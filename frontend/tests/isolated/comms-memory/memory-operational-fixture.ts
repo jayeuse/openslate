@@ -43,14 +43,27 @@ export function seed(offset = 0) {
   if (original.kind !== "channel" || !root || !reply || !guest)
     throw new Error("Expected accepted seed graph");
   const channelId = id(offset + 10),
-    privateId = id(offset + 11),
-    closedId = id(offset + 12);
+    privateId = id(offset + 11);
   const managerId = root.author_id,
     peerId = reply.author_id,
     outsiderId = id(offset + 40);
   initial.categories[original.category_id!].department_id = null;
+  // D44: department roles alone make readers. The working room's department
+  // holds the reporter, manager, peer and guest; a second department holds
+  // only the manager and the peer.
+  const operations = Object.values(initial.departments)[0];
+  const privateDesk = id(offset + 13);
+  initial.departments[privateDesk] = {
+    id: privateDesk,
+    org_id: context.org_id,
+    name: "Dispatch desk",
+  };
   for (const person of Object.values(initial.people))
     person.department_levels = {};
+  for (const user of [context.user_id, managerId, peerId, guest.user_id])
+    initial.people[user].department_levels[operations.id] = "write";
+  for (const user of [managerId, peerId])
+    initial.people[user].department_levels[privateDesk] = "write";
   initial.people[outsiderId] = {
     ...initial.people[context.user_id],
     user_id: outsiderId,
@@ -60,33 +73,26 @@ export function seed(offset = 0) {
     readable_module_ids: [],
   };
   initial.users[outsiderId] = structuredClone(initial.users[context.user_id]);
-  const channel = { ...original, id: channelId, scope: "members" as const };
+  const channel = {
+    ...original,
+    id: channelId,
+    scope: "department" as const,
+    department_id: operations.id,
+  };
   initial.conversations = {
     [channelId]: channel,
-    [privateId]: { ...channel, id: privateId, name: "Request-only room" },
-    [closedId]: { ...channel, id: closedId, name: "Invitation-only room" },
+    [privateId]: {
+      ...channel,
+      id: privateId,
+      name: "Dispatch desk room",
+      department_id: privateDesk,
+    },
   };
+  // Channel rows are a manager roster: only the creator's row exists.
   initial.members = {
     [channelId]: initial.members[original.id],
-    [privateId]: {
-      [managerId]: initial.members[original.id][managerId],
-      [peerId]: initial.members[original.id][peerId],
-    },
-    [closedId]: { [managerId]: initial.members[original.id][managerId] },
+    [privateId]: structuredClone(initial.members[original.id]),
   };
-  for (const [cid, join_rule] of [
-    [privateId, "request"],
-    [closedId, "invite"],
-  ] as const) {
-    initial.configuration[`channel:${cid}`] = {
-      settings: { join_rule },
-      capabilities: {
-        scope: { kind: "channel", id: cid },
-        group_grants: [],
-        everyone: {},
-      },
-    };
-  }
   const rootMessage: MemoryMessage = {
     ...root,
     id: id(offset + 20),
@@ -121,13 +127,12 @@ export function seed(offset = 0) {
       archived: false,
     },
   };
-  initial.high_water_seq = { [channelId]: 2, [privateId]: 0, [closedId]: 0 };
+  initial.high_water_seq = { [channelId]: 2, [privateId]: 0 };
   return {
     initial,
     context,
     channelId,
     privateId,
-    closedId,
     managerId,
     peerId,
     guestId: guest.user_id,

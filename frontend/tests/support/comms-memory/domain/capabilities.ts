@@ -18,6 +18,7 @@ import type { MemoryPolicyWorld } from "../memory/model";
 import {
   activePerson,
   conversationAccess,
+  linkedDepartment,
   notFound,
   ownedConversation,
   policyFailure,
@@ -110,6 +111,7 @@ function scopedDecision(
   key: Capability,
   scopes: SettingsScope[],
   poster: boolean,
+  grants = true,
 ): CapabilityDecision {
   const person = activePerson(world, context);
   const locked =
@@ -147,7 +149,7 @@ function scopedDecision(
       .sort((a, b) =>
         a.group_id < b.group_id ? -1 : a.group_id > b.group_id ? 1 : 0,
       )[0];
-    if (!grant && row)
+    if (grants && !grant && row)
       grant = {
         allowed: true,
         source: {
@@ -192,10 +194,19 @@ export function inspectCapabilities(
     : capabilityCheck(world, { ...context, user_id: userId }, id);
 }
 
+/**
+ * `departmentId` is the requested channel's department (D44 A7). The GET route
+ * takes none, so a department manager is admitted only by a bound category there.
+ * A createChannel grant creates a channel only in a department where the person
+ * holds a department role; `channel: false` keeps category creation on the
+ * unrestricted grant (owner decision 2026-10-22).
+ */
 export function channelCreationCheck(
   world: MemoryPolicyWorld,
   context: CommsContext,
   scope: ChannelCreationScope,
+  departmentId: string | null = null,
+  channel = true,
 ): ChannelCreationCheck {
   const person = activePerson(world, context);
   const category =
@@ -205,31 +216,37 @@ export function channelCreationCheck(
     (!category || category.org_id !== context.org_id)
   )
     return notFound();
+  const roleDepartment = category?.department_id ?? departmentId;
   let decision = scopedDecision(
     world,
     context,
     "createChannel",
     scopeChain(world, scope),
     false,
+    !channel ||
+      (!!roleDepartment && !!person.department_levels[roleDepartment]),
   );
   if (person.role === "admin")
     decision = { allowed: true, source: { kind: "admin" } };
   else if (person.role === "guest")
     decision = { allowed: false, source: { kind: "guest_cap" } };
-  else if (
-    !world.capability_locks.includes("createChannel") &&
-    category?.department_id &&
-    world.departments[category.department_id]?.org_id === context.org_id &&
-    person.department_levels[category.department_id] === "manage"
-  )
-    decision = {
-      allowed: true,
-      source: {
-        kind: "department_manager",
-        category_id: category.id,
-        department_id: category.department_id,
-      },
-    };
+  else {
+    const department = category?.department_id ?? departmentId;
+    if (
+      !world.capability_locks.includes("createChannel") &&
+      department &&
+      world.departments[department]?.org_id === context.org_id &&
+      person.department_levels[department] === "manage"
+    )
+      decision = {
+        allowed: true,
+        source: {
+          kind: "department_manager",
+          category_id: category?.id ?? null,
+          department_id: department,
+        },
+      };
+  }
   return {
     org_id: context.org_id,
     user_id: context.user_id,
@@ -264,6 +281,7 @@ export function capabilityCheck(
           category_id
             ? { kind: "category", id: category_id }
             : { kind: "workspace" },
+          linkedDepartment(world, conversation),
         ).decision;
       else if (key === "manageWorkspace")
         decision = {

@@ -8,16 +8,21 @@ import { presenceLabel, type Presence } from "../domain/view-model";
 import { Avatar } from "./floating";
 import { PersonLink } from "./person-link";
 import { Action } from "../../shared/components/ui";
+import type { Member } from "../contract/types";
+import { LevelBadge } from "./member-level";
 
 export function MembersPanel({
   members,
   roles,
+  levels,
   presence,
   onClose,
   onDirect,
 }: {
   members: Person[];
   roles: Role[];
+  /** A channel's level per reader; direct and group messages have none to show. */
+  levels?: Record<string, Member["level"]>;
   viewerId: string;
   viewerPresence: string;
   presence: Presence;
@@ -99,11 +104,15 @@ export function MembersPanel({
                       </bdi>
                     </span>
                   </PersonLink>
-                  <p className="text-muted-foreground pl-12 text-xs">
-                    <bdi>
-                      {person.departments.join(", ") || "No department"}
-                    </bdi>{" "}
-                    · {status}
+                  <p className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pl-12 text-xs">
+                    <span className="min-w-0 truncate">
+                      <bdi>
+                        {person.departments.join(", ") || "No department"}
+                      </bdi>
+                    </span>
+                    {levels?.[person.id] && (
+                      <LevelBadge level={levels[person.id]} />
+                    )}
                   </p>
                 </div>
               ))}

@@ -4,6 +4,7 @@ import type * as C from "@/components/systems/comms/contract/types";
 import {
   activePerson,
   directBlocked,
+  memberCandidateIds,
   notFound,
   policyFailure,
 } from "../domain/access";
@@ -155,7 +156,7 @@ function validateEdit(
     if (
       !person?.active ||
       person.org_id !== context.org_id ||
-      !state.members[id]?.[userId]
+      !memberCandidateIds(state, id).includes(userId)
     )
       return invalidInput();
     // Same current core access decision as a new-send mention, without send rate limits.
