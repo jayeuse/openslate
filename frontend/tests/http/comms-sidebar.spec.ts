@@ -218,6 +218,11 @@ test("S06 correction tomorrow mute uses organization midnight rather than device
       exact: true,
     })
     .click();
+  // Both mutes are saved and shown before any reload cuts a write short.
+  for (const name of ["operations", "deliveries"])
+    await expect(
+      page.getByRole("button", { name: new RegExp(`^${name},`) }),
+    ).toHaveAccessibleName(/muted/);
   for (const instant of ["2026-10-19T15:59:00Z", "2026-10-19T16:01:00Z"]) {
     await page.clock.setFixedTime(new Date(instant));
     clock.set(instant);
@@ -620,40 +625,43 @@ test("Comms keeps a refused group draft and applies a newly admitted guest role"
   await expect(
     dialog.getByRole("button", { name: "Remove Sofia Garcia", exact: true }),
   ).toBeVisible();
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  // A guest admission while the dialog is open refuses the draft in place.
   await signedInAs(page, { id: userId, role: "guest" });
   server.setRole("guest");
-  await page.reload();
-  await page
-    .getByRole("button", { name: "Start direct message", exact: true })
-    .click();
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   await expect(
     dialog.getByText("Guests cannot start conversations.", { exact: true }),
   ).toBeVisible();
   await expect(
     dialog.getByRole("button", { name: "Start conversation", exact: true }),
   ).toBeDisabled();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  // After a reload the guest is never offered the dialog again.
+  await page.reload();
+  await expect(
+    page.getByRole("region", { name: "No conversations yet", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start direct message", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("Comms guest cannot create a group and the channel browser has useful no-match state", async ({
   page,
 }) => {
   await seedSidebar(page, "guest");
+  // The start actions wait for the role check, so absence counts only after it.
+  const roleCheck = page.waitForResponse((response) =>
+    response.url().includes("/api/comms/capabilities/channel-creation"),
+  );
   await page.goto("/comms");
-  await page
-    .getByRole("button", { name: "Start direct message", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Start direct message",
-    exact: true,
-  });
+  expect((await roleCheck).ok()).toBe(true);
   await expect(
-    dialog.getByText("Guests cannot start conversations.", { exact: true }),
+    page.getByRole("button", { name: /^operations,/ }),
   ).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Start conversation", exact: true }),
-  ).toBeDisabled();
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    page.getByRole("button", { name: "Start direct message", exact: true }),
+  ).toHaveCount(0);
   await page
     .getByRole("button", { name: "Browse channels", exact: true })
     .click();

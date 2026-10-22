@@ -36,11 +36,13 @@ pytestmark = pytest.mark.integration
 SAMPLES = 10
 CONCURRENCY = os.environ.get("OPENSLATE_COMMS_LATENCY_CONCURRENCY") == "1"
 GUARDED = ("presence", "bootstrap")
-# Before the per-person department clause (run 07b12f6a): max loops 4951 / 2530 and
-# 17 / 13 users-table scan nodes (one inside every department-level reader subquery);
-# after (run 3e3e8be7): 1446 / 529 and 5 / 1. Loops are bounded only without statistics,
-# where the old plan repeats per (conversation, person) pair.
-MAX_LOOPS_UNANALYZED = {"presence": 3000, "bootstrap": 1500}
+# Before the per-person department clause (run 07b12f6a): 17 / 13 users-table scan nodes
+# (one inside every department-level reader subquery) in both phases, and after ANALYZE
+# max loops 980 / 84; after (runs 3e3e8be7, 40e851b5): 5 / 1 scan nodes, and 497 / 23
+# loops after ANALYZE. Loops are bounded only after the explicit ANALYZE: the first
+# phase plans on whatever statistics earlier tests left (autoanalyze in a batch turned
+# 1446 into 5070 loops in run 40e851b5), so there only the scan nodes are asserted.
+MAX_LOOPS_ANALYZED = {"presence": 700, "bootstrap": 50}
 MAX_USERS_SCANS = {"presence": 8, "bootstrap": 3}
 
 
@@ -99,8 +101,8 @@ def harbor_routes(message_routes):
 def test_cold_load_access_relation_does_not_rescan_accounts_per_pair(
     harbor_routes, record_property,
 ):
-    """Before the tables have statistics (a small installation that autovacuum has not
-    analyzed yet) and after ANALYZE."""
+    """On the statistics the run finds (none when the file runs alone, as on a small
+    installation that autovacuum has not analyzed yet) and after an explicit ANALYZE."""
     case, org, world = harbor_routes
     routes = _routes(world)
     clients = {
@@ -139,7 +141,7 @@ def test_cold_load_access_relation_does_not_rescan_accounts_per_pair(
     over = {
         key: value for key, value in shape.items()
         if value[1] > MAX_USERS_SCANS[key.split(":")[1]]
-        or (key.startswith("unanalyzed:") and value[0] > MAX_LOOPS_UNANALYZED[key.split(":")[1]])
+        or (key.startswith("analyzed:") and value[0] > MAX_LOOPS_ANALYZED[key.split(":")[1]])
     }
     assert len(shape) == 4 and not over, shape
 
