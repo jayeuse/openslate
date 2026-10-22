@@ -4,7 +4,11 @@ import type {
   CommsContext,
   HttpFailure,
 } from "@/components/systems/comms/contract/types";
-import type { MemoryConversation, MemoryPolicyWorld } from "../memory/model";
+import type {
+  MemoryConversation,
+  MemoryPerson,
+  MemoryPolicyWorld,
+} from "../memory/model";
 
 export function policyFailure(failure: HttpFailure): never {
   throw Object.assign(new Error("OpenComms request refused"), {
@@ -55,6 +59,36 @@ export function linkedDepartment(
     return null;
   const id = conversation.department_id;
   return world.departments[id]?.org_id === world.org_id ? id : null;
+}
+
+/**
+ * D45: the best grant for a person on a channel, from the channel's own grants
+ * and its current category's, directly or through a live group. Read 1, post 2.
+ */
+export function grantedLevel(
+  world: MemoryPolicyWorld,
+  person: MemoryPerson,
+  conversation: MemoryConversation,
+): "read" | "post" | null {
+  if (conversation.kind !== "channel") return null;
+  let best = 0;
+  for (const grant of Object.values(world.access_grants)) {
+    const { target } = grant;
+    if (
+      grant.org_id !== world.org_id ||
+      !(
+        (target.kind === "channel" && target.id === conversation.id) ||
+        (target.kind === "category" && target.id === conversation.category_id)
+      ) ||
+      !(grant.subject === "user"
+        ? grant.subject_id === person.user_id
+        : person.group_ids.includes(grant.subject_id) &&
+          world.groups[grant.subject_id]?.org_id === world.org_id)
+    )
+      continue;
+    best = Math.max(best, grant.level === "post" ? 2 : 1);
+  }
+  return best === 2 ? "post" : best === 1 ? "read" : null;
 }
 
 export function conversationAccess(
@@ -108,6 +142,13 @@ export function conversationAccess(
         kind: "department",
         department_id: department,
       });
+    // D45: grants only add, and only above the department role; an
+    // organization channel already gives post.
+    const granted =
+      conversation.scope === "department"
+        ? grantedLevel(world, person, conversation)
+        : null;
+    if (granted) offer(granted, { kind: "grant" });
   } else if (membership) offer("post", { kind: "membership" });
   if (person.role === "guest" && result.level !== "none")
     return {

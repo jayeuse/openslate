@@ -158,6 +158,7 @@ export function createMemorySeed(
     capability_locks: [],
     dm_rule: "everyone",
     blocks: {},
+    access_grants: {},
     messages: { [root.id]: root, [reply.id]: reply },
     threads: { [thread.id]: thread },
     revisions: {},

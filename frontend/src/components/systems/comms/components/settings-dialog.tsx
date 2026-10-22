@@ -59,6 +59,7 @@ import {
 } from "./settings-fields";
 import { PermissionFields, PermissionInspector } from "./permission-inspector";
 import { AccessSummary } from "./channel-scope";
+import { AccessGrantsEditor } from "./access-grants";
 import {
   ConfirmActionDialog,
   type ConfirmActionRequest,
@@ -278,6 +279,27 @@ function LoadedCommsSettingsDialog({
     target.kind === "channel"
       ? channels.find((item) => item.id === target.id)
       : undefined;
+  const category =
+    target.kind === "category"
+      ? categories.find((item) => item.id === target.id)
+      : undefined;
+  // D45: only department channels and department categories take grants.
+  const accessTarget =
+    channel?.scope === "department" && channel.departmentId
+      ? {
+          kind: "channel" as const,
+          departmentId: channel.departmentId,
+          categoryName: categories.find(
+            (item) => item.id === channel.categoryId,
+          )?.name,
+        }
+      : category?.departmentId
+        ? {
+            kind: "category" as const,
+            departmentId: category.departmentId,
+            categoryName: undefined,
+          }
+        : null;
   const resolved =
     target.kind === "category"
       ? (config.resolved[`category:${target.id}`] ??
@@ -872,7 +894,7 @@ function LoadedCommsSettingsDialog({
                 <AccessSummary
                   scope={target.kind}
                   channel={channel}
-                  category={categories.find((item) => item.id === target.id)}
+                  category={category}
                   onNavigate={(event) => {
                     if (dirty) {
                       event.preventDefault();
@@ -883,6 +905,18 @@ function LoadedCommsSettingsDialog({
                   }}
                 />
               )}
+              {!search &&
+                !personal &&
+                section === "permissions" &&
+                !unsavedChannel &&
+                accessTarget && (
+                  // Organization channels already admit everyone (D45).
+                  <AccessGrantsEditor
+                    target={{ kind: accessTarget.kind, id: target.id }}
+                    departmentId={accessTarget.departmentId}
+                    categoryName={accessTarget.categoryName}
+                  />
+                )}
               {!personal && (section === "permissions" || search) && (
                 <Action className="self-start" onClick={() => setInspect(true)}>
                   Check one person

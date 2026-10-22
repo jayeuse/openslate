@@ -100,6 +100,22 @@ COMMS_ROUTES = frozenset(
         ("GET", "/api/comms/conversations/{conversation_id}/capabilities"),
         ("GET", "/api/comms/conversations/{conversation_id}/capabilities/{user_id}"),
         ("GET", "/api/comms/capabilities/channel-creation"),
+        # D45: the UI fixes the {subject} path parameter, so each subject is listed.
+        *(
+            (method, target + suffix)
+            for target in (
+                "/api/comms/conversations/{conversation_id}",
+                "/api/comms/categories/{category_id}",
+            )
+            for method, suffix in (
+                ("GET", "/access-grants"),
+                ("GET", "/access-candidates"),
+                ("PUT", "/access-grants/group/{subject_id}"),
+                ("PUT", "/access-grants/user/{subject_id}"),
+                ("DELETE", "/access-grants/group/{subject_id}"),
+                ("DELETE", "/access-grants/user/{subject_id}"),
+            )
+        ),
         *(
             (method, "/api/comms/settings/" + scope + suffix)
             for scope in ("workspace", "category/{category_id}", "channel/{conversation_id}")

@@ -10,6 +10,7 @@ import type {
 } from "./presence-contract";
 import * as messages from "./message-api";
 import * as structure from "./structure-api";
+import * as accessGrants from "./access-grants-api";
 import * as preferences from "./preferences-api";
 import * as settings from "./settings-api";
 import * as threads from "./threads-api";
@@ -191,6 +192,10 @@ export function createReadyHttpCommsClient(
     setMemberRole: bind(structure.setMemberRole, 3),
     removeMember: bind(structure.removeMember, 2),
     duplicateChannel: bind(structure.duplicateChannel, 2),
+    listAccessGrants: bind(accessGrants.listAccessGrants, 1),
+    setAccessGrant: bind(accessGrants.setAccessGrant, 4),
+    removeAccessGrant: bind(accessGrants.removeAccessGrant, 3),
+    listAccessCandidates: bind(accessGrants.listAccessCandidates, 2),
     listDirectBlocks: bind(structure.listDirectBlocks, 1),
     blockDirect: bind(structure.blockDirect, 1),
     unblockDirect: bind(structure.unblockDirect, 1),

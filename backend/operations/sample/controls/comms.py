@@ -127,6 +127,10 @@ def execute_comms_control(
         from operations.sample.controls.comms_candidates import execute_candidate_control
 
         return execute_candidate_control(action, dataset, context, on_substep=on_substep)
+    if action.values.get("operation") == "access_grants_roundtrip":
+        from operations.sample.controls.comms_access_grants import execute_access_grant_control
+
+        return execute_access_grant_control(action, dataset, context, on_substep=on_substep)
     if action.values.get("operation") in ("jobs_roundtrip", "partner_jobs_roundtrip"):
         from operations.sample.controls.comms_jobs import execute_comms_job_control
 

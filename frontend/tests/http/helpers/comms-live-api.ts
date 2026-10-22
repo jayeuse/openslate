@@ -460,6 +460,62 @@ export async function installCommsLiveApi(
         if (tool)
           return reply(tool.json, tool.status, tool.etag, tool.location);
         if (path === "/bootstrap") return reply(await client.bootstrap());
+        // D45 grants and their candidate search, on a channel or a category.
+        const access = path.match(
+          /^\/(conversations|categories)\/([^/]+)\/access-(grants|candidates)(?:\/(group|user)\/([^/]+))?$/,
+        );
+        if (access) {
+          const [, collection, targetId, resource, subject, subjectId] =
+            access as unknown as [
+              string,
+              string,
+              string,
+              string,
+              "group" | "user" | undefined,
+              string,
+            ];
+          const target = {
+            kind: collection === "conversations" ? "channel" : "category",
+            id: targetId,
+          } as const;
+          if (resource === "candidates") {
+            const kind = url.searchParams.get("kind");
+            return reply(
+              await client.listAccessCandidates(target, {
+                q: url.searchParams.get("q") ?? "",
+                limit: Number(url.searchParams.get("limit") ?? 20),
+                ...(kind === "user" || kind === "group" ? { kind } : {}),
+              }),
+            );
+          }
+          if (!subject) return version(client.listAccessGrants(target));
+          if (method === "DELETE") {
+            await client.removeAccessGrant(
+              target,
+              subject,
+              subjectId,
+              condition,
+            );
+            return reply(null, 204);
+          }
+          const existed = Object.hasOwn(
+            memory.exportSnapshot().state.access_grants,
+            `${target.kind}:${targetId}:${subject}:${subjectId}`,
+          );
+          const result = await client.setAccessGrant(
+            target,
+            subject,
+            subjectId,
+            body(),
+            condition,
+          );
+          return reply(
+            result.data,
+            existed ? 200 : 201,
+            result.etag,
+            existed ? undefined : `/api/comms${path}`,
+          );
+        }
         if (path === "/conversations" && method === "GET")
           return reply(
             await client.listConversations(

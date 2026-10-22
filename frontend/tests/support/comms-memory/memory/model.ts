@@ -40,6 +40,24 @@ export interface MemoryRecord {
   title: string;
   fields: Extract<C.RecordReference, { state: "available" }>["fields"];
 }
+/**
+ * D45: a grant on a channel or a category, keyed by `accessGrantKey`. It only
+ * adds read or post; a category grant reaches the channels currently in it.
+ */
+export interface MemoryAccessGrant {
+  org_id: string;
+  target: C.AccessGrantTarget;
+  subject: C.AccessGrantSubject;
+  subject_id: string;
+  level: C.AccessGrantLevel;
+  created_at: string;
+  updated_at: string;
+}
+export const accessGrantKey = (
+  target: C.AccessGrantTarget,
+  subject: C.AccessGrantSubject,
+  subjectId: string,
+) => `${target.kind}:${target.id}:${subject}:${subjectId}`;
 /** Validated internal state, not a schema for accepting browser snapshots. */
 export interface MemoryPolicyWorld {
   org_id: string;
@@ -57,6 +75,7 @@ export interface MemoryPolicyWorld {
   capability_locks: C.CapabilityLocks["capabilities"];
   dm_rule: C.DirectPolicy["dm_rule"];
   blocks: Record<string, C.DirectBlock[]>;
+  access_grants: Record<string, MemoryAccessGrant>;
 }
 
 /** Private canonical content. Deleted content is never a read projection. */

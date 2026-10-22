@@ -5,7 +5,7 @@ import type {
   Settings,
   SettingsScope,
 } from "@/components/systems/comms/contract/types";
-import type { MemoryCommsState } from "./model";
+import { accessGrantKey, type MemoryCommsState } from "./model";
 import { scopeKey } from "../domain/policy-scope";
 import type { MemoryRestoration } from "./store-types";
 import { memorySnapshotSchema, memoryStateSchema } from "./snapshot-schema";
@@ -111,6 +111,15 @@ function validateRelationships(state: MemoryCommsState) {
     settingsReferences(configuration.settings);
     for (const grant of configuration.capabilities.group_grants)
       ensure(state.groups[grant.group_id]);
+  }
+  for (const [key, grant] of Object.entries(state.access_grants)) {
+    ensure(
+      grant.org_id === state.org_id &&
+        key === accessGrantKey(grant.target, grant.subject, grant.subject_id),
+    );
+    scope(grant.target);
+    if (grant.subject === "user") person(grant.subject_id);
+    else ensure(state.groups[grant.subject_id]);
   }
   for (const [key, retention] of Object.entries(state.retention)) {
     scope(retention.scope);

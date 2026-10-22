@@ -517,6 +517,43 @@ export const memberSchema = z.strictObject({
   joined_at: dateTime,
   departments: z.array(z.strictObject({ id: uuid, name: z.string() })),
 });
+/** D45: who also reads a department channel, granted on the channel or its category. */
+export const accessGrantTargetSchema = z.strictObject({
+  kind: z.enum(["channel", "category"]),
+  id: uuid,
+});
+export const accessGrantSubjectSchema = z.enum(["group", "user"]);
+export const accessGrantLevelSchema = z.enum(["read", "post"]);
+export const accessGrantSchema = z.strictObject({
+  subject: accessGrantSubjectSchema,
+  subject_id: uuid,
+  display_name: z.string(),
+  level: accessGrantLevelSchema,
+  source: z.enum(["channel", "category"]),
+  created_at: dateTime,
+  updated_at: dateTime,
+});
+export const accessGrantListSchema = z.strictObject({
+  items: z.array(accessGrantSchema),
+});
+export const accessGrantRequestSchema = z.strictObject({
+  level: accessGrantLevelSchema,
+});
+export const accessCandidatesRequestSchema = z.strictObject({
+  q: z.string().trim().min(1).max(100),
+  limit: z.number().int().min(1).max(20).default(20),
+  kind: z.enum(["user", "group"]).optional(),
+});
+export const accessCandidatesSchema = z.strictObject({
+  people: z.array(
+    z.strictObject({
+      user_id: uuid,
+      display_name: z.string(),
+      departments: z.array(z.strictObject({ id: uuid, name: z.string() })),
+    }),
+  ),
+  groups: z.array(z.strictObject({ id: uuid, name: z.string() })),
+});
 export const presenceSchema = z.strictObject({
   user_id: uuid,
   state: z.enum(["online", "away", "offline"]),
@@ -762,6 +799,8 @@ export const conversationAccessSourceSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("organization") }),
   z.strictObject({ kind: z.literal("department"), department_id: uuid }),
   z.strictObject({ kind: z.literal("membership") }),
+  // D45: a channel or category grant gives more than the department role.
+  z.strictObject({ kind: z.literal("grant") }),
   z.strictObject({ kind: z.literal("manager"), reason: managerSourceSchema }),
   z.strictObject({ kind: z.literal("admin") }),
   z.strictObject({ kind: z.literal("guest_cap") }),

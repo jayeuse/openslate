@@ -149,6 +149,18 @@ export type MemberListRequest = z.input<typeof schema.memberListRequestSchema>;
 export type HistoryRequest = z.input<typeof schema.historyRequestSchema>;
 export type SearchRequest = z.input<typeof schema.searchRequestSchema>;
 
+export type AccessGrantTarget = z.output<typeof schema.accessGrantTargetSchema>;
+export type AccessGrantSubject = z.output<
+  typeof schema.accessGrantSubjectSchema
+>;
+export type AccessGrantLevel = z.output<typeof schema.accessGrantLevelSchema>;
+export type AccessGrant = z.output<typeof schema.accessGrantSchema>;
+export type AccessGrantList = z.output<typeof schema.accessGrantListSchema>;
+export type AccessCandidatesRequest = z.input<
+  typeof schema.accessCandidatesRequestSchema
+>;
+export type AccessCandidates = z.output<typeof schema.accessCandidatesSchema>;
+
 export type Page<T> = {
   items: T[];
   pagination: {

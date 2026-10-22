@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createActivityRead } from "./memory/activity";
+import { createAccessGrantOperations } from "./memory/access-grants";
 import { createDirectCandidateRead } from "./memory/direct-candidates";
 import type { CommsClient } from "@/components/systems/comms/contract/client";
 import * as S from "@/components/systems/comms/contract/schemas";
@@ -45,6 +46,7 @@ export function createMemoryCommsClient(
   const client: CommsClient = {
     ...createActivityRead(binding),
     ...createDirectCandidateRead(binding),
+    ...createAccessGrantOperations(binding),
     ...createConversationOperations(binding),
     ...createConfigurationOperations(binding),
     ...createMessageFamily(binding, dependencies),
@@ -127,6 +129,11 @@ export interface MemoryCommsRuntime {
     setTokenExpired(expired: boolean): void;
     pumpDue(options?: C.RequestOptions): Promise<void>;
     expireTransient(options?: C.RequestOptions): Promise<void>;
+    /**
+     * A client acting as another active person of the same world, so a test
+     * can change what the browser's owner sees (for example a manager's grant).
+     */
+    clientFor(userId: string): CommsClient;
   };
 }
 
@@ -302,6 +309,19 @@ export function createMemoryCommsRuntime(
         },
         expireTransient(request?: C.RequestOptions) {
           return operational.expireTransient(request);
+        },
+        clientFor(userId: string) {
+          assertOpen();
+          const handle = store.bind({ org_id: owner.org_id, user_id: userId });
+          const dependencies = operational.sendDependenciesFor(handle);
+          return createMemoryCommsClient({
+            binding: Object.freeze({
+              handle,
+              authority: dependencies.authority,
+            }),
+            operational,
+            protectedTools,
+          });
         },
       }),
     });

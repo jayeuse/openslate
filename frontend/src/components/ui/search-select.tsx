@@ -4,8 +4,11 @@ import { useId } from "react";
 
 import {
   Combobox,
+  ComboboxCollection,
   ComboboxContent,
   ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxGroupLabel,
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
@@ -19,6 +22,8 @@ export interface SearchSelectOption {
   label: string;
   description?: string;
   disabled?: boolean;
+  /** A heading the option is listed under; options keep their given order. */
+  group?: string;
 }
 
 export interface SearchSelectProps {
@@ -82,12 +87,42 @@ export function SearchSelect({
   if (selectedOption && !optionByValue.has(selectedOption.value))
     optionByValue.set(selectedOption.value, selectedOption);
   const selected = optionByValue.get(value);
+  const grouped = options.some((option) => option.group !== undefined);
+  const groups: { value: string; items: string[] }[] = [];
+  if (grouped)
+    for (const option of options) {
+      const name = option.group ?? "";
+      const group = groups.find((row) => row.value === name);
+      if (group) group.items.push(option.value);
+      else groups.push({ value: name, items: [option.value] });
+    }
+  const item = (value: string) => {
+    const option = optionByValue.get(value);
+    if (!option) return null;
+    return (
+      <ComboboxItem
+        key={option.value}
+        value={option.value}
+        disabled={option.disabled}
+        className="min-h-11"
+      >
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="break-words">{option.label}</span>
+          {option.description && (
+            <span className="text-muted-foreground text-xs">
+              {option.description}
+            </span>
+          )}
+        </span>
+      </ComboboxItem>
+    );
+  };
 
   return (
     <Field invalid={Boolean(validationError)}>
       <FieldLabel htmlFor={controlId}>{label}</FieldLabel>
       <Combobox
-        items={[...optionByValue.keys()]}
+        items={grouped ? groups : [...optionByValue.keys()]}
         {...(onSearchChange
           ? {
               inputValue: search ?? "",
@@ -135,28 +170,16 @@ export function SearchSelect({
             className="min-h-11"
           />
           <ComboboxList>
-            {(item: string) => {
-              const option = optionByValue.get(item);
-              if (!option) return null;
-
-              return (
-                <ComboboxItem
-                  key={option.value}
-                  value={option.value}
-                  disabled={option.disabled}
-                  className="min-h-11"
-                >
-                  <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="break-words">{option.label}</span>
-                    {option.description && (
-                      <span className="text-muted-foreground text-xs">
-                        {option.description}
-                      </span>
-                    )}
-                  </span>
-                </ComboboxItem>
-              );
-            }}
+            {grouped
+              ? (group: { value: string; items: string[] }) => (
+                  <ComboboxGroup key={group.value} items={group.items}>
+                    <ComboboxGroupLabel>{group.value}</ComboboxGroupLabel>
+                    <ComboboxCollection>
+                      {(value: string) => item(value)}
+                    </ComboboxCollection>
+                  </ComboboxGroup>
+                )
+              : (value: string) => item(value)}
           </ComboboxList>
           {loading ? (
             <p role="status" className="text-muted-foreground p-3 text-sm">

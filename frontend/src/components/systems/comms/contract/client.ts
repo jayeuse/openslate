@@ -110,6 +110,33 @@ export interface CommsClient {
     request: C.DuplicateChannelRequest,
     options: C.ConditionalOptions,
   ): Promise<C.Versioned<C.Channel>>;
+  /**
+   * D45 grants of a channel (its own, then its category's, read-only there)
+   * or of a category. Needs manage on the target; the ETag is the target's.
+   */
+  listAccessGrants(
+    target: C.AccessGrantTarget,
+    options?: C.RequestOptions,
+  ): Promise<C.Versioned<C.AccessGrantList>>;
+  setAccessGrant(
+    target: C.AccessGrantTarget,
+    subject: C.AccessGrantSubject,
+    subjectId: string,
+    request: { level: C.AccessGrantLevel },
+    options: C.ConditionalOptions,
+  ): Promise<C.Versioned<C.AccessGrant>>;
+  removeAccessGrant(
+    target: C.AccessGrantTarget,
+    subject: C.AccessGrantSubject,
+    subjectId: string,
+    options: C.ConditionalOptions,
+  ): Promise<void>;
+  /** Active organization members (name and departments only) and groups. */
+  listAccessCandidates(
+    target: C.AccessGrantTarget,
+    request: C.AccessCandidatesRequest,
+    options?: C.RequestOptions,
+  ): Promise<C.AccessCandidates>;
   listDirectBlocks(
     request?: C.TimeListRequest,
     options?: C.RequestOptions,

@@ -121,7 +121,7 @@ These commits were correct for the earlier model. The removal in slice 2 deletes
 
 ## Addendum: access grants for other departments (D45)
 
-Status: proposed. Owner decision on 2026-10-22, after D44 removed group-shared channels.
+Status: implemented in 5b388e1d (backend) and the following frontend commit. Owner decision on 2026-10-22, after D44 removed group-shared channels.
 
 ### Outcome
 
@@ -129,7 +129,7 @@ A channel still belongs to its organization or to one department. A channel mana
 
 Owner words: "if inventory member has granted access to read and send messages in a finance channel, they can do that." Owner choices: grants go to Access groups and to individual people. No channel has more than one owning department.
 
-### Acceptance criteria (proposed)
+### Acceptance criteria
 
 | ID | Start state | Action | Expected result |
 |---|---|---|---|
@@ -142,7 +142,7 @@ Owner words: "if inventory member has granted access to read and send messages i
 | G8 | A category grant to an Inventory group | Open any channel in that category; move one channel out | Every channel in the category is readable at the granted level; the moved channel loses the category grant. |
 | G7 | A channel manager | Search for a person to grant | The search finds active members of the organization by name and shows name and departments only. People outside the organization are never found. |
 
-### Design (proposed)
+### Design
 
 1. One table of access grants: organization, target (a channel or a category), subject (group or person), level (read or post). One row per subject per target. A category grant applies to every channel in that category, and a channel can add more grants (owner, 2026-10-22, like Discord category sync). Grants only add access; there are no deny grants (owner, 2026-10-22). Direct and group messages cannot have grants.
 2. `access.py`: a channel's level is the higher of its scope level and the best grant level for the person from the channel's grants and its category's grants (through their groups or their own row), capped at post; the guest cap and the admin rule stay. Moving a channel to another category changes which category grants apply. D43 is unchanged.
@@ -151,6 +151,25 @@ Owner words: "if inventory member has granted access to read and send messages i
 5. Channel settings → Access: the read-only department summary stays, and a list "Also has access" shows each grant with its level and a remove action; "Give access" opens a search over groups and people with a level choice. Layout from ui-ux-pro-max; visual choices from impeccable (owner instruction).
 6. Migration: create the table. Channels soft-deleted by `168d66144b73` stay deleted (development data only; no installations in use).
 
+### Changes from the design
+
+The implementation differs from the design above in these points:
+
+1. The candidate search returns two lists, `people` and `groups`. The `limit` applies to each list.
+2. The search shows a person's display name. If a person has no display name, it shows the username.
+3. The grant list of a channel also shows the grants of its category, with source `category`. These rows are read-only on the channel. Change them on the category.
+4. Grants are only on department channels. A grant on an organization channel is refused (422), because every member already posts there.
+5. Removing a grant deletes the row. No removed grant stays in the table.
+6. Duplicating a channel does not copy its grants.
+7. A channel or a category has no limit on its number of grants.
+8. The capability check names a grant as the source of access: `access_source` is `{"kind": "grant"}`.
+9. In the editor, a person row shows "Person". The grant list does not include departments.
+
 ### Security note (SEC-R6)
 
-This widens channel access by explicit grants that only channel managers can create; the reason is the owner decision above. The person search tells a channel manager the names and departments of organization members; it needs `manageChannel` and returns no contact data.
+This widens channel access by explicit grants; the reason is the owner decision above. Only these people can create or remove grants:
+
+- On a channel: a person with `manageChannel` on that channel. `manageChannel` already needs read access to the channel.
+- On a category: an admin, or a manager of the category's department. A `manageChannel` capability grant on the category is not sufficient (parent decision, 2026-10-22). Such a holder can read the category's grants but cannot change them. This prevents a self-grant to every channel in the category.
+
+Grants on organization channels are refused (422). The person search tells a manager the names and departments of organization members. It needs management of the target and returns no contact data.

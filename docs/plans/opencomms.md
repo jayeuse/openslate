@@ -296,6 +296,7 @@ One Alembic revision per slice that changes the schema, in this order after `226
 | `e17b63a36a2f` | S24 | Templates and admissions |
 | `e03383c56cde` | S25 | Bounded link previews |
 | `168d66144b73` | D44 | Drops `comms_admissions` and `comms_conversation_groups`; allows only `organization` and `department` scopes on live channels; removes the `join_rule` and `default_member_ids` settings and locks; keeps only creator and `manager` member rows on channels. Downgrade restores the schema only, not the data. |
+| `5a5ccb851c11` | D45 | Adds `comms_channel_access`: read or post grants to an Access group or a person on a channel or a category. Downgrade refuses while grants exist. |
 
 ## 9. After OpenComms
 

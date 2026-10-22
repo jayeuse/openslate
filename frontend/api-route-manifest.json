@@ -1428,6 +1428,78 @@
     "path": "/api/comms/conversations/{param}"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "listAccessCandidates",
+    "method": "GET",
+    "path": "/api/comms/categories/{param}/access-candidates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "listAccessCandidates",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/access-candidates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "listAccessGrants",
+    "method": "GET",
+    "path": "/api/comms/categories/{param}/access-grants"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "listAccessGrants",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/access-grants"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "removeAccessGrant",
+    "method": "DELETE",
+    "path": "/api/comms/categories/{param}/access-grants/group/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "removeAccessGrant",
+    "method": "DELETE",
+    "path": "/api/comms/categories/{param}/access-grants/user/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "removeAccessGrant",
+    "method": "DELETE",
+    "path": "/api/comms/conversations/{param}/access-grants/group/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "removeAccessGrant",
+    "method": "DELETE",
+    "path": "/api/comms/conversations/{param}/access-grants/user/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "setAccessGrant",
+    "method": "PUT",
+    "path": "/api/comms/categories/{param}/access-grants/group/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "setAccessGrant",
+    "method": "PUT",
+    "path": "/api/comms/categories/{param}/access-grants/user/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "setAccessGrant",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/access-grants/group/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "setAccessGrant",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/access-grants/user/{param}"
+  },
+  {
     "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
     "function": "downloadManageAuditCsv",
     "method": "GET",

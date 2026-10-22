@@ -107,6 +107,18 @@ export const memoryStateSchema = z.strictObject({
   capability_locks: S.capabilityLocksSchema.shape.capabilities,
   dm_rule: S.directPolicySchema.shape.dm_rule,
   blocks: z.record(uuid, z.array(S.directBlockSchema)),
+  access_grants: z.record(
+    z.string(),
+    z.strictObject({
+      org_id: uuid,
+      target: S.accessGrantTargetSchema,
+      subject: S.accessGrantSubjectSchema,
+      subject_id: uuid,
+      level: S.accessGrantLevelSchema,
+      created_at: z.iso.datetime({ offset: true }),
+      updated_at: z.iso.datetime({ offset: true }),
+    }),
+  ),
   messages: z.record(uuid, message),
   threads: z.record(uuid, thread),
   revisions: z.record(uuid, z.array(S.messageRevisionSchema)),
