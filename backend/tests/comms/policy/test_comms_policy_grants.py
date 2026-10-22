@@ -159,3 +159,14 @@ def test_category_grants_follow_the_channels_current_category(policy_case):
 def test_grant_rows_never_emit_a_generic_invalidation():
     # A generic event would announce grant changes to every signed-in person.
     assert event_for_entity("comms_channel_access", uuid7()) is None
+
+
+def test_a_roster_manager_who_reads_only_by_grant_keeps_manage(policy_case):
+    # Spec deviation 7: a manager row counts while its holder reads by role or grant.
+    c, db = policy_case, policy_case.db
+    channel = c.conversation(scope="department", department=c.department, creator=c.peer)
+    outsider = c.person("Inventory manager")
+    grant(c, channel, "post", person=outsider)
+    c.member(channel, outsider, role="manager")
+    assert_views(db, outsider, [channel], {channel.id: "manage"})
+    assert capability_check(db, outsider, channel.id)["manager_source"] == "membership_manager"

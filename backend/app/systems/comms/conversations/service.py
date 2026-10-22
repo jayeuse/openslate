@@ -67,6 +67,8 @@ def require_creation(
     *,
     channel: bool = True,
 ) -> None:
+    if category_id is not None:
+        require_visible_category(db, user, category_id)
     scope = creation_scope(category_id)
     check = channel_creation_check(db, user, scope, department_id, channel=channel)
     if not check["decision"]["allowed"]:

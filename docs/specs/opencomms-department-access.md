@@ -96,7 +96,7 @@ These differences between the proposal above and the implemented code are intend
 4. **Retired channels keep their old scope.** The CHECK constraint accepts the old `groups` or `members` scope on a channel only while it is soft-deleted.
 5. **A `createChannel` grant creates only department channels** (owner, 2026-10-22). The grant applies only in a department where the holder has a department role of read or higher. Module rows do not count. A grant never creates an organization channel. Category creation keeps the unrestricted grant. See `CapabilityInputs.grant_department` in `comms/capabilities.py`.
 6. **A category rebind is refused while it holds other channels.** Changing a category's `department_id` returns 422 `comms_invalid` while a live channel in it has a different department. An organization channel counts as no department. Move those channels out first.
-7. **The per-channel manager role stays** (owner, 2026-10-22). A manager must be a current reader of the channel, and a guest cannot be a manager. A removed manager stays a reader by scope and department roles.
+7. **The per-channel manager role stays** (owner, 2026-10-22). A manager must be a current reader of the channel, and a guest cannot be a manager. A removed manager stays a reader by scope and department roles. A manager row counts only while the person can read the channel by department role or grant.
 8. **Member entries carry a level.** `MemberResponse.level` gives each person's current level (`read`, `post` or `manage`). On a channel, `member_role` is `manager` exactly at level `manage`.
 
 ## Security note (SEC-R6)

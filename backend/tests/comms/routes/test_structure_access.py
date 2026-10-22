@@ -12,6 +12,7 @@ from app.systems.comms.conversations.models import (
     CommsCategory,
     CommsChannelAccess,
     CommsConversation,
+    CommsMember,
 )
 from app.systems.comms.settings.models import CommsCapabilityGrant, CommsSettingLock
 from app.systems.sandbox.departments.models import Department
@@ -410,6 +411,32 @@ def test_department_bound_categories_reach_only_people_who_can_see_into_them(str
     assert {status for status, _ in missing} == {404}
     assert [(row.status_code, row.json()) for row in calls(outsider, ids["bound"])] == missing
     assert [row.status_code for row in calls(viewer, ids["bound"])] == [200, 403, 403, 403]
+
+    # A hidden category named in a write body answers like a missing one too: creating,
+    # duplicating into, or moving into it, here by the manager of an organization channel.
+    with case.world.session(org) as db:
+        db.scalars(
+            select(CommsMember).where(
+                CommsMember.conversation_id == org.conversation, CommsMember.user_id == org.peer
+            )
+        ).one().role = "manager"
+        db.commit()
+    room = f"{ROOT}/conversations/{org.conversation}"
+
+    def named(identity):
+        tag = {"If-Match": _tag(outsider.get(room))}
+        return [
+            outsider.post(ROOT + "/conversations", json=_channel("Hidden", identity)),
+            outsider.post(
+                room + "/duplicates", json={"name": "Copy", "category_id": str(identity)},
+                headers=tag,
+            ),
+            outsider.patch(room, json={"category_id": str(identity)}, headers=tag),
+        ]
+
+    missing = [(row.status_code, row.json()) for row in named(uuid4())]
+    assert {status for status, _ in missing} == {404}
+    assert [(row.status_code, row.json()) for row in named(ids["bound"])] == missing
 
     def change(*rows, remove=()):
         with case.world.session(org) as db:

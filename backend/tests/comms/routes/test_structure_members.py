@@ -298,6 +298,8 @@ def test_channel_members_are_its_readers_with_level_role_paging_and_search(
             CommsMember.conversation_id == org.other_conversation,
             CommsMember.user_id == org.peer,
         )).one().role = "manager"
+        # Bravo now writes by department role: a manager row counts only for a current reader.
+        db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
         db.get(GroupAccess, reader_access_id).level = "manage"
         db.commit()
     # A manager row and department manage both make a manager.

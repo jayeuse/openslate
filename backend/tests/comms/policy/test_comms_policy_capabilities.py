@@ -39,6 +39,9 @@ def test_manager_sources_are_distinct_and_immutable_without_org_promotion(policy
         c.member(channel, c.actor)
     if source == "membership_manager":
         c.member(channel, c.actor, role="manager")
+    if source != "department_manager":
+        # A manager row counts only for a current reader (spec deviation 7).
+        make_group_access(db, [c.actor], c.department, level="read")
     if source == "department_manager":
         make_group_access(db, [c.actor], c.department, level="manage")
     for capability in ("react", "reply", "createThread", "attachFiles", "linkRecords"):
@@ -66,6 +69,7 @@ def test_guest_cap_and_admin_eligibility_precede_manager_and_grant_shortcuts(pol
     channel = c.conversation()
     guest = c.person("Guest manager", role="guest")
     c.member(channel, guest, role="manager")
+    make_group_access(db, [guest], c.department, level="read")  # Still a current reader.
     group = c.group(guest)
     c.grant({"kind": "channel", "id": channel.id}, "manageChannel", group=group)
     check = capability_check(db, guest, channel.id)

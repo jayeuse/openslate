@@ -84,13 +84,6 @@ def _conversation_access_statement(
             User.id.expression, Membership.role.expression, c.department_id.expression, minimum,
         )
 
-    manages_department = department_level(AccessLevel.MANAGE)
-    manager = case(
-        (and_(c.created_by == User.id, membership_role.is_not(None)), "creator"),
-        (membership_role == "manager", "membership_manager"),
-        (manages_department, "department_manager"),
-        else_=None,
-    )
     department_rank = case(
         (department_level(AccessLevel.WRITE), 2),
         (department_level(AccessLevel.READ), 1),
@@ -131,6 +124,20 @@ def _conversation_access_statement(
         .correlate(c, User)
         .scalar_subquery(),
         0,
+    )
+    # Spec deviation 7: on a department channel a creator or roster manager row counts only
+    # while the person still reads the channel by department role or D45 grant.
+    current_reader = or_(
+        c.scope != "department", department_level(AccessLevel.READ), granted > 0,
+    )
+    manager = case(
+        (
+            and_(membership_role.is_not(None), c.created_by == User.id, current_reader),
+            "creator",
+        ),
+        (and_(membership_role == "manager", current_reader), "membership_manager"),
+        (department_level(AccessLevel.MANAGE), "department_manager"),
+        else_=None,
     )
     ordinary = case(
         (c.scope == "organization", 2),

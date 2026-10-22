@@ -151,6 +151,8 @@ def update_channel(
     with service.transaction(db):
         row = service.manage_conversation(db, actor, conversation_id)
         service.match(db, row, if_match)
+        if payload.category_id is not None:
+            service.require_visible_category(db, actor, payload.category_id)
         mutations.update_channel(db, row, payload)
         mutations.retain_read(db, actor, row)
         revoke_stale(db)

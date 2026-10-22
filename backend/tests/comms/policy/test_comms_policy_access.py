@@ -106,6 +106,7 @@ def test_guest_and_ineligible_admin_caps_agree_in_all_access_forms(policy_case):
     private = c.conversation()
     guest = c.person("Guest manager", role="guest")
     c.member(private, guest, role="manager")
+    make_group_access(db, [guest], c.department, level="read")  # Still a current reader.
     assert_views(db, guest, [organization, private], {organization.id: "read", private.id: "read"})
     membership_of(db, guest.id).expires_at = datetime(2000, 1, 1, tzinfo=UTC)
     db.flush()
@@ -162,12 +163,15 @@ def test_creator_management_ends_with_membership_without_erasing_other_access(po
     c, db = policy_case, policy_case.db
     channel = c.conversation(scope=scope, creator=c.actor)
     member = c.member(channel, c.actor)
+    if scope == "department":
+        # A creator row counts only for a current reader (spec deviation 7).
+        make_group_access(db, [c.actor], c.department, level="read")
     assert_views(db, c.actor, [channel], {channel.id: "manage"})
     assert capability_check(db, c.actor, channel.id)["manager_source"] == "creator"
     member.is_deleted = True
     member.deleted_at = datetime(2000, 1, 1, tzinfo=UTC)
     db.flush()
-    expected = "post" if scope == "organization" else "none"
+    expected = "post" if scope == "organization" else "read"
     assert_views(db, c.actor, [channel], {channel.id: expected})
     check = capability_check(db, c.actor, channel.id)
     assert check["manager_source"] is None
@@ -231,6 +235,38 @@ def test_department_roles_alone_decide_department_channels_and_revocation_is_imm
         with pytest.raises(HTTPException) as refused:
             require_conversation_access(db, c.actor, department.id, "read")
         assert refused.value.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("source", "keeps_role", "expected"),
+    [
+        ("membership_manager", False, "none"),
+        ("creator", False, "none"),
+        ("membership_manager", True, "manage"),
+    ],
+)
+def test_department_channel_manager_rows_need_a_current_department_reader(
+    policy_case, source, keeps_role, expected,
+):
+    # Spec deviation 7: a manager row counts only while its holder still reads the channel.
+    c, db = policy_case, policy_case.db
+    channel = c.conversation(
+        scope="department", department=c.department,
+        creator=c.actor if source == "creator" else c.peer,
+    )
+    c.member(channel, c.actor, role="manager" if source == "membership_manager" else "member")
+    role = make_group_access(db, [c.actor], c.department, level="read")
+    assert_views(db, c.actor, [channel], {channel.id: "manage"})
+    if not keeps_role:
+        role.is_deleted = True
+        db.flush()
+    assert_views(db, c.actor, [channel], {channel.id: expected})
+    if expected == "none":
+        with pytest.raises(HTTPException) as refused:
+            require_conversation_access(db, c.actor, channel.id, "read")
+        assert refused.value.status_code == 404
+    else:
+        assert capability_check(db, c.actor, channel.id)["manager_source"] == source
 
 
 def test_department_manager_cannot_manage_another_department_category_sibling(policy_case):
