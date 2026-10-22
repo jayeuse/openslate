@@ -189,15 +189,16 @@ def test_edits_append_revisions_without_requiring_or_comparing_if_match(
 
 
 @pytest.mark.parametrize("channel_flag", ["mentions_channel", "mentions_here"])
-def test_mentions_need_actual_members_capability_and_the_configured_limit(
+def test_mentions_need_current_readers_capability_and_the_configured_limit(
     message_routes,
     channel_flag,
 ):
     case, org = message_routes, message_routes.world.first
-    case.add_home_members(case.world.second.author)
     peer, manager = case.client(org.peer, org.id), case.client(org.author, org.id)
     path = f"{_root(org.conversation)}/messages"
     before = _stored_state(case.world)
+    # Another organization's person can never read this channel; D44 reader cases are owned by
+    # test_channel_readers_without_member_rows_are_mentionable_and_notified.
     invalid = _payload() | {"mention_user_ids": [str(case.world.second.author)]}
     assert peer.post(path, json=invalid).status_code == 422
     assert _stored_state(case.world) == before

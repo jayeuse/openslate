@@ -213,6 +213,65 @@ def test_creator_management_ends_with_membership_without_erasing_other_access(po
     assert check["capabilities"]["manageChannel"]["allowed"] is False
 
 
+@pytest.mark.parametrize(
+    ("department_level", "expected", "guest_expected"),
+    [
+        (None, "none", "none"),
+        ("read", "read", "read"),
+        ("write", "post", "read"),
+        ("manage", "manage", "read"),
+    ],
+)
+def test_department_roles_alone_decide_department_channels_and_revocation_is_immediate(
+    policy_case, department_level, expected, guest_expected,
+):
+    # SEC-R6 matrix for D44: department level -> channel level; organization channels post/read.
+    c, db = policy_case, policy_case.db
+    department = c.conversation(scope="department", department=c.department, creator=c.peer)
+    organization = c.conversation(scope="organization", creator=c.peer)
+    guest = c.person("Guest reader", role="guest")
+    grant = None
+    if department_level is not None:
+        grant = make_group_access(db, [c.actor, guest], c.department, level=department_level)
+    assert_views(
+        db, c.actor, [department, organization],
+        {department.id: expected, organization.id: "post"},
+    )
+    assert_views(
+        db, guest, [department, organization],
+        {department.id: guest_expected, organization.id: "read"},
+    )
+    assert_views(
+        db, c.admin, [department, organization],
+        {department.id: "manage", organization.id: "manage"},
+    )
+    outcomes = {
+        "none": {"read": 404, "post": 404, "manage": 404},
+        "read": {"read": 200, "post": 403, "manage": 403},
+        "post": {"read": 200, "post": 200, "manage": 403},
+        "manage": {"read": 200, "post": 200, "manage": 200},
+    }[expected]
+    for requested, status in outcomes.items():
+        if status == 200:
+            assert require_conversation_access(db, c.actor, department.id, requested).id == (
+                department.id
+            )
+            continue
+        with pytest.raises(HTTPException) as refused:
+            require_conversation_access(db, c.actor, department.id, requested)
+        assert refused.value.status_code == status
+        assert refused.value.detail["code"] == (
+            "comms_not_found" if status == 404 else f"comms_{requested}_denied"
+        )
+    if grant is not None:
+        grant.is_deleted = True
+        db.flush()
+        assert_views(db, c.actor, [department], {department.id: "none"})
+        with pytest.raises(HTTPException) as refused:
+            require_conversation_access(db, c.actor, department.id, "read")
+        assert refused.value.status_code == 404
+
+
 def test_department_manager_cannot_manage_private_category_sibling(policy_case):
     c, db = policy_case, policy_case.db
     own_department = c.conversation(

@@ -90,14 +90,20 @@ def mentions(
         raise error("comms_invalid_input", "Mention limit exceeded", 422)
     ids = set(request.mention_user_ids)
     if ids:
-        members = set(
-            db.scalars(
-                select(CommsMember.user_id).where(
-                    CommsMember.org_id == bound_organization_column(),
-                    CommsMember.conversation_id == conversation_id,
-                    CommsMember.user_id.in_(ids),
-                    CommsMember.is_deleted.is_(False),
-                    CommsMember.deleted_at.is_(None),
+        conversation = db.get(CommsConversation, conversation_id)
+        # D44: any channel reader is mentionable; direct and group messages need a member row.
+        members = (
+            ids
+            if conversation is not None and conversation.kind == "channel"
+            else set(
+                db.scalars(
+                    select(CommsMember.user_id).where(
+                        CommsMember.org_id == bound_organization_column(),
+                        CommsMember.conversation_id == conversation_id,
+                        CommsMember.user_id.in_(ids),
+                        CommsMember.is_deleted.is_(False),
+                        CommsMember.deleted_at.is_(None),
+                    )
                 )
             )
         )

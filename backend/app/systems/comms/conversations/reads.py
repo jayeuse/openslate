@@ -2,11 +2,12 @@
 
 from collections import defaultdict
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from pydantic import TypeAdapter
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.common.listing import (
@@ -21,7 +22,14 @@ from app.systems.access.policy.readers import active_account_clause
 from app.systems.access.policy.scope import department_level_reader_statement
 from app.systems.access.users.membership import bound_membership_join
 from app.systems.access.users.models import Membership, User
-from app.systems.comms.access import LEVELS, _conversation_access_statement, error
+from app.systems.comms.access import (
+    LEVELS,
+    _conversation_access_statement,
+    conversation_reader_counts,
+    conversation_reader_statement,
+    error,
+    organization_member_ids,
+)
 from app.systems.comms.conversations.models import (
     CommsCategory,
     CommsConversation,
@@ -88,6 +96,7 @@ def conversations(db: Session, user: User, rows: Sequence[CommsConversation]) ->
     ):
         people[row.conversation_id][row.user_id] = row.role
     grants = grants_for(db, ids)
+    readers = conversation_reader_counts(db, [row.id for row in rows if row.kind == "channel"])
     levels = {
         row.conversation_id: LEVELS[row.level]
         for row in db.execute(
@@ -104,6 +113,7 @@ def conversations(db: Session, user: User, rows: Sequence[CommsConversation]) ->
                 levels[row.id],
                 people[row.id],
                 grants[row.id],
+                readers.get(row.id, 0),
             )
         )
         for row in rows
@@ -236,6 +246,15 @@ def member_rows(db: Session, rows: Sequence[CommsMember]) -> list[MemberResponse
             ).where(User.id.in_(ids))
         )
     }
+    return _member_responses(
+        db, [(row.user_id, names[row.user_id], row.role, row.joined_at) for row in rows]
+    )
+
+
+def _member_responses(
+    db: Session, entries: Sequence[tuple[UUID, str, str, datetime]]
+) -> list[MemberResponse]:
+    ids = [entry[0] for entry in entries]
     departments: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
     d = aliased(Department)
     readers = department_level_reader_statement(
@@ -263,20 +282,23 @@ def member_rows(db: Session, rows: Sequence[CommsMember]) -> list[MemberResponse
     return [
         MemberResponse.model_validate(
             {
-                "user_id": row.user_id,
-                "display_name": names[row.user_id],
-                "member_role": row.role,
-                "joined_at": row.joined_at,
-                "departments": departments[row.user_id],
+                "user_id": person,
+                "display_name": name,
+                "member_role": role,
+                "joined_at": joined_at,
+                "departments": departments[person],
             }
         )
-        for row in rows
+        for person, name, role, joined_at in entries
     ]
 
 
 def member_page(
     db: Session, identity: UUID, query: MemberQuery
 ) -> StandardListResponse[MemberResponse]:
+    conversation = db.get(CommsConversation, identity)
+    if conversation is not None and conversation.kind == "channel":
+        return _reader_page(db, conversation, query)
     m = CommsMember
     name = func.coalesce(func.nullif(User.display_name, ""), User.username)
     result = execute_standard_list(
@@ -303,6 +325,59 @@ def member_page(
         ),
     )
     return StandardListResponse(items=member_rows(db, result.items), pagination=result.pagination)
+
+
+def _reader_page(
+    db: Session, conversation: CommsConversation, query: MemberQuery
+) -> StandardListResponse[MemberResponse]:
+    """D44: a channel lists its readers; a member row only adds a role and its join time."""
+    name = func.coalesce(func.nullif(User.display_name, ""), User.username)
+    readers = conversation_reader_statement(
+        select(CommsConversation.id).where(CommsConversation.id == conversation.id),
+        organization_member_ids(db),
+    )
+    result = execute_standard_list(
+        db,
+        select(User)
+        .join(Membership, bound_membership_join())
+        .where(User.id.in_(readers), active_account_clause()),
+        StandardListRequest[MemberSort](**query.model_dump()),
+        ListQuerySpec(
+            sort_fields={MemberSort.NAME: name},
+            default_sort=MemberSort.NAME,
+            tie_breaker=User.id.expression,
+            search_fields=(name,),
+        ),
+    )
+    member = and_(
+        CommsMember.org_id == Membership.org_id,
+        CommsMember.conversation_id == conversation.id,
+        CommsMember.user_id == Membership.user_id,
+        CommsMember.is_deleted.is_(False),
+        CommsMember.deleted_at.is_(None),
+    )
+    joined: dict[UUID, tuple[str, datetime]] = {
+        person: (role or "member", joined_at or max(created, conversation.created_at))
+        for person, created, role, joined_at in db.execute(
+            select(
+                Membership.user_id,
+                Membership.created_at,
+                CommsMember.role,
+                CommsMember.joined_at,
+            )
+            .outerjoin(CommsMember, member)
+            .where(
+                Membership.org_id == bound_organization_column(),
+                Membership.user_id.in_([user.id for user in result.items]),
+                Membership.is_deleted.is_(False),
+            )
+        ).tuples()
+    }
+    entries = [
+        (user.id, user.display_name or user.username, joined[user.id][0], joined[user.id][1])
+        for user in result.items
+    ]
+    return StandardListResponse(items=_member_responses(db, entries), pagination=result.pagination)
 
 
 def block_page(

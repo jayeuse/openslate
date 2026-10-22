@@ -10,7 +10,11 @@ from sqlalchemy.orm import Session
 from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
-from app.systems.comms.access import LEVELS, _conversation_access_statement
+from app.systems.comms.access import (
+    LEVELS,
+    _conversation_access_statement,
+    conversation_reader_counts,
+)
 from app.systems.comms.conversations.models import (
     CommsCategory,
     CommsConversation,
@@ -35,7 +39,10 @@ def project_conversation(
     level: str,
     people: dict[UUID, str],
     grants: list[dict[str, Any]],
+    readers: int,
 ) -> dict[str, Any]:
+    """``people`` are member rows; ``readers`` counts a channel's readers (D44)."""
+    channel = row.kind == "channel"
     common: dict[str, Any] = {
         "id": row.id,
         "org_id": row.org_id,
@@ -43,11 +50,12 @@ def project_conversation(
         "updated_at": row.updated_at,
         "archived_at": row.archived_at,
         "level": level,
-        "member_count": len(people),
-        "member_role": people.get(actor),
+        # A channel's members are its readers; a role row only marks a manager.
+        "member_count": readers if channel else len(people),
+        "member_role": people.get(actor, "member") if channel else people.get(actor),
         "kind": row.kind,
     }
-    if row.kind != "channel":
+    if not channel:
         common["participant_ids"] = sorted(people)
         if row.kind == "group":
             common["name"] = row.name
@@ -101,6 +109,8 @@ def bootstrap(db: Session, user: User) -> BootstrapResponse:
         .order_by(c.position, c.id)
     ).all()
     ids = [row[0].id for row in rows]
+    channel_ids = [row[0].id for row in rows if row[0].kind == "channel"]
+    readers = conversation_reader_counts(db, channel_ids)
     members: dict[UUID, dict[UUID, str]] = defaultdict(dict)
     for conversation, person, role in db.execute(
         select(
@@ -194,7 +204,16 @@ def bootstrap(db: Session, user: User) -> BootstrapResponse:
                 m.conversation_id,
                 func.count(),
                 func.min(m.seq),
-                func.count().filter(or_(mentioned, and_(m.mentions_channel, channel_member))),
+                func.count().filter(
+                    or_(
+                        mentioned,
+                        # Every channel reader is in @channel; elsewhere members are.
+                        and_(
+                            m.mentions_channel,
+                            or_(m.conversation_id.in_(channel_ids), channel_member),
+                        ),
+                    )
+                ),
             )
             .where(
                 m.org_id == org,
@@ -211,7 +230,12 @@ def bootstrap(db: Session, user: User) -> BootstrapResponse:
     for conversation, level, high_water, watermark in rows:
         identity = conversation.id
         common = project_conversation(
-            conversation, user.id, LEVELS[level], members[identity], grants[identity]
+            conversation,
+            user.id,
+            LEVELS[level],
+            members[identity],
+            grants[identity],
+            readers.get(identity, 0),
         )
         pref = personal.get(identity)
         count, first, mentions = unread.get(identity, (0, None, 0))

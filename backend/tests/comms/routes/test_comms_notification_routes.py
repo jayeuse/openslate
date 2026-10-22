@@ -9,6 +9,7 @@ from fastapi import Depends
 from sqlalchemy import select
 
 from app.common.dependencies.auth import get_account_user, get_current_membership, get_current_user
+from app.systems.access.policy.models import GroupAccess, GroupMember
 from app.systems.access.users.models import Membership, User
 from app.systems.comms.conversations.models import CommsConversation, CommsMember
 from app.systems.comms.messages.models import CommsMessage
@@ -149,23 +150,22 @@ def test_notification_kinds_overlap_and_narrowing_policy(
         assert publication == []
 
 
-@pytest.mark.parametrize("state,age,member,expected", [
+@pytest.mark.parametrize("state,age,reader,expected", [
     ("online", 119, True, True), ("online", 120, True, False),
     ("away", 0, True, False), ("offline", 0, True, False),
     ("online", 0, False, False),
 ])
-def test_here_only_reaches_fresh_online_current_members(
-    message_routes, budget_clock, state, age, member, expected,
+def test_here_only_reaches_fresh_online_current_readers(
+    message_routes, budget_clock, state, age, reader, expected,
 ):
     case, org = message_routes, message_routes.world.first
     with case.world.session(org) as db:
         db.add(CommsPresence(org_id=org.id, user_id=org.peer, state=state,
                              last_seen_at=NOW - timedelta(seconds=age)))
-        if not member:
-            row = db.scalars(select(CommsMember).where(
-                CommsMember.conversation_id == org.conversation, CommsMember.user_id == org.peer,
-            )).one()
-            row.is_deleted, row.deleted_at = True, NOW
+        if not reader:
+            # D44: a member row does not make a reader; department access does.
+            conversation = db.get(CommsConversation, org.conversation)
+            conversation.scope, conversation.department_id = "department", org.department
         db.commit()
     try:
         author = inbox_client(case, org.author, org.id)
@@ -178,6 +178,46 @@ def test_here_only_reaches_fresh_online_current_members(
             for row in db.scalars(select(CommsPresence).where(CommsPresence.org_id == org.id)):
                 db.delete(row)
             db.commit()
+
+
+def test_channel_readers_without_member_rows_are_mentionable_and_notified(structure_routes):
+    case, org, other = structure_routes, structure_routes.world.first, structure_routes.world.second
+    case.add_home_members(other.peer)  # An organization member with no rows and no department.
+    case.settings({"keywords": ["needle"]})
+    with case.world.session(org) as db:
+        department = db.get(CommsConversation, org.other_conversation)
+        department.scope, department.department_id = "department", org.department
+        for row in db.scalars(select(CommsMember).where(
+            CommsMember.org_id == org.id, CommsMember.user_id == org.peer,
+        )):
+            row.is_deleted, row.deleted_at = True, NOW
+        db.commit()
+    author = inbox_client(case, org.author, org.id)
+    peer, outsider = inbox_client(case, org.peer, org.id), inbox_client(case, other.peer, org.id)
+    everyone = f"/api/comms/conversations/{org.conversation}/messages"
+    restricted = f"/api/comms/conversations/{org.other_conversation}/messages"
+    mention = send(author, everyone, "Hello", mention_user_ids=[str(org.peer)])
+    keyword = send(author, everyone, "A needle")
+    refused = author.post(restricted, json=_payload() | {"mention_user_ids": [str(org.peer)]})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"]["code"] == "comms_invalid_input"
+    send(author, restricted, "Before access", mentions_channel=True)
+    with case.world.session(org) as db:
+        db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
+        db.add(GroupAccess(
+            org_id=org.id, group_id=org.group, department_id=org.department, level="read",
+        ))
+        db.commit()
+    granted = send(author, restricted, "After access", mentions_channel=True)
+
+    def received(api):
+        return sorted((row["kind"], row["message_id"]) for row in notices(api))
+
+    assert received(peer) == sorted([
+        ("comms-mention", mention["id"]), ("comms-keyword", keyword["id"]),
+        ("comms-mention", granted["id"]),
+    ])
+    assert received(outsider) == [("comms-keyword", keyword["id"])]
 
 
 @pytest.mark.parametrize("loss", ["message", "conversation", "access", "reparent", "membership"])

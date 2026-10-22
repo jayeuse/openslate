@@ -12,7 +12,11 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.users.models import User
-from app.systems.comms.access import conversation_reader_statement, visible_conversation_clause
+from app.systems.comms.access import (
+    conversation_reader_statement,
+    organization_member_ids,
+    visible_conversation_clause,
+)
 from app.systems.comms.conversations.models import CommsConversation, CommsMember
 from app.systems.comms.messages.interaction_models import CommsThreadFollow
 from app.systems.comms.messages.models import CommsMessage
@@ -88,7 +92,10 @@ def stage_notifications(
         if conversation.kind == "channel" else {"kind": "workspace"}
     )
     shared = resolve_settings(db, scope)["effective"]
-    candidates = db.scalars(select(CommsMember.user_id).where(
+    # D44: a channel reaches its readers; direct and group messages reach their members.
+    candidates = [
+        person for person in organization_member_ids(db) if person != message.author_id
+    ] if conversation.kind == "channel" else db.scalars(select(CommsMember.user_id).where(
         CommsMember.org_id == org, CommsMember.conversation_id == conversation.id,
         CommsMember.user_id != message.author_id,
         CommsMember.is_deleted.is_(False), CommsMember.deleted_at.is_(None),

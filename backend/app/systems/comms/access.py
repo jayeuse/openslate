@@ -290,23 +290,56 @@ def conversation_reader_statement(
     return select(relation.c.user_id).where(relation.c.level > 0).distinct()
 
 
-def conversation_reader_ids(db: Session, conversation: CommsConversation) -> set[UUID]:
+def organization_member_ids(db: Session) -> list[UUID]:
+    """Active people of the bound organization: the only candidates for a channel reader.
+
+    Returned as a list on purpose: a ``Select`` passed to the relation would correlate
+    with its own ``User``/``Membership`` and silently change the result.
+    """
     db.flush()
-    candidates = db.scalars(
-        select(User.id)
-        .join(Membership, bound_membership_join())
-        .where(
-            active_account_clause(),
+    return list(
+        db.scalars(
+            select(User.id)
+            .join(Membership, bound_membership_join())
+            .where(
+                active_account_clause(),
+            )
         )
-    ).all()
+    )
+
+
+def conversation_reader_ids(db: Session, conversation: CommsConversation) -> set[UUID]:
     return set(
         db.scalars(
             conversation_reader_statement(
                 select(CommsConversation.id).where(CommsConversation.id == conversation.id),
-                candidates,
+                organization_member_ids(db),
             )
         )
     )
+
+
+def conversation_reader_counts(db: Session, conversation_ids: Collection[UUID]) -> dict[UUID, int]:
+    """Readers per conversation in one grouped statement (D44 channel member counts).
+
+    Evaluates the requested conversations times the bound organization's active people
+    in the database (C x N), larger than one organization-wide event (N); slice 5 of
+    the D44 spec measures it at sample-pack scale.
+    """
+    if not conversation_ids:
+        return {}
+    relation = _conversation_access_statement(
+        select(CommsConversation.id).where(CommsConversation.id.in_(conversation_ids)),
+        organization_member_ids(db),
+    ).subquery()
+    return {
+        identity: count
+        for identity, count in db.execute(
+            select(relation.c.conversation_id, func.count(relation.c.user_id.distinct()))
+            .where(relation.c.level > 0)
+            .group_by(relation.c.conversation_id)
+        ).tuples()
+    }
 
 
 def _blocked(db: Session, user_id: UUID, others: Collection[UUID]) -> bool:

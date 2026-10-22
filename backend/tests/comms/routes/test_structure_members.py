@@ -7,8 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.policy.models import GroupMember
+from app.systems.access.policy.models import GroupAccess, GroupMember
 from app.systems.access.users.models import Membership, User
+from app.systems.comms.conversations.models import CommsConversation, CommsMember
 from app.systems.comms.settings.models import CommsCapabilityGrant
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY
 from app.systems.manage.audit.models import AuditLog
@@ -191,6 +192,45 @@ def test_membership_grant_role_removal_and_group_floor_are_distinct_atomic_comma
             admin.post(f"{ROOT}/groups", json={"name": "Invalid", "participant_ids": people}), 422
         )
         assert _snapshot(case) == before
+
+
+def test_channel_member_list_is_its_readers_and_the_count_matches(
+    structure_routes, named_members,
+):
+    case, org, other = structure_routes, structure_routes.world.first, structure_routes.world.second
+    case.add_home_members(other.author)  # Charlie: an organization member with no rows.
+    admin, peer = case.client(org.author, org.id), case.client(org.peer, org.id)
+    query = {"sort_by": "display_name", "sort_order": "asc", "limit": 100}
+
+    def listed(api, conversation):
+        path = f"{ROOT}/conversations/{conversation}"
+        page = _ok(api.get(path + "/members", params=query))
+        assert page["pagination"]["total"] == len(page["items"])
+        assert _ok(api.get(path))["member_count"] == page["pagination"]["total"]
+        return [(row["display_name"], row["member_role"]) for row in page["items"]]
+
+    assert listed(peer, org.conversation) == [
+        ("Alpha", "member"), ("Bravo", "member"), ("Charlie", "member"),
+    ]
+    with case.world.session(org) as db:
+        department = db.get(CommsConversation, org.other_conversation)
+        department.scope, department.department_id = "department", org.department
+        db.commit()
+    # Bravo keeps a member row but has no department access, so Bravo is not a reader.
+    assert listed(admin, org.other_conversation) == [("Alpha", "member")]
+    with case.world.session(org) as db:
+        db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=other.author))
+        db.add(GroupAccess(
+            org_id=org.id, group_id=org.group, department_id=org.department, level="write",
+        ))
+        db.scalars(select(CommsMember).where(
+            CommsMember.conversation_id == org.other_conversation,
+            CommsMember.user_id == org.peer,
+        )).one().role = "manager"
+        db.commit()
+    assert listed(admin, org.other_conversation) == [
+        ("Alpha", "member"), ("Bravo", "manager"), ("Charlie", "member"),
+    ]
 
 
 def test_creator_loses_private_access_on_leaving_and_role_put_never_readds(structure_routes):
