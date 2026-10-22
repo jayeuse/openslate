@@ -445,9 +445,28 @@ async function openRoom(
   room: string,
 ) {
   await account.page.goto(`${origin}/comms`);
-  await account.page
-    .getByRole("button", { name: new RegExp(`^${name}(,|$)`, "u") })
-    .click();
+  try {
+    await account.page
+      .getByRole("button", { name: new RegExp(`^${name}(,|$)`, "u") })
+      .click();
+  } catch {
+    // Owned channel names and alerts only: which rows the sidebar actually shows.
+    const shown = await account.page
+      .locator("h1, h2, [role=alert], nav button, aside button")
+      .evaluateAll((nodes) =>
+        nodes
+          .map(
+            (node) =>
+              node.getAttribute("aria-label") ?? node.textContent?.trim(),
+          )
+          .filter(Boolean)
+          .join(" | "),
+      )
+      .catch(() => "no snapshot");
+    throw new Error(
+      `${account.name}: no ${name} row; shown: ${shown.slice(0, 600)}`,
+    );
+  }
   await expect(
     account.page.getByRole("heading", { name, exact: true }),
   ).toBeVisible();
@@ -468,6 +487,85 @@ async function openRoom(
       `${name} join not observed: sockets=${account.wire.sockets} closed=${account.wire.closed} sse=${account.wire.sse} joined=[${kinds.join(",")}]`,
     );
   }
+}
+
+// A department exists only through a Sandbox publication; the fixture appends one owned
+// department to the current draft and publishes it with the owned administrator.
+async function publishDepartment(
+  page: Page,
+  owned: OwnedFixture,
+  sandboxId: string,
+  name: string,
+) {
+  const org = owned.comms.orgId;
+  const current = await api(page, org, "GET", "/api/sandbox/document");
+  expect(current.status).toBe(200);
+  const draft = object(current.payload);
+  const sandbox = object(draft.document);
+  const design = object(sandbox.design);
+  const departments = Array.isArray(design.departments)
+    ? design.departments
+    : [];
+  // Validation needs a layout box for every department.
+  const layout = design.layout === undefined ? {} : object(design.layout);
+  const saved = await api(page, org, "PUT", "/api/sandbox/document", {
+    expectedRevision: draft.revision,
+    document: {
+      ...sandbox,
+      design: {
+        ...design,
+        departments: [...departments, { id: sandboxId, name }],
+        layout: {
+          ...layout,
+          [sandboxId]: {
+            x: 0,
+            y: departments.length * 200,
+            width: 240,
+            height: 160,
+          },
+        },
+      },
+    },
+  });
+  expect(saved.status).toBe(200);
+  const revision = object(saved.payload).revision;
+  const preview = await api(
+    page,
+    org,
+    "POST",
+    "/api/sandbox/publication-previews",
+    { expectedRevision: revision },
+  );
+  expect(preview.status).toBe(200);
+  const plan = object(preview.payload);
+  expect(plan.blockers).toEqual([]);
+  const published = await api(
+    page,
+    org,
+    "POST",
+    "/api/sandbox/publications",
+    {
+      expectedRevision: revision,
+      previewToken: text(plan.previewToken),
+      impactDigest: text(plan.impactDigest),
+      password: owned.admin.password,
+    },
+    { "Idempotency-Key": `s32-${sandboxId}` },
+  );
+  expect(published.status).toBe(201);
+  const listed = await api(
+    page,
+    org,
+    "GET",
+    "/api/departments?limit=100&offset=0",
+  );
+  expect(listed.status).toBe(200);
+  const items = object(listed.payload).items;
+  const matches = (Array.isArray(items) ? items : [])
+    .map(object)
+    .filter((item) => item.department_name === name);
+  expect(matches).toHaveLength(1);
+  return text(matches[0]!.id);
 }
 
 export function commsTest(names: JourneyNames) {
@@ -550,8 +648,21 @@ export function commsTest(names: JourneyNames) {
           workspace,
           owned.comms.orgName,
         );
+        stage = "owned department publication";
+        const departmentId = await publishDepartment(
+          adminPage,
+          owned,
+          `s32-${names.slug}-${owned.runId}`,
+          `S32 ${names.slug} ${owned.runId.slice(0, 8)}`,
+        );
         stage = "owned channel setup";
-        const create = async (org: string, name: string, members: string[]) => {
+        const create = async (
+          org: string,
+          name: string,
+          scope:
+            | { scope: "organization" }
+            | { scope: "department"; department_id: string },
+        ) => {
           const response = await api(
             adminPage,
             org,
@@ -559,8 +670,7 @@ export function commsTest(names: JourneyNames) {
             "/api/comms/conversations",
             {
               name,
-              scope: "members",
-              member_ids: members,
+              ...scope,
               topic: "",
               position: 0,
               category_id: null,
@@ -569,14 +679,40 @@ export function commsTest(names: JourneyNames) {
           expect(response.status).toBe(201);
           return text(object(response.payload).id);
         };
-        const room = await create(owned.comms.orgId, names.room, [memberId]);
+        // The measured room is a department channel the member holds no department
+        // role in: a user access grant (D45) is their only access, so revoking it
+        // removes them at once.
+        const room = await create(owned.comms.orgId, names.room, {
+          scope: "department",
+          department_id: departmentId,
+        });
         // A second shared channel lets the member stand outside the measured room.
-        const lobby = await create(owned.comms.orgId, names.lobby, [memberId]);
+        const lobby = await create(owned.comms.orgId, names.lobby, {
+          scope: "organization",
+        });
         const isolatedRoom = await create(
           owned.comms.otherOrgId,
           names.isolated,
-          [],
+          { scope: "organization" },
         );
+        stage = "member access grant";
+        const roomState = await api(
+          adminPage,
+          owned.comms.orgId,
+          "GET",
+          `/api/comms/conversations/${room}`,
+        );
+        expect(roomState.status).toBe(200);
+        const granted = await api(
+          adminPage,
+          owned.comms.orgId,
+          "PUT",
+          `/api/comms/conversations/${room}/access-grants/user/${memberId}`,
+          { level: "post" },
+          { "If-Match": text(roomState.etag) },
+        );
+        // 201: the grant is new, so it is the member's only source of access.
+        expect(granted.status).toBe(201);
         const isolatedPage = await adminContext.newPage();
         await isolatedPage.goto(`${owned.baseURL}/openview`);
         await selectOrganization(isolatedPage, owned.comms.otherOrgName);
@@ -626,7 +762,7 @@ export function commsTest(names: JourneyNames) {
           .split("\n")[0]!
           .replaceAll(owned.admin.password, "[redacted]")
           .replace(/S32![0-9a-f-]+a9/giu, "[redacted]")
-          .slice(0, 200);
+          .slice(0, 800);
         throw new Error(
           `Owned Comms fixture failed during ${stage} (${reason}); credentials and provider output suppressed`,
         );

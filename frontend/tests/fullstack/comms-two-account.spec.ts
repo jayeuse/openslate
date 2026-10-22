@@ -319,6 +319,11 @@ test("real invited accounts complete the Comms journey without crossing organiza
       await reload(admin);
       await reset(member);
       const name = `s32-proof-${owned.runId.slice(0, 8)}.png`;
+      // The open conversation's capabilities load after the room; until then the
+      // upload input is disabled and ignores chosen files.
+      await expect(
+        admin.page.getByRole("button", { name: "Choose files", exact: true }),
+      ).toBeEnabled();
       await admin.page
         .getByLabel("Upload files", { exact: true })
         .setInputFiles({
@@ -381,10 +386,22 @@ test("real invited accounts complete the Comms journey without crossing organiza
       .getByRole("button", { name: "OpenComms menu", exact: true })
       .first()
       .click();
+    // Let the Admin tools entry settle (its moderation count) before opening it,
+    // then click Moderation only once its submenu has finished opening.
+    await expect(
+      admin.page.getByRole("status", {
+        name: "Loading moderation count",
+        exact: true,
+      }),
+    ).toHaveCount(0);
     await admin.page.getByRole("menuitem", { name: /^Admin tools/u }).click();
-    await admin.page
-      .getByRole("menuitem", { name: /^Moderation(?: |$)/u })
-      .click();
+    const moderation = admin.page.getByRole("menuitem", {
+      name: /^Moderation(?: |$)/u,
+    });
+    const adminTools = admin.page.getByRole("menu").filter({ has: moderation });
+    await expect(adminTools).toHaveAttribute("data-open", "");
+    await expect(adminTools).not.toHaveAttribute("data-starting-style");
+    await moderation.click();
     const tool = admin.page.getByRole("region", {
       name: "Moderation",
       exact: true,
@@ -575,7 +592,7 @@ test("real invited accounts complete the Comms journey without crossing organiza
       admin.page,
       admin.orgId,
       "DELETE",
-      `/api/comms/conversations/${room}/members/${member.id}`,
+      `/api/comms/conversations/${room}/access-grants/user/${member.id}`,
       undefined,
       { "If-Match": current.etag! },
     );

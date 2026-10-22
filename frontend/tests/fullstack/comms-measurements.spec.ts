@@ -313,7 +313,7 @@ test("real invited accounts meet the Comms latency, offline and revocation bound
         admin.page,
         admin.orgId,
         "DELETE",
-        `/api/comms/conversations/${room}/members/${member.id}`,
+        `/api/comms/conversations/${room}/access-grants/user/${member.id}`,
         undefined,
         { "If-Match": current.etag! },
       );

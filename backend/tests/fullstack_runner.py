@@ -179,7 +179,26 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member"), com
                 identities[role] = {"email": email, "password": password, "id": str(user.id)}
             if comms:
                 from app.systems.access.users.models import User
+                from app.systems.sandbox.designs.models import SandboxDocument
+                from app.systems.sandbox.designs.schemas import DesignDocument
+                from app.systems.sandbox.designs.schemas import SandboxDocument as Document
+                from app.systems.sandbox.designs.service import canonical_document
 
+                # Same empty Sandbox document as operations/create_organization.py, so the
+                # journey can publish its own department into the primary organization.
+                document, digest, size = canonical_document(
+                    Document(kind="openslate-sandbox", schema_version=4, design=DesignDocument())
+                )
+                db.add(
+                    SandboxDocument(
+                        org_id=organization.id,
+                        document=document,
+                        content_hash=digest,
+                        byte_count=size,
+                    )
+                )
+                # Write it while the session is still bound to the primary organization.
+                db.flush()
                 administrator = db.get(User, UUID(identities["admin"]["id"]))
                 if administrator is None:
                     raise RuntimeError("Comms fixture requires its owned administrator")
