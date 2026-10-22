@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from app.systems.comms.conversations.access_grants import router as access_grants
 from app.systems.comms.conversations.router import router as conversations
 from app.systems.comms.direct_candidates import router as direct_candidates
 from app.systems.comms.files.router import router as files
@@ -23,6 +24,7 @@ from app.systems.comms.templates.router import router as templates
 router = APIRouter()
 router.include_router(messages)
 router.include_router(conversations)
+router.include_router(access_grants)
 router.include_router(direct_candidates)
 router.include_router(preferences)
 router.include_router(settings)

@@ -46,6 +46,7 @@ ORGANIZATION_TABLES = (
         "comms_retention_sweeps",
         "comms_expired_sends",
         "comms_templates",
+        "comms_channel_access",
     }
 )
 MIXED_TABLES = frozenset({"audit_logs", "files", "security_events", "in_app_notifications"})

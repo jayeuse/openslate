@@ -225,6 +225,26 @@ def _member_responses(
     ids = [entry[0] for entry in entries]
     levels = _member_levels(db, conversation.id, ids)
     channel = conversation.kind == "channel"
+    departments = person_departments(db, ids)
+    return [
+        MemberResponse.model_validate(
+            {
+                "user_id": person,
+                "display_name": name,
+                "member_role": ("manager" if levels[person] == "manage" else "member")
+                if channel
+                else role,
+                "level": levels[person],
+                "joined_at": joined_at,
+                "departments": departments[person],
+            }
+        )
+        for person, name, role, joined_at in entries
+    ]
+
+
+def person_departments(db: Session, ids: Sequence[UUID]) -> dict[UUID, list[dict[str, Any]]]:
+    """Departments where each person holds a department role of read or higher, in one query."""
     departments: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
     d = aliased(Department)
     readers = department_level_reader_statement(
@@ -249,21 +269,7 @@ def _member_responses(
         .order_by(d.id)
     ):
         departments[person].append({"id": identity, "name": name})
-    return [
-        MemberResponse.model_validate(
-            {
-                "user_id": person,
-                "display_name": name,
-                "member_role": ("manager" if levels[person] == "manage" else "member")
-                if channel
-                else role,
-                "level": levels[person],
-                "joined_at": joined_at,
-                "departments": departments[person],
-            }
-        )
-        for person, name, role, joined_at in entries
-    ]
+    return departments
 
 
 def member_response(db: Session, conversation: CommsConversation, user_id: UUID) -> MemberResponse:

@@ -24,6 +24,7 @@ from app.systems.comms.capabilities import (
 )
 from app.systems.comms.conversations.models import (
     CommsCategory,
+    CommsChannelAccess,
     CommsConversation,
     CommsMember,
 )
@@ -161,9 +162,13 @@ def version(db: Session, row: CommsCategory | CommsConversation) -> str:
         "resource": {column.name: getattr(row, column.name) for column in row.__table__.columns},
     }
     field = "category_id" if isinstance(row, CommsCategory) else "conversation_id"
-    models: tuple[type[CommsSettings | CommsCapabilityGrant | CommsMember], ...] = (
+    models: tuple[
+        type[CommsSettings | CommsCapabilityGrant | CommsChannelAccess | CommsMember], ...
+    ] = (
         CommsSettings,
         CommsCapabilityGrant,
+        # D45: a target's own grants; a channel's token excludes its category's grants.
+        CommsChannelAccess,
     )
     if isinstance(row, CommsConversation):
         models += (CommsMember,)

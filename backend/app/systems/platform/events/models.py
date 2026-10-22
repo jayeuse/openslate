@@ -24,6 +24,7 @@ _PRIVATE_INVALIDATION_ENTITIES = frozenset(
         "dashboard_widgets",
         "comms_capability_grants",
         "comms_categories",
+        "comms_channel_access",
         "comms_conversation_counters",
         "comms_conversations",
         "comms_direct_blocks",

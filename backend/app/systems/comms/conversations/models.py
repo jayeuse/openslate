@@ -165,6 +165,78 @@ class CommsMember(BaseModel):
     )
 
 
+class CommsChannelAccess(BaseModel):
+    """D45: an added read or post grant on one channel, or on a category for its channels.
+
+    Grants only add access (no deny) and never give manage. Only a channel or a category
+    is a target; the service refuses direct and group messages (a CHECK cannot see kind).
+    """
+
+    __tablename__ = "comms_channel_access"
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_comms_channel_access_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "conversation_id"],
+            ["comms_conversations.org_id", "comms_conversations.id"],
+            name="fk_comms_channel_access_conversation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "category_id"],
+            ["comms_categories.org_id", "comms_categories.id"],
+            name="fk_comms_channel_access_category",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "group_id"],
+            ["groups.org_id", "groups.id"],
+            name="fk_comms_channel_access_group",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "(conversation_id IS NULL) <> (category_id IS NULL)",
+            name="ck_comms_channel_access_target",
+        ),
+        CheckConstraint(
+            "(subject = 'group' AND group_id IS NOT NULL AND user_id IS NULL) OR "
+            "(subject = 'user' AND user_id IS NOT NULL AND group_id IS NULL)",
+            name="ck_comms_channel_access_subject",
+        ),
+        CheckConstraint("level IN ('read','post')", name="ck_comms_channel_access_level"),
+        Index(
+            "uq_comms_channel_access_active",
+            "org_id",
+            "conversation_id",
+            "category_id",
+            "subject",
+            "group_id",
+            "user_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
+        Index("ix_comms_channel_access_conversation", "org_id", "conversation_id"),
+        Index("ix_comms_channel_access_category", "org_id", "category_id"),
+        Index("ix_comms_channel_access_user", "org_id", "user_id"),
+        Index("ix_comms_channel_access_group", "org_id", "group_id"),
+    )
+
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
+    conversation_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    category_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    subject: Mapped[str] = mapped_column(Text, nullable=False)
+    group_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    level: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+
+
 class CommsDirectBlock(BaseModel):
     __tablename__ = "comms_direct_blocks"
     __table_args__ = (

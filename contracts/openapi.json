@@ -1,6 +1,31 @@
 {
   "components": {
     "schemas": {
+      "AccessCandidates": {
+        "additionalProperties": false,
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/GroupCandidate"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "people": {
+            "items": {
+              "$ref": "#/components/schemas/PersonCandidate"
+            },
+            "title": "People",
+            "type": "array"
+          }
+        },
+        "required": [
+          "people",
+          "groups"
+        ],
+        "title": "AccessCandidates",
+        "type": "object"
+      },
       "AccessChangedNotificationResponse": {
         "properties": {
           "created_at": {
@@ -96,6 +121,100 @@
           "level"
         ],
         "title": "AccessEntryResponse",
+        "type": "object"
+      },
+      "AccessGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "read",
+              "post"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "channel",
+              "category"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "subject": {
+            "enum": [
+              "group",
+              "user"
+            ],
+            "title": "Subject",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "subject_id",
+          "display_name",
+          "level",
+          "source",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AccessGrant",
+        "type": "object"
+      },
+      "AccessGrantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "enum": [
+              "read",
+              "post"
+            ],
+            "title": "Level",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "title": "AccessGrantRequest",
+        "type": "object"
+      },
+      "AccessGrants": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AccessGrant"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AccessGrants",
         "type": "object"
       },
       "AccessGroupResponse": {
@@ -8516,6 +8635,26 @@
         "title": "GroupAccessResponse",
         "type": "object"
       },
+      "GroupCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "GroupCandidate",
+        "type": "object"
+      },
       "GroupConversation": {
         "additionalProperties": false,
         "properties": {
@@ -11857,6 +11996,34 @@
           "expires_at"
         ],
         "title": "PendingInvitationResponse",
+        "type": "object"
+      },
+      "PersonCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "departments": {
+            "items": {
+              "$ref": "#/components/schemas/MemberDepartment"
+            },
+            "title": "Departments",
+            "type": "array"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "display_name",
+          "departments"
+        ],
+        "title": "PersonCandidate",
         "type": "object"
       },
       "PersonCardPublicResponse": {
@@ -35043,6 +35210,464 @@
         ]
       }
     },
+    "/api/comms/categories/{category_id}/access-candidates": {
+      "get": {
+        "operationId": "list_category_candidates_api_comms_categories__category_id__access_candidates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "group",
+                    "user"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessCandidates"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "The target cannot be managed by this person"
+          },
+          "404": {
+            "description": "Absent or unreadable target, person, group or grant"
+          },
+          "409": {
+            "description": "Grant changed concurrently; no changes saved"
+          },
+          "412": {
+            "description": "Target configuration changed"
+          },
+          "422": {
+            "description": "Direct and group messages cannot have grants"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Grant operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Category Candidates",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/categories/{category_id}/access-grants": {
+      "get": {
+        "operationId": "list_category_grants_api_comms_categories__category_id__access_grants_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessGrants"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Target configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The target cannot be managed by this person"
+          },
+          "404": {
+            "description": "Absent or unreadable target, person, group or grant"
+          },
+          "409": {
+            "description": "Grant changed concurrently; no changes saved"
+          },
+          "412": {
+            "description": "Target configuration changed"
+          },
+          "422": {
+            "description": "Direct and group messages cannot have grants"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Grant operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Category Grants",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/categories/{category_id}/access-grants/{subject}/{subject_id}": {
+      "delete": {
+        "operationId": "delete_category_grant_api_comms_categories__category_id__access_grants__subject___subject_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subject",
+            "required": true,
+            "schema": {
+              "enum": [
+                "group",
+                "user"
+              ],
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subject_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Subject Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "The target cannot be managed by this person"
+          },
+          "404": {
+            "description": "Absent or unreadable target, person, group or grant"
+          },
+          "409": {
+            "description": "Grant changed concurrently; no changes saved"
+          },
+          "412": {
+            "description": "Target configuration changed"
+          },
+          "422": {
+            "description": "Direct and group messages cannot have grants"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Grant operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Category Grant",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "put_category_grant_api_comms_categories__category_id__access_grants__subject___subject_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subject",
+            "required": true,
+            "schema": {
+              "enum": [
+                "group",
+                "user"
+              ],
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subject_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Subject Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccessGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessGrant"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Target configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "description": "Target configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The target cannot be managed by this person"
+          },
+          "404": {
+            "description": "Absent or unreadable target, person, group or grant"
+          },
+          "409": {
+            "description": "Grant changed concurrently; no changes saved"
+          },
+          "412": {
+            "description": "Target configuration changed"
+          },
+          "422": {
+            "description": "Direct and group messages cannot have grants"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Grant operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Category Grant",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
     "/api/comms/categories/{category_id}/preferences": {
       "get": {
         "operationId": "get_category_api_comms_categories__category_id__preferences_get",
@@ -35690,6 +36315,464 @@
           }
         ],
         "summary": "Update Channel",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/access-candidates": {
+      "get": {
+        "operationId": "list_channel_candidates_api_comms_conversations__conversation_id__access_candidates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "group",
+                    "user"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessCandidates"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "The target cannot be managed by this person"
+          },
+          "404": {
+            "description": "Absent or unreadable target, person, group or grant"
+          },
+          "409": {
+            "description": "Grant changed concurrently; no changes saved"
+          },
+          "412": {
+            "description": "Target configuration changed"
+          },
+          "422": {
+            "description": "Direct and group messages cannot have grants"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Grant operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Channel Candidates",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/access-grants": {
+      "get": {
+        "operationId": "list_channel_grants_api_comms_conversations__conversation_id__access_grants_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessGrants"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Target configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The target cannot be managed by this person"
+          },
+          "404": {
+            "description": "Absent or unreadable target, person, group or grant"
+          },
+          "409": {
+            "description": "Grant changed concurrently; no changes saved"
+          },
+          "412": {
+            "description": "Target configuration changed"
+          },
+          "422": {
+            "description": "Direct and group messages cannot have grants"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Grant operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Channel Grants",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/access-grants/{subject}/{subject_id}": {
+      "delete": {
+        "operationId": "delete_channel_grant_api_comms_conversations__conversation_id__access_grants__subject___subject_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subject",
+            "required": true,
+            "schema": {
+              "enum": [
+                "group",
+                "user"
+              ],
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subject_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Subject Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "The target cannot be managed by this person"
+          },
+          "404": {
+            "description": "Absent or unreadable target, person, group or grant"
+          },
+          "409": {
+            "description": "Grant changed concurrently; no changes saved"
+          },
+          "412": {
+            "description": "Target configuration changed"
+          },
+          "422": {
+            "description": "Direct and group messages cannot have grants"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Grant operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Channel Grant",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "put_channel_grant_api_comms_conversations__conversation_id__access_grants__subject___subject_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subject",
+            "required": true,
+            "schema": {
+              "enum": [
+                "group",
+                "user"
+              ],
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subject_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Subject Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccessGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessGrant"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Target configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "description": "Target configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The target cannot be managed by this person"
+          },
+          "404": {
+            "description": "Absent or unreadable target, person, group or grant"
+          },
+          "409": {
+            "description": "Grant changed concurrently; no changes saved"
+          },
+          "412": {
+            "description": "Target configuration changed"
+          },
+          "422": {
+            "description": "Direct and group messages cannot have grants"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Grant operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Channel Grant",
         "tags": [
           "comms"
         ]

@@ -51,6 +51,7 @@ COMMS_DELETE_ORDER = (
     "comms_members",
     "comms_conversation_counters",
     "comms_messages",
+    "comms_channel_access",
     "comms_capability_grants",
     "comms_setting_locks",
     "comms_settings",

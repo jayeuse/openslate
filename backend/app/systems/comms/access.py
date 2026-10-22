@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.database.organization_scope import bound_organization_column
-from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.policy.readers import active_account_clause
 from app.systems.access.policy.scope import department_level_reader_statement
 from app.systems.access.users.membership import (
@@ -21,6 +21,7 @@ from app.systems.access.users.membership import (
 )
 from app.systems.access.users.models import Membership, User
 from app.systems.comms.conversations.models import (
+    CommsChannelAccess,
     CommsConversation,
     CommsDirectBlock,
     CommsMember,
@@ -100,9 +101,45 @@ def _conversation_access_statement(
         (User.id.in_(department_level_reader_statement(departments, AccessLevel.READ)), 1),
         else_=0,
     )
+    # D45: the best added grant of this channel or of its current category, for the person
+    # or one of their live groups; read 1, post 2, never manage. An organization channel
+    # already gives post, and direct or group messages have no category, so only the
+    # department arm reads it.
+    groups = (
+        select(GroupMember.group_id)
+        .join(Group, Group.id == GroupMember.group_id)
+        .where(
+            GroupMember.org_id == bound_organization_column(),
+            Group.org_id == bound_organization_column(),
+            GroupMember.user_id == User.id,
+            GroupMember.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+        )
+        .correlate(User)
+    )
+    grant = CommsChannelAccess
+    granted = func.coalesce(
+        select(func.max(case((grant.level == "post", 2), else_=1)))
+        .where(
+            grant.org_id == bound_organization_column(),
+            grant.is_deleted.is_(False),
+            grant.deleted_at.is_(None),
+            or_(
+                grant.conversation_id == c.id,
+                and_(c.category_id.is_not(None), grant.category_id == c.category_id),
+            ),
+            or_(
+                and_(grant.subject == "user", grant.user_id == User.id),
+                and_(grant.subject == "group", grant.group_id.in_(groups)),
+            ),
+        )
+        .correlate(c, User)
+        .scalar_subquery(),
+        0,
+    )
     ordinary = case(
         (c.scope == "organization", 2),
-        (c.scope == "department", department_level),
+        (c.scope == "department", func.greatest(department_level, granted)),
         (and_(c.scope == "members", membership_role.is_not(None)), 2),
         else_=0,
     )
@@ -128,6 +165,7 @@ def _conversation_access_statement(
             level.label("level"),
             Membership.role.label("role"),
             manager.label("manager"),
+            and_(c.scope == "department", granted > department_level).label("from_grant"),
             c.scope,
             c.department_id,
         )
@@ -191,6 +229,8 @@ def explain_conversation_access(
         source, manager = {"kind": "guest_cap"}, None
     elif manager:
         source = {"kind": "manager", "reason": manager}
+    elif row["from_grant"]:
+        source = {"kind": "grant"}
     elif row["scope"] == "department":
         source = {"kind": "department", "department_id": row["department_id"]}
     elif row["scope"] == "organization":

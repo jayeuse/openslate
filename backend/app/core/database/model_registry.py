@@ -20,6 +20,7 @@ from app.systems.boards.record_link_models import (  # noqa: F401
 )
 from app.systems.boards.reminder_models import BoardEventReminder  # noqa: F401
 from app.systems.comms.conversations.models import CommsCategory as CommsCategory
+from app.systems.comms.conversations.models import CommsChannelAccess as CommsChannelAccess
 from app.systems.comms.conversations.models import CommsConversation as CommsConversation
 from app.systems.comms.conversations.models import CommsDirectBlock as CommsDirectBlock
 from app.systems.comms.conversations.models import CommsMember as CommsMember

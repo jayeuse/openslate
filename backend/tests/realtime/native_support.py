@@ -156,6 +156,7 @@ def native_room(request):
                 "comms_messages",
                 "files",
                 "comms_settings",
+                "comms_channel_access",
                 "comms_capability_grants",
                 "comms_setting_locks",
                 "comms_members",
