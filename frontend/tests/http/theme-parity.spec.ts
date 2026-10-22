@@ -73,14 +73,26 @@ async function snapshot(page: Page) {
       .getByRole("navigation", { name: "Main navigation" })
       .getByRole("button", { name: /^Access/ }),
   ).toBeVisible();
-  return page.evaluate(() => {
-    const shell = document.querySelector(".app-shell");
-    if (!shell) throw new Error("Workspace shell is unavailable");
-    return {
-      elements: shell.querySelectorAll("*").length,
-      text: shell.textContent,
-    };
-  });
+  const capture = () =>
+    page.evaluate(() => {
+      const shell = document.querySelector(".app-shell");
+      if (!shell) throw new Error("Workspace shell is unavailable");
+      return {
+        elements: shell.querySelectorAll("*").length,
+        text: shell.textContent,
+      };
+    });
+  // Comms may refetch its conversations right after the first paint, and the
+  // "Refreshing conversations…" status then covers the connection strip for a
+  // moment. Capture a shell with no refresh in flight so looks compare settled.
+  let settled = await capture();
+  await expect
+    .poll(async () => {
+      settled = await capture();
+      return settled.text?.includes("Refreshing conversations…");
+    })
+    .toBe(false);
+  return settled;
 }
 
 const THEMES = [
