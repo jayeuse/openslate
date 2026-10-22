@@ -44,6 +44,12 @@ def _complete_graph(world, org):
             send_fingerprint=uuid7().hex * 2, parent_id=identities["comms_messages"],
             reply_to_id=identities["comms_messages"],
         ))
+        # A pending link-preview job restricts its message until the job row is gone.
+        connection.execute(tables["scheduled_work"].insert().values(
+            org_id=org.id, kind="comms-link-preview", state="pending",
+            comms_preview_message_id=identities["comms_messages"], comms_preview_generation=0,
+            scheduling_actor_id=org.author, scheduled_for=NOW, next_attempt_at=NOW,
+        ))
         connection.execute(tables["comms_conversation_counters"].update().where(
             tables["comms_conversation_counters"].c.id == identities["comms_conversation_counters"],
         ).values(last_seq=2))
@@ -135,7 +141,9 @@ def test_reset_removes_all_twenty_comms_tables_and_preserves_operator_and_backup
     # A new guarded connection proves the deletion and preservation really committed.
     target.guard()
     with connect(target.url) as database, database.cursor() as cursor:
-        for table in sorted(COMMS_TABLES | {"groups", "files", "records", "modules", "audit_logs"}):
+        for table in sorted(COMMS_TABLES | {
+            "groups", "files", "records", "modules", "audit_logs", "scheduled_work",
+        }):
             cursor.execute(f"SELECT count(*) FROM public.{table}")
             assert cursor.fetchone() == (0,), table
         assert_only_the_operator_remains(cursor, first.author, operator_id)

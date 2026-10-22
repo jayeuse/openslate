@@ -2,7 +2,7 @@
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier, BrokenBarrierError, Event
+from threading import Event
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -24,7 +24,8 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import guarded_create_engine
-from tests.organization_scope_support import in_context, scoped_override
+from tests.organization_scope_support import in_context, scope_like_a_request, scoped_override
+from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
 from tests.rbac.support import add_department, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -63,6 +64,8 @@ def audience():
 def _write(engine, ids, group_id, *, members=None, level="manage"):
     admin_id, _member_id, department_id, _groups = ids
     with AuditSession(bind=engine) as db:
+        # A request binds its session to the actor's organization; Comms events need it.
+        scope_like_a_request(db)
         set_audit_actor(db, admin_id)
         row = db.get(Group, group_id)
         actor = db.get(User, admin_id)
@@ -131,41 +134,44 @@ def test_locked_recipient_refuses_atomically_then_retry_succeeds(audience, opera
     assert _count(engine, ids[1]) == (0 if operation == "remove-member" else 1)
 
 
-def test_cross_group_writer_refuses_stale_snapshot_and_retries_under_current_authority(
+def test_cross_group_writer_waits_for_the_first_and_applies_under_current_authority(
     audience, monkeypatch
 ):
     engine, ids = audience
     at_commit, release = Event(), Event()
+    holder: list[int] = []
     original = service.commit
 
     def pause(db, message):
         if message == "Unable to change group access" and not at_commit.is_set():
+            holder.append(backend_pid(db))
             at_commit.set()
-            assert release.wait(5)
+            assert release.wait(WAIT)
         original(db, message)
 
     monkeypatch.setattr(service, "commit", pause)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(in_context(_write), engine, ids, ids[3][0])
-            assert at_commit.wait(5)
+            assert at_commit.wait(WAIT)
             second = pool.submit(in_context(_write), engine, ids, ids[3][1], level=None)
-            try:
-                assert second.result(timeout=5) == 503
-            finally:
-                release.set()
-            assert first.result(timeout=5) == 200
+            # Every access writer enters the organization's projection guard first (ID30),
+            # so the second waits in PostgreSQL for the first instead of using a stale view.
+            wait_until_blocked_by(engine, holder[0])
+            assert not second.done()
+            release.set()
+            assert first.result(timeout=WAIT) == 200
+            assert second.result(timeout=WAIT) == 200
     finally:
         release.set()
-    assert _count(engine, ids[1]) == 1
-    assert _write(engine, ids, ids[3][1], level=None) == 200
+    # The grant raised the member to manage; dropping the other read group changes nothing.
     assert _count(engine, ids[1]) == 1
     assert _write(engine, ids, ids[3][0], level="read") == 200
     assert _count(engine, ids[1]) == 2
 
 
 def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission(monkeypatch):
-    """Two real requests add each other's retained member after distinct admissions."""
+    """Two real requests add each other's retained member; the projection guard orders them."""
 
     owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     engine = guarded_create_engine(os.environ["TEST_DATABASE_URL"], pool_size=4)
@@ -186,22 +192,17 @@ def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission
         group_ids = [grant.group_id for grant in grants]
         db.commit()
 
-    validation_reached = []
     sqlstates = []
-    barrier = Barrier(2)
-    early_refusal = Event()
+    first_validating, release = Event(), Event()
+    holder: list[int] = []
     original_validation = service._active_users
 
-    def pause_before_real_validation(db, user_ids):
-        validation_reached.append(tuple(sorted(str(user_id) for user_id in user_ids)))
-        # The frozen candidate has already admitted each distinct changed User.
-        # A correction may move validation earlier and serialize its sorted query.
-        # A prompt refusal before this boundary also releases the other request.
-        try:
-            barrier.wait(timeout=10)
-        except BrokenBarrierError:
-            if not early_refusal.is_set():
-                raise
+    def pause_first_at_real_validation(db, user_ids):
+        # Hold the first request inside its transaction, after its recipient admission.
+        if not first_validating.is_set():
+            holder.append(backend_pid(db))
+            first_validating.set()
+            assert release.wait(WAIT)
         return original_validation(db, user_ids)
 
     def observe_database_error(context):
@@ -223,28 +224,27 @@ def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission
                     json={"member_ids": [str(user_id) for user_id in member_ids]},
                     headers={"If-Match": f'"{group_id}:1"'},
                 )
-                if response.status_code == 503:
-                    early_refusal.set()
-                    barrier.abort()
                 return response.status_code
 
-    monkeypatch.setattr(service, "_active_users", pause_before_real_validation)
+    monkeypatch.setattr(service, "_active_users", pause_first_at_real_validation)
     event.listen(engine, "handle_error", observe_database_error)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(in_context(request_members), actor_ids[0], group_ids[0])
+            assert first_validating.wait(WAIT)
             second = pool.submit(in_context(request_members), actor_ids[1], group_ids[1])
-            outcomes = [first.result(timeout=15), second.result(timeout=15)]
-        # The result contract admits a prompt NOWAIT refusal as well as two
-        # serial successes. A database deadlock is never that refusal.
+            # The organization's projection guard (ID30) orders the opposite additions:
+            # the second waits in PostgreSQL for the first, so they cannot deadlock.
+            wait_until_blocked_by(engine, holder[0])
+            assert not second.done()
+            release.set()
+            outcomes = [first.result(timeout=WAIT), second.result(timeout=WAIT)]
         assert "40P01" not in sqlstates, (
-            f"PostgreSQL deadlock SQLSTATE={sqlstates}; request outcomes={outcomes}; "
-            f"requests reaching real sorted validation={validation_reached}"
+            f"PostgreSQL deadlock SQLSTATE={sqlstates}; request outcomes={outcomes}"
         )
-        assert all(status in (200, 503) for status in outcomes), outcomes
-        assert 200 in outcomes, outcomes
+        assert outcomes == [200, 200]
     finally:
-        barrier.abort()
+        release.set()
         event.remove(engine, "handle_error", observe_database_error)
         with Session(owner) as db:
             owned_users = actor_ids + member_ids

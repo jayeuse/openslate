@@ -49,7 +49,7 @@ def plan_content_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             values={
                 "operation": "s18_content" if org == "primary" else "partner_s18_content",
                 "organization": org,
-                "filename": f"{org}-comms-sample.pdf",
+                "filename": f"{org}-weekly-briefing.pdf",
                 "record_key": dataset.records[0].logical_id if org == "primary" else None,
             },
             expected_status=200,
