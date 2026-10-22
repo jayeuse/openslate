@@ -183,6 +183,31 @@ test("Comms stale refusal cannot override a later-started success and 503 is not
   }
 });
 
+test("a presence read never clears its conversation's refusal", async () => {
+  const cache = client(),
+    scope = createCommsQueryScope(cache, owner);
+  try {
+    await expect(
+      scope.read(conversation, async () => {
+        throw new ApiError(403, "Refused");
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(scope.isRefused(conversation)).toBe(true);
+    // Presence is organization data: its success says nothing about access.
+    await cache.fetchQuery(
+      scope.presenceOptions(conversation, 1, [id(9)], {
+        getPresence: async () => ({
+          items: [{ user_id: id(9), state: "online" }],
+        }),
+      } as unknown as Parameters<typeof scope.presenceOptions>[3]),
+    );
+    expect(scope.isRefused(conversation)).toBe(true);
+  } finally {
+    scope.dispose();
+    cache.clear();
+  }
+});
+
 test("Comms disposal aborts reads and rejects late completion without touching another scope", async () => {
   const cache = client(),
     scope = createCommsQueryScope(cache, owner);

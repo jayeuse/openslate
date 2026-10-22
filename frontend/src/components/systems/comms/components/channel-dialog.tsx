@@ -23,13 +23,53 @@ import { Action, Choice } from "../../shared/components/ui";
 import { TextField } from "./ui";
 import type { Category, Channel } from "../domain/view-model";
 import { useCommsClient } from "../state/client-context";
-import type { ChannelPatch } from "../contract/types";
+import type {
+  Bootstrap,
+  ChannelPatch,
+  Conversation,
+  ConversationSummary,
+} from "../contract/types";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+
+/** Resolves once the query under `queryKey` is not fetching. */
+function settled(cache: QueryClient, queryKey: readonly unknown[]) {
+  const query = cache.getQueryCache().find({ queryKey, exact: true });
+  if (!query || query.state.fetchStatus === "idle") return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const stop = cache.getQueryCache().subscribe((event) => {
+      if (event.query !== query || query.state.fetchStatus !== "idle") return;
+      stop();
+      resolve();
+    });
+  });
+}
+
+/** A just-created conversation's summary: nothing read, nothing unread. */
+function newConversationSummary(
+  conversation: Conversation,
+): ConversationSummary {
+  return {
+    conversation,
+    preferences: {
+      notify: "all",
+      mute: { kind: "off" },
+      starred: false,
+      hidden: false,
+      manual_unread: false,
+    },
+    last_read_seq: 0,
+    high_water_seq: 0,
+    unread_count: 0,
+    mention_count: 0,
+    first_unread_seq: null,
+  };
+}
 import type { CommsScope } from "../domain/configuration-model";
 
 type EditorProps = {
   opener: HTMLElement;
   roles: Role[];
-  people: Person[];
+  people?: Person[];
   categories: Category[];
   onClose: () => void;
   onAcceptedChannelSave?: (id: string) => void;
@@ -48,7 +88,8 @@ type EditorProps = {
 );
 
 export function ChannelDialog(props: EditorProps) {
-  const { client, catalog } = useCommsClient();
+  const { client, catalog, scope: queryScope } = useCommsClient();
+  const cache = useQueryClient();
   const [draft, setDraft] = useState(() => ({
     ...props.value,
     id: props.value.id || crypto.randomUUID(),
@@ -222,6 +263,27 @@ export function ChannelDialog(props: EditorProps) {
           position: props.channels.length,
         });
         savedId.current = created.data.id;
+        // The new channel opens from this response; the follow-up bootstrap
+        // read replaces the seeded row.
+        if (queryScope) {
+          // A bootstrap read in flight settles first (its other waiters keep
+          // their result), so it cannot overwrite the seed afterwards.
+          await settled(cache, queryScope.keys.bootstrap);
+          cache.setQueryData<Bootstrap>(queryScope.keys.bootstrap, (current) =>
+            current &&
+            !current.conversations.some(
+              (row) => row.conversation.id === created.data.id,
+            )
+              ? {
+                  ...current,
+                  conversations: [
+                    ...current.conversations,
+                    newConversationSummary(created.data),
+                  ],
+                }
+              : current,
+          );
+        }
         confirmedDetails.current = JSON.stringify(details);
         accepted(scope());
       } else if (confirmedDetails.current !== JSON.stringify(details)) {

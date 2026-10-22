@@ -37,6 +37,7 @@ import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { datetimeInputToUtc, formatDateTimeLocal } from "@/lib/date-time";
 import { TextField } from "./message-shared";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
+import { useVisiblePeople } from "../state/use-visible-people";
 import { useCommsClient } from "../state/client-context";
 import { complete } from "../state/workspace-view";
 import {
@@ -110,7 +111,12 @@ function LifecycleTools({
   const workspace = useCommsWorkspaceView();
   const region = useWorkspaceDisplayRegion();
   const { run, isPending } = useCommsCommands();
-  const { channels, people, messages, threads } = workspace;
+  const { channels, messages, threads } = workspace;
+  // Moderation and history name people from everyone in the viewer's
+  // conversations; other tools need no people read.
+  const people = useVisiblePeople(
+    view === "moderation" || view === "history" || view === "message-history",
+  );
   const thread = threads.find((item) => item.id === threadId);
   const message = [
     ...messages,

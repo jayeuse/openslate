@@ -11,20 +11,33 @@ import {
   type ReactNode,
 } from "react";
 
+import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { createCommsConfiguration } from "../domain/configuration-model";
 import type {
   Bootstrap,
   CapabilityCheck,
   Member,
+  Message,
   Settings,
 } from "../contract/types";
+import type { ConversationDetail } from "../adapters/conversation-detail";
 import type { Presence } from "../domain/view-model";
 import { useCommsClient } from "./client-context";
-import { loadWorkspace } from "./workspace-view";
+import {
+  loadWorkspace,
+  loadWorkspaceRecords,
+  loadWorkspaceThreads,
+  type WorkspaceThreads,
+  withBootstrap,
+  withDetails,
+} from "./workspace-view";
 import { useCommsRead, useCommsRefusals } from "./runtime";
-type CommsWorkspace = Awaited<ReturnType<typeof loadWorkspace>> & {
-  readEpoch: number;
-};
+import { useCommsMessageAuthors } from "./use-comms-message-authors";
+type LoadedRead = Awaited<ReturnType<typeof loadWorkspace>>;
+type CommsWorkspace = ReturnType<
+  typeof withDetails<ReturnType<typeof withBootstrap<LoadedRead>>>
+>;
 
 const empty = {
   client: null,
@@ -45,23 +58,232 @@ const empty = {
   effective: {} as Record<string, Settings>,
 };
 
+/** Cached details with a stamp that changes only when one of them changes. */
+function cachedDetails(
+  results: {
+    data: (ConversationDetail & { readEpoch: number }) | undefined;
+    dataUpdatedAt: number;
+    isFetching: boolean;
+  }[],
+) {
+  return {
+    data: results.map((result) => result.data),
+    updatedAt: results.map((result) => result.dataUpdatedAt),
+    stamp: results.map((result) => result.dataUpdatedAt).join(","),
+    // A shown conversation's members are being read again.
+    refreshing: results.some(
+      (result) => result.isFetching && result.data !== undefined,
+    ),
+  };
+}
+
+/** Every cached presence read, merged, with a stamp of their read times. */
+function cachedPresence(
+  results: { data: Presence | undefined; dataUpdatedAt: number }[],
+) {
+  return {
+    data: results.map((result) => result.data),
+    stamp: results.map((result) => result.dataUpdatedAt).join(","),
+  };
+}
+
+const noMessages: Message[] = [];
+
 export function useCommsWorkspace() {
   const binding = useCommsClient();
-  const requiredRead = useRef(0);
-  const acceptedRead = useRef<{
-    client: CommsWorkspace["client"];
-    epoch: number;
-  } | null>(null);
+  const cache = useQueryClient();
+  const acceptedRead = useRef<{ client: CommsWorkspace["client"] } | null>(
+    null,
+  );
   const [lastGood, setLastGood] = useState<CommsWorkspace>();
   const key = "workspace";
-  const resource = useCommsRead(key, async (client, signal) => {
-    // Capture at start: a read already in flight cannot admit a later change.
-    const readEpoch = requiredRead.current;
-    return {
-      ...(await loadWorkspace(client, signal)),
-      readEpoch,
-    };
+  const read = useCommsRead(key, (client, signal) =>
+    loadWorkspace(client, signal),
+  );
+  // Threads and record links fill in after the frame; nothing waits for them.
+  const threadsKey = "workspace-threads",
+    recordsKey = "workspace-records";
+  const readKey = (name: string) =>
+    binding.scope ? [...binding.scope.keys.conversation(name), "read"] : [];
+  // A thread event re-reads the lists and only the roots it lacks; a repair
+  // reads every root again.
+  const reuseRoots = useRef(false);
+  const threadRead = useCommsRead(threadsKey, (client, signal) => {
+    const previous = reuseRoots.current
+      ? cache.getQueryData<WorkspaceThreads>(readKey(threadsKey))
+      : undefined;
+    reuseRoots.current = false;
+    return loadWorkspaceThreads(
+      client,
+      signal,
+      new Map((previous?.roots ?? []).map((root) => [root.id, root])),
+    );
   });
+  const recordRead = useCommsRead(recordsKey, (client, signal) =>
+    loadWorkspaceRecords(
+      client,
+      signal,
+      new Set(
+        cache
+          .getQueryData<WorkspaceThreads>(readKey(threadsKey))
+          ?.roots.map((root) => root.id),
+      ),
+    ),
+  );
+  // The sidebar, channels and direct names follow the live bootstrap query.
+  const loaded = read.data;
+  const bootstrap =
+    loaded && binding.bootstrap && loaded.client === binding.client
+      ? binding.bootstrap
+      : loaded?.bootstrap;
+  // Every conversation's detail is observed but never fetched from here: only
+  // an open conversation (or a dialog) enables its read. Cached details of
+  // conversations opened earlier still name their people.
+  const rooms = useMemo(
+    () =>
+      (bootstrap?.conversations ?? []).map(({ conversation }) => ({
+        id: conversation.id,
+        channel: conversation.kind === "channel",
+      })),
+    [bootstrap],
+  );
+  const { scope, client } = binding;
+  // The open conversation's detail starts with the bootstrap, not after the
+  // frame read: the same choice navigation makes (the linked conversation,
+  // else the first channel; views and deep links resolve later). History is
+  // not prefetched: its window depends on the timeline's position.
+  const query = useSearchParams();
+  const linked = query.get("conversation");
+  const implicit =
+    !query.has("message") &&
+    !query.has("thread") &&
+    !query.has("settings") &&
+    !query.has("view");
+  const early = binding.bootstrap?.conversations.find(({ conversation }) =>
+    linked
+      ? conversation.id === linked
+      : implicit && conversation.kind === "channel",
+  )?.conversation;
+  const earlyId = early?.id;
+  const earlyChannel = early?.kind === "channel";
+  useEffect(() => {
+    if (!earlyId || !scope || !client || scope.signal.aborted) return;
+    void cache.prefetchQuery(
+      scope.detailOptions(earlyId, earlyChannel, client),
+    );
+  }, [cache, scope, client, earlyId, earlyChannel]);
+  const details = useQueries({
+    queries:
+      scope && client
+        ? rooms.map((room) => ({
+            ...scope.detailOptions(room.id, room.channel, client),
+            enabled: false,
+          }))
+        : [],
+    combine: cachedDetails,
+  });
+  const detailStamp = `${rooms.map((room) => room.id).join(",")}|${details.stamp}`;
+  const detailData = details.data;
+  const detailMap = useMemo(
+    () =>
+      Object.fromEntries(
+        rooms.flatMap((room, index) =>
+          detailData[index] ? [[room.id, detailData[index]]] : [],
+        ),
+      ),
+    // detailStamp changes exactly when a room or a cached detail changes.
+    [detailStamp],
+  );
+  // Presence follows each cached detail read; it is observed here and read
+  // only for the open conversation (`useConversationPresence`).
+  const presenceRooms = rooms.flatMap((room, index) => {
+    const detail = detailData[index];
+    return detail
+      ? [
+          {
+            id: room.id,
+            readAt: details.updatedAt[index],
+            userIds: detail.members.map((member) => member.user_id),
+          },
+        ]
+      : [];
+  });
+  const presenceReads = useQueries({
+    queries:
+      scope && client
+        ? presenceRooms.map((room) => ({
+            ...scope.presenceOptions(
+              room.id,
+              room.readAt,
+              room.userIds,
+              client,
+            ),
+            enabled: false,
+          }))
+        : [],
+    combine: cachedPresence,
+  });
+  const presenceData = presenceReads.data;
+  const presence = useMemo(
+    () => Object.assign({}, ...presenceData.filter(Boolean)) as Presence,
+    // The stamp changes exactly when a presence read or patch lands.
+    [presenceReads.stamp],
+  );
+  // Authors of thread roots and record links outside the loaded members are
+  // named from their person cards, once any conversation's members are known.
+  const heldRaw = useMemo(
+    () => [...(threadRead.data?.roots ?? []), ...(recordRead.data ?? [])],
+    [threadRead.data, recordRead.data],
+  );
+  const known = useMemo(
+    () =>
+      Object.values(detailMap).flatMap((detail) =>
+        detail.members.map((member) => ({ id: member.user_id })),
+      ),
+    [detailMap],
+  );
+  const authors = useCommsMessageAuthors(
+    known.length ? heldRaw : noMessages,
+    known,
+  );
+  const projected = useMemo(
+    () =>
+      loaded &&
+      bootstrap &&
+      withDetails(
+        withBootstrap(loaded, bootstrap),
+        detailMap,
+        presence,
+        threadRead.data,
+        recordRead.data,
+        authors,
+      ),
+    [
+      loaded,
+      bootstrap,
+      detailMap,
+      presence,
+      threadRead.data,
+      recordRead.data,
+      authors,
+    ],
+  );
+  const resource = {
+    ...read,
+    data: projected,
+    refreshing:
+      read.refreshing ||
+      threadRead.refreshing ||
+      recordRead.refreshing ||
+      details.refreshing,
+    // A failed thread or record read keeps the frame and offers Try again.
+    error: read.error || threadRead.error || recordRead.error,
+    reload: () => {
+      read.reload();
+      threadRead.reload();
+      recordRead.reload();
+    },
+  };
   useLayoutEffect(() => {
     if (resource.data) setLastGood(resource.data);
   }, [resource.data]);
@@ -71,39 +293,123 @@ export function useCommsWorkspace() {
       : undefined;
   useLayoutEffect(() => {
     // This result has passed the existing query scope's abort/refusal guards.
-    acceptedRead.current = data
-      ? { client: data.client, epoch: data.readEpoch }
-      : null;
+    acceptedRead.current = data ? { client: data.client } : null;
   }, [data]);
+  // Typing names come from the open conversation's members, so typing is
+  // shown only from a detail read that started after the last change.
+  const detailsNow = useRef(detailMap);
+  useLayoutEffect(() => {
+    detailsNow.current = detailMap;
+  }, [detailMap]);
   const invalidateTypingRead = useCallback(() => {
-    requiredRead.current += 1;
-  }, []);
+    binding.scope?.bumpTypingEpoch();
+  }, [binding.scope]);
   const isTypingReadCurrent = useCallback(
-    () =>
+    (conversationId: string) =>
       acceptedRead.current !== null &&
       acceptedRead.current.client === binding.client &&
-      acceptedRead.current.epoch === requiredRead.current &&
       !!binding.scope &&
       !binding.scope.signal.aborted &&
-      !binding.scope.isRefused(key),
+      !binding.scope.isRefused(key) &&
+      !binding.scope.isRefused(conversationId) &&
+      detailsNow.current[conversationId]?.readEpoch ===
+        binding.scope.typingEpoch(),
     [binding.client, binding.scope, key],
   );
   useEffect(() => {
-    if (!data || !binding.client || binding.scope?.signal.aborted) return;
-    return binding.client.events.subscribe({
+    if (!loaded || !client || !scope || scope.signal.aborted) return;
+    const cached = (kind: string) =>
+      cache
+        .getQueryCache()
+        .findAll({ queryKey: scope.keys.all })
+        .filter(
+          (query) =>
+            query.queryKey[5] === kind && query.state.data !== undefined,
+        );
+    return client.events.subscribe({
       on_event(event) {
+        if (scope.signal.aborted) return;
+        // A presence event carries the new state; it patches cached reads.
         if (
           event.event === "presence" &&
-          document.visibilityState === "visible" &&
-          event.topic === `org:${binding.client!.context.org_id}:presence` &&
-          Object.hasOwn(data.presence, event.payload.user_id)
-        )
-          resource.reload();
+          event.topic === `org:${client.context.org_id}:presence`
+        ) {
+          for (const query of cached("presence")) {
+            const current = query.state.data as Presence;
+            if (!Object.hasOwn(current, event.payload.user_id)) continue;
+            cache.setQueryData<Presence>(query.queryKey, {
+              ...current,
+              [event.payload.user_id]: event.payload.state,
+            });
+          }
+          return;
+        }
+        if (event.event !== "message") return;
+        // The bridge applies messages to history and the bootstrap counts.
+        // Only a change to a message this workspace holds reads it again:
+        // that one message, or the thread lists and their new roots.
+        const { conversation_id: id, seq, kind } = event.payload;
+        const detailKey = scope.keys.detail(id);
+        const pinned = cache
+          .getQueryData<ConversationDetail>(detailKey)
+          ?.pins.some((message) => message.seq === seq);
+        if (kind === "pin" || (kind !== "created" && pinned))
+          void cache.invalidateQueries({ queryKey: detailKey, exact: true });
+        if (kind === "thread") {
+          // A repair's full root read in flight is not replaced by a reuse.
+          reuseRoots.current =
+            cache.isFetching({ queryKey: readKey(threadsKey), exact: true }) ===
+            0;
+          void cache.invalidateQueries({
+            queryKey: readKey(threadsKey),
+            exact: true,
+          });
+          return;
+        }
+        if (kind === "created" || kind === "pin") return;
+        const holds = (rows: readonly Message[] | undefined) =>
+          !!rows?.some(
+            (message) => message.conversation_id === id && message.seq === seq,
+          );
+        const inThreads = holds(
+            cache.getQueryData<WorkspaceThreads>(readKey(threadsKey))?.roots,
+          ),
+          inRecords = holds(cache.getQueryData<Message[]>(readKey(recordsKey)));
+        if (!inThreads && !inRecords) return;
+        void scope
+          .read(
+            id,
+            (signal) => client.getMessageBySequence(id, seq, { signal }),
+            undefined,
+            false,
+          )
+          .then(({ data: message }) => {
+            const swap = (rows: readonly Message[]) =>
+              rows.map((row) => (row.id === message.id ? message : row));
+            if (inThreads)
+              cache.setQueryData<WorkspaceThreads>(
+                readKey(threadsKey),
+                (current) =>
+                  current && { ...current, roots: swap(current.roots) },
+              );
+            if (inRecords)
+              cache.setQueryData<Message[]>(
+                readKey(recordsKey),
+                (current) => current && swap(current),
+              );
+          })
+          .catch(() => {
+            // A purged message has no DTO; read its list again.
+            void cache.invalidateQueries({
+              queryKey: readKey(inThreads ? threadsKey : recordsKey),
+              exact: true,
+            });
+          });
       },
       on_connection() {},
       on_error() {},
     });
-  }, [data, binding.client, binding.scope, resource.reload]);
+  }, [loaded, client, scope, cache]);
   const displayed = data ?? lastGood ?? empty;
   const people = useMemo(
     () =>

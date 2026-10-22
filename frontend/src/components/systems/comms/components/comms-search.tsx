@@ -19,6 +19,7 @@ import type { SearchHit, SearchRequest } from "../contract/types";
 import { useCommsClient } from "../state/client-context";
 import { useCommsRead } from "../state/runtime";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
+import { useVisiblePeople } from "../state/use-visible-people";
 import type { NavigationState } from "../state/use-comms-navigation";
 import { CommsSearchResults } from "./comms-search-results";
 
@@ -65,7 +66,6 @@ export default function CommsSearch({
           : (metadata.directs.find((row) => row.id === conversation.id)?.user ??
             "Private conversation"),
     })) ?? [];
-  const people = metadata?.people ?? [];
   const current = rooms.find((room) => room.id === navigation.selected);
   const defaults = (): Filters => ({
     who: "",
@@ -78,6 +78,9 @@ export default function CommsSearch({
   });
   const [filters, setFilters] = useState<Filters>(defaults);
   const [editor, setEditor] = useState<Chip | null>(null);
+  // The Who picker reads everyone in the viewer's conversations when it opens.
+  const visible = useVisiblePeople(open && editor === "Who");
+  const people = metadata ? visible : [];
   const [request, setRequest] = useState<SearchRequest | null>(null);
   const [validation, setValidation] = useState("");
   const [target, setTarget] = useState<{

@@ -13,7 +13,7 @@ import {
   channelCreationCheck,
   scopeManagementDecision,
 } from "../domain/capabilities";
-import { invalidInput } from "../domain/settings";
+import { invalidInput, resolveSettings } from "../domain/settings";
 import type { MemoryCommsState, MemoryPolicyWorld } from "./model";
 import type { MemoryExecution } from "./store-types";
 import {
@@ -240,18 +240,24 @@ export function projectConversation(
           : ("member" as const)
         : (members[context.user_id]?.member_role ?? null),
   };
-  if (stored.kind === "direct")
+  const participant_ids = Object.keys(members).sort();
+  // Like the API: a person who is no longer an active member has no name.
+  const participants = participant_ids.map((user_id) => {
+    const person = world.people[user_id];
     return {
-      ...common,
-      kind: "direct",
-      participant_ids: Object.keys(members).sort(),
+      user_id,
+      display_name: person?.active ? person.display_name : null,
     };
+  });
+  if (stored.kind === "direct")
+    return { ...common, kind: "direct", participant_ids, participants };
   if (stored.kind === "group")
     return {
       ...common,
       kind: "group",
       name: stored.name,
-      participant_ids: Object.keys(members).sort(),
+      participant_ids,
+      participants,
     };
   const channel = {
     ...common,
@@ -260,6 +266,8 @@ export function projectConversation(
     topic: stored.topic,
     category_id: stored.category_id,
     position: stored.position,
+    thread_branches: resolveSettings(world, { kind: "channel", id }).effective
+      .thread_branches,
   };
   if (stored.scope === "department")
     return {

@@ -25,10 +25,10 @@ export function ExportTools({
   opener,
   onClose,
 }: CommsToolsDialogProps) {
-  const { client } = useCommsClient();
+  const { client, managedDepartmentIds } = useCommsClient();
   const [password, setPassword] = useState("");
   useEffect(() => setPassword(""), [client]);
-  const { bootstrap, checks } = useCommsWorkspaceView();
+  const { bootstrap } = useCommsWorkspaceView();
   const { run, isPending } = useCommsCommands();
   const rooms = bootstrap?.conversations.map((row) => row.conversation) ?? [];
   const privateRoom = (id: string) =>
@@ -42,9 +42,8 @@ export function ExportTools({
   const [reason, setReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
-  const allowed = Object.values(checks).some(
-    (check) => check.capabilities.manageWorkspace.allowed,
-  );
+  // Only an organization admin manages the workspace.
+  const allowed = managedDepartmentIds === "all";
   const protectedSelection = selected.some(privateRoom);
   const resource = useCommsRead("exports", (client, signal) =>
     complete((offset) =>

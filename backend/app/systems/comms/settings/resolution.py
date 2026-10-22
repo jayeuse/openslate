@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -302,6 +302,60 @@ def _metadata() -> list[dict[str, str]]:
         for section, keys in sections.items()
         for key in keys.split()
     ]
+
+
+def channel_effective_settings(
+    db: Session, channels: Sequence[CommsConversation]
+) -> dict[UUID, dict[str, Any]]:
+    """Effective settings of many channels in two statements: stored rows, then locks.
+
+    Same layers as ``resolve_settings``; a deleted category adds nothing (``scope_context``).
+    """
+    if not channels:
+        return {}
+    s, category = CommsSettings, CommsCategory
+    stored: dict[tuple[str, UUID | None], Mapping[str, Any]] = {}
+    for kind, category_id, conversation_id, values in db.execute(
+        select(s.scope, s.category_id, s.conversation_id, s.values)
+        .outerjoin(
+            category,
+            and_(
+                category.org_id == s.org_id,
+                category.id == s.category_id,
+                category.is_deleted.is_(False),
+                category.deleted_at.is_(None),
+            ),
+        )
+        .where(
+            s.org_id == bound_organization_column(),
+            s.is_deleted.is_(False),
+            or_(
+                s.scope == "workspace",
+                and_(
+                    s.scope == "category",
+                    s.category_id.in_({row.category_id for row in channels}),
+                    category.id.is_not(None),
+                ),
+                and_(s.scope == "channel", s.conversation_id.in_([row.id for row in channels])),
+            ),
+        )
+    ).tuples():
+        stored[kind, category_id or conversation_id] = values or {}
+    locks = locked_keys(db, "setting")
+    result: dict[UUID, dict[str, Any]] = {}
+    for row in channels:
+        layers: list[tuple[Scope, Mapping[str, Any]]] = [
+            ({"kind": "workspace"}, stored.get(("workspace", None), {})),
+            ({"kind": "channel", "id": row.id}, stored.get(("channel", row.id), {})),
+        ]
+        if ("category", row.category_id) in stored:
+            assert row.category_id is not None
+            layers.insert(
+                1,
+                ({"kind": "category", "id": row.category_id}, stored["category", row.category_id]),
+            )
+        result[row.id] = resolve_layers(layers, locks)[0]
+    return result
 
 
 def resolve_settings(db: Session, scope: Scope) -> dict[str, Any]:

@@ -4,10 +4,17 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import { failureStatus } from "../contract/failure-status";
 import { commsContextSchema } from "../contract/schemas";
 import type { CommsContext, HistoryRequest } from "../contract/types";
 import { bootstrap, getHistory } from "./message-api";
 import { getReplies } from "./threads-api";
+import {
+  loadConversationDetail,
+  loadConversationPresence,
+  type ConversationDetail,
+  type ConversationPresence,
+} from "./conversation-detail";
 
 /** One admitted lifetime on the existing account QueryClient, never a provider. */
 export function createCommsQueryScope(
@@ -23,12 +30,18 @@ export function createCommsQueryScope(
     { latestSuccess: number; deniedAt: number | null; refusedThrough: number }
   >();
   let sequence = 0;
+  // Bumped when typing may name a person the loaded members no longer hold.
+  let typingEpoch = 0;
   const keys = {
     all,
     bootstrap: [...all, "bootstrap"] as const,
     conversation: (id: string) => [...all, "conversation", id] as const,
     history: (id: string, root: string | null) =>
       [...all, "conversation", id, "history", root] as const,
+    detail: (id: string) => [...all, "conversation", id, "detail"] as const,
+    // Keyed by the detail read it follows: new members, new presence read.
+    presence: (id: string, detailReadAt: number) =>
+      [...all, "conversation", id, "presence", detailReadAt] as const,
     refusal: refusals,
   };
   async function read<T>(
@@ -37,6 +50,9 @@ export function createCommsQueryScope(
     signal?: AbortSignal,
     // A purged message may be missing while its conversation remains readable.
     notFoundIsRefusal = true,
+    // Organization data read for a conversation (presence) may set its
+    // refusal but never proves access, so its success clears nothing.
+    clearsRefusal = true,
   ): Promise<T> {
     const combined = signal
       ? AbortSignal.any([controller.signal, signal])
@@ -55,6 +71,7 @@ export function createCommsQueryScope(
       const bootstrapRefusal = reads.get("bootstrap")?.refusedThrough ?? 0;
       if (startedAt <= state.refusedThrough || startedAt <= bootstrapRefusal)
         throw new DOMException("A newer read refused this data", "AbortError");
+      if (!clearsRefusal) return result;
       state.latestSuccess = Math.max(state.latestSuccess, startedAt);
       if (state.deniedAt !== null && startedAt > state.deniedAt) {
         state.deniedAt = null;
@@ -69,12 +86,8 @@ export function createCommsQueryScope(
       const status =
         error instanceof ApiError
           ? error.status
-          : error instanceof Error &&
-              "failure" in error &&
-              typeof error.failure === "object" &&
-              error.failure !== null &&
-              "status" in error.failure
-            ? Number(error.failure.status)
+          : error instanceof Error
+            ? failureStatus(error)
             : undefined;
       if (
         error instanceof Error &&
@@ -116,6 +129,10 @@ export function createCommsQueryScope(
     keys,
     read,
     isRefused,
+    typingEpoch: () => typingEpoch,
+    bumpTypingEpoch: () => {
+      typingEpoch += 1;
+    },
     refusalOptions: (id?: string) =>
       queryOptions({
         queryKey: refusals,
@@ -138,6 +155,65 @@ export function createCommsQueryScope(
         queryKey: keys.bootstrap,
         queryFn: ({ signal }) =>
           read(undefined, (signal) => bootstrap(context, { signal }), signal),
+      }),
+    /**
+     * One conversation's members, check, settings and pins. It is read only
+     * while the conversation is open (or a dialog needs it), through the
+     * conversation's own refusal latch, so a 403 conceals its history too.
+     */
+    detailOptions: (
+      conversationId: string,
+      channel: boolean,
+      http: Parameters<typeof loadConversationDetail>[0],
+    ) =>
+      queryOptions<ConversationDetail & { readEpoch: number }>({
+        queryKey: keys.detail(conversationId),
+        queryFn: async ({ signal }) => {
+          // Captured at start: a read in flight cannot admit a later change.
+          const readEpoch = typingEpoch;
+          return {
+            ...(await read(
+              conversationId,
+              (signal) =>
+                loadConversationDetail(http, conversationId, channel, signal),
+              signal,
+            )),
+            readEpoch,
+          };
+        },
+      }),
+    /**
+     * The presence of one conversation's members, read after its detail and
+     * through the conversation's refusal latch. Nothing waits for it.
+     */
+    presenceOptions: (
+      conversationId: string,
+      detailReadAt: number,
+      userIds: readonly string[],
+      http: Parameters<typeof loadConversationPresence>[0],
+    ) =>
+      queryOptions<ConversationPresence>({
+        queryKey: keys.presence(conversationId, detailReadAt),
+        queryFn: ({ signal }) =>
+          read(
+            conversationId,
+            (signal) => loadConversationPresence(http, userIds, signal),
+            signal,
+            true,
+            false,
+          ),
+        // A new member read keeps showing the last presence (as stale data)
+        // until this one lands, instead of everyone Offline.
+        initialData: () =>
+          client
+            .getQueryCache()
+            .findAll({
+              queryKey: [...keys.conversation(conversationId), "presence"],
+            })
+            .filter((query) => query.state.data !== undefined)
+            .sort((a, b) => b.state.dataUpdatedAt - a.state.dataUpdatedAt)[0]
+            ?.state.data as ConversationPresence | undefined,
+        initialDataUpdatedAt: 0,
       }),
     historyOptions: (
       conversationId: string,

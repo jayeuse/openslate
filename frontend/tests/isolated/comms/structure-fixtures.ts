@@ -39,11 +39,20 @@ const identity = {
   member_count: 3,
   member_role: "manager",
 };
-export const channel = { ...identity, ...channelRequest, kind: "channel" };
+export const channel = {
+  ...identity,
+  ...channelRequest,
+  kind: "channel",
+  thread_branches: "all",
+};
 export const direct = {
   ...identity,
   kind: "direct",
   participant_ids: [peer, user],
+  participants: [
+    { user_id: peer, display_name: "Peer" },
+    { user_id: user, display_name: "Owner" },
+  ],
   member_count: 2,
 };
 export const group = {
@@ -51,6 +60,11 @@ export const group = {
   kind: "group",
   name: "Team",
   participant_ids: [peer, other, user],
+  participants: [
+    { user_id: peer, display_name: "Peer" },
+    { user_id: other, display_name: null },
+    { user_id: user, display_name: "Owner" },
+  ],
 };
 export const member = {
   user_id: peer,

@@ -18,7 +18,15 @@ export interface MemoryGroup {
 }
 export type MemoryDepartment = MemoryGroup;
 type StoredConversation<T> = T extends C.Conversation
-  ? Omit<T, "level" | "member_count" | "member_role" | "participant_ids"> & {
+  ? Omit<
+      T,
+      | "level"
+      | "member_count"
+      | "member_role"
+      | "participant_ids"
+      | "participants"
+      | "thread_branches"
+    > & {
       creator_id: string;
     }
   : never;

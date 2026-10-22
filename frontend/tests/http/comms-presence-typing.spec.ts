@@ -251,7 +251,11 @@ test("typing names expire and exclude own unknown foreign and inactive conversat
     await expect(typing).toBeEmpty();
     gate.release();
     gate = null;
-    const retry = page.getByRole("button", { name: "Try again", exact: true });
+    // A refused member read conceals the conversation until it is read again.
+    const retry = page.getByRole("button", {
+      name: "Retry history",
+      exact: true,
+    });
     await expect(retry).toBeVisible();
     server.publishTyping(person.user_id);
     await expect(typing).toBeHidden();
@@ -401,11 +405,23 @@ test("presence snapshots and events update avatars members and the authorized pe
         ? route.fulfill({ status: 403, json: { detail: "Unavailable" } })
         : route.fallback(),
     );
+    // A presence event only patches the shown state; the repair after a
+    // grants change reads the open conversation again, and a presence
+    // refusal conceals that conversation and its members.
     server.setPresence(person.user_id, "online");
+    await expect(
+      members.getByRole("region", { name: "Online members", exact: true }),
+    ).toContainText(person.display_name);
+    server.publishAuthorizationChange("grants");
     await expect(members).toBeHidden();
+    await expect(
+      page.getByText("This conversation is not available.", { exact: true }),
+    ).toBeVisible();
     denied = false;
     server.setPresence(person.user_id, "offline");
-    await page.getByRole("button", { name: "Try again", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Retry history", exact: true })
+      .click();
     await expect(
       members.getByRole("region", { name: "Offline members", exact: true }),
     ).toContainText(person.display_name);

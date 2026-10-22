@@ -40,9 +40,31 @@ export function createLiveCommsRuntime(
       );
   const refreshReads = async () => {
     scope.signal.throwIfAborted();
+    // A conversation detail nobody shows is dropped, not kept stale: its
+    // checks and members may have changed. A shown one is read again.
+    const unshown = new Set(
+      cache
+        .getQueryCache()
+        .findAll({ queryKey: scope.keys.all })
+        .filter(
+          (query) =>
+            (query.queryKey[5] === "detail" ||
+              query.queryKey[5] === "presence") &&
+            !query.isActive(),
+        ),
+    );
+    if (unshown.size)
+      await cache.resetQueries({
+        queryKey: scope.keys.all,
+        predicate: (query) => unshown.has(query),
+      });
     await cache.invalidateQueries({
       queryKey: scope.keys.all,
-      predicate: (query) => query.queryKey[5] === "read",
+      predicate: (query) =>
+        query.queryKey[5] === "read" ||
+        query.queryKey[5] === "detail" ||
+        // A people picker's union of members.
+        query.queryKey[3] === "people",
     });
   };
   // One read repair at a time. A change seen while a repair runs is folded
@@ -83,8 +105,9 @@ export function createLiveCommsRuntime(
         .then(() => {
           if (["grants", "membership", "structure"].includes(event.event))
             return refresh();
-          if (!["typing", "presence"].includes(event.event))
-            return refreshReads();
+          // The bridge applied a message, a read watermark or a notice to
+          // history and the bootstrap counts. The workspace view reads again
+          // only what such a change touches (a thread, a pin, a held message).
         })
         .catch(failure);
       observers.forEach((observer) => observer.on_event(event));
@@ -93,7 +116,8 @@ export function createLiveCommsRuntime(
       if (scope.signal.aborted) return;
       const recovered = state.state === "live" && connection.state !== "live";
       // Before the initial read completes there is no displayed snapshot to
-      // repair. Late first connections and every reconnect still resynchronize.
+      // repair. Late first connections and every reconnect still resynchronize
+      // (the workspace read no longer grows with the conversations).
       const repair = recovered && (connectedOnce || hasReadModel());
       connection = state;
       if (state.state === "live") connectedOnce = true;

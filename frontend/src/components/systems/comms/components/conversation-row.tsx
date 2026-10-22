@@ -21,7 +21,6 @@ import {
   type SidebarActions,
   type SidebarRow,
 } from "../state/use-comms-sidebar";
-import { resolveCommsSettings } from "../domain/configuration";
 import type { Thread } from "../domain/view-model";
 
 export function ConversationCounts({ row }: { row: SidebarRow }) {
@@ -61,21 +60,26 @@ export function ConversationRow({
   select: (id: string) => void;
   openThread: (thread: Thread, conversation: string) => void;
 }) {
-  const { channels, categories, threads, messages, configuration, checks } =
+  const { channels, categories, threads, messages, checks } =
     useCommsWorkspaceView();
   const { duplicateChannel, setChannelArchived, copyConversation } =
     useCommsListActions();
   const id = row.conversation.id;
   const channel = channels.find((item) => item.id === id);
-  const manage = checks[id]?.capabilities.manageChannel.allowed ?? false;
+  // The open conversation's check decides; others go by the bootstrap level.
+  const manage =
+    checks[id]?.capabilities.manageChannel.allowed ??
+    row.conversation.level === "manage";
   const selected = navigation.selected === id && !navigation.view;
   const label = channel ? "channel" : "conversation";
   const branches = threads.filter(
     (thread) => thread.conversation === id && !thread.archived,
   );
-  const branchMode = channel
-    ? resolveCommsSettings(configuration, channel).values.threadBranches
-    : "none";
+  // The bootstrap carries each channel's effective thread-branches setting.
+  const branchMode =
+    row.conversation.kind === "channel"
+      ? row.conversation.thread_branches
+      : "none";
   const Icon =
     row.conversation.kind === "channel"
       ? Hash

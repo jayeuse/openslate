@@ -458,6 +458,10 @@ export const messageSendCommand: MessageSendCommand = (input, dependencies) => {
         ],
         publications: [
           ...messagePublications(draft, message, "created"),
+          // Like the API, a reply also announces its thread root changed.
+          ...(parentId === null
+            ? []
+            : messagePublications(draft, draft.messages[parentId], "thread")),
           ...notifications.publications,
         ],
       };

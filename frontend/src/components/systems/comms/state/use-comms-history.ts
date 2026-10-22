@@ -15,6 +15,9 @@ import { useCommsWorkspaceView } from "./use-comms-workspace";
 import { useCommsRead } from "./runtime";
 import { loadQuotes, messageView } from "./message-view";
 import { useCommsMessageAuthors } from "./use-comms-message-authors";
+import { useConversationDetail } from "./use-conversation-detail";
+
+const noMessages: HistoryPage["items"] = [];
 
 export function useCommsHistory(
   id: string,
@@ -60,10 +63,15 @@ export function useCommsHistory(
     enabled: !!client && !!scope && enabled,
     meta: { commsFollowLatest: following },
   });
+  // Messages show with their authors' names: wait for the conversation's
+  // members, which load beside history (a failed read does not hold it).
+  const detail = useConversationDetail(id, false);
+  const peopleReady = detail.data !== undefined || detail.isError;
   const page = useMemo((): HistoryPage | undefined => {
     if (
       !client ||
       !enabled ||
+      !peopleReady ||
       scope?.isRefused(id) ||
       !resource.data?.pages.length
     )
@@ -89,7 +97,7 @@ export function useCommsHistory(
         has_newer: pages.at(-1)!.pagination.has_newer,
       },
     };
-  }, [client, enabled, id, scope, resource.data]);
+  }, [client, enabled, id, scope, resource.data, peopleReady]);
   const displayed = useRef<HistoryPage | undefined>(undefined);
   const anchor = useRef<{ id: string; top: number; page: HistoryPage } | null>(
     null,
@@ -215,7 +223,11 @@ export function useCommsHistory(
     () => [...(page?.items ?? []), ...(quotes.data ?? [])],
     [page, quotes.data],
   );
-  const authors = useCommsMessageAuthors(authorMessages, workspace.people);
+  // Look up only authors the open conversation's members do not name.
+  const authors = useCommsMessageAuthors(
+    peopleReady ? authorMessages : noMessages,
+    workspace.people,
+  );
   const projected = useMemo(() => {
     const records = new Map(
       workspace.records.map((record) => [record.id, record]),
@@ -241,8 +253,11 @@ export function useCommsHistory(
     followLatest: following,
     restoreId: position.id === id ? position.restoreId : undefined,
     error: resource.isError ? "History could not be loaded. Try again." : "",
-    loading: enabled && resource.isPending,
+    loading: enabled && (resource.isPending || !peopleReady),
     retry: () => {
+      // A refusal also cleared the conversation's detail; read both again.
+      if (scope)
+        void cache.invalidateQueries({ queryKey: scope.keys.detail(id) });
       void resource.refetch();
     },
     latest: () => {

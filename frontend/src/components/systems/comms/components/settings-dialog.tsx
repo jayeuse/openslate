@@ -29,6 +29,8 @@ import { lockableCapabilitySchema } from "../contract/schemas";
 import { ConfigurationFrame } from "./configuration-frame";
 import { TextField } from "./message-shared";
 import { useCommsConfiguration } from "../state/configuration-state";
+import { useConversationDetail } from "../state/use-conversation-detail";
+import { useVisiblePeople } from "../state/use-visible-people";
 import { useCommsClient } from "../state/client-context";
 import {
   wirePreferences,
@@ -74,7 +76,8 @@ export interface CommsSettingsDialogProps {
   scope: CommsScope | "personal";
   channels: Channel[];
   categories: Category[];
-  people: Person[];
+  /** Defaults to everyone in the viewer's conversations, read on open. */
+  people?: Person[];
   roles: Role[];
   opener: HTMLElement | null;
   onClose: () => void;
@@ -103,6 +106,16 @@ export function CommsSettingsDialog(props: CommsSettingsDialogProps) {
       ? { kind: "workspace", id: "workspace" }
       : props.scope;
   const [initialLocks, setInitialLocks] = useState<C.Capability[] | null>(null);
+  // People pickers (restricted people, roles, the permission inspector) read
+  // everyone in the viewer's conversations only once this dialog opens.
+  const visiblePeople = useVisiblePeople(!personal && !props.people);
+  // A channel's baseline is its own settings, read here when the channel is
+  // not open; an empty baseline could reset settings it never showed.
+  const existingChannel =
+    !personal && target.kind === "channel" && !props.unsavedChannel;
+  const detail = useConversationDetail(existingChannel ? target.id : undefined);
+  const [loadedConfig] = useCommsConfiguration();
+  const baselineReady = !existingChannel || !!loadedConfig.channels[target.id];
   const admission = useCommsRead(
     `settings-admission:${personal ? "personal" : `${target.kind}:${target.id}`}`,
     async (client, signal) => {
@@ -137,8 +150,12 @@ export function CommsSettingsDialog(props: CommsSettingsDialogProps) {
     )
       setInitialLocks(locks.data.data.capabilities);
   }, [initialLocks, admission.data, personal, locks.data, catalogStatus]);
-  if (initialLocks === null) {
-    const error = admission.error || locks.error || catalogStatus === "error";
+  if (initialLocks === null || !baselineReady) {
+    const error =
+      admission.error ||
+      locks.error ||
+      catalogStatus === "error" ||
+      (existingChannel && detail.isError);
     return (
       <ConfigurationFrame
         title={
@@ -169,6 +186,7 @@ export function CommsSettingsDialog(props: CommsSettingsDialogProps) {
             <Action
               onClick={() => {
                 admission.reload();
+                if (detail.isError) void detail.refetch();
                 if (!personal && admission.data) {
                   if (locks.error) locks.reload();
                   if (catalogStatus === "error") retryCatalog?.();
@@ -185,6 +203,7 @@ export function CommsSettingsDialog(props: CommsSettingsDialogProps) {
   return (
     <LoadedCommsSettingsDialog
       {...props}
+      people={props.people ?? visiblePeople}
       admission={admission}
       initialCapabilityLocks={initialLocks}
     />
@@ -214,6 +233,7 @@ function LoadedCommsSettingsDialog({
 }: CommsSettingsDialogProps & {
   admission: ReturnType<typeof useCommsRead<boolean>>;
   initialCapabilityLocks: C.Capability[];
+  people: Person[];
 }) {
   const userId = useVerifiedWorkspaceUserId();
   const region = useWorkspaceDisplayRegion();
@@ -613,6 +633,13 @@ function LoadedCommsSettingsDialog({
           : messageFromCommsError(failure, "Changes could not be saved."),
       );
       return false;
+    }
+    // A created channel opens at once from the seeded bootstrap; the
+    // follow-up read replaces the seed in the background.
+    if (unsavedChannel) {
+      onAfterSave?.();
+      onClose();
+      return true;
     }
     // Join the follow-up read that run() started, so the next dialog opens on
     // the saved locks instead of the previous read model. Joining never asks

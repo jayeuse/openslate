@@ -27,13 +27,12 @@ const projections = {
 } as const;
 const creator = { creator_id: uuid };
 const [organization, department] = S.channelSchema.options;
+const participants = { participant_ids: true, participants: true } as const;
 const conversation = z.union([
-  organization.omit(projections).extend(creator),
-  department.omit(projections).extend(creator),
-  S.directSchema
-    .omit({ ...projections, participant_ids: true })
-    .extend(creator),
-  S.groupSchema.omit({ ...projections, participant_ids: true }).extend(creator),
+  organization.omit({ ...projections, thread_branches: true }).extend(creator),
+  department.omit({ ...projections, thread_branches: true }).extend(creator),
+  S.directSchema.omit({ ...projections, ...participants }).extend(creator),
+  S.groupSchema.omit({ ...projections, ...participants }).extend(creator),
 ]);
 const message = S.liveMessageSchema
   .omit({

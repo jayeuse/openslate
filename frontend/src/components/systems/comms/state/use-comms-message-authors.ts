@@ -19,6 +19,7 @@ import { useWorkspaceInteractionSuspended } from "../../shared/runtime/workspace
 import type { Person } from "../../shared/data/sample-people";
 import type { Message } from "../contract/types";
 import { useCommsClient } from "./client-context";
+import { BURST } from "./bounded";
 
 function clearCards(
   cache: QueryClient,
@@ -49,7 +50,7 @@ function clearCards(
  */
 export function useCommsMessageAuthors(
   messages: readonly Pick<Message, "org_id" | "author_id">[],
-  people: readonly Person[],
+  people: readonly Pick<Person, "id">[],
 ) {
   const { client, scope } = useCommsClient();
   const cache = useQueryClient();
@@ -86,11 +87,21 @@ export function useCommsMessageAuthors(
   const seen = useRef<{ viewer: PersonCardViewer; ids: Set<string> } | null>(
     null,
   );
+  // At most BURST card reads are in flight: the rest start as those settle.
+  const unsettled = missing.filter(
+    (id) =>
+      cache.getQueryState(personCardKey(viewer, id))?.status !== "success" &&
+      cache.getQueryState(personCardKey(viewer, id))?.status !== "error",
+  );
+  const starting = new Set(unsettled.slice(0, BURST));
   const reads = useQueries({
     queries: missing.map((id) =>
       queryOptions({
         ...personCardOptions(viewer, id),
-        enabled: (query) => admitted && !query.state.error,
+        enabled: (query) =>
+          admitted &&
+          !query.state.error &&
+          (query.state.status === "success" || starting.has(id)),
       }),
     ),
     combine: (results) => ({
@@ -135,7 +146,8 @@ export function useCommsMessageAuthors(
     }
   }, [cache, viewer, reads.refused]);
   useEffect(() => {
-    if (!admitted || !client || !scope) return;
+    // A runtime retired between render and this effect cannot subscribe.
+    if (!admitted || !client || !scope || scope.signal.aborted) return;
     return client.events.subscribe({
       on_event(event) {
         if (

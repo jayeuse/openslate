@@ -38,6 +38,7 @@ import {
 } from "./configuration-frame";
 import { SettingsFields, SETTINGS_LABELS } from "./settings-fields";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
+import { useCommsClient } from "../state/client-context";
 import {
   useCommsRead,
   useCommsCommands,
@@ -62,9 +63,8 @@ export function ManagementTools({
   const workspace = useCommsWorkspaceView();
   const { channels, people, configuration: config } = workspace;
   const { run, isPending } = useCommsCommands();
-  const canManage = Object.values(workspace.checks).some(
-    (check) => check.capabilities.manageWorkspace.allowed,
-  );
+  // Only an organization admin manages the workspace.
+  const canManage = useCommsClient().managedDepartmentIds === "all";
   const [active, setActive] = useState("");
   const version = useRef<string | null>(null);
   const acceptedTemplate = useRef<C.Versioned<C.Template> | null>(null);

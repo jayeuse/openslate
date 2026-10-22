@@ -261,6 +261,7 @@ class ChannelIdentity(ConversationIdentity):
     topic: str
     category_id: UUID | None
     position: int
+    thread_branches: Literal["all", "followed", "none"]
 
 
 class OrganizationChannel(ChannelIdentity):
@@ -272,15 +273,23 @@ class DepartmentChannel(ChannelIdentity):
     department_id: UUID
 
 
+class Participant(WireModel):
+    user_id: UUID
+    # Null when the person is no longer visible (D36): no longer an active member.
+    display_name: str | None
+
+
 class DirectConversation(ConversationIdentity):
     kind: Literal["direct"]
     participant_ids: list[UUID]
+    participants: list[Participant]
 
 
 class GroupConversation(ConversationIdentity):
     kind: Literal["group"]
     name: str
     participant_ids: list[UUID]
+    participants: list[Participant]
 
 
 Conversation = (

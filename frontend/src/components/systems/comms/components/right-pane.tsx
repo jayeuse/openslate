@@ -145,7 +145,9 @@ export function RightPane({
         onClose={() => navigation.setRecordId("")}
       />
     );
-  const memberRows = canView ? (workspace.members[selected] ?? []) : [];
+  // An unavailable conversation shows no members region at all (D44).
+  if (!canView) return <ScrollArea className="h-full" />;
+  const memberRows = workspace.members[selected] ?? [];
   const memberIds = new Set(memberRows.map((member) => member.user_id));
   return (
     <ScrollArea className="h-full">

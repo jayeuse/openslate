@@ -67,6 +67,8 @@ export function ConversationView({
     canPost,
     canParticipate,
     check,
+    detailStatus,
+    retryDetail,
     viewerId,
     identity,
   } = conversation;
@@ -459,10 +461,13 @@ export function ConversationView({
             </Action>
           </Alert>
         ))}
-      <TypingIndicator
-        conversationId={selected}
-        enabled={canView && !settings.locked && !navigation.navigating}
-      />
+      {/* Typing belongs with the composer; an unavailable conversation has neither. */}
+      {(canView || direct) && (
+        <TypingIndicator
+          conversationId={selected}
+          enabled={canView && !settings.locked && !navigation.navigating}
+        />
+      )}
       {/* An unreadable conversation has no composer; a blocked direct keeps its reason. */}
       {(canView || direct) && (
         <MessageComposer
@@ -478,14 +483,19 @@ export function ConversationView({
             channel ? `#${channel.name}` : (direct?.user ?? "a teammate")
           }
           unavailableReason={
-            direct?.blocked
-              ? "Unblock this user to send a message."
-              : channel?.archived
-                ? "This channel is archived. Restore it to post."
-                : settings.locked
-                  ? "This channel is locked. Unlock it in channel settings to post."
-                  : "Your role cannot post in this channel."
+            detailStatus === "loading"
+              ? "Loading your access…"
+              : detailStatus === "error"
+                ? "Your access could not be loaded."
+                : direct?.blocked
+                  ? "Unblock this user to send a message."
+                  : channel?.archived
+                    ? "This channel is archived. Restore it to post."
+                    : settings.locked
+                      ? "This channel is locked. Unlock it in channel settings to post."
+                      : "Your role cannot post in this channel."
           }
+          unavailableRetry={detailStatus === "error" ? retryDetail : undefined}
           records={records}
           onSend={send}
           onEditLast={(message) => {

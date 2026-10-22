@@ -399,6 +399,7 @@ async function commsSetup(page: Page) {
       scope: "organization",
       category_id: null,
       position: 0,
+      thread_branches: "all",
       member_count: 2,
       member_role: "member",
       level: "read",
@@ -495,11 +496,17 @@ test("Comms inbox opens a current-organization message through the shell's unsav
   expect(state.selectedOrganizations).toEqual([id(702)]);
   // This guard owns the notification's Comms sources: the conversation title
   // metadata and the bootstrap, never a message body or any other read. The
-  // opened Comms page also checks channel creation and sends its presence
-  // heartbeat; neither carries message content, and Comms specs own both.
+  // opened Comms page also checks channel creation, sends its presence
+  // heartbeat and starts its workspace reads beside the bootstrap; Comms
+  // specs own all of them.
   const commsPageReads = new Set([
     "/api/comms/capabilities/channel-creation",
     "/api/comms/presence",
+    "/api/comms/preferences",
+    "/api/comms/settings/workspace",
+    "/api/comms/settings/workspace/capabilities",
+    "/api/comms/threads",
+    "/api/comms/search",
   ]);
   expect(
     new Set(state.sourceReads.filter((path) => !commsPageReads.has(path))),

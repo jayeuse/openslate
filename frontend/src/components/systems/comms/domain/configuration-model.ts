@@ -125,10 +125,17 @@ export function resolveCommsSettings(
   config: CommsConfiguration,
   channel?: Pick<Channel, "id" | "categoryId">,
 ): ResolvedCommsSettings {
+  // A channel's own settings load with its detail; until then it shows what
+  // it inherits from its category, then the workspace.
   return (
-    config.resolved[
-      channel?.id ||
-        (channel?.categoryId ? `category:${channel.categoryId}` : "workspace")
-    ] ?? { values: DEFAULT_COMMS_SETTINGS, sources: {}, locked: [] }
+    (channel?.id ? config.resolved[channel.id] : undefined) ??
+    (channel?.categoryId
+      ? config.resolved[`category:${channel.categoryId}`]
+      : undefined) ??
+    config.resolved.workspace ?? {
+      values: DEFAULT_COMMS_SETTINGS,
+      sources: {},
+      locked: [],
+    }
   );
 }

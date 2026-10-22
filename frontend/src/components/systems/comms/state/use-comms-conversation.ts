@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
 import {
   DEFAULT_COMMS_PREFERENCES,
@@ -6,21 +7,47 @@ import {
 } from "../domain/configuration";
 import { useCommsWorkspaceView } from "./use-comms-workspace";
 import { useCommsClient } from "./client-context";
-import { useCommsRead } from "./runtime";
+import { creationLocked } from "../domain/channel-creation";
+import { useChannelCreationReach } from "./use-channel-creation";
 import {
-  creationLocked,
-  holdsCreateChannelGrant,
-} from "../domain/channel-creation";
+  useConversationDetail,
+  useConversationPresence,
+} from "./use-conversation-detail";
+import { isCommsReadRefusal } from "./runtime";
 
 export function useCommsConversation(selected: string) {
   const workspace = useCommsWorkspaceView();
   const { client, managedDepartmentIds } = useCommsClient();
-  const granted = holdsCreateChannelGrant(workspace.checks);
-  const creation = useCommsRead(
-    "channel-creation:workspace",
-    (client, signal) =>
-      client.getChannelCreationCheck({ kind: "workspace" }, { signal }),
+  // Members, check, settings and pins load for the open conversation only.
+  // After a refusal it stays concealed until its detail is read again.
+  const detail = useConversationDetail(selected || undefined);
+  useConversationPresence(selected || undefined);
+  // A retry resets the refused read to pending, so the refusal is remembered
+  // until a detail read lands after it.
+  const [refusal, setRefusal] = useState<{ id: string; at: number } | null>(
+    null,
   );
+  if (
+    detail.isError &&
+    isCommsReadRefusal(detail.error) &&
+    (refusal?.id !== selected || refusal.at !== detail.errorUpdatedAt)
+  )
+    setRefusal({ id: selected, at: detail.errorUpdatedAt });
+  const detailRefused =
+    refusal?.id === selected && detail.dataUpdatedAt < refusal.at;
+  // What the composer says while the check is not known: loading, or a
+  // failure that is not a refusal (with Retry).
+  const detailStatus: "loading" | "error" | "ready" = detail.data
+    ? "ready"
+    : detail.isError && !isCommsReadRefusal(detail.error)
+      ? "error"
+      : "loading";
+  const check = workspace.checks[selected];
+  const { creation, reach } = useChannelCreationReach(
+    workspace.categories,
+    check,
+  );
+  const granted = reach.workspace || reach.categoryIds.size > 0;
   const viewerId = useVerifiedWorkspaceUserId();
   const channel = workspace.channels.find((item) => item.id === selected);
   const direct = workspace.directs.find((item) => item.id === selected);
@@ -30,8 +57,7 @@ export function useCommsConversation(selected: string) {
     workspace.configuration,
     channel,
   ).values;
-  const check = workspace.checks[selected];
-  const canView = !!(channel || direct) && !direct?.blocked;
+  const canView = !!(channel || direct) && !direct?.blocked && !detailRefused;
   const canParticipate =
     !!client &&
     canView &&
@@ -55,6 +81,10 @@ export function useCommsConversation(selected: string) {
     canView,
     canParticipate,
     canPost,
+    detailStatus,
+    retryDetail: () => {
+      void detail.refetch();
+    },
     menuAccess: {
       canManageChannel: check?.capabilities.manageChannel.allowed ?? false,
       // A department manager, or a grant holder with a department role,

@@ -111,7 +111,13 @@ export async function installCommsSearchApi(
     if (route.request().headers()["x-org"] !== owner.org_id)
       return route.fallback();
     const url = new URL(route.request().url());
-    requests.push(url);
+    // The cold load's one record-link read (has=record, 100 per page) is not
+    // a search the person ran; only searches from the dialog are counted.
+    if (
+      url.searchParams.get("has") !== "record" ||
+      url.searchParams.get("limit") !== "100"
+    )
+      requests.push(url);
     const result = await respond(url);
     const status = result.status ?? 200,
       items = result.items ?? [];

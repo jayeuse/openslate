@@ -1,15 +1,17 @@
 """Body-free bootstrap built from bounded set projections, never per-channel policy calls."""
 
 from collections import defaultdict
+from collections.abc import Collection, Mapping
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, exists, false, func, or_, select
+from sqlalchemy import and_, case, exists, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.database.organization_scope import bound_organization_column
-from app.systems.access.users.membership import bound_organization
-from app.systems.access.users.models import User
+from app.systems.access.policy.readers import active_account_clause
+from app.systems.access.users.membership import bound_membership_join, bound_organization
+from app.systems.access.users.models import Membership, User
 from app.systems.comms.access import (
     LEVELS,
     _conversation_access_statement,
@@ -24,6 +26,7 @@ from app.systems.comms.messages.interaction_models import CommsMention
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage, CommsReadState
 from app.systems.comms.messages.schemas import BootstrapResponse
 from app.systems.comms.settings.models import CommsMemberPreferences
+from app.systems.comms.settings.resolution import channel_effective_settings
 
 
 def _mute(row: CommsMemberPreferences) -> dict[str, Any]:
@@ -32,16 +35,47 @@ def _mute(row: CommsMemberPreferences) -> dict[str, Any]:
     )
 
 
+# A member row is a role; a name only for a person visible under D36 (an active member).
+People = dict[UUID, tuple[str, str | None]]
+
+
+def conversation_people(db: Session, ids: Collection[UUID]) -> defaultdict[UUID, People]:
+    """Member rows of many conversations, with names, in one statement."""
+    name = case(
+        (
+            active_account_clause(),
+            func.coalesce(func.nullif(User.display_name, ""), User.username),
+        ),
+        else_=None,
+    )
+    people: defaultdict[UUID, People] = defaultdict(dict)
+    for conversation, person, role, display_name in db.execute(
+        select(CommsMember.conversation_id, CommsMember.user_id, CommsMember.role, name)
+        .join(User, User.id == CommsMember.user_id)
+        .outerjoin(Membership, bound_membership_join())
+        .where(
+            CommsMember.org_id == bound_organization_column(),
+            CommsMember.conversation_id.in_(ids),
+            CommsMember.is_deleted.is_(False),
+            CommsMember.deleted_at.is_(None),
+        )
+    ).tuples():
+        people[conversation][person] = role, display_name
+    return people
+
+
 def project_conversation(
     row: CommsConversation,
     actor: UUID,
     level: str,
-    people: dict[UUID, str],
+    people: People,
     readers: int,
+    settings: Mapping[str, Any],
 ) -> dict[str, Any]:
     """``people`` are member rows; ``readers`` counts a channel's readers (D44).
 
-    On a channel the actor is a "manager" exactly at manage level (D44 A6).
+    On a channel the actor is a "manager" exactly at manage level (D44 A6);
+    ``settings`` are a channel's effective settings and unused elsewhere.
     """
     channel = row.kind == "channel"
     common: dict[str, Any] = {
@@ -55,11 +89,14 @@ def project_conversation(
         "member_count": readers if channel else len(people),
         "member_role": ("manager" if level == "manage" else "member")
         if channel
-        else people.get(actor),
+        else people[actor][0] if actor in people else None,
         "kind": row.kind,
     }
     if not channel:
         common["participant_ids"] = sorted(people)
+        common["participants"] = [
+            {"user_id": person, "display_name": people[person][1]} for person in sorted(people)
+        ]
         if row.kind == "group":
             common["name"] = row.name
     else:
@@ -69,6 +106,7 @@ def project_conversation(
             category_id=row.category_id,
             position=row.position,
             scope=row.scope,
+            thread_branches=settings["thread_branches"],
         )
         if row.scope == "department":
             common["department_id"] = row.department_id
@@ -112,20 +150,8 @@ def bootstrap(db: Session, user: User) -> BootstrapResponse:
     ids = [row[0].id for row in rows]
     channel_ids = [row[0].id for row in rows if row[0].kind == "channel"]
     readers = conversation_reader_counts(db, channel_ids)
-    members: dict[UUID, dict[UUID, str]] = defaultdict(dict)
-    for conversation, person, role in db.execute(
-        select(
-            CommsMember.conversation_id,
-            CommsMember.user_id,
-            CommsMember.role,
-        ).where(
-            CommsMember.org_id == org,
-            CommsMember.conversation_id.in_(ids),
-            CommsMember.is_deleted.is_(False),
-            CommsMember.deleted_at.is_(None),
-        )
-    ):
-        members[conversation][person] = role
+    members = conversation_people(db, ids)
+    settings = channel_effective_settings(db, [row[0] for row in rows if row[0].kind == "channel"])
     preferences = db.scalars(
         select(CommsMemberPreferences).where(
             CommsMemberPreferences.org_id == org,
@@ -214,6 +240,7 @@ def bootstrap(db: Session, user: User) -> BootstrapResponse:
             LEVELS[level],
             members[identity],
             readers.get(identity, 0),
+            settings.get(identity, {}),
         )
         pref = personal.get(identity)
         count, first, mentions = unread.get(identity, (0, None, 0))

@@ -1,23 +1,7 @@
 import type {
-  CapabilityCheck,
   CapabilityDecision,
   ChannelCreationCheck,
 } from "../contract/types";
-
-/**
- * Whether a D27 createChannel grant reaches the viewer in any readable channel.
- * A grant creates channels only in departments where the viewer holds a
- * department role, never organization channels (owner decision 2026-10-22).
- */
-export function holdsCreateChannelGrant(
-  checks: Record<string, CapabilityCheck>,
-): boolean {
-  return Object.values(checks).some(
-    ({ capabilities }) =>
-      capabilities.createChannel.allowed &&
-      capabilities.createChannel.source.kind === "group_grant",
-  );
-}
 
 /** A workspace lock on createChannel turns the department-manager default off. */
 export function creationLocked(check: ChannelCreationCheck | undefined) {
@@ -31,12 +15,13 @@ export interface GrantReach {
 }
 
 /**
- * Collects grant reach from conversation checks and per-category creation
- * checks. A category check allowed under a workspace lock counts for that
- * category only; a department-manager decision is the manager rule, not a grant.
+ * Collects grant reach from createChannel decisions (the workspace creation
+ * check, the open conversation's check) and per-category creation checks. A
+ * category check allowed under a workspace lock counts for that category only;
+ * a department-manager decision is the manager rule, not a grant.
  */
 export function grantReach(
-  conversationChecks: CapabilityCheck[],
+  decisions: CapabilityDecision[],
   categoryChecks: { categoryId: string; check: ChannelCreationCheck }[],
 ): GrantReach {
   const reach: GrantReach = { workspace: false, categoryIds: new Set() };
@@ -50,7 +35,7 @@ export function grantReach(
     } else if (source.kind === "workspace_lock" && categoryId)
       reach.categoryIds.add(categoryId);
   };
-  for (const check of conversationChecks) add(check.capabilities.createChannel);
+  for (const decision of decisions) add(decision);
   for (const { categoryId, check } of categoryChecks)
     add(check.decision, categoryId);
   return reach;

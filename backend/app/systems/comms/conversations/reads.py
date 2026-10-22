@@ -47,8 +47,9 @@ from app.systems.comms.conversations.schemas import (
     ResourceSort,
     TimeSort,
 )
-from app.systems.comms.messages.bootstrap import project_conversation
+from app.systems.comms.messages.bootstrap import conversation_people, project_conversation
 from app.systems.comms.messages.schemas import Category, Conversation
+from app.systems.comms.settings.resolution import channel_effective_settings
 from app.systems.sandbox.departments.models import Department
 
 CONVERSATION: TypeAdapter[Any] = TypeAdapter(Conversation)
@@ -56,16 +57,8 @@ CONVERSATION: TypeAdapter[Any] = TypeAdapter(Conversation)
 
 def conversations(db: Session, user: User, rows: Sequence[CommsConversation]) -> list[Any]:
     ids = [row.id for row in rows]
-    people: dict[UUID, dict[UUID, str]] = defaultdict(dict)
-    for row in db.scalars(
-        select(CommsMember).where(
-            CommsMember.org_id == bound_organization_column(),
-            CommsMember.conversation_id.in_(ids),
-            CommsMember.is_deleted.is_(False),
-            CommsMember.deleted_at.is_(None),
-        )
-    ):
-        people[row.conversation_id][row.user_id] = row.role
+    people = conversation_people(db, ids)
+    settings = channel_effective_settings(db, [row for row in rows if row.kind == "channel"])
     readers = conversation_reader_counts(db, [row.id for row in rows if row.kind == "channel"])
     levels = {
         row.conversation_id: LEVELS[row.level]
@@ -83,6 +76,7 @@ def conversations(db: Session, user: User, rows: Sequence[CommsConversation]) ->
                 levels[row.id],
                 people[row.id],
                 readers.get(row.id, 0),
+                settings.get(row.id, {}),
             )
         )
         for row in rows

@@ -3,6 +3,8 @@ import type * as C from "../contract/types";
 import type { Person } from "../../shared/data/sample-people";
 import type { SampleRecord } from "../../shared/data/sample-data";
 import type { Message } from "../domain/view-model";
+import { BURST, limited } from "./bounded";
+import { failureStatus } from "../contract/failure-status";
 
 export function messageView(
   message: C.Message,
@@ -66,37 +68,33 @@ export function messageView(
   };
 }
 
+/** Reads the quoted messages that are not loaded yet, all at once. */
 export async function loadQuotes(
   client: CommsClient,
   messages: Map<string, C.Message>,
   signal: AbortSignal,
 ) {
-  for (const message of [...messages.values()]) {
+  const wanted = new Map<string, string>();
+  for (const message of messages.values())
     if (
-      message.state !== "live" ||
-      !message.reply_to_id ||
-      messages.has(message.reply_to_id)
+      message.state === "live" &&
+      message.reply_to_id &&
+      !messages.has(message.reply_to_id)
     )
-      continue;
-    try {
-      const quote = await client.getMessage(
-        message.conversation_id,
-        message.reply_to_id,
-        { signal },
-      );
-      messages.set(quote.data.id, quote.data);
-    } catch (error) {
-      if (!(
-        typeof error === "object" &&
-        error !== null &&
-        "failure" in error &&
-        typeof error.failure === "object" &&
-        error.failure !== null &&
-        "status" in error.failure &&
-        error.failure.status === 404
-      ))
-        throw error;
-      await client.getConversation(message.conversation_id, { signal });
-    }
-  }
+      wanted.set(message.reply_to_id, message.conversation_id);
+  const quotes = await limited(
+    [...wanted],
+    BURST,
+    async ([id, conversationId]) => {
+      try {
+        return (await client.getMessage(conversationId, id, { signal })).data;
+      } catch (error) {
+        if (failureStatus(error) !== 404) throw error;
+        // A purged quote is fine; an unreadable conversation is a refusal.
+        await client.getConversation(conversationId, { signal });
+        return undefined;
+      }
+    },
+  );
+  for (const quote of quotes) if (quote) messages.set(quote.id, quote);
 }

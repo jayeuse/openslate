@@ -265,6 +265,8 @@ const channelFields = {
   topic: z.string(),
   category_id: uuid.nullable(),
   position: watermark,
+  // The effective thread-branches setting, so a row needs no settings read.
+  thread_branches: z.enum(["all", "followed", "none"]),
 };
 export const channelSchema = z.discriminatedUnion("scope", [
   z.strictObject({ ...channelFields, scope: z.literal("organization") }),
@@ -274,16 +276,24 @@ export const channelSchema = z.discriminatedUnion("scope", [
     department_id: uuid,
   }),
 ]);
+/** A participant's name; null when the person is no longer a visible member. */
+const participantSchema = z.strictObject({
+  user_id: uuid,
+  display_name: z.string().nullable(),
+});
+// `participants` follows `participant_ids` in the same order.
 export const directSchema = z.strictObject({
   ...conversationIdentity,
   kind: z.literal("direct"),
   participant_ids: ids.length(2),
+  participants: z.array(participantSchema).length(2),
 });
 export const groupSchema = z.strictObject({
   ...conversationIdentity,
   kind: z.literal("group"),
   name: z.string(),
   participant_ids: ids.min(3).max(50),
+  participants: z.array(participantSchema).min(3).max(50),
 });
 export const conversationSchema = z.union([
   channelSchema,

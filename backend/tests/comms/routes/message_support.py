@@ -60,6 +60,7 @@ CHANNEL_KEYS = {
     "category_id",
     "position",
     "scope",
+    "thread_branches",
 }
 PREFERENCE_KEYS = {"notify", "mute", "starred", "hidden", "manual_unread"}
 

@@ -1,11 +1,24 @@
+import {
+  hashKey,
+  useQueryClient,
+  type InfiniteData,
+} from "@tanstack/react-query";
+import type { HistoryPage } from "../contract/types";
 import type { Person } from "../../shared/data/sample-people";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import Image from "next/image";
 import { Clock, Paperclip, Reply, Send, X } from "lucide-react";
 import type { SampleRecord } from "../../shared/data/sample-data";
 import {
   messageAuthorId,
-  threadMessages,
   type LocalAttachment,
   type Message,
 } from "../domain/view-model";
@@ -85,6 +98,7 @@ export function MessageComposer({
   canPost,
   conversationName,
   unavailableReason,
+  unavailableRetry,
   records,
   replyingTo,
   people,
@@ -104,6 +118,8 @@ export function MessageComposer({
   canPost: boolean;
   conversationName: string;
   unavailableReason: string;
+  /** Offered beside the reason when the access read failed. */
+  unavailableRetry?: () => void;
   records: SampleRecord[];
   replyingTo: Message | null;
   people: Person[];
@@ -252,19 +268,42 @@ export function MessageComposer({
     text.slice(tokenStart, tokenStart + completed.value.length) ===
       completed.value;
   const picking = !!token && !chosen && options.length > 0;
+  // Slow mode counts from the viewer's latest message in the loaded history
+  // (the timeline owns that read) or from a send accepted here.
+  const cache = useQueryClient();
+  const historyKey =
+    scope && conversationId
+      ? scope.keys.history(conversationId, rootId ?? null)
+      : null;
+  const historyHash = historyKey ? hashKey(historyKey) : "";
+  const historyPages = useSyncExternalStore(
+    useCallback(
+      (changed: () => void) =>
+        // Only this history's own updates: other cache events can fire while
+        // another component renders.
+        cache.getQueryCache().subscribe((event) => {
+          if (event.type === "updated" && event.query.queryHash === historyHash)
+            changed();
+        }),
+      [cache, historyHash],
+    ),
+    () =>
+      historyKey
+        ? cache.getQueryData<InfiniteData<HistoryPage>>(historyKey)?.pages
+        : undefined,
+    () => undefined,
+  );
   const lastSent = useMemo(
     () =>
       Math.max(
         0,
-        ...[...workspace.messages, ...workspace.threads.flatMap(threadMessages)]
-          .filter(
-            (message) =>
-              message.conversation === conversationId &&
-              messageAuthorId(message) === userId,
-          )
-          .map((message) => message.created),
+        ...(historyPages ?? []).flatMap((page) =>
+          page.items
+            .filter((message) => message.author_id === userId)
+            .map((message) => Date.parse(message.created_at)),
+        ),
       ),
-    [workspace.messages, workspace.threads, conversationId, userId],
+    [historyPages, userId],
   );
   const until = Math.max(
     backoff,
@@ -498,7 +537,22 @@ export function MessageComposer({
         </p>
       )}
       {!canPost && (
-        <Alert className="mb-2 p-2 text-xs">{unavailableReason}</Alert>
+        <Alert
+          variant={unavailableRetry ? "destructive" : "default"}
+          className="mb-2 flex items-center gap-2 p-2 text-xs"
+        >
+          <span className="min-w-0 flex-1">{unavailableReason}</span>
+          {unavailableRetry && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={unavailableRetry}
+            >
+              Try again
+            </Button>
+          )}
+        </Alert>
       )}
       {replyingTo && (
         <div className="bg-muted/50 mb-2 flex items-center gap-2 rounded-md px-3 py-2 text-xs">

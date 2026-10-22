@@ -297,6 +297,10 @@ test("conversation creation is bound to the actor and counts distinct participan
     org_id: org,
     kind: "direct",
     participant_ids: [user, otherUser],
+    participants: [
+      { user_id: user, display_name: "Owner" },
+      { user_id: otherUser, display_name: null },
+    ],
     created_at: timestamp,
     updated_at: timestamp,
     archived_at: null,
@@ -751,6 +755,10 @@ test("bootstrap cannot manufacture unread targets or carry another organization'
       org_id: org,
       kind: "direct",
       participant_ids: [user, otherUser],
+      participants: [
+        { user_id: user, display_name: "Owner" },
+        { user_id: otherUser, display_name: "Other" },
+      ],
       created_at: timestamp,
       updated_at: timestamp,
       archived_at: null,

@@ -10,11 +10,10 @@ import { cn } from "@/lib/utils";
 import { Action, Choice } from "../../shared/components/ui";
 import { useCommsClient } from "../state/client-context";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
-import { useCommsRead } from "../state/runtime";
+import { useChannelCreationReach } from "../state/use-channel-creation";
 import {
   creationLocked,
   departmentPlacement,
-  grantReach,
 } from "../domain/channel-creation";
 import type { Category, Channel } from "../domain/view-model";
 
@@ -55,42 +54,12 @@ export function useChannelDepartments() {
     retryDepartments,
     departmentsStatus,
   } = useCommsClient();
-  const { checks, categories } = useCommsWorkspaceView();
+  const { categories } = useCommsWorkspaceView();
   useEffect(() => {
     requestDepartments?.();
   }, [requestDepartments]);
-  const admin = managedDepartmentIds === "all";
-  const creation = useCommsRead(
-    "channel-creation:workspace",
-    (client, signal) =>
-      client.getChannelCreationCheck({ kind: "workspace" }, { signal }),
-  );
-  // Per-category checks show category grants, which no channel check names.
-  const candidates = admin
-    ? []
-    : categories
-        .filter(
-          (category) =>
-            category.departmentId &&
-            departmentRoleIds.has(category.departmentId),
-        )
-        .map((category) => category.id)
-        .sort();
-  const categoryChecks = useCommsRead(
-    `channel-creation:categories:${candidates.join(",")}`,
-    (client, signal) =>
-      Promise.all(
-        candidates.map(async (categoryId) => ({
-          categoryId,
-          check: await client.getChannelCreationCheck(
-            { kind: "category", id: categoryId },
-            { signal },
-          ),
-        })),
-      ),
-    candidates.length > 0,
-  );
-  const reach = grantReach(Object.values(checks), categoryChecks.data ?? []);
+  const { admin, creation, candidates, categoryChecks, reach } =
+    useChannelCreationReach(categories);
   const placement: Placement = (departmentId) =>
     departmentPlacement(departmentId, {
       admin,

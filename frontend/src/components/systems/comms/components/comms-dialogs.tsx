@@ -206,7 +206,7 @@ export function CommsDialogs({
   ) => void;
   fallbackOpener: React.RefObject<HTMLDivElement | null>;
 }) {
-  const { channels, categories, people, roles, threads, messages } =
+  const { channels, categories, roles, threads, messages } =
     useCommsWorkspaceView();
   const [threadFilter, setThreadFilter] = useState<"active" | "inactive">(
     "active",
@@ -275,7 +275,6 @@ export function CommsDialogs({
             {...settings}
             channels={channels}
             categories={categories}
-            people={people}
             roles={roles}
             onClose={closeSettings}
           />
@@ -317,7 +316,6 @@ export function CommsDialogs({
             channels={channels}
             existing={state.editor.kind === "channel" ? channels : categories}
             onClose={() => state.setEditor(null)}
-            people={people}
             onAcceptedChannelSave={select}
           />
         </Suspense>

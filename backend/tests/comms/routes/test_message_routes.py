@@ -13,7 +13,10 @@ import pytest
 from sqlalchemy import event, select
 
 from app.core.database.session import AuditSession
+from app.systems.access.users.models import Membership, User
+from app.systems.comms.conversations.models import CommsConversation
 from app.systems.comms.messages.models import CommsMessage, CommsMessageRevision
+from app.systems.comms.settings.models import CommsSettingLock, CommsSettings
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY
 from tests.comms.conftest import NOW
 from tests.comms.routes.message_support import (
@@ -404,6 +407,69 @@ def test_bootstrap_unread_counts_exclude_self_and_tombstones_and_saturate_at_100
         99,
         0,
         3,
+    )
+
+
+def test_bootstrap_names_direct_and_group_participants_who_are_visible_people(message_routes):
+    case, org, home = message_routes, message_routes.world.first, message_routes.world.second
+    private = case.private_conversations()
+    with case.world.session(org) as db:
+        db.get(User, org.peer).display_name = "Pat Peer"
+        db.get(User, home.author).display_name = ""
+        # D36: a person who is no longer an active member is not visible, so not named.
+        db.scalars(select(Membership).where(
+            Membership.org_id == org.id, Membership.user_id == home.peer,
+        )).one().status = "disabled"
+        db.commit()
+    peer = case.client(org.peer, org.id)
+    summaries = _bootstrap(peer, org.id, org.peer)
+    names = {
+        str(org.peer): "Pat Peer",
+        str(home.author): f"person-{home.author}",
+        str(home.peer): None,
+    }
+    for kind, count in (("direct", 2), ("group", 3)):
+        identity = str(private[kind][0])
+        conversation = summaries[identity]["conversation"]
+        participants = conversation["participants"]
+        assert [row["user_id"] for row in participants] == conversation["participant_ids"]
+        assert len(participants) == count
+        assert all(row == {"user_id": row["user_id"], "display_name": names[row["user_id"]]}
+                   for row in participants)
+        assert _ok(peer.get(f"/api/comms/conversations/{identity}")) == conversation
+    assert "participants" not in summaries[str(org.conversation)]["conversation"]
+
+
+def test_bootstrap_channel_thread_branches_follow_workspace_category_channel_and_locks(
+    message_routes,
+):
+    case, org = message_routes, message_routes.world.first
+    in_category, overridden = case.seed_more_conversations(2)
+    case.settings({"thread_branches": "followed"})
+    case.settings({"thread_branches": "all"}, overridden)
+    with case.world.session(org) as db:
+        db.get(CommsConversation, org.conversation).category_id = None  # Workspace layer only.
+        db.add(CommsSettings(
+            org_id=org.id, scope="category", category_id=org.category,
+            values={"thread_branches": "none"},
+        ))
+        db.commit()
+    peer = case.client(org.peer, org.id)
+
+    def branches():
+        summaries = _bootstrap(peer, org.id, org.peer)
+        return [
+            summaries[str(identity)]["conversation"]["thread_branches"]
+            for identity in (org.conversation, in_category, overridden)
+        ]
+
+    assert branches() == ["followed", "none", "all"]
+    with case.world.session(org) as db:
+        db.add(CommsSettingLock(org_id=org.id, namespace="setting", key="thread_branches"))
+        db.commit()
+    assert branches() == ["followed", "followed", "followed"]
+    assert _ok(peer.get(f"/api/comms/conversations/{overridden}"))["thread_branches"] == (
+        "followed"
     )
 
 

@@ -6137,6 +6137,15 @@
             "title": "Scope",
             "type": "string"
           },
+          "thread_branches": {
+            "enum": [
+              "all",
+              "followed",
+              "none"
+            ],
+            "title": "Thread Branches",
+            "type": "string"
+          },
           "topic": {
             "title": "Topic",
             "type": "string"
@@ -6161,6 +6170,7 @@
           "topic",
           "category_id",
           "position",
+          "thread_branches",
           "scope",
           "department_id"
         ],
@@ -6627,6 +6637,13 @@
             "title": "Participant Ids",
             "type": "array"
           },
+          "participants": {
+            "items": {
+              "$ref": "#/components/schemas/Participant"
+            },
+            "title": "Participants",
+            "type": "array"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -6643,7 +6660,8 @@
           "member_count",
           "member_role",
           "kind",
-          "participant_ids"
+          "participant_ids",
+          "participants"
         ],
         "title": "DirectConversation",
         "type": "object"
@@ -8730,6 +8748,13 @@
             "title": "Participant Ids",
             "type": "array"
           },
+          "participants": {
+            "items": {
+              "$ref": "#/components/schemas/Participant"
+            },
+            "title": "Participants",
+            "type": "array"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -8747,7 +8772,8 @@
           "member_role",
           "kind",
           "name",
-          "participant_ids"
+          "participant_ids",
+          "participants"
         ],
         "title": "GroupConversation",
         "type": "object"
@@ -11779,6 +11805,15 @@
             "title": "Scope",
             "type": "string"
           },
+          "thread_branches": {
+            "enum": [
+              "all",
+              "followed",
+              "none"
+            ],
+            "title": "Thread Branches",
+            "type": "string"
+          },
           "topic": {
             "title": "Topic",
             "type": "string"
@@ -11803,6 +11838,7 @@
           "topic",
           "category_id",
           "position",
+          "thread_branches",
           "scope"
         ],
         "title": "OrganizationChannel",
@@ -11933,6 +11969,33 @@
           "has_more"
         ],
         "title": "PaginationMetadata",
+        "type": "object"
+      },
+      "Participant": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "display_name"
+        ],
+        "title": "Participant",
         "type": "object"
       },
       "PasswordChangeRequest": {

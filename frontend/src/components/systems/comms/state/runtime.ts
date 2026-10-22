@@ -11,6 +11,7 @@ import { ApiError } from "@/lib/api";
 import type { CommsViewClient as CommsClient } from "../contract/client";
 import { composerFailure, sendRefusal } from "../domain/composer-input";
 import { useCommsClient } from "./client-context";
+import { failureStatus } from "../contract/failure-status";
 
 export function useCommsCommands() {
   const binding = useCommsClient();
@@ -125,17 +126,6 @@ export function messageFromCommsError(
 /** A 412 precondition failure: the version the user saw is no longer current. */
 export function isCommsConflict(error: unknown): boolean {
   return failureStatus(error) === 412;
-}
-/** The HTTP status of a typed Comms refusal, when the error carries one. */
-function failureStatus(error: unknown): number | undefined {
-  return typeof error === "object" &&
-    error !== null &&
-    "failure" in error &&
-    typeof error.failure === "object" &&
-    error.failure !== null &&
-    "status" in error.failure
-    ? Number(error.failure.status)
-    : undefined;
 }
 
 export function useCommsRefusals() {

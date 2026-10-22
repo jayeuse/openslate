@@ -76,10 +76,15 @@ export function CommsMenu({
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const { checks } = useCommsWorkspaceView();
-  const rooms = Object.entries(checks)
-    .filter(([, check]) => check.capabilities.moderate.allowed)
-    .map(([id]) => id);
+  const { bootstrap } = useCommsWorkspaceView();
+  // Conversations the viewer manages (channels and groups, never another
+  // person's direct messages), where removed messages can be reviewed.
+  const rooms = (bootstrap?.conversations ?? [])
+    .filter(
+      ({ conversation }) =>
+        conversation.kind !== "direct" && conversation.level === "manage",
+    )
+    .map(({ conversation }) => conversation.id);
   const counts = useCommsRead(
     `moderation-count:${rooms.join(",")}`,
     async (client, signal) => {

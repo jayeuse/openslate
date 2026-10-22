@@ -66,7 +66,7 @@ export function TypingIndicator({
         }
         if (
           event.event !== "typing" ||
-          !isTypingReadCurrent() ||
+          !isTypingReadCurrent(conversationId) ||
           !visible() ||
           scope.isRefused("bootstrap") ||
           scope.isRefused(conversationId) ||
