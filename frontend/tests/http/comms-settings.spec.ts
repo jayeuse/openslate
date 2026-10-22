@@ -403,7 +403,7 @@ test("a member has no shared settings controls even through a settings URL", asy
   ).toHaveCount(0);
   await page.goto(`/comms?settings=permissions&channel=${data.conversation}`);
   await expect(
-    page.getByText("You cannot manage settings for this scope.", {
+    page.getByText("You cannot manage these settings.", {
       exact: true,
     }),
   ).toBeVisible();

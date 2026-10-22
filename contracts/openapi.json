@@ -131,6 +131,20 @@
             "title": "Created At",
             "type": "string"
           },
+          "departments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MemberDepartment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Departments"
+          },
           "display_name": {
             "title": "Display Name",
             "type": "string"

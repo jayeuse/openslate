@@ -12,6 +12,7 @@ import { Alert } from "@/components/ui/alert";
 import { Action, Choice } from "../../shared/components/ui";
 import type { Channel } from "../domain/view-model";
 import { LevelBadge } from "./member-level";
+import { DepartmentList } from "./channel-scope";
 import type { CommsSettings } from "../domain/configuration";
 import { useCommsRead } from "../state/runtime";
 import { complete } from "../state/workspace-view";
@@ -91,7 +92,17 @@ export function MembershipPreview({
           <Action onClick={members.reload}>Try again</Action>
         </Alert>
       )}
-      {members.data && (
+      {members.status === "loading" && !members.data && (
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading members…
+        </p>
+      )}
+      {members.data?.members.length === 0 && (
+        <p className="text-muted-foreground text-sm">
+          No one can use this channel yet.
+        </p>
+      )}
+      {!!members.data?.members.length && (
         <ul
           aria-label="People who can use this channel"
           className="border-card-edge divide-y overflow-hidden rounded-lg border"
@@ -101,14 +112,15 @@ export function MembershipPreview({
               key={member.user_id}
               className="flex min-h-11 items-center justify-between gap-3 px-3 py-2"
             >
-              <span className="min-w-0">
-                <bdi className="block truncate text-sm font-medium">
+              <span className="flex min-w-0 flex-col">
+                <bdi className="truncate text-sm font-medium">
                   {member.display_name}
                 </bdi>
-                <bdi className="text-muted-foreground block truncate text-xs">
-                  {member.departments.map((item) => item.name).join(", ") ||
-                    "No department"}
-                </bdi>
+                <span className="text-muted-foreground text-xs">
+                  <DepartmentList
+                    names={member.departments.map((item) => item.name)}
+                  />
+                </span>
               </span>
               <LevelBadge level={member.level} />
             </li>

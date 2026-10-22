@@ -53,7 +53,7 @@ import {
   type TimelinePeople,
 } from "./message-shared";
 import { reportCommsError } from "../state/comms-feedback";
-import { recordContext, type GroupTone } from "../domain/records";
+import { recordContext } from "../domain/records";
 import { useCommsClient } from "../state/client-context";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { VirtualMessageList } from "./virtual-message-list";
@@ -90,14 +90,9 @@ function MessageText({
       ),
     );
 }
-// The department's top edge on a record card, as on a canvas module.
-const TONE_EDGE: Record<GroupTone, string> = {
-  0: "shadow-[inset_0_3px_0_var(--rule-strong)]",
-  1: "shadow-[inset_0_3px_0_var(--dept-1)]",
-  2: "shadow-[inset_0_3px_0_var(--dept-2)]",
-  3: "shadow-[inset_0_3px_0_var(--dept-3)]",
-  4: "shadow-[inset_0_3px_0_var(--dept-4)]",
-};
+
+const replyLabel = (count: number) =>
+  `${count} ${count === 1 ? "reply" : "replies"}`;
 
 /** The table glyph of a module card on the Sandbox canvas. */
 function TableGlyph() {
@@ -730,14 +725,11 @@ const TimelineRow = memo(function TimelineRow({
               preferences.previews &&
               (() => {
                 const title = record?.title ?? "Linked record";
-                const { module, group } = recordContext(record);
+                const { module } = recordContext(record);
                 return (
-                  <div
-                    className={cn(
-                      "border-card-edge bg-card mt-2 max-w-md overflow-hidden rounded-[calc(var(--radius)*1.25)] border",
-                      TONE_EDGE[group?.tone ?? 0],
-                    )}
-                  >
+                  // The top edge of a canvas module card, neutral: Comms reads
+                  // no record department.
+                  <div className="border-card-edge bg-card mt-2 max-w-md overflow-hidden rounded-[calc(var(--radius)*1.25)] border shadow-[inset_0_3px_0_var(--rule-strong)]">
                     <div className="flex flex-col gap-1 border-b sm:flex-row sm:items-center sm:gap-2 sm:pr-3">
                       <button
                         type="button"
@@ -747,10 +739,7 @@ const TimelineRow = memo(function TimelineRow({
                         <span className="sr-only">Open record: </span>
                         <span className="text-muted-foreground flex items-center gap-2 text-xs sm:shrink-0">
                           <TableGlyph />
-                          <span>
-                            {group ? `${group.name} › ` : ""}
-                            {module}
-                          </span>
+                          <span>{module}</span>
                         </span>
                         {record && (
                           <span className="min-w-0 text-sm font-semibold break-words whitespace-normal">
@@ -843,7 +832,7 @@ const TimelineRow = memo(function TimelineRow({
                 onClick={() => onThread(message)}
               >
                 <MessagesSquare className="size-3" />
-                {thread.replyCount ?? thread.replies.length} replies
+                {replyLabel(thread.replyCount ?? thread.replies.length)}
                 {thread.resolved ? " · Resolved" : ""}
               </Button>
             )}

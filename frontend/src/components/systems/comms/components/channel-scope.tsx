@@ -174,6 +174,38 @@ export function DepartmentName({ id }: { id: string }) {
   );
 }
 
+/**
+ * A person's departments, each name after its Sandbox color. Names wrap and
+ * are never cut, so a level chip beside the list cannot hide one.
+ */
+export function DepartmentList({ names }: { names: readonly string[] }) {
+  const { catalog } = useCommsClient();
+  if (!names.length) return <span>No department</span>;
+  // Active department names are unique in an organization. Catalog order, so
+  // a person's departments read the same everywhere; unknown names go last.
+  const rows = names
+    .map((name) => {
+      const position = catalog.departments.findIndex(
+        (department) => department.name === name,
+      );
+      return { name, position: position < 0 ? Infinity : position };
+    })
+    .sort((a, b) => a.position - b.position);
+  return (
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+      {rows.map(({ name, position }, index) => (
+        <span key={name} className="inline-flex min-w-0 items-baseline gap-1.5">
+          {position < Infinity && <DepartmentMark departmentIndex={position} />}
+          <span className="wrap-anywhere">
+            <bdi>{name}</bdi>
+            {index < rows.length - 1 && <span className="sr-only">,</span>}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 /** "Organization" or "Department · Sales", for compact places like the header. */
 export function ScopeLabel({ channel }: { channel: Channel }) {
   return channel.scope === "department" ? (

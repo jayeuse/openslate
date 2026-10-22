@@ -10,6 +10,7 @@ import { PersonLink } from "./person-link";
 import { Action } from "../../shared/components/ui";
 import type { Member } from "../contract/types";
 import { LevelBadge } from "./member-level";
+import { DepartmentList } from "./channel-scope";
 
 export function MembersPanel({
   members,
@@ -105,11 +106,7 @@ export function MembersPanel({
                     </span>
                   </PersonLink>
                   <p className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pl-12 text-xs">
-                    <span className="min-w-0 truncate">
-                      <bdi>
-                        {person.departments.join(", ") || "No department"}
-                      </bdi>
-                    </span>
+                    <DepartmentList names={person.departments} />
                     {levels?.[person.id] && (
                       <LevelBadge level={levels[person.id]} />
                     )}

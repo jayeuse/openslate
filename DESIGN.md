@@ -443,7 +443,7 @@ Correct: Whiteboard's `--dept-2` is a teal marker pastel (`#8fcfc6`), so Commerc
 
 Wrong: Whiteboard's `--dept-2` is lavender, so Commerce is teal in Slate and lavender on the board.
 
-**Outside the canvas.** `DepartmentMark` (`components/sandbox/department-mark.tsx`) is the canvas identity mark at 8px: a small square with the extra-small corner, filled with `--dept-n` by the department's canvas position, so a department has the same color in the Sandbox and in OpenComms. It is `aria-hidden`, and the department name follows it as text. OpenComms shows it in category rows of the conversation list and, through `DepartmentName`, in the channel scope label, the Access summary, and the grants list. Inside a native select option or a search option description, the name stands alone.
+**Outside the canvas.** `DepartmentMark` (`components/sandbox/department-mark.tsx`) is the canvas identity mark at 8px: a small square with the extra-small corner, filled with `--dept-n` by the department's canvas position, so a department has the same color in the Sandbox and in OpenComms. It is `aria-hidden`, and the department name follows it as text. OpenComms shows it in category rows of the conversation list and, through `DepartmentName`, in the channel scope label, the Access summary, and the grants list; `DepartmentList` gives each of a person's departments its mark in the member panel, the channel's Members tab, and person rows of the grants list, in department order, with names that wrap and are never cut. A followed record has no department here, so its row shows the record's table glyph instead of a mark. Inside a native select option or a search option description, the name stands alone.
 
 Correct: `<DepartmentName id={channel.departmentId} />` renders the mark, then "Sales".
 
@@ -775,7 +775,7 @@ An access level is always a word in a chip (`LevelBadge`, `member-level.tsx`). T
 
 "Also has access" (`access-grants.tsx`) lists the groups and people outside the department who can also read or post.
 
-- **List:** a bordered list with hairline dividers, large radius, at most `max-w-prose` wide. A row has a 16px muted icon (group or person), the name at weight 500, and a 12px muted line under it: "Group · 3 people", "Person", or "From category <name>" for an inherited row.
+- **List:** a bordered list with hairline dividers, large radius, at most `max-w-prose` wide. A row has a 16px muted icon (group or person), the name at weight 500, and a 12px muted line under it: "Group · 3 people", the person's departments with their marks ("No department" when none), or "From category <name>" for an inherited row.
 - **Inherited first:** grants from the channel's category come first and are read-only. The channel's own grants follow and are editable.
 - **Per-row save:** the level select and a ghost text Remove (named "Remove access for <name>") save at once; there is no form-level Save. While a row saves, it is `aria-busy`, its controls lock, its line adds "· Saving…", and the chosen level stays shown. A failure shows under that row in danger text with `role="alert"`; a conflict says "Someone changed access first. Check the list, then try again."
 - **Empty:** one muted line that names the department with its mark ("Only people with a role in Sales can use this channel.").
@@ -824,7 +824,7 @@ A conversation is a header, a timeline, and a composer between the conversation 
 - **Slow mode:** Send is disabled, and a 12px muted `role="status"` line under the composer counts down ("Send available in 12s"); the input's description points at it.
 - **Other refusals:** a compact destructive notice above the input, with the server's wait when there is one ("Too many attempts. Try again in 5s."), or the mention limit ("This conversation allows 3 mentions per message."). A send that fails after it left shows "Not sent" in a destructive notice with Retry message.
 - **Mention picker:** "@" opens an inline listbox above the input: a hairline border, medium radius, at most 160px tall and 8 names, 44px rows. The active row takes the secondary fill, and the input keeps focus through `aria-activedescendant`. The query may hold spaces while a name still matches; Escape, a choice, or no match closes the list.
-- **Unavailable conversation:** the shared `Empty` state with "This conversation is not available.", "It may have been removed, or you may not have access.", and one Retry history action. The header reads "Conversation not available", there is no composer, and the member, thread, and pinned lists stay empty (The Same Answer Rule).
+- **Unavailable conversation:** the shared `Empty` state with "This conversation is not available.", "It may have been removed, or you may not have access.", and one Retry history action. The header reads "Not available", there is no composer, and the member, thread, and pinned lists stay empty (The Same Answer Rule).
 
 ## Do's and Don'ts
 

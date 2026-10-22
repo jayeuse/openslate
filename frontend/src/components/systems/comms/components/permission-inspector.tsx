@@ -271,7 +271,7 @@ export function PermissionInspector({
                             : source.kind === "default"
                               ? `Default for ${source.basis.replaceAll("_", " ")}.`
                               : source.kind === "group_grant"
-                                ? "This group's grant enables the capability at this scope and below."
+                                ? "This group's grant turns this on here and everywhere inside it."
                                 : source.kind === "workspace_lock"
                                   ? "The workspace lock fixes the inherited capability value."
                                   : source.kind === "everyone"

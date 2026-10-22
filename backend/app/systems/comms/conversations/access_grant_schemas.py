@@ -16,6 +16,8 @@ class AccessGrant(WireModel):
     subject: Subject
     subject_id: UUID
     display_name: str
+    # A person's departments, so a manager can tell people apart; null for a group.
+    departments: list[MemberDepartment] | None = None
     level: GrantLevel
     source: Literal["channel", "category"]
     created_at: datetime

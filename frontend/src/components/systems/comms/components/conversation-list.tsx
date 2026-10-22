@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, Plus, Table } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,7 +13,6 @@ import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { cn } from "@/lib/utils";
 import { Action } from "../../shared/components/ui";
 import { RowEditMenu } from "./floating";
-import { GroupMark } from "./group-mark";
 import { CommsMenu } from "./comms-menu";
 import { preloadChannelEditor, type CommsDialogsState } from "./comms-dialogs";
 import { newChannel, threadMessages, type Thread } from "../domain/view-model";
@@ -341,7 +340,7 @@ export function ConversationList({
                 className="mt-1 flex flex-col"
               >
                 {followedRecords.map((record) => {
-                  const { module, group } = recordContext(record);
+                  const { module } = recordContext(record);
                   return (
                     <li key={record.id}>
                       <Button
@@ -354,13 +353,18 @@ export function ConversationList({
                         className="h-auto min-h-11 w-full justify-start gap-2 px-2 py-1.5 text-left font-normal"
                         onClick={() => navigation.setRecordId(record.id)}
                       >
-                        <GroupMark tone={group?.tone ?? 0} />
+                        <Table
+                          aria-hidden="true"
+                          className="text-muted-foreground size-4 shrink-0"
+                        />
                         <span className="flex min-w-0 flex-col">
                           <span className="truncate text-sm font-semibold">
                             {record.title}
                           </span>
                           <span className="text-muted-foreground truncate text-xs">
-                            {group?.name ?? module} · {record.status}
+                            {[module, record.status]
+                              .filter(Boolean)
+                              .join(" · ")}
                           </span>
                         </span>
                       </Button>

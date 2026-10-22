@@ -403,7 +403,7 @@ test("retention previews the org policy before applying and keeps file overrides
   await page.goto("/comms");
   const tool = await openTool(page, "Message retention");
   await expect(
-    tool.getByLabel("Retention scope", { exact: true }),
+    tool.getByLabel("Retention applies to", { exact: true }),
   ).toBeHidden();
   await expect(
     tool.getByRole("button", { name: "Preview impact", exact: true }),

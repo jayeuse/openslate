@@ -813,10 +813,31 @@ test("the composer waits neutrally for the open conversation's access and retrie
         exact: true,
       }),
     ).toHaveCount(0);
+    // A file dropped before access loads is refused out loud, not ignored.
+    await composer.evaluate((node) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["x"], "early.txt", { type: "text/plain" }));
+      node.dispatchEvent(
+        new DragEvent("drop", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer,
+        }),
+      );
+    });
+    await expect(composer.getByRole("alert")).toHaveText(
+      "Wait until your access loads, then add the file again.",
+    );
     check.release();
     await expect(
       page.getByRole("textbox", { name: "Message", exact: true }),
     ).toBeEnabled();
+    // The refusal clears once access has loaded.
+    await expect(
+      composer.getByText(
+        "Wait until your access loads, then add the file again.",
+      ),
+    ).toHaveCount(0);
   } finally {
     check.release();
     token.release();
@@ -1286,6 +1307,36 @@ test("a change to a held message reads it once, and a purged one reloads every l
       body: JSON.stringify(api.calls),
       contentType: "application/json",
     });
+    await page.close();
+    api.server.close();
+  }
+});
+
+test("a failed conversation refresh keeps the list and raises an alert with Retry", async ({
+  page,
+}) => {
+  const api = await prepare(page);
+  try {
+    await page.goto("/comms");
+    await ready(page);
+    let fail = true;
+    await page.route("**/api/comms/threads?**", (route) =>
+      fail
+        ? route.fulfill({ status: 500, json: { detail: "Unavailable" } })
+        : route.fallback(),
+    );
+    api.server.publishAuthorizationChange("structure");
+    const failure = page
+      .getByRole("alert")
+      .filter({ hasText: "Showing the last saved conversations." });
+    await expect(failure).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Retry", exact: true }),
+    ).toBeVisible();
+    fail = false;
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(failure).toBeHidden();
+  } finally {
     await page.close();
     api.server.close();
   }

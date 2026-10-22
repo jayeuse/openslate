@@ -11,9 +11,12 @@ const LABEL: Record<Member["level"], string> = {
 /** A person's level in a channel, always as text; Manager is the one tinted label. */
 export function LevelBadge({
   level,
+  label = LABEL[level],
   className,
 }: {
   level: Member["level"];
+  /** A grant names its own levels ("Read and post"); the chip stays the same. */
+  label?: string;
   className?: string;
 }) {
   return (
@@ -31,7 +34,7 @@ export function LevelBadge({
         className,
       )}
     >
-      {LABEL[level]}
+      {label}
     </Badge>
   );
 }

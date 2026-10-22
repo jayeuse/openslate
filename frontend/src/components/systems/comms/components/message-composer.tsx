@@ -15,7 +15,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import Image from "next/image";
-import { Clock, Paperclip, Reply, Send, X } from "lucide-react";
+import { Clock, Paperclip, Reply, Send, Table, X } from "lucide-react";
 import type { SampleRecord } from "../../shared/data/sample-data";
 import {
   messageAuthorId,
@@ -221,6 +221,14 @@ export function MessageComposer({
       ? workspace.checks[conversationId]?.capabilities
       : undefined;
   const canAttach = canPost && (capabilities?.attachFiles.allowed ?? false);
+  // A file that arrives before access loads is refused out loud, not dropped.
+  const [early, setEarly] = useState(false);
+  function addFiles(chosen: File[]) {
+    if (canAttach && !isPending) {
+      setEarly(false);
+      uploads.add(chosen, files.length);
+    } else if (!capabilities) setEarly(true);
+  }
   const candidates = [
     ...people
       .filter(
@@ -247,6 +255,12 @@ export function MessageComposer({
         selectedMentions.length > settings.mentionLimit
       ? `This conversation allows ${settings.mentionLimit} mention${settings.mentionLimit === 1 ? "" : "s"} per message.`
       : "";
+  const notice =
+    mentionError ||
+    uploads.error ||
+    (early && !capabilities
+      ? "Wait until your access loads, then add the file again."
+      : error);
   // The query may hold spaces ("@HO M") while a name still matches; the
   // list closes on Escape, on a choice, or when nothing matches.
   const token = mentionOpen
@@ -415,8 +429,7 @@ export function MessageComposer({
       onDrop={(event) => {
         if (event.dataTransfer.files.length) {
           event.preventDefault();
-          if (canAttach && !isPending)
-            uploads.add(Array.from(event.dataTransfer.files), files.length);
+          addFiles(Array.from(event.dataTransfer.files));
         }
       }}
       onSubmit={async (event) => {
@@ -525,9 +538,9 @@ export function MessageComposer({
         }
       }}
     >
-      {(error || uploads.error || mentionError) && (
-        <Alert role="alert" variant="destructive" className="mb-2 p-2 text-xs">
-          {mentionError || uploads.error || error}
+      {notice && (
+        <Alert variant="destructive" className="mb-2 p-2 text-xs">
+          {notice}
         </Alert>
       )}
       {(draftText.storageUnavailable || sendJournal.storageUnavailable) && (
@@ -790,11 +803,7 @@ export function MessageComposer({
           onPaste={(event) => {
             if (event.clipboardData.files.length) {
               event.preventDefault();
-              if (canAttach && !isPending)
-                uploads.add(
-                  Array.from(event.clipboardData.files),
-                  files.length,
-                );
+              addFiles(Array.from(event.clipboardData.files));
             }
           }}
           onKeyDown={(event) => {
@@ -873,7 +882,7 @@ export function MessageComposer({
             onChange={(event) => {
               const chosen = Array.from(event.target.files ?? []);
               event.target.value = "";
-              if (canAttach && !isPending) uploads.add(chosen, files.length);
+              addFiles(chosen);
             }}
           />
           <InputGroupButton
@@ -901,9 +910,7 @@ export function MessageComposer({
             aria-expanded={recordPickerOpen}
             onClick={() => setRecordPickerOpen(!recordPickerOpen)}
           >
-            <span className="text-base" aria-hidden="true">
-              ↗
-            </span>
+            <Table className="size-4" />
           </InputGroupButton>
           {canPost && (
             <InputGroupButton

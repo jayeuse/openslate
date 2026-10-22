@@ -28,6 +28,8 @@ async function seedGrants(
      * With `categoryGrant`, Inventory staff membership lets the owner read ledger.
      */
     categoryManager?: boolean;
+    /** Sofia also holds a role in "Accounts payable", listed after Finance. */
+    secondDepartment?: boolean;
   },
 ) {
   const seeded = { user_id: ownerId, org_id: defaultOrganization.org_id };
@@ -51,6 +53,15 @@ async function seedGrants(
     name: "Inventory staff",
   };
   person("Sofia Garcia").group_ids.push(inventoryId);
+  if (options.secondDepartment) {
+    const payableId = "d4500000-0000-4000-8000-000000000006";
+    state.departments[payableId] = {
+      id: payableId,
+      org_id: seeded.org_id,
+      name: "Accounts payable",
+    };
+    person("Sofia Garcia").department_levels[payableId] = "write";
+  }
   const created = room.created_at;
   state.categories[financeDeskId] = {
     id: financeDeskId,
@@ -174,9 +185,10 @@ async function openCategoryAccess(page: Page, category: string) {
 test("a channel manager gives a person read and post, changes it and removes it; the category's grant stays read-only", async ({
   page,
 }) => {
-  const { runtime, person } = await seedGrants(page, {
+  const { api, runtime, person } = await seedGrants(page, {
     role: "admin",
     categoryGrant: true,
+    secondDepartment: true,
   });
   const sofia = person("Sofia Garcia").user_id;
   const sofiaClient = runtime.controls.clientFor(sofia);
@@ -231,6 +243,11 @@ test("a channel manager gives a person read and post, changes it and removes it;
   });
   await expect(level).toHaveValue("post");
   await expect(rows).toHaveCount(2);
+  // A person's row names their departments instead of "Person".
+  const sofiaRow = rows.filter({ hasText: "Sofia Garcia" });
+  // In department order, as everywhere else: Operations came first.
+  await expect(sofiaRow).toContainText(/Operations.*Accounts payable/);
+  await expect(sofiaRow).not.toContainText("Person");
   await expect
     .poll(
       () =>
@@ -258,6 +275,13 @@ test("a channel manager gives a person read and post, changes it and removes it;
   await page.keyboard.press("Escape");
   await editor.getByRole("button", { name: "Cancel", exact: true }).click();
 
+  // A failed change stays on its row, and the select points at the failure.
+  api.failNext(/\/access-grants\/user\/[^/]+$/, 500, undefined, "PUT");
+  await level.selectOption({ label: "Read" });
+  await expect(level).toHaveAccessibleDescription(
+    "Access could not be changed. Try again.",
+  );
+  await expect(level).toHaveValue("post");
   await level.selectOption({ label: "Read" });
   await expect
     .poll(

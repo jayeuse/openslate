@@ -2,7 +2,6 @@
 import { useId, useState, type ReactNode } from "react";
 import { User, Users } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   NativeSelect,
@@ -19,7 +18,8 @@ import {
   useCommsRead,
   useCommsRefusals,
 } from "../state/runtime";
-import { DepartmentName } from "./channel-scope";
+import { DepartmentList, DepartmentName } from "./channel-scope";
+import { LevelBadge } from "./member-level";
 
 const LEVEL_LABELS: Record<C.AccessGrantLevel, string> = {
   read: "Read",
@@ -190,10 +190,11 @@ export function AccessGrantsEditor({
                 grant={grant}
                 error={errors[id]}
                 pending={pending}
-                controls={
+                controls={(describedBy) => (
                   <>
                     <NativeSelect
                       aria-label={`Access for ${grant.display_name}`}
+                      aria-describedby={describedBy}
                       value={level}
                       disabled={pending}
                       className="w-full sm:w-40 [&_select]:min-h-11"
@@ -215,13 +216,14 @@ export function AccessGrantsEditor({
                       variant="ghost"
                       className="min-h-11 shrink-0 underline-offset-4 hover:underline"
                       aria-label={`Remove access for ${grant.display_name}`}
+                      aria-describedby={describedBy}
                       disabled={pending}
                       onClick={() => void change(grant, null)}
                     >
                       Remove
                     </Button>
                   </>
-                }
+                )}
               />
             );
           })}
@@ -259,7 +261,8 @@ function GrantRow({
   grant: C.AccessGrant;
   /** Read-only rows say where they come from instead of offering controls. */
   note?: string;
-  controls?: ReactNode;
+  /** The row's controls, pointed at the row's error while it shows. */
+  controls?: (describedBy: string | undefined) => ReactNode;
   pending?: boolean;
   error?: string;
 }) {
@@ -270,12 +273,19 @@ function GrantRow({
     grant.subject === "group"
       ? groups.find((group) => group.id === grant.subject_id)?.memberIds.length
       : undefined;
+  // A person reads by departments; an older server sends none, so "Person".
   const kind =
-    grant.subject === "group"
-      ? size === undefined
-        ? "Group"
-        : `Group · ${size} ${size === 1 ? "person" : "people"}`
-      : "Person";
+    grant.subject === "group" ? (
+      size === undefined ? (
+        "Group"
+      ) : (
+        `Group · ${size} ${size === 1 ? "person" : "people"}`
+      )
+    ) : grant.departments ? (
+      <DepartmentList names={grant.departments.map((item) => item.name)} />
+    ) : (
+      "Person"
+    );
   return (
     <li
       aria-busy={pending || undefined}
@@ -298,11 +308,15 @@ function GrantRow({
         </div>
       </div>
       {controls ? (
-        <div className="flex items-center gap-1 sm:shrink-0">{controls}</div>
+        <div className="flex items-center gap-1 sm:shrink-0">
+          {controls(error ? errorId : undefined)}
+        </div>
       ) : (
-        <Badge variant="secondary" className="self-start sm:self-center">
-          {LEVEL_LABELS[grant.level]}
-        </Badge>
+        <LevelBadge
+          level={grant.level}
+          label={LEVEL_LABELS[grant.level]}
+          className="self-start sm:self-center"
+        />
       )}
       {error && (
         <p

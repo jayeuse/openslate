@@ -96,6 +96,14 @@ function subjectName(world: MemoryPolicyWorld, grant: MemoryAccessGrant) {
     : null;
 }
 
+/** Like the backend: departments where the person holds a department role. */
+function personDepartments(world: MemoryPolicyWorld, userId: string) {
+  return Object.keys(world.people[userId]?.department_levels ?? {})
+    .filter((id) => world.departments[id]?.org_id === world.org_id)
+    .map((id) => ({ id, name: world.departments[id].name }))
+    .sort((a, b) => compare(a.name, b.name) || compare(a.id, b.id));
+}
+
 function project(
   world: MemoryPolicyWorld,
   grant: MemoryAccessGrant,
@@ -107,6 +115,10 @@ function project(
         subject: grant.subject,
         subject_id: grant.subject_id,
         display_name: name,
+        departments:
+          grant.subject === "group"
+            ? null
+            : personDepartments(world, grant.subject_id),
         level: grant.level,
         source: grant.target.kind,
         created_at: grant.created_at,
@@ -303,14 +315,7 @@ export function createAccessGrantOperations(
                 .map((person) => ({
                   user_id: person.user_id,
                   display_name: person.display_name,
-                  departments: Object.keys(person.department_levels)
-                    .filter(
-                      (id) => world.departments[id]?.org_id === world.org_id,
-                    )
-                    .map((id) => ({ id, name: world.departments[id].name }))
-                    .sort(
-                      (a, b) => compare(a.name, b.name) || compare(a.id, b.id),
-                    ),
+                  departments: personDepartments(world, person.user_id),
                 }));
         const groups =
           kind === "user"

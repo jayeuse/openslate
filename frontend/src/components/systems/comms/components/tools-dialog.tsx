@@ -584,8 +584,8 @@ function LifecycleTools({
                       Restore {restore.entry.scope.kind} settings
                     </CardTitle>
                     <CardDescription>
-                      Replaces this scope’s overrides with the previewed values.
-                      Other scopes remain unchanged.
+                      Replaces these settings with the previewed values. Other
+                      settings stay as they are.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="flex flex-col gap-3">
@@ -702,7 +702,7 @@ function LifecycleTools({
             />
             <ToolAdvanced tool="retention" count={Number(dirty)}>
               <Choice
-                label="Retention scope"
+                label="Retention applies to"
                 value={retentionTarget}
                 disabled={dirty || isPending()}
                 onChange={(event) => {

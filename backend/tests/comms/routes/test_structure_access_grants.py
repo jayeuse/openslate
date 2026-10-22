@@ -71,11 +71,13 @@ def test_channel_grant_gives_read_and_post_mentions_notifications_and_is_revoked
         "subject",
         "subject_id",
         "display_name",
+        "departments",
         "level",
         "source",
         "created_at",
         "updated_at",
     }
+    assert body["departments"] == []  # A person row names their departments; this one has none.
     assert _tag(created) == _tag(_read(admin, path)) != _tag(empty)
     _error(
         admin.put(target, headers={"If-Match": _tag(empty)}, json={"level": "read"}),
@@ -286,6 +288,7 @@ def test_category_grant_reaches_its_channels_adds_to_channel_grants_and_stops_on
     assert _level(outsider, path) == "post"
     listed = _ok(admin.get(f"{path}/access-grants"))["items"]
     assert [row["source"] for row in listed] == ["channel", "category"]
+    assert [row["departments"] for row in listed] == [[], None]  # A group row has none.
     # An inherited grant is removed on its category, never through the channel.
     _error(
         admin.delete(
@@ -340,6 +343,14 @@ def test_candidate_search_finds_only_this_organizations_people_and_groups_withou
         ]
         assert people[str(other.author)]["departments"] == []
         assert found["groups"] == []
+    granted = admin.put(
+        f"{path}/access-grants/user/{org.peer}",
+        headers={"If-Match": _tag(_read(admin, path))},
+        json={"level": "read"},
+    )
+    assert _ok(granted, 201)["departments"] == [
+        {"id": str(org.department), "name": "Comms fixture"},
+    ]
     groups = _ok(admin.get(f"{path}/access-candidates", params={"q": "fixture group"}))
     # Both organizations own a group with this name; only this organization's is found.
     assert groups["people"] == []

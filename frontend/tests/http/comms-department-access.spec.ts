@@ -1,5 +1,11 @@
 import type { Page } from "@playwright/test";
-import { expect, test, signedInAs, defaultOrganization } from "./helpers/test";
+import {
+  expect,
+  test,
+  signedInAs,
+  defaultOrganization,
+  heldResponse,
+} from "./helpers/test";
 import { createMemorySeed } from "../support/comms-memory/memory/seed";
 import { validateMemoryState } from "../support/comms-memory/memory/snapshot";
 import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
@@ -549,4 +555,64 @@ test("the member panel and the Members tab show each reader's level, and only ro
       () => runtime.exportSnapshot().state.members[room.id][sofia]?.member_role,
     )
     .toBe("manager");
+});
+
+test("the Members tab says while members load, and when no one can use the channel", async ({
+  page,
+}) => {
+  await seedDepartments(page, "admin");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/comms");
+  const open = page.getByRole("button", {
+    name: "Channel settings",
+    exact: true,
+  });
+  await expect(open).toBeVisible();
+  const read = heldResponse();
+  try {
+    // The tab's full read (100 a page) waits, then answers with no one.
+    await page.route(
+      "**/api/comms/conversations/*/members?**",
+      async (route) => {
+        if (!route.request().url().includes("limit=100"))
+          return route.fallback();
+        read.enter();
+        await read.released;
+        return route.fulfill({
+          json: {
+            items: [],
+            pagination: {
+              limit: 100,
+              offset: 0,
+              count: 0,
+              total: 0,
+              has_more: false,
+            },
+          },
+        });
+      },
+    );
+    await open.click();
+    const settings = page.getByRole("dialog", {
+      name: "Channel settings",
+      exact: true,
+    });
+    await settings.getByRole("tab", { name: "Members", exact: true }).click();
+    await read.entered;
+    await expect(
+      settings.getByRole("status").filter({ hasText: "Loading members…" }),
+    ).toBeVisible();
+    read.release();
+    await expect(
+      settings.getByText("No one can use this channel yet.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      settings.getByRole("list", {
+        name: "People who can use this channel",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  } finally {
+    read.release();
+  }
 });

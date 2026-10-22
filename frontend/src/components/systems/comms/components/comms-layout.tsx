@@ -207,8 +207,20 @@ export function CommsLayout({
           )}
           <Activity mode={resource.data ? "visible" : "hidden"}>
             {(resource.refreshing || resource.error) && (
-              <div className="bg-background/95 absolute inset-x-0 top-0 z-20 flex items-center gap-2 border-b px-4 py-2 text-xs backdrop-blur">
-                <p role="status" className="text-muted-foreground flex-1">
+              // Covers the 44px connection strip; a failed refresh is a request
+              // failure, so it takes the danger band and speaks as an alert.
+              <div
+                className={cn(
+                  "absolute inset-x-0 top-0 z-20 flex min-h-11 items-center gap-2 border-b px-4 text-xs",
+                  resource.refreshing
+                    ? "bg-background text-muted-foreground"
+                    : "border-danger-rule bg-danger-tint text-foreground",
+                )}
+              >
+                <p
+                  role={resource.refreshing ? "status" : "alert"}
+                  className="flex-1"
+                >
                   {resource.refreshing
                     ? "Refreshing conversations…"
                     : `Showing the last saved conversations. ${resource.error}`}

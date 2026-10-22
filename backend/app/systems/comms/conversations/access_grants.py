@@ -141,16 +141,15 @@ def _grants(db: Session, row: Target) -> list[AccessGrant]:
         )
         .execution_options(populate_existing=True)
     ).all()
-    names = _subject_names(
-        db,
-        {r.user_id for r in rows if r.user_id is not None},
-        {r.group_id for r in rows if r.group_id is not None},
-    )
+    users = {r.user_id for r in rows if r.user_id is not None}
+    names = _subject_names(db, users, {r.group_id for r in rows if r.group_id is not None})
+    departments = person_departments(db, list(users)) if users else {}
     items = [
         AccessGrant(
             subject="group" if r.subject == "group" else "user",
             subject_id=identity,
             display_name=names[identity],
+            departments=None if r.user_id is None else departments.get(r.user_id, []),
             level="post" if r.level == "post" else "read",
             source="category" if r.category_id is not None else "channel",
             created_at=r.created_at,

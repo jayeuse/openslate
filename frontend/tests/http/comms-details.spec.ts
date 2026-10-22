@@ -401,10 +401,16 @@ test("record detail and recent linked records include thread-only references and
 }) => {
   await serveDetails(page, await seedDetails(page, { replyRecord: true }));
   await page.goto("/comms");
-  await page
+  const followed = page
     .getByRole("list", { name: "Records you follow", exact: true })
-    .getByRole("button", { name: /Riverside service visit/ })
-    .click();
+    .getByRole("button", { name: /Riverside service visit/ });
+  // One reply is "1 reply", not "1 replies".
+  await expect(
+    page.getByRole("button", { name: "1 reply", exact: true }),
+  ).toBeVisible();
+  // A record without a status names only its module: no dangling separator.
+  await expect(followed).toHaveText("Riverside service visitService requests");
+  await followed.click();
   const record = page.getByRole("complementary", {
     name: "Record",
     exact: true,
@@ -438,12 +444,44 @@ test("thread management and record detail do not broaden read-only source permis
   await page.goto(
     `/comms?conversation=${data.conversation}&panel=record:${data.record}`,
   );
+  // The Same Answer Rule: an unreadable record reads like an unavailable conversation.
   await expect(
-    page.getByText("Record unavailable", { exact: true }),
+    page.getByText("This record is not available.", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByText("It may have been removed, or you may not have access.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "not available" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Close record", exact: true }).click();
+  await expect(
+    page.getByText("This record is not available.", { exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByText("Riverside service visit", { exact: true }),
   ).toHaveCount(0);
+});
+
+test("thread replies that fail to load show a destructive alert with Retry replies", async ({
+  page,
+}) => {
+  const data = await seedDetails(page);
+  const api = await serveDetails(page, data);
+  for (let attempt = 0; attempt < 4; attempt += 1)
+    api.failNext(/\/threads\/[^/]+\/replies$/, 500, undefined, "GET");
+  await page.goto(
+    `/comms?conversation=${data.conversation}&thread=${data.thread}`,
+  );
+  const failure = page
+    .getByRole("region", { name: "Thread conversation", exact: true })
+    .getByRole("alert")
+    .filter({
+      has: page.getByRole("button", { name: "Retry replies", exact: true }),
+    });
+  await expect(failure).toHaveAttribute("data-variant", "destructive");
 });
 
 test("phone record cards keep their title readable with inline context and a separate OpenView action", async ({

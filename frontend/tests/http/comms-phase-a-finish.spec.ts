@@ -321,7 +321,7 @@ for (const entry of process.env.OPENCOMMS_ADJUDICATED_CONFIRM === "1"
     } else {
       await page
         .getByRole("button", {
-          name: entry.width === 390 ? "1 replies" : "Thread: Morning handover",
+          name: entry.width === 390 ? "1 reply" : "Thread: Morning handover",
           exact: true,
         })
         .click();

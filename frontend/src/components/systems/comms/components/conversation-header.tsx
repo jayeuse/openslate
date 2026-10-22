@@ -139,7 +139,7 @@ export function ConversationHeader({
   const title =
     channel?.name ??
     direct?.user ??
-    (selected ? "Conversation not available" : "Choose a conversation");
+    (selected ? "Not available" : "Choose a conversation");
   const description =
     channel?.description ?? (direct ? "Private conversation" : "");
   const [detailsFor, setDetailsFor] = useState("");

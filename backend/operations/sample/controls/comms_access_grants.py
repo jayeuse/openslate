@@ -21,6 +21,7 @@ GRANT_KEYS = {
     "subject",
     "subject_id",
     "display_name",
+    "departments",
     "level",
     "source",
     "created_at",

@@ -1,6 +1,11 @@
 "use client";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Alert } from "@/components/ui/alert";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Action } from "../../shared/components/ui";
 import dynamic from "next/dynamic";
 import { MembersPanel } from "./ui";
@@ -98,10 +103,16 @@ export function RightPane({
     );
   if (navigation.recordId && (!record || !canView))
     return (
-      <Alert role="alert">
-        <span>Record unavailable</span>
+      // The Same Answer Rule: one state whether the record exists or not.
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>This record is not available.</EmptyTitle>
+          <EmptyDescription>
+            It may have been removed, or you may not have access.
+          </EmptyDescription>
+        </EmptyHeader>
         <Action onClick={() => navigation.setRecordId("")}>Close record</Action>
-      </Alert>
+      </Empty>
     );
   if (record && canView)
     return (

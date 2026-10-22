@@ -179,7 +179,7 @@ export function CommsSettingsDialog(props: CommsSettingsDialogProps) {
             {error
               ? "Settings data could not be loaded. Try again."
               : admission.data === false
-                ? "You cannot manage settings for this scope."
+                ? "You cannot manage these settings."
                 : "Loading settings data…"}
           </Alert>
           {error && (
@@ -723,7 +723,7 @@ function LoadedCommsSettingsDialog({
           <Alert role={admission.status === "loading" ? "status" : "alert"}>
             {admission.status === "loading"
               ? "Checking settings access…"
-              : "You cannot manage settings for this scope."}
+              : "You cannot manage these settings."}
           </Alert>
           {admission.error && (
             <Action onClick={admission.reload}>Try again</Action>

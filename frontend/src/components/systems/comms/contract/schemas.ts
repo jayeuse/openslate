@@ -538,6 +538,10 @@ export const accessGrantSchema = z.strictObject({
   subject: accessGrantSubjectSchema,
   subject_id: uuid,
   display_name: z.string(),
+  /** A person's departments; null for a group, absent from an older server. */
+  departments: z
+    .array(z.strictObject({ id: uuid, name: z.string() }))
+    .nullish(),
   level: accessGrantLevelSchema,
   source: z.enum(["channel", "category"]),
   created_at: dateTime,
