@@ -115,6 +115,10 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
     direct_calls = 0
     created = {}
 
+    def _participants(user_ids):
+        names = {user_id: key for key, user_id in ids.items()}
+        return [{"user_id": user_id, "display_name": names[user_id]} for user_id in user_ids]
+
     def response(status, payload=None, *, tag=None, location=None):
         headers = {
             "X-Request-ID": str(uuid5(NAMESPACE_URL, f"partner-reply-{len(seen)}")),
@@ -222,6 +226,7 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                 "topic": "",
                 "position": 0,
                 "category_id": CATEGORY,
+                "thread_branches": "all",
                 "archived_at": None,
                 "level": "manage",
                 "member_role": "manager",
@@ -240,6 +245,7 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                 "member_role": "manager",
                 "member_count": 2,
                 "participant_ids": [ADMIN, ids[members[0]]],
+                "participants": _participants([ADMIN, ids[members[0]]]),
             }
             return response(
                 201 if direct_calls == 1 else 200,
@@ -262,6 +268,7 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                 "member_count": 3,
                 "name": body["name"],
                 "participant_ids": [ADMIN, *(ids[key] for key in members)],
+                "participants": _participants([ADMIN, *(ids[key] for key in members)]),
             }
             return response(
                 201,

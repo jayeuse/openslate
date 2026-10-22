@@ -158,6 +158,7 @@ def test_message_executor_covers_message_routes_and_checks_observed_state_withou
                                 "topic": "",
                                 "category_id": None,
                                 "position": 0,
+                                "thread_branches": "all",
                                 "archived_at": None,
                                 "level": "manage",
                                 "member_count": 1,
