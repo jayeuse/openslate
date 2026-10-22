@@ -26,6 +26,11 @@ from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.post_models import BoardPost
 from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.boards.reminder_service import occurrence_at
+from app.systems.comms.notifications import (
+    COMMS_KINDS,
+    CommsNotificationResponse,
+    current_references,
+)
 from app.systems.platform.scheduling.models import (
     InAppNotification,
     NotificationKind,
@@ -144,7 +149,8 @@ NotificationItem = Annotated[
     | RecordAssignmentNotificationResponse
     | InvitationAcceptedNotificationResponse
     | SandboxPublishedNotificationResponse
-    | AccessChangedNotificationResponse,
+    | AccessChangedNotificationResponse
+    | CommsNotificationResponse,
     Field(discriminator="kind"),
 ]
 
@@ -184,6 +190,8 @@ def _response(
     notification: InAppNotification,
     work: ScheduledWork | None,
     *,
+    user: User,
+    comms_references: dict[UUID, UUID] | None = None,
     post_board_ids: dict[UUID, UUID] | None = None,
     reminder_events: dict[UUID, BoardEvent] | None = None,
     record_modules: dict[UUID, UUID] | None = None,
@@ -198,6 +206,15 @@ def _response(
         subject_type=notification.subject_type,
         subject_id=notification.subject_id,
     )
+    if notification.kind in COMMS_KINDS:
+        refs = (comms_references if comms_references is not None
+                else current_references(db, user, [notification.id]))
+        if notification.id not in refs or work is not None or notification.org_id is None:
+            raise _not_found()
+        return CommsNotificationResponse.model_validate({
+            **common, "kind": notification.kind, "org_id": notification.org_id,
+            "conversation_id": refs[notification.id], "message_id": notification.subject_id,
+        })
     if notification.kind == NotificationKind.ACCESS_CHANGED:
         if (
             work is not None
@@ -390,11 +407,16 @@ def list_notifications(
             if item.kind == NotificationKind.SANDBOX_PUBLISHED
         },
     )
+    comms_references = current_references(
+        db, user, [item.id for item in result.items if item.kind in COMMS_KINDS],
+    )
     items = [
         _response(
             db,
             item,
             work,
+            user=user,
+            comms_references=comms_references,
             post_board_ids=post_board_ids,
             reminder_events=reminder_events,
             record_modules=record_modules,
@@ -462,4 +484,4 @@ def mark_notification_read(
         notification.read_at = utc_now()
         db.commit()
         db.refresh(notification)
-    return _response(db, notification, work)
+    return _response(db, notification, work, user=user)

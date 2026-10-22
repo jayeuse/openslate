@@ -1,5 +1,6 @@
 import {
   authMeBody,
+  defaultOrganization,
   expect,
   test,
   type Locator,
@@ -100,6 +101,7 @@ async function installRecordFilesApi(
     route.fulfill({
       json: {
         authenticated: true,
+        organization_id: defaultOrganization.org_id,
         user_id: activeUser,
         default_organization_blocked: null,
         setup_required: false,
@@ -4727,6 +4729,7 @@ test.describe("OpenView workspace regional dates", () => {
         json: {
           authenticated: true,
           user_id: actor,
+          organization_id: defaultOrganization.org_id,
           setup_required: false,
           default_organization_blocked: null,
         },
@@ -6137,6 +6140,7 @@ async function installS16Export(
       json: {
         authenticated: true,
         user_id: actor,
+        organization_id: defaultOrganization.org_id,
         setup_required: false,
         default_organization_blocked: null,
       },

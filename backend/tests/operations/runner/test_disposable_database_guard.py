@@ -87,61 +87,91 @@ def disposable_target(tmp_path, monkeypatch):
             ("studio", "supabase-studio-snippets", "/app/snippets"),
         ):
             if service == owner:
-                mounts.append({"Type": "volume", "Name": f"{project}_{name}",
-                               "Destination": destination, "RW": service != "imgproxy"})
+                mounts.append(
+                    {
+                        "Type": "volume",
+                        "Name": f"{project}_{name}",
+                        "Destination": destination,
+                        "RW": service != "imgproxy",
+                    }
+                )
         for entry in compose["services"].get(service, {}).get("volumes", []):
             if entry.startswith("./"):
                 source, destination, mode = entry.split(":")
-                mounts.append({
-                    "Type": "bind",
-                    "Source": str((Path(worktree) / "infra/supabase" / source).resolve()),
-                    "Destination": destination,
-                    "RW": mode != "ro",
-                })
+                mounts.append(
+                    {
+                        "Type": "bind",
+                        "Source": str((Path(worktree) / "infra/supabase" / source).resolve()),
+                        "Destination": destination,
+                        "RW": mode != "ro",
+                    }
+                )
         ports = {}
         if service in {"db", "api-gw", "mailpit"}:
             internal, host_port = {
-                "db": ("5432/tcp", "49152"), "api-gw": ("8000/tcp", "49153"),
+                "db": ("5432/tcp", "49152"),
+                "api-gw": ("8000/tcp", "49153"),
                 "mailpit": ("8025/tcp", "49154"),
             }[service]
             ports[internal] = [{"HostIp": "127.0.0.1", "HostPort": host_port}]
+        if service == "api-gw":
+            ports["8001/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": "49155"}]
         containers[service] = {
-            "Id": service_ids[service], "Name": f"/{project}-{service}-1",
+            "Id": service_ids[service],
+            "Name": f"/{project}-{service}-1",
             "State": {
                 "Running": service != "provider-volume-init",
                 "ExitCode": 0,
             },
-            "Config": {"Image": image, "Labels": {
-                **labels, "com.docker.compose.project": project,
-                "com.docker.compose.service": service,
-                "com.docker.compose.project.working_dir": f"{worktree}/infra/supabase",
-            }},
+            "Config": {
+                "Image": image,
+                "Labels": {
+                    **labels,
+                    "com.docker.compose.project": project,
+                    "com.docker.compose.service": service,
+                    "com.docker.compose.project.working_dir": f"{worktree}/infra/supabase",
+                },
+            },
             "Mounts": mounts,
             "NetworkSettings": {
-                "Networks": {f"{project}_{name}": {"NetworkID": network_ids[name]}
-                             for name in networks},
+                "Networks": {
+                    f"{project}_{name}": {"NetworkID": network_ids[name]} for name in networks
+                },
                 "Ports": ports,
             },
         }
     networks = {
-        name: {"Id": network_ids[name], "Name": f"{project}_{name}",
-               "Internal": name in {"provider", "operator", "studio-ingress"}, "Labels": {
-                   **labels, "com.docker.compose.project": project,
-                   "com.docker.compose.network": name,
-               }}
+        name: {
+            "Id": network_ids[name],
+            "Name": f"{project}_{name}",
+            "Internal": name in {"provider", "operator", "studio-ingress"},
+            "Labels": {
+                **labels,
+                "com.docker.compose.project": project,
+                "com.docker.compose.network": name,
+            },
+        }
         for name in PROVIDER_NETWORKS
     }
     volumes = {
-        name: {"Name": f"{project}_{name}", "Labels": {
-            **labels, "com.docker.compose.project": project,
-            "com.docker.compose.volume": name,
-        }}
+        name: {
+            "Name": f"{project}_{name}",
+            "Labels": {
+                **labels,
+                "com.docker.compose.project": project,
+                "com.docker.compose.volume": name,
+            },
+        }
         for name in PROVIDER_VOLUMES
     }
     facts = {
-        "container": containers["db"], "network": networks["provider"],
-        "volume": volumes["supabase-db-data"], "containers": containers,
-        "networks": networks, "volumes": volumes, "project_ids": project_ids,
+        "container": containers["db"],
+        "network": networks["provider"],
+        "volume": volumes["supabase-db-data"],
+        "containers": containers,
+        "networks": networks,
+        "volumes": volumes,
+        "project_ids": project_ids,
     }
     inspection_calls = []
     inspection_faults = {}
@@ -152,8 +182,9 @@ def disposable_target(tmp_path, monkeypatch):
         if arguments[0] == "ps":
             return project_ids
         if arguments[0] == "inspect":
-            return [container for container in containers.values()
-                    if container["Id"] in arguments[1:]]
+            return [
+                container for container in containers.values() if container["Id"] in arguments[1:]
+            ]
         kind, names = arguments[0], arguments[2:]
         source = networks if kind == "network" else volumes
         results = [source[name.removeprefix(f"{project}_")] for name in names]
@@ -179,35 +210,50 @@ def disposable_target(tmp_path, monkeypatch):
     monkeypatch.setattr(instance, "_docker_json", inspect)
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (
-        "postgres", "openslate_runtime", project
+        "postgres",
+        "openslate_runtime",
+        project,
     )
     engine = MagicMock()
     engine.connect.return_value.__enter__.return_value = connection
     monkeypatch.setattr(postgres_runtime, "create_engine", lambda *_args, **_kwargs: engine)
     facts["connection"] = connection
     manifest = tmp_path / "database.json"
-    manifest.write_text(json.dumps({
-        "version": 2, "run_id": run_id, "urls": [url],
-        "provider": {
-            "api_url": "http://127.0.0.1:49153",
-            "auth_issuer": "http://127.0.0.1:49153/auth/v1",
-            "storage_url": "http://127.0.0.1:49153/storage/v1",
-            "mail_url": "http://127.0.0.1:49154",
-        },
-        "ownership": {
-            "project": project, "worktree": worktree,
-            "compose_directory": f"{worktree}/infra/supabase",
-            "service_ids": service_ids, "network_ids": network_ids,
-            "db_port": 49152, "api_port": 49153, "mail_port": 49154,
-            "cluster_name": project,
-        },
-    }))
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "run_id": run_id,
+                "urls": [url],
+                "provider": {
+                    "api_url": "http://127.0.0.1:49153",
+                    "auth_issuer": "http://127.0.0.1:49153/auth/v1",
+                    "storage_url": "http://127.0.0.1:49153/storage/v1",
+                    "mail_url": "http://127.0.0.1:49154",
+                    "publish_url": "http://127.0.0.1:49155/realtime/v1/api/broadcast",
+                },
+                "ownership": {
+                    "project": project,
+                    "worktree": worktree,
+                    "compose_directory": f"{worktree}/infra/supabase",
+                    "service_ids": service_ids,
+                    "network_ids": network_ids,
+                    "db_port": 49152,
+                    "api_port": 49153,
+                    "mail_port": 49154,
+                    "publisher_port": 49155,
+                    "cluster_name": project,
+                },
+            }
+        )
+    )
     manifest.chmod(0o600)
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setenv("OPENSLATE_TEST_DATABASE_MANIFEST", str(manifest))
     monkeypatch.setenv("E2E_ALLOW_MUTATIONS", "true")
     monkeypatch.setenv("OPENSLATE_FULLSTACK_RUN_ID", run_id)
     monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:49153")
+    monkeypatch.setenv("REALTIME_PUBLISH_URL", "http://127.0.0.1:49155/realtime/v1/api/broadcast")
     monkeypatch.setenv("SUPABASE_AUTH_ISSUER", "http://127.0.0.1:49153/auth/v1")
     monkeypatch.setenv("SUPABASE_STORAGE_URL", "http://127.0.0.1:49153/storage/v1")
     return url, facts
@@ -235,6 +281,7 @@ def test_provider_endpoint_from_another_run_is_denied_before_database_connection
     url, _facts = disposable_target
     for name, value in (
         ("SUPABASE_URL", "http://127.0.0.1:59000"),
+        ("REALTIME_PUBLISH_URL", "http://127.0.0.1:59000/realtime/v1/api/broadcast"),
         ("SUPABASE_AUTH_ISSUER", "http://127.0.0.1:59000/auth/v1"),
         ("SUPABASE_STORAGE_URL", "http://127.0.0.1:59000/storage/v1"),
     ):
@@ -244,9 +291,7 @@ def test_provider_endpoint_from_another_run_is_denied_before_database_connection
                 _guard_integration_database(url)
 
 
-@pytest.mark.parametrize(
-    "name", ["SUPABASE_URL", "SUPABASE_AUTH_ISSUER", "SUPABASE_STORAGE_URL"]
-)
+@pytest.mark.parametrize("name", ["SUPABASE_URL", "SUPABASE_AUTH_ISSUER", "SUPABASE_STORAGE_URL"])
 def test_missing_provider_endpoint_is_denied_before_database_connection(
     disposable_target, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
@@ -272,6 +317,7 @@ def test_runner_exposes_owned_provider_and_mail_endpoints(tmp_path: Path) -> Non
         runtime.port = 49152
         runtime.api_port = 49153
         runtime.mail_port = 49154
+        runtime.publisher_port = 49155
         endpoint = runtime.provider_environment()
     assert endpoint["SUPABASE_URL"] == "http://127.0.0.1:49153"
     assert endpoint["SUPABASE_AUTH_ISSUER"] == "http://127.0.0.1:49153/auth/v1"
@@ -329,8 +375,13 @@ def test_swapped_authorized_roles_are_refused_before_connect(
 @pytest.mark.parametrize(
     "change",
     [
-        "volume", "port", "network", "container",
-        "extra-project-container", "extra-published-port", "extra-bind-mount",
+        "volume",
+        "port",
+        "network",
+        "container",
+        "extra-project-container",
+        "extra-published-port",
+        "extra-bind-mount",
     ],
 )
 def test_live_ownership_mismatch_is_rejected_before_connection(disposable_target, change):
@@ -348,10 +399,14 @@ def test_live_ownership_mismatch_is_rejected_before_connection(disposable_target
             {"HostIp": "127.0.0.1", "HostPort": "59199"}
         ]
     elif change == "extra-bind-mount":
-        facts["containers"]["auth"]["Mounts"].append({
-            "Type": "bind", "Source": "/tmp/unowned-auth-config",
-            "Destination": "/etc/auth/override", "RW": False,
-        })
+        facts["containers"]["auth"]["Mounts"].append(
+            {
+                "Type": "bind",
+                "Source": "/tmp/unowned-auth-config",
+                "Destination": "/etc/auth/override",
+                "RW": False,
+            }
+        )
     else:
         facts["container"]["State"]["Running"] = False
     with pytest.raises(RuntimeError, match="live runner-owned"):
@@ -381,12 +436,8 @@ def test_live_resource_inspections_are_batched_and_accept_reordered_results(disp
     network_calls = [call for call in calls if call[:2] == ["network", "inspect"]]
     volume_calls = [call for call in calls if call[:2] == ["volume", "inspect"]]
     assert len(network_calls) == len(volume_calls) == 1
-    assert set(network_calls[0][2:]) == {
-        network["Name"] for network in facts["networks"].values()
-    }
-    assert set(volume_calls[0][2:]) == {
-        volume["Name"] for volume in facts["volumes"].values()
-    }
+    assert set(network_calls[0][2:]) == {network["Name"] for network in facts["networks"].values()}
+    assert set(volume_calls[0][2:]) == {volume["Name"] for volume in facts["volumes"].values()}
 
 
 class _TestItem:
@@ -465,8 +516,11 @@ def test_runtime_database_guard_rechecks_live_database_ownership(disposable_targ
 
 @pytest.mark.parametrize(
     ("database", "user", "cluster"),
-    [("other", "openslate_runtime", True), ("openslate", "other", True),
-     ("openslate", "openslate_runtime", False)],
+    [
+        ("other", "openslate_runtime", True),
+        ("openslate", "other", True),
+        ("openslate", "openslate_runtime", False),
+    ],
 )
 def test_test_mode_connected_identity_must_match_before_write(
     disposable_target, database, user, cluster
@@ -475,7 +529,9 @@ def test_test_mode_connected_identity_must_match_before_write(
     target = instance_target_for_process(url, "openslate_runtime", os.environ)
     connection = facts["connection"]
     connection.exec_driver_sql.return_value.one.return_value = (
-        database, user, target.cluster_name if cluster else "other-cluster"
+        database,
+        user,
+        target.cluster_name if cluster else "other-cluster",
     )
     with pytest.raises(RuntimeError, match="matching live database identity"):
         _guard_integration_database(url)
@@ -495,19 +551,26 @@ def test_disposable_supabase_starts_pinned_compose_and_writes_private_manifest(
         def compose(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             commands.append(arguments)
             mapping = {"db": 49152, "api-gw": 49153, "mailpit": 49154}
-            output = f"127.0.0.1:{mapping[arguments[1]]}\n" if arguments[0] == "port" else ""
+            mapped = (
+                49155
+                if arguments[-1] == "8001"
+                else mapping.get(arguments[1] if len(arguments) > 1 else "")
+            )
+            output = f"127.0.0.1:{mapped}\n" if arguments[0] == "port" else ""
             return subprocess.CompletedProcess(arguments, 0, output)
 
         monkeypatch.setattr(runtime, "_compose", compose)
         monkeypatch.setattr(runtime, "_free_network_block", lambda: 7)
         monkeypatch.setattr(
-            runtime, "_ownership",
+            runtime,
+            "_ownership",
             lambda: {
                 "project": runtime.project,
                 "service_ids": {"db": "b" * 64},
                 "db_port": runtime.port,
                 "api_port": runtime.api_port,
                 "mail_port": runtime.mail_port,
+                "publisher_port": runtime.publisher_port,
             },
         )
         monkeypatch.setattr(runtime, "_inspect_json", lambda _: [{"Name": f"/{runtime.container}"}])
@@ -521,7 +584,10 @@ def test_disposable_supabase_starts_pinned_compose_and_writes_private_manifest(
     assert commands[2] == ["up", "-d", "--wait", "--wait-timeout", "180"]
     assert "subnet: 10.199.7.0/27" in runtime.overlay_file.read_text()
     assert {tuple(command) for command in commands if command[0] == "port"} == {
-        ("port", "db", "5432"), ("port", "api-gw", "8000"), ("port", "mailpit", "8025"),
+        ("port", "db", "5432"),
+        ("port", "api-gw", "8000"),
+        ("port", "mailpit", "8025"),
+        ("port", "api-gw", "8001"),
     }
     assert checked == [True]
     assert runtime.env_file.stat().st_mode & 0o077 == 0
@@ -531,6 +597,7 @@ def test_disposable_supabase_starts_pinned_compose_and_writes_private_manifest(
     assert contents["version"] == 2
     assert contents["provider"]["auth_issuer"] == "http://127.0.0.1:49153/auth/v1"
     assert contents["provider"]["storage_url"] == "http://127.0.0.1:49153/storage/v1"
+    assert contents["provider"]["publish_url"] == "http://127.0.0.1:49155/realtime/v1/api/broadcast"
     assert contents["container_runtime"]["url"].endswith("@db:5432/postgres")
     assert all(urlsplit(url).path == "/postgres" for url in contents["urls"])
     assert not any(runtime.keys["SUPABASE_SECRET_KEY"] in str(command) for command in commands)
@@ -580,8 +647,7 @@ def test_disposable_supabase_never_removes_unowned_resources(
     with (tmp_path / "process.log").open("w") as log:
         runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
         commands: list[list[str]] = []
-        labels = {"openslate.test.run": runtime.run_id,
-                  "openslate.test.worktree": runtime.worktree}
+        labels = {"openslate.test.run": runtime.run_id, "openslate.test.worktree": runtime.worktree}
 
         def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             commands.append(arguments)
@@ -595,35 +661,59 @@ def test_disposable_supabase_never_removes_unowned_resources(
         def inspect(arguments: list[str]) -> list[dict[str, object]]:
             if arguments[0] == "inspect":
                 if unowned == "container-id":
-                    return [{"Id": "c" * 64, "Config": {
-                        "Image": PROVIDER_IMAGES["db"], "Labels": {
-                            **labels,
-                            "com.docker.compose.project": runtime.project,
-                            "com.docker.compose.service": "db",
-                            "com.docker.compose.project.working_dir": str(
-                                runtime.worktree + "/infra/supabase"
-                            ),
-                        },
-                    }}]
+                    return [
+                        {
+                            "Id": "c" * 64,
+                            "Config": {
+                                "Image": PROVIDER_IMAGES["db"],
+                                "Labels": {
+                                    **labels,
+                                    "com.docker.compose.project": runtime.project,
+                                    "com.docker.compose.service": "db",
+                                    "com.docker.compose.project.working_dir": str(
+                                        runtime.worktree + "/infra/supabase"
+                                    ),
+                                },
+                            },
+                        }
+                    ]
                 return [{"Config": {"Image": "postgres:17", "Labels": labels}}]
             if arguments[0] == "volume":
                 if unowned != "volume":
                     raise subprocess.CalledProcessError(1, arguments)
-                return [{"Name": runtime.volume, "Labels": {**labels,
-                    "com.docker.compose.project": runtime.project,
-                    "com.docker.compose.volume": "wrong-volume"}}]
+                return [
+                    {
+                        "Name": runtime.volume,
+                        "Labels": {
+                            **labels,
+                            "com.docker.compose.project": runtime.project,
+                            "com.docker.compose.volume": "wrong-volume",
+                        },
+                    }
+                ]
             if unowned != "network":
                 raise subprocess.CalledProcessError(1, arguments)
-            return [{"Name": f"{runtime.project}_provider", "Labels": {**labels,
-                "com.docker.compose.project": runtime.project,
-                "com.docker.compose.network": "wrong-network"}}]
+            return [
+                {
+                    "Name": f"{runtime.project}_provider",
+                    "Labels": {
+                        **labels,
+                        "com.docker.compose.project": runtime.project,
+                        "com.docker.compose.network": "wrong-network",
+                    },
+                }
+            ]
 
         monkeypatch.setattr(runtime, "_run", command)
         monkeypatch.setattr(runtime, "_inspect_json", inspect)
         with pytest.raises(RuntimeError, match="unowned"):
             runtime.stop()
-    assert not any(arguments[0] == "rm" or arguments[:2] == ["volume", "rm"]
-                   or arguments[:2] == ["network", "rm"] for arguments in commands)
+    assert not any(
+        arguments[0] == "rm"
+        or arguments[:2] == ["volume", "rm"]
+        or arguments[:2] == ["network", "rm"]
+        for arguments in commands
+    )
 
 
 def test_disposable_supabase_cleans_only_owned_partial_resources(
@@ -632,9 +722,11 @@ def test_disposable_supabase_cleans_only_owned_partial_resources(
     with (tmp_path / "process.log").open("w") as log:
         runtime = DisposablePostgres(tmp_path, "a" * 32, {"PATH": "test"}, log)
         commands: list[list[str]] = []
-        labels = {"openslate.test.run": runtime.run_id,
-                  "openslate.test.worktree": runtime.worktree,
-                  "com.docker.compose.project": runtime.project}
+        labels = {
+            "openslate.test.run": runtime.run_id,
+            "openslate.test.worktree": runtime.worktree,
+            "com.docker.compose.project": runtime.project,
+        }
 
         def command(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             commands.append(arguments)
@@ -642,11 +734,19 @@ def test_disposable_supabase_cleans_only_owned_partial_resources(
 
         def inspect(arguments: list[str]) -> list[dict[str, object]]:
             if arguments[:2] == ["volume", "inspect"] and arguments[2] == runtime.volume:
-                return [{"Name": runtime.volume,
-                         "Labels": {**labels, "com.docker.compose.volume": "supabase-db-data"}}]
+                return [
+                    {
+                        "Name": runtime.volume,
+                        "Labels": {**labels, "com.docker.compose.volume": "supabase-db-data"},
+                    }
+                ]
             if arguments[:2] == ["network", "inspect"] and arguments[2] == runtime.network:
-                return [{"Name": runtime.network,
-                         "Labels": {**labels, "com.docker.compose.network": "provider"}}]
+                return [
+                    {
+                        "Name": runtime.network,
+                        "Labels": {**labels, "com.docker.compose.network": "provider"},
+                    }
+                ]
             raise subprocess.CalledProcessError(1, arguments)
 
         monkeypatch.setattr(runtime, "_run", command)
@@ -683,19 +783,28 @@ def _container_runtime_process(
     run_id = "a" * 32
     database_url = "postgresql+psycopg://openslate_runtime:secret@openslate-postgres:5432/openslate"
     manifest = tmp_path / "database.json"
-    manifest.write_text(json.dumps({
-            "run_id": run_id,
-            "urls": ["postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/openslate"],
-            "container_runtime": {
-                "url": database_url, "network": network or f"openslate-app-e2e-{run_id}",
-                "alias": "openslate-postgres", "port": 5432,
-            },
-        }), encoding="utf-8")
+    manifest.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "urls": ["postgresql+psycopg://openslate_runtime:secret@127.0.0.1:55322/openslate"],
+                "container_runtime": {
+                    "url": database_url,
+                    "network": network or f"openslate-app-e2e-{run_id}",
+                    "alias": "openslate-postgres",
+                    "port": 5432,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     manifest.chmod(mode)
     return database_url, {
-        "ENVIRONMENT": "test", "E2E_ALLOW_MUTATIONS": "true",
+        "ENVIRONMENT": "test",
+        "E2E_ALLOW_MUTATIONS": "true",
         "OPENSLATE_FULLSTACK_RUN_ID": run_id,
-        "OPENSLATE_TEST_DATABASE_MANIFEST": str(manifest)}
+        "OPENSLATE_TEST_DATABASE_MANIFEST": str(manifest),
+    }
 
 
 def test_test_process_rejects_a_container_manifest_without_live_identity(tmp_path: Path) -> None:

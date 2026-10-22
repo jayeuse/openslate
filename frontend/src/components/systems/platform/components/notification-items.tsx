@@ -8,9 +8,15 @@ import { ApiError } from "@/lib/api";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { Alert } from "@/components/ui/alert";
 import { reportDone, reportError } from "@/lib/feedback";
-import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
+import {
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time-display";
 import { manageWorkspaceOptions } from "../../manage/adapters/manage-queries";
-import { useWorkspaceInteractionSuspended } from "../../shared/runtime/workspace-identity";
+import {
+  useVerifiedWorkspaceUserId,
+  useWorkspaceInteractionSuspended,
+} from "../../shared/runtime/workspace-identity";
 import { Action } from "../../shared/components/ui";
 import {
   markAllNotificationsRead,
@@ -119,8 +125,9 @@ function NotificationItem({
   format: DateFormat;
 }) {
   const suspended = useWorkspaceInteractionSuspended();
+  const userId = useVerifiedWorkspaceUserId();
   const source = useQuery({
-    ...notificationTitleOptions(item),
+    ...notificationTitleOptions(item, userId),
     enabled: !suspended,
   });
   const title =
@@ -186,6 +193,9 @@ function NotificationItem({
         {title && href && (
           <GuardedWorkspaceLink
             href={href as Route}
+            organizationId={
+              item.subjectType === "comms_message" ? item.orgId : undefined
+            }
             onAcceptedNavigate={onNavigate}
             className="text-primary focus-visible:outline-ring inline-flex min-h-11 items-center text-sm underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2"
           >

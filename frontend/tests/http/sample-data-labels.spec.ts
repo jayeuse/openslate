@@ -1,19 +1,47 @@
-import { expect, signedInSession, test, type Page } from "./helpers/test";
+import { expect, signedInAs, test, type Page } from "./helpers/test";
 import { wirePagination } from "../helpers/pagination";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
 
 async function openSignedIn(page: Page, path: string) {
-  await signedInSession(page, "00000000-0000-4000-8000-000000000101");
+  await signedInAs(page, {
+    id: "00000000-0000-4000-8000-000000000101",
+    role: "admin",
+  });
   await page.goto(path);
 }
 
 const surfaces = [
-  { path: "/comms", says: "Conversations here are examples.", temporary: true },
   {
     path: "/manage?view=organization",
     says: "Settings save to the organization.",
     temporary: false,
   },
 ];
+
+test("OpenComms shows server conversations without an example-data label", async ({
+  page,
+}) => {
+  const server = await installCommsLiveApi(page, {
+    userId: "00000000-0000-4000-8000-000000000101",
+  });
+  try {
+    await openSignedIn(page, "/comms");
+    await expect(
+      page.getByText("Live message 59", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("note", { name: "Example data", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("status", {
+        name: "Conversation connection",
+        exact: true,
+      }),
+    ).toContainText("Live");
+  } finally {
+    server.close();
+  }
+});
 
 for (const surface of surfaces) {
   test(`${surface.path} labels its data source once`, async ({ page }) => {

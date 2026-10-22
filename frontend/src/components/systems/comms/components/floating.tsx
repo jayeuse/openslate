@@ -18,6 +18,8 @@ import {
   ContextMenuSubTrigger,
   ContextMenuSubContent,
   ContextMenuSeparator,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
 } from "@/components/ui/context-menu";
 import {
   Popover,
@@ -48,7 +50,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Person } from "../../shared/data/sample-people";
-import { EMOTES } from "../domain/model";
+import { EMOTES } from "../domain/view-model";
 
 const ProfilePopoverContext = createContext<{
   activeId: string | null;
@@ -132,7 +134,7 @@ export function FloatingList({
         collisionPadding={12}
 
         aria-label={label}
-        className="w-[min(360px,calc(100vw-24px))] p-4"
+        className="w-[min(360px,calc(100vw-24px))] p-4 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       >
         <div className="mb-3 flex items-center justify-between">
           <PopoverTitle className="text-sm font-semibold">{label}</PopoverTitle>
@@ -276,7 +278,7 @@ export function ProfilePopover({
 
         aria-label="Member profile"
         finalFocus={() => (activeId === null ? trigger.current : false)}
-        className="w-[min(280px,calc(100vw-24px))] gap-0 p-0"
+        className="w-[min(280px,calc(100vw-24px))] gap-0 p-0 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       >
         <div className="bg-muted h-14" />
         <div className="flex flex-col gap-3 px-4 pb-4">
@@ -297,7 +299,7 @@ export function ProfilePopover({
           <Button
             onClick={() => {
               setOpen(false);
-              onMessage(person.name);
+              onMessage(person.id);
             }}
           >
             Message {person.name}
@@ -309,6 +311,11 @@ export function ProfilePopover({
 }
 
 type MessageMenuProps = {
+  tabIndex?: number;
+  sequence?: number;
+  position?: number;
+  pageSize?: number;
+  onOpen?: () => void;
   id: string;
   /** Names the actions button, so each message's button is distinct. */
   label: string;
@@ -318,6 +325,10 @@ type MessageMenuProps = {
   highlighted?: boolean;
   children: ReactNode;
   mutable: boolean;
+  canReact: boolean;
+  canReply: boolean;
+  canCreateThread: boolean;
+  canReport: boolean;
   canEdit: boolean;
   editExpired: boolean;
   canElevate: boolean;
@@ -336,6 +347,11 @@ type MessageMenuProps = {
   onDelete: () => void;
 };
 export function MessageMenu({
+  tabIndex = -1,
+  sequence,
+  position,
+  pageSize,
+  onOpen,
   id,
   label,
   own,
@@ -343,6 +359,10 @@ export function MessageMenu({
   highlighted,
   children,
   mutable,
+  canReact,
+  canReply,
+  canCreateThread,
+  canReport,
   canEdit,
   editExpired,
   canElevate,
@@ -361,28 +381,43 @@ export function MessageMenu({
   const [buttonAnchor, setButtonAnchor] = useState<HTMLElement | null>(null);
   const article = useRef<HTMLDivElement | null>(null);
   return (
-    <ContextMenu open={open} onOpenChange={setOpen}>
+    <ContextMenu
+      open={open}
+      onOpenChange={(next) => {
+        if (next) onOpen?.();
+        setOpen(next);
+      }}
+    >
       <ContextMenuTrigger
         render={
           <article
             id={id}
-            tabIndex={-1}
+            aria-posinset={position}
+            aria-setsize={pageSize}
+            tabIndex={tabIndex}
+            aria-label={
+              sequence === undefined ? label : `Message ${sequence}: ${label}`
+            }
             data-highlighted={highlighted || undefined}
           />
         }
         ref={article}
         className={cn(
-          "group focus-visible:ring-ring relative rounded-md outline-none select-text focus-visible:ring-2",
+          "group focus-visible:ring-ring relative rounded-md outline-none select-text focus-visible:ring-2 forced-colors:border forced-colors:border-[CanvasText]",
           highlighted && "bg-accent ring-border ring-1",
           className,
         )}
-        onContextMenu={() => setButtonAnchor(null)}
+        onContextMenu={() => {
+          onOpen?.();
+          setButtonAnchor(null);
+        }}
         onKeyDown={(event) => {
           if (
             event.key === "ContextMenu" ||
             (event.shiftKey && event.key === "F10")
           ) {
             event.preventDefault();
+            onOpen?.();
             setButtonAnchor(event.currentTarget);
             setOpen(true);
           }
@@ -399,6 +434,7 @@ export function MessageMenu({
           className="bg-card absolute top-1 right-1 size-8 opacity-100 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
           onClick={(event) => {
             event.stopPropagation();
+            onOpen?.();
             setButtonAnchor(event.currentTarget);
             setOpen(true);
           }}
@@ -406,124 +442,132 @@ export function MessageMenu({
           <MoreHorizontal className="size-4" />
         </Button>
       </ContextMenuTrigger>
-      <ContextMenuContent
-        anchor={buttonAnchor ?? undefined}
-        sideOffset={4}
-        collisionPadding={10}
+      {open && (
+        <ContextMenuContent
+          anchor={buttonAnchor ?? undefined}
+          sideOffset={4}
+          collisionPadding={10}
 
-        aria-label={`Message actions: ${label}`}
-        finalFocus={() => buttonAnchor ?? article.current}
-        className="w-56"
-      >
-        <ContextMenuGroup>
-          <ContextMenuSub>
-            <ContextMenuSubTrigger className="min-h-9" disabled={!mutable}>
-              <Smile />
-              Add reaction
-            </ContextMenuSubTrigger>
-            <ContextMenuSubContent
-              side="right"
-              align="start"
-              sideOffset={5}
-              collisionPadding={10}
-
-              aria-label="Common reactions"
-              className="w-44"
-            >
-              <ContextMenuGroup>
-                {EMOTES.filter(
-                  ({ emoji }) =>
-                    !allowedReactions || allowedReactions.includes(emoji),
-                ).map(({ emoji, label }) => (
-                  <ContextMenuItem
-                    key={emoji}
-                    className="min-h-9"
-                    aria-label={`React with ${emoji}`}
-                    onClick={() => onReaction(emoji)}
-                  >
-                    <span className="text-lg">{emoji}</span>
-                    {label}
-                  </ContextMenuItem>
-                ))}
-              </ContextMenuGroup>
-            </ContextMenuSubContent>
-          </ContextMenuSub>
-        </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
-          {canEdit && (
-            <ContextMenuItem
-              className="min-h-9"
-              disabled={editExpired}
-              onClick={onEdit}
-            >
-              <Pencil />
-              Edit message
-            </ContextMenuItem>
-          )}
-          <ContextMenuItem
-            className="min-h-9"
-            disabled={!mutable}
-            onClick={onReply}
-          >
-            <Reply />
-            Reply
-          </ContextMenuItem>
-        </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
-          <ContextMenuItem
-            className="min-h-9"
-            disabled={!mutable}
-            onClick={onThread}
-          >
-            <MessagesSquare />
-            Create thread
-          </ContextMenuItem>
-          {canElevate && (
-            <ContextMenuItem className="min-h-9" onClick={onPin}>
-              <Pin />
-              {pinned ? "Unpin message" : "Pin message"}
-            </ContextMenuItem>
-          )}
-        </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
-          {(
-            [
-              ...(own ? [] : ([["report", "Report message"]] as const)),
-              ["message-history", "Edit history"],
-              ...(own ? ([["outbox", "Schedule a copy"]] as const) : []),
-            ] as const
-          ).map(([view, itemLabel]) => (
-            <ContextMenuItem
-              key={view}
-              className="min-h-9"
-              onClick={() => {
-                const opener = article.current;
-                if (opener) onTool?.(view, opener);
-              }}
-            >
-              {itemLabel}
-            </ContextMenuItem>
-          ))}
-        </ContextMenuGroup>
-        {canDelete && (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuGroup>
-              <ContextMenuItem
-                variant="destructive"
+          aria-label={`Message actions: ${label}`}
+          finalFocus={() => buttonAnchor ?? article.current}
+          className="w-56 max-sm:[&_[role=menuitem]]:min-h-11"
+        >
+          <ContextMenuGroup>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger
                 className="min-h-9"
-                onClick={onDelete}
+                disabled={!mutable || !canReact}
               >
-                <Trash2 />
-                Delete message
+                <Smile />
+                Add reaction
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent
+                side="right"
+                align="start"
+                sideOffset={5}
+                collisionPadding={10}
+
+                aria-label="Common reactions"
+                className="w-44 max-sm:[&_[role=menuitem]]:min-h-11"
+              >
+                <ContextMenuGroup>
+                  {EMOTES.filter(
+                    ({ emoji }) =>
+                      !allowedReactions || allowedReactions.includes(emoji),
+                  ).map(({ emoji, label }) => (
+                    <ContextMenuItem
+                      key={emoji}
+                      className="min-h-9"
+                      aria-label={`React with ${emoji}`}
+                      onClick={() => onReaction(emoji)}
+                    >
+                      <span className="text-lg">{emoji}</span>
+                      {label}
+                    </ContextMenuItem>
+                  ))}
+                </ContextMenuGroup>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            {canEdit && (
+              <ContextMenuItem
+                className="min-h-9"
+                disabled={editExpired}
+                onClick={onEdit}
+              >
+                <Pencil />
+                Edit message
               </ContextMenuItem>
-            </ContextMenuGroup>
-          </>
-        )}
-      </ContextMenuContent>
+            )}
+            <ContextMenuItem
+              className="min-h-9"
+              disabled={!mutable || !canReply}
+              onClick={onReply}
+            >
+              <Reply />
+              Reply
+            </ContextMenuItem>
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            <ContextMenuItem
+              className="min-h-9"
+              disabled={!mutable || !canCreateThread}
+              onClick={onThread}
+            >
+              <MessagesSquare />
+              Create thread
+            </ContextMenuItem>
+            {canElevate && (
+              <ContextMenuItem className="min-h-9" onClick={onPin}>
+                <Pin />
+                {pinned ? "Unpin message" : "Pin message"}
+              </ContextMenuItem>
+            )}
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            {(
+              [
+                ...(own ? [] : ([["report", "Report message"]] as const)),
+                ["message-history", "Edit history"],
+                ...(own ? ([["outbox", "Schedule a copy"]] as const) : []),
+              ] as const
+            ).map(([view, itemLabel]) => (
+              <ContextMenuItem
+                key={view}
+                className="min-h-9"
+                disabled={
+                  view === "report" ? !canReport : view === "outbox" && !mutable
+                }
+                onClick={() => {
+                  const opener = article.current;
+                  if (opener) onTool?.(view, opener);
+                }}
+              >
+                {itemLabel}
+              </ContextMenuItem>
+            ))}
+          </ContextMenuGroup>
+          {canDelete && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuGroup>
+                <ContextMenuItem
+                  variant="destructive"
+                  className="min-h-9"
+                  onClick={onDelete}
+                >
+                  <Trash2 />
+                  Delete message
+                </ContextMenuItem>
+              </ContextMenuGroup>
+            </>
+          )}
+        </ContextMenuContent>
+      )}
     </ContextMenu>
   );
 }
@@ -535,6 +579,7 @@ export function RowEditMenu({
   children,
   onEdit,
   actions = [],
+  notification,
 }: {
   label: "Channel settings" | "Category settings";
   actionsLabel: string;
@@ -542,6 +587,11 @@ export function RowEditMenu({
   children: ReactNode;
   /** Absent for people who cannot change settings. */
   onEdit?: (opener: HTMLElement) => void;
+  notification?: {
+    value: "all" | "mentions" | "mute";
+    disabled: boolean;
+    onChange: (value: "all" | "mentions" | "mute") => void;
+  };
   actions?: {
     label: string;
     onSelect: (opener: HTMLElement) => void;
@@ -595,7 +645,7 @@ export function RowEditMenu({
             aria-label={actionsLabel}
             aria-haspopup="menu"
             aria-expanded={open}
-            className="absolute top-1/2 right-1 size-8 -translate-y-1/2 opacity-100 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
+            className="absolute top-1/2 right-1 size-11 -translate-y-1/2 sm:size-8"
             onClick={(event) => {
               event.stopPropagation();
               openAt(event.currentTarget);
@@ -621,7 +671,7 @@ export function RowEditMenu({
         <ContextMenuGroup>
           {onEdit && (
             <ContextMenuItem
-              className="min-h-9"
+              className="min-h-11 sm:min-h-9"
               onClick={() => {
                 const opener = row.current?.querySelector("button");
                 if (!opener) return;
@@ -637,7 +687,7 @@ export function RowEditMenu({
             <ContextMenuItem
               key={action.label}
               disabled={action.disabled}
-              className="min-h-9"
+              className="min-h-11 sm:min-h-9"
               onClick={() => {
                 const opener = row.current?.querySelector("button");
                 if (opener) {
@@ -649,6 +699,49 @@ export function RowEditMenu({
               {action.label}
             </ContextMenuItem>
           ))}
+          {notification && (
+            <ContextMenuSub>
+              <ContextMenuSubTrigger
+                disabled={notification.disabled}
+                className="min-h-11 sm:min-h-9"
+              >
+                Notify:{" "}
+                {
+                  { all: "All", mentions: "Mentions", mute: "Mute" }[
+                    notification.value
+                  ]
+                }
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <ContextMenuRadioGroup
+                  value={notification.value}
+                  onValueChange={(value) => {
+                    if (
+                      value === "all" ||
+                      value === "mentions" ||
+                      value === "mute"
+                    )
+                      notification.onChange(value);
+                  }}
+                  aria-label="Conversation notifications"
+                >
+                  {(["all", "mentions", "mute"] as const).map((value) => (
+                    <ContextMenuRadioItem
+                      key={value}
+                      value={value}
+                      className="min-h-11 sm:min-h-9"
+                    >
+                      {
+                        { all: "All", mentions: "Mentions", mute: "Mute" }[
+                          value
+                        ]
+                      }
+                    </ContextMenuRadioItem>
+                  ))}
+                </ContextMenuRadioGroup>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+          )}
         </ContextMenuGroup>
       </ContextMenuContent>
     </ContextMenu>

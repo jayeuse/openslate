@@ -29,6 +29,7 @@ pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
 _PROVIDER_KEYS = (
     "SUPABASE_URL",
+    "REALTIME_PUBLISH_URL",
     "SUPABASE_AUTH_ISSUER",
     "SUPABASE_STORAGE_URL",
     "SUPABASE_PUBLISHABLE_KEY",

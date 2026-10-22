@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   authMeBody,
+  defaultOrganization,
   expect,
   test,
   type Locator,
@@ -244,6 +245,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
         json: {
           authenticated: true,
           user_id: userId,
+          organization_id: defaultOrganization.org_id,
           setup_required: false,
           default_organization_blocked: null,
         },

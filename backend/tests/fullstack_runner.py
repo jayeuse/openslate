@@ -66,7 +66,7 @@ __all__ = (
 )
 
 
-def browser_acceptance_command(*, browser_only: bool = False) -> list[str]:
+def browser_acceptance_command(*, browser_only: bool = False, comms: bool = False) -> list[str]:
     """Keep the auth-only repair run separate from complete browser acceptance."""
     command = [
         "npx",
@@ -75,7 +75,9 @@ def browser_acceptance_command(*, browser_only: bool = False) -> list[str]:
         "--config=playwright.fullstack.config.ts",
         *e2e_browser_flags(),
     ]
-    if browser_only:
+    if comms:
+        command.append("tests/fullstack/comms-two-account.spec.ts")
+    elif browser_only:
         command.append("tests/fullstack/auth-session.spec.ts")
     return command
 
@@ -130,7 +132,7 @@ def wait_for(url, process, *, verify: bool = True):
     raise RuntimeError("application startup deadline exceeded")
 
 
-def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
+def seed(owner_url, run_id, database_environment, roles=("admin", "member"), comms=False):
     """Owner-only fixture setup, guarded by a brand-new empty application DB."""
     from app.systems.access.users.models import UserStatus
     from tests.conftest import create_member, create_organization
@@ -148,15 +150,20 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
             assert_instance_target(db.connection(), target, expected_user="openslate_owner")
             if db.scalar(text("SELECT count(*) FROM public.users")) != 0:
                 raise RuntimeError("refusing to seed a nonempty database")
-            organization = create_organization(db)
+            organization = create_organization(
+                db, **({"display_name": "S32 Primary"} if comms else {})
+            )
             for role in roles:
                 email = f"p5-{run_id}-{role}@example.com"
                 password = f"P5-{secrets.token_urlsafe(24)}!9"
-                user, _membership = create_member(db, organization,
+                user, _membership = create_member(
+                    db,
+                    organization,
                     email=email,
                     username=f"p5-{role}",
                     status=UserStatus.ACTIVE.value,
                     role=role,
+                    **({"display_name": "S32 Administrator"} if comms and role == "admin" else {}),
                 )
                 db.add(user)
                 db.flush()
@@ -170,6 +177,37 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
                     raise RuntimeError("Disposable Auth user provisioning failed")
                 user.supabase_user_id = UUID(response.json()["id"])
                 identities[role] = {"email": email, "password": password, "id": str(user.id)}
+            if comms:
+                from app.systems.access.users.models import User
+                from app.systems.sandbox.designs.models import SandboxDocument
+                from app.systems.sandbox.designs.schemas import DesignDocument
+                from app.systems.sandbox.designs.schemas import SandboxDocument as Document
+                from app.systems.sandbox.designs.service import canonical_document
+
+                # Same empty Sandbox document as operations/create_organization.py, so the
+                # journey can publish its own department into the primary organization.
+                document, digest, size = canonical_document(
+                    Document(kind="openslate-sandbox", schema_version=4, design=DesignDocument())
+                )
+                db.add(
+                    SandboxDocument(
+                        org_id=organization.id,
+                        document=document,
+                        content_hash=digest,
+                        byte_count=size,
+                    )
+                )
+                # Write it while the session is still bound to the primary organization.
+                db.flush()
+                administrator = db.get(User, UUID(identities["admin"]["id"]))
+                if administrator is None:
+                    raise RuntimeError("Comms fixture requires its owned administrator")
+                other = create_organization(db, display_name="S32 Isolated")
+                create_member(db, other, "admin", user=administrator)
+                identities["comms"] = {
+                    "orgId": str(organization.id), "orgName": organization.display_name,
+                    "otherOrgId": str(other.id), "otherOrgName": other.display_name,
+                }
             db.commit()
     finally:
         engine.dispose()
@@ -182,6 +220,45 @@ def main(arguments=()):
     arguments = tuple(arguments)
     batch = parse_batch(arguments, BACKEND)
     reset_only = arguments == ("--reset-acceptance-only",)
+    realtime_only = arguments == ("--realtime-foundation-only",)
+    comms_native = arguments in (
+        ("--comms-realtime-only",),
+        ("--comms-capacity-only",),
+        ("--comms-notifications-only",),
+        ("--comms-moderation-only",),
+        ("--comms-jobs-only",),
+        ("--comms-candidates-only",),
+        ("--comms-configuration-only",),
+        ("--comms-previews-only",),
+    )
+    if comms_native:
+        target = "comms_capacity.py" if arguments == ("--comms-capacity-only",) else "comms_live.py"
+        if arguments == ("--comms-notifications-only",):
+            target = "comms_notifications_live.py"
+        if arguments == ("--comms-moderation-only",):
+            target = "comms_moderation_live.py"
+        if arguments == ("--comms-jobs-only",):
+            target = "comms_jobs_live.py"
+        if arguments == ("--comms-candidates-only",):
+            target = "comms_candidates_live.py"
+        if arguments == ("--comms-configuration-only",):
+            target = "comms_configuration_live.py"
+        if arguments == ("--comms-previews-only",):
+            target = "comms_previews_live.py"
+        batch = {
+            "targets": [f"tests/realtime/{target}"],
+            "layer": "integration",
+            "interactive": False,
+        }
+    if realtime_only:
+        batch = {
+            "targets": [
+                "tests/realtime/test_realtime_channel_acceptance.py",
+                "tests/realtime/test_comms_foundation_live.py",
+            ],
+            "layer": "integration",
+            "interactive": False,
+        }
     if reset_only:
         batch = {
             "targets": ["tests/reset_application_data/provider_reset_acceptance.py"],
@@ -196,18 +273,28 @@ def main(arguments=()):
         ("--backend-coverage-only",),
         ("--acceptance-only",),
         ("--browser-only",),
+        ("--comms-browser-only",),
     ):
         raise SystemExit("Usage: fullstack_runner.py [mode]")
     backend_only = (
         batch is not None or shard is not None or arguments == ("--backend-coverage-only",)
     )
     acceptance_only = arguments == ("--acceptance-only",)
-    browser_only = arguments == ("--browser-only",)
+    comms_browser_only = arguments == ("--comms-browser-only",)
+    browser_only = arguments == ("--browser-only",) or comms_browser_only
     if batch is None and not acceptance_only and not browser_only:
         output = coverage_output(BACKEND)
         if output.exists():
             shutil.rmtree(output)
-    for port in () if backend_only else (8008, GATEWAY_PORT):
+    for port in (
+        (8008, GATEWAY_PORT)
+        if comms_native
+        else (GATEWAY_PORT,)
+        if realtime_only
+        else ()
+        if backend_only
+        else (8008, GATEWAY_PORT)
+    ):
         with socket.socket() as listener:
             try:
                 listener.bind(("127.0.0.1", port))
@@ -282,6 +369,17 @@ def main(arguments=()):
         timed("migrations")
         run([sys.executable, "-m", "alembic", "upgrade", "head"], BACKEND, migration_env)
         run([sys.executable, "-m", "alembic", "check"], BACKEND, migration_env)
+        if realtime_only:
+            timed("Realtime forward migration roundtrip")
+            run(
+                [sys.executable, "-m", "alembic", "downgrade", "8464b72e2cd5"],
+                BACKEND,
+                migration_env,
+            )
+            run([sys.executable, "-m", "alembic", "upgrade", "head"], BACKEND, migration_env)
+            run([sys.executable, "-m", "alembic", "check"], BACKEND, migration_env)
+            timed("Realtime managed-policy upgrade")
+            run([sys.executable, "-m", "tests.realtime.provisioning_probe"], BACKEND, migration_env)
         api_env = api_environment(
             base_env,
             database_env,
@@ -297,6 +395,55 @@ def main(arguments=()):
             BACKEND,
             api_env,
         )
+        gateway_host = (
+            "127.0.0.1"
+            if shutil.which("caddy") or sys.platform.startswith("linux")
+            else "host.docker.internal"
+        )
+        gateway_env = {
+            **base_env,
+            "SUPABASE_PUBLISHABLE_KEY": provider_env["SUPABASE_PUBLISHABLE_KEY"],
+            "OPENSLATE_REALTIME_UPSTREAM": (f"{gateway_host}:{postgres.api_port}"),
+        }
+        if realtime_only:
+            timed("same-origin Realtime gateway")
+            caddy = DisposableCaddy(private, run_id, gateway_env, log)
+            caddy.start()
+            api_env["OPENSLATE_TEST_REALTIME_GATEWAY"] = WEB
+        if comms_native:
+            timed("native Comms API and same-origin gateway")
+            if arguments in (("--comms-jobs-only",), ("--comms-previews-only",)):
+                api_env["E2E_BACKGROUND_WORKERS"] = "true"
+            api_env["OPENSLATE_COMMS_NATIVE_API"] = API
+            api_env["OPENSLATE_COMMS_TELEMETRY"] = str(private / "comms-metrics.jsonl")
+            processes.append(
+                subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "uvicorn",
+                        "tests.realtime.comms_previews_api:app"
+                        if arguments == ("--comms-previews-only",)
+                        else "tests.realtime.measured_api:app",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        "8008",
+                        "--no-access-log",
+                        "--limit-concurrency",
+                        str(RUNNER_CONCURRENCY_LIMIT),
+                    ],
+                    cwd=BACKEND,
+                    env=api_env,
+                    stdout=log,
+                    stderr=log,
+                    start_new_session=True,
+                )
+            )
+            wait_for(API + "/api/ready", processes[-1])
+            caddy = DisposableCaddy(private, run_id, gateway_env, log)
+            caddy.start()
+            api_env["OPENSLATE_TEST_REALTIME_GATEWAY"] = WEB
         if not acceptance_only and not browser_only:
             timed("backend batch" if batch else "backend regression and coverage gate")
             execute = run_backend_batches if batch else run_backend_coverage
@@ -308,6 +455,12 @@ def main(arguments=()):
                     **api_env,
                     "MIGRATION_DATABASE_URL": owner_url,
                     "TEST_DATABASE_URL": database_env["DATABASE_URL"],
+                    # Operator-only metric reads; never passed to the separately started API.
+                    **(
+                        {"DATABASE_BOOTSTRAP_URL": database_env["DATABASE_BOOTSTRAP_URL"]}
+                        if arguments == ("--comms-capacity-only",)
+                        else {}
+                    ),
                 },
                 run_id,
                 *([batch] if batch else [shard] if shard else []),
@@ -316,7 +469,13 @@ def main(arguments=()):
             result = result if batch else 0
         else:
             timed("dedicated identities")
-            identities = seed(owner_url, run_id, migration_env)
+            identities = (
+                seed(owner_url, run_id, migration_env, ("admin",), True)
+                if comms_browser_only
+                else seed(owner_url, run_id, migration_env, ("admin", "member"), True)
+                if not browser_only
+                else seed(owner_url, run_id, migration_env)
+            )
             fixture = private / "fixture.json"
             fixture.write_text(
                 json.dumps(
@@ -332,6 +491,9 @@ def main(arguments=()):
             timed("static frontend build")
             run(["npm", "run", "build", "--", "--webpack"], FRONTEND)
             api_env["WEB_ASSETS_ROOT"] = str(FRONTEND / "out")
+            if comms_browser_only:
+                # The journey's scheduled message needs the test-stack scheduler worker.
+                api_env["E2E_BACKGROUND_WORKERS"] = "true"
             timed("FastAPI startup")
             processes.append(
                 subprocess.Popen(
@@ -356,10 +518,11 @@ def main(arguments=()):
                 )
             )
             wait_for(API + "/api/ready", processes[-1])
-            timed("bounded admission and recovery")
-            admission = measure_admission()
+            if not comms_browser_only:
+                timed("bounded admission and recovery")
+                admission = measure_admission()
             timed("Caddy gateway startup")
-            caddy = DisposableCaddy(private, run_id, base_env, log)
+            caddy = DisposableCaddy(private, run_id, gateway_env, log)
             caddy.start()
             wait_for(WEB + "/login", caddy, verify=False)
             timed("browser acceptance")
@@ -372,7 +535,7 @@ def main(arguments=()):
                 "PLAYWRIGHT_NO_COPY_PROMPT": "1",
             }
             run(
-                browser_acceptance_command(browser_only=browser_only),
+                browser_acceptance_command(browser_only=browser_only, comms=comms_browser_only),
                 FRONTEND,
                 test_env,
                 shown=browser_lines,

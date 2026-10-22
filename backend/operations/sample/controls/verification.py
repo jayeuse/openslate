@@ -9,24 +9,10 @@ from app.systems.access.users.schemas import UserPreferencesResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient, SampleClientError
 from operations.sample.controls.request_verification import _canonical_uuid, verify_request_evidence
-from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.packs.phase_types import PHASE_KINDS, PhaseAction
 from operations.sample.verification.core import SampleVerificationError
 
-_CONTROL_KINDS = frozenset(
-    {
-        "account_controls",
-        "manage_controls",
-        "backup_controls",
-        "jobs_controls",
-        "read_controls",
-        "board_controls",
-        "openview_controls",
-        "access_controls",
-        "sandbox_controls",
-        "audit_controls",
-        "platform_controls",
-    }
-)
+_CONTROL_KINDS = frozenset(kind for kind in PHASE_KINDS if kind.endswith("_controls"))
 
 
 def _same_json_value(actual: object, expected: object) -> bool:
@@ -179,6 +165,18 @@ def _run_final_verifiers(
         verifiers += (("Host", lambda: verify_host_controls(client, dataset, manifest, admin_id)),)
     if "real_mfa_reset" in operations:
         verifiers += (("MFA", lambda: verify_mfa_controls(client, dataset, manifest, admin_id)),)
+    if "message_roundtrip" in operations:
+        from operations.sample.controls.comms import verify_comms_controls
+
+        verifiers += (
+            ("Comms", lambda: verify_comms_controls(client, dataset, manifest, admin_id)),
+        )
+    if "structure_roundtrip" in operations:
+        from operations.sample.controls.comms_structure import verify_structure_controls
+
+        verifiers += (
+            ("Structure", lambda: verify_structure_controls(client, dataset, manifest, admin_id)),
+        )
     if "self_profile" in operations:
         from operations.sample.controls.profile_verification import verify_profile_controls
 

@@ -1,6 +1,12 @@
 # Use with compose.yaml for disposable development and test instances.
 # Set SMTP_HOST=mailpit and SMTP_PORT=1025 in the installation env file.
 services:
+  # OD1: host-run FastAPI may publish only with the existing server key.
+  # This is host-reachable development transport, not browser-unreachability.
+  api-gw:
+    ports:
+      - "127.0.0.1:${SUPABASE_REALTIME_PUBLISH_PORT:?Project the private publisher port}:8001"
+
   auth:
     environment:
       # Development mail stays in owned Mailpit; allow complete sample rosters.

@@ -10,6 +10,7 @@ from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.systems.access.users.models import User
+from app.systems.comms.realtime.grants import lock_projection
 from app.systems.manage.audit.context import get_audit_context
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
@@ -173,6 +174,8 @@ def _close(
             user.email,
             payload.password,
         )
+        if target_type in (LifecycleTargetType.DEPARTMENT, LifecycleTargetType.MODULE):
+            lock_projection(db)
         require_fresh_exact_admin(db, user.id)
         plan = plan_lifecycle(db, target_type, target_id, LifecycleOperation.CLOSE, user.id)
         if plan.impact_digest != challenge.impact_digest:
@@ -258,6 +261,8 @@ def _purge(
             payload.password,
         )
         _require_purge_enabled()
+        if target_type in (LifecycleTargetType.DEPARTMENT, LifecycleTargetType.MODULE):
+            lock_projection(db)
         require_fresh_exact_admin(db, user.id)
         plan = plan_lifecycle(db, target_type, target_id, LifecycleOperation.PURGE, user.id)
         if plan.impact_digest != challenge.impact_digest:

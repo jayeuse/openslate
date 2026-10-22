@@ -64,6 +64,26 @@ Storage write. Downloads are served as attachments with `nosniff`. OpenSlate
 runs no antivirus scan; type validation is not malware detection. A private
 bucket or privileged Storage key does not replace application authorization.
 
+Conversation attachments use the same inventory and private bucket with a
+`comms_attachment` purpose and an organization-bound conversation parent.
+[Comms file admission](../../backend/app/systems/comms/files/access.py) requires
+current conversation access; uploads additionally require the uploader and
+`attachFiles` capability. Transfers recheck authority after provider I/O. Generic
+UUID-only file reads do not expose conversation files, and existing administrator
+reconciliation also requires current private-parent access. Retained message links
+block file/source-record purge without exposing private conversation identifiers.
+
+Ordinary private-conversation readability (D43) remains distinct from privileged
+purposes. Report-bound moderation takes no request body and returns only report
+metadata, not private message content or an ordinary read grant. Export is an
+export-only exact-administrator purpose (D31), with fresh password confirmation
+and a recorded reason for private sources, captured authority and current-source
+rechecks. It is not a general private-read bypass. Retention irreversibly removes
+expired content/revisions and fences attachments while confirmed Storage cleanup
+finishes; a retained linkage anchor is not restorable content. See the
+[API purpose contracts](07-api-architecture.md#ordinary-private-reads-versus-privileged-purposes)
+and [Comms lifecycle](09-lifecycle-and-state-management.md#comms-retention-and-durable-work).
+
 Encrypted [backup exports](../../backend/app/systems/manage/backups/downloads.py)
 require an eligible administrator and current-password reauthentication through
 Supabase Auth. Admission is a short-lived, single-use handle bound to the actor,
@@ -82,10 +102,39 @@ administrator-only ([`audit/router.py`](../../backend/app/systems/manage/audit/r
 The audit listener derives the department from entity ancestry before a purge
 removes parent rows ([`department_ancestry.py`](../../backend/app/systems/manage/audit/department_ancestry.py)).
 
-Authenticated SSE carries opaque invalidations over PostgreSQL
-`LISTEN`/`NOTIFY`; Supabase Realtime is not the active event transport.
-Subscriber limits, reauthorization, bounded queues, and send timeouts limit
-retained stream resources. FastAPI separates exact static exports, `/api`, and
+Authenticated SSE continues to carry other application invalidations over
+PostgreSQL `LISTEN`/`NOTIFY`. Comms uses private Realtime conversation topics backed
+by FastAPI's expiring current-access projection, own-user topics and organization
+presence. The five-minute purpose-specific token is not an Auth/API/Storage content
+credential. Browser Comms topics are read-only; content and presence/typing commands
+remain authorized HTTP operations. Current content access is refused immediately
+after removal, while already-joined ID-only delivery may continue until token
+expiry. Public channels and row-change subscriptions are not application data paths.
+
+Production Caddy and the development launcher admit only the exact-origin
+WebSocket upgrade and inject the gateway key server-side. The server publisher
+uses a separate authenticated private listener, unpublished in production;
+development loopback publication still requires the server key. Request-buffered
+events submit after response completion. Resource-owned durable jobs instead
+submit after their own commit/Session close, without awaiting a triggering HTTP
+response. Neither path retains a Session or pooled connection through publisher
+HTTP I/O, and neither makes network delivery atomic with SQL. See the
+[protected runtime boundary](../../SECURITY.md#current-opencomms-runtime-boundary).
+
+Resource bounds remain concrete, not throughput guarantees. The
+[SSE hub](../../backend/app/systems/platform/events/hub.py) uses queues of 32,
+four streams per user and a process ceiling of
+`min(128, max(1, SERVER_MAX_CONCURRENCY - 8))`. The
+[Comms publisher](../../backend/app/systems/comms/realtime/publisher.py) queues
+64 batches of at most 100 events, uses one HTTP connection with a one-second
+HTTPX timeout configuration, and disables redirects/environment proxies. Its
+[transaction buffer](../../backend/app/systems/comms/realtime/publication.py)
+is capped at 1024 events. Full queues report safe reason codes and may lose
+invalidations; clients must recover through authorized reads. The
+[Compose tenant ceilings](../../infra/supabase/compose.yaml) are 500 concurrent
+Realtime users and 1000 events/second, not a guarantee of application throughput.
+
+FastAPI separates exact static exports, `/api`, and
 `/api/events`; it never sends UI HTML for an API or missing-asset path. Static
 route/asset cache policy and response security headers belong to FastAPI/Caddy,
 not a Node.js frontend process. Audit redacts sensitive fields and does not

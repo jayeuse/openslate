@@ -14,6 +14,7 @@ from app.systems.platform.events.models import (
     event_for_entity,
     parse_invalidation_payload,
 )
+from tests.migrations.test_organization_root import COMMS_TABLES
 
 READABLE_MODULE = str(uuid7())
 ROW = str(uuid7())
@@ -67,6 +68,10 @@ def _rows() -> list[object]:
     rows += [
         pytest.param({"entity": entity, "entity_id": ROW}, id=f"raw-{entity}")
         for entity in BOARD_CHILDREN
+    ]
+    rows += [
+        pytest.param({"entity": entity}, id=f"private-comms-{entity}")
+        for entity in sorted(COMMS_TABLES)
     ]
     rows += [
         pytest.param(
@@ -179,6 +184,6 @@ def test_unsafe_invalidation_values_fail_before_serialization(
         InvalidationEvent(entity, **values)
 
 
-@pytest.mark.parametrize("entity", AUDIENCE_SCOPED + BOARD_CHILDREN)
+@pytest.mark.parametrize("entity", AUDIENCE_SCOPED + BOARD_CHILDREN + sorted(COMMS_TABLES))
 def test_audience_scoped_and_raw_board_rows_have_no_generic_invalidation(entity: str) -> None:
     assert event_for_entity(entity, uuid7()) is None

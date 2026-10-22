@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import type { Page, Route } from "./test";
 import { installOpenViewEventSource } from "./openview-event-source";
 import { pageOf } from "../../helpers/pagination";
-import { authMeBody } from "./test";
+import { authMeBody, defaultOrganization } from "./test";
 
 type RunState = "queued" | "running" | "succeeded" | "failed" | "interrupted";
 type Schedule = "disabled" | "daily" | "weekly";
@@ -501,6 +501,7 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
         : {
             authenticated: true,
             user_id: state.actorId,
+            organization_id: defaultOrganization.org_id,
             default_organization_blocked: null,
             setup_required: false,
           },

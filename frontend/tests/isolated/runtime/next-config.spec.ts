@@ -340,7 +340,7 @@ test("development launcher reads the root configuration without a gateway wrappe
 test("development launcher parses standard root dotenv syntax", () => {
   const fixture = createLauncherFixture({
     rootEnvironment:
-      "export FRONTEND_DEV_PORT=3200 # local Next port\nBACKEND_PORT=8200 # local FastAPI port\nBACKEND_BIND_HOST=127.0.0.1\nPUBLIC_ORIGIN=http://192.168.254.178:\${FRONTEND_DEV_PORT}\nAUTH_JWT_SECRET=secret-canary\nDATABASE_URL=database-canary\n",
+      "export FRONTEND_DEV_PORT=3200 # local Next port\nBACKEND_PORT=8200 # local FastAPI port\nBACKEND_BIND_HOST=127.0.0.1\nPUBLIC_ORIGIN=http://192.168.254.178:\${FRONTEND_DEV_PORT}\nAUTH_JWT_SECRET=secret-canary\nDATABASE_URL=database-canary\nSUPABASE_URL=http://127.0.0.1:58000\nSUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture\nSUPABASE_SECRET_KEY=server-key-canary\n",
   });
   try {
     const result = invokeFixture(fixture, "dev");
@@ -359,8 +359,37 @@ test("development launcher parses standard root dotenv syntax", () => {
     });
     expect(invocation.environment).not.toHaveProperty("AUTH_JWT_SECRET");
     expect(invocation.environment).not.toHaveProperty("DATABASE_URL");
+    expect(invocation.environment).not.toHaveProperty("SUPABASE_SECRET_KEY");
+    expect(invocation.environment).not.toHaveProperty(
+      "SUPABASE_PUBLISHABLE_KEY",
+    );
+    expect(invocation.environment).not.toHaveProperty("SUPABASE_URL");
   } finally {
     fixture.cleanup();
+  }
+});
+
+test("development Realtime refuses non-loopback provider targets without exposing configured credentials", () => {
+  for (const provider of [
+    "http://outside.invalid:8000",
+    "https://127.0.0.1:8000",
+    "http://127.0.0.1:8000/realtime",
+    "http://user:pass@127.0.0.1:8000",
+  ]) {
+    const fixture = createLauncherFixture({
+      rootEnvironment: `FRONTEND_DEV_PORT=3200\nBACKEND_PORT=8200\nBACKEND_BIND_HOST=127.0.0.1\nPUBLIC_ORIGIN=http://localhost:3200\nSUPABASE_URL=${provider}\nSUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture\nSUPABASE_SECRET_KEY=server-key-canary\n`,
+    });
+    try {
+      const result = invokeFixture(fixture, "dev");
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "SUPABASE_URL must be an owned HTTP loopback origin",
+      );
+      expect(result.stderr).not.toContain("server-key-canary");
+      expect(result.stderr).not.toContain("sb_publishable_fixture");
+    } finally {
+      fixture.cleanup();
+    }
   }
 });
 

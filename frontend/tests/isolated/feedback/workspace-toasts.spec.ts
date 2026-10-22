@@ -2,32 +2,29 @@ import { expect, test } from "@playwright/test";
 import { toast } from "../../../src/components/ui/toast";
 import { createCommsMessageOperations } from "../../../src/components/systems/comms/state/use-comms-message-operations";
 import { reportCommsError } from "../../../src/components/systems/comms/state/comms-feedback";
-import {
-  initialPeople,
-  initialRoles,
-} from "../../../src/components/systems/shared/data/sample-people";
-import { INITIAL_RECORDS } from "../../../src/components/systems/shared/data/sample-data";
-import {
-  CATEGORIES,
-  CHANNELS,
-  MESSAGES,
-} from "../../../src/components/systems/comms/domain/model";
-import { normalizeCommsConfiguration } from "../../../src/components/systems/comms/domain/configuration";
-import {
-  createSampleRuntime,
-  type SampleDecoder,
-} from "../../../src/components/systems/shared/runtime/sample-runtime";
+import { createMemoryCommsRuntime } from "../../support/comms-memory/memory-client";
+import { createMemorySeed } from "../../support/comms-memory/memory/seed";
 import { createSampleCommands } from "../../../src/components/systems/shared/runtime/sample-async-state";
 
 test("a real pending Comms cancellation cannot admit its caught error during account cleanup", async () => {
   toast.resumeWorkspace();
-  const decode: SampleDecoder = <T>(
-    _key: string,
-    value: unknown,
-    fallback: T,
-  ) => (value === undefined ? fallback : (value as T));
-  const runtime = createSampleRuntime(decode);
+  const owner = {
+    user_id: "00000000-0000-4000-8000-000000000001",
+    org_id: "00000000-0000-4000-8000-000000000102",
+  };
+  const initial = createMemorySeed(owner, {
+    role: "admin",
+    display_name: "Toast owner",
+  });
+  const root = Object.values(initial.messages).find(
+    (message) => message.parent_id === null,
+  )!;
+  const runtime = createMemoryCommsRuntime({ owner, initial });
   const commands = createSampleCommands();
+  const committed: unknown[] = [];
+  const stop = runtime.subscribe(() =>
+    committed.push(runtime.exportSnapshot()),
+  );
   const admissions: (string | null)[] = [];
   const original = toast.add;
   toast.add = (options) => {
@@ -36,33 +33,25 @@ test("a real pending Comms cancellation cannot admit its caught error during acc
     return id;
   };
   const operations = createCommsMessageOperations({
-    run: (key, recipe, keys) =>
-      commands.run(key, (signal) => runtime.execute(recipe, { signal, keys })),
-    selected: CHANNELS[0].id,
-    viewerId: initialPeople[0].id,
+    run: (key, action) =>
+      commands.run(key, (signal) => action(runtime.client, signal)),
+    selected: root.conversation_id,
+    viewerId: owner.user_id,
     replyingTo: null,
-    setThreadId: () => {},
     setReplyingTo: () => {},
     setNotice: reportCommsError,
     announce: () => {},
     scrollToLatest: () => {},
-    config: normalizeCommsConfiguration(null),
-    viewer: initialPeople[0],
-    channel: CHANNELS[0],
-    categories: CATEGORIES,
-    people: initialPeople,
-    roles: initialRoles,
-    allMessages: MESSAGES,
-    channelThreads: [],
-    records: INITIAL_RECORDS,
+    allMessages: [],
   });
   try {
-    const pending = operations.deleteMessage(MESSAGES[0].id);
+    const pending = operations.deleteMessage(root.id);
     expect(commands.isPending()).toBe(true);
     toast.clearWorkspace();
-    runtime.reset();
     commands.cancel();
+    runtime.dispose();
     const error = await pending;
+    expect(committed).toEqual([]);
     expect(error).toBe(
       "The workspace changed before this operation finished. Try again.",
     );
@@ -71,6 +60,8 @@ test("a real pending Comms cancellation cannot admit its caught error during acc
     reportCommsError(error!);
     expect(admissions[1]).toEqual(expect.any(String));
   } finally {
+    stop();
+    runtime.dispose();
     toast.add = original;
     toast.clearWorkspace();
   }

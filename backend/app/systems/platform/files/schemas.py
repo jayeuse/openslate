@@ -12,6 +12,7 @@ from app.systems.platform.files.validation import MAX_BYTES
 class FilePurpose(StrEnum):
     RECORD_ATTACHMENT = "record_attachment"
     BOARD_ATTACHMENT = "board_attachment"
+    COMMS_ATTACHMENT = "comms_attachment"
     LIBRARY_DOCUMENT = "library_document"
     WORKSPACE_LOGO = "workspace_logo"
     USER_AVATAR = "user_avatar"
@@ -43,8 +44,8 @@ class FileCreate(BaseModel):
 
     @model_validator(mode="after")
     def purpose_matches_parent(self) -> "FileCreate":
-        if self.purpose == FilePurpose.BOARD_ATTACHMENT:
-            raise ValueError("Board attachments require a Board-scoped reservation")
+        if self.purpose in {FilePurpose.BOARD_ATTACHMENT, FilePurpose.COMMS_ATTACHMENT}:
+            raise ValueError("Contextual attachments require a parent-scoped reservation")
         if (self.purpose == FilePurpose.RECORD_ATTACHMENT) != (self.record_id is not None):
             raise ValueError("Only record attachments require a record")
         if (self.purpose == FilePurpose.LIBRARY_DOCUMENT) != (self.department_id is not None):

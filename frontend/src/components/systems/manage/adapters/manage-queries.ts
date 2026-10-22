@@ -7,6 +7,7 @@ import {
   getManageWorkspace,
   getWorkspaceBrand,
   workspaceBrand,
+  workspaceCalendarQueryOptions,
   workspaceHasContacts,
   type WorkspaceBrand,
   type ManageWorkspaceProfile,
@@ -252,6 +253,10 @@ export function afterManageWorkspaceChange(
   if (workspace.revision < acceptedWorkspaceRevision(client)) return false;
   client.setQueryData(manageKeys.workspace(), workspace);
   client.setQueryData(manageKeys.brand(), workspaceBrand(workspace));
+  // Formatters reuse a recent calendar read; a saved change rechecks it.
+  void client.invalidateQueries({
+    queryKey: workspaceCalendarQueryOptions().queryKey,
+  });
   void client.invalidateQueries({ queryKey: manageKeys.logos() });
   void client.invalidateQueries({ queryKey: manageKeys.logoFiles() });
   void client.invalidateQueries({ queryKey: accessKeys.security() });

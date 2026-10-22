@@ -1,16 +1,13 @@
-import {
-  expect,
-  signedInSession,
-  signedOut,
-  test,
-  type Page,
-} from "./helpers/test";
+import { expect, signedInAs, signedOut, test, type Page } from "./helpers/test";
+import { installSeededComms } from "./helpers/comms-seeded-world";
 import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
-import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 
 async function signIn(page: Page) {
-  await signedInSession(page, "00000000-0000-4000-8000-000000000101");
+  await signedInAs(page, {
+    id: "00000000-0000-4000-8000-000000000101",
+    role: "admin",
+  });
 }
 
 const routeTitles = [
@@ -105,13 +102,6 @@ test("Comms snapshot recovery stays within Comms while live routes and returning
             })
           : route.fallback(),
     );
-  const snapshotKey = workspaceSessionSnapshotStorageKey(
-    "00000000-0000-4000-8000-000000000101",
-  );
-  await page.addInitScript(
-    (key) => sessionStorage.setItem(key, "{"),
-    snapshotKey,
-  );
   const recovery = page.getByText(
     "Saved workspace data could not be restored. Default data has been loaded.",
     { exact: true },
@@ -134,10 +124,10 @@ test("Comms snapshot recovery stays within Comms while live routes and returning
       path,
     ).toHaveCount(0);
   }
+  await installSeededComms(page, "00000000-0000-4000-8000-000000000101");
   await page.goto("/comms");
   const message = page.getByRole("textbox", { name: "Message", exact: true });
   await expect(message).toBeVisible();
-  await expect(recovery).toBeVisible();
   await message.fill("Unsent route-owned Comms draft");
   await page
     .getByRole("link", { name: "Search workspace", exact: true })

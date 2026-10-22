@@ -11,6 +11,7 @@ type PhaseJsonScalar = str | int | float | bool | None
 type PhaseJsonValue = PhaseJsonScalar | list[PhaseJsonValue] | dict[str, PhaseJsonValue]
 
 PhaseActionKind = Literal[
+    "comms_controls",
     "openview_controls",
     "board_controls",
     "access_controls",

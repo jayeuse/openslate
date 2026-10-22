@@ -937,25 +937,7 @@ test("Board Record link labels refresh after linked module invalidations", async
   let label = "Cooling manifold";
   let linkRequests = 0;
 
-  await page.addInitScript(() => {
-    const sources: EventTarget[] = [];
-    class TestEventSource extends EventTarget {
-      constructor(readonly url: string) {
-        super();
-        sources.push(this);
-      }
-
-      close() {}
-    }
-    Object.defineProperty(window, "EventSource", {
-      configurable: true,
-      value: TestEventSource,
-    });
-    Object.defineProperty(window, "__boardTestEventSources", {
-      configurable: true,
-      value: sources,
-    });
-  });
+  await installOpenViewEventSource(page);
 
   await page.route(`**/api/boards/${boardId}/events/occurrences?**`, (route) =>
     route.fulfill({
@@ -1037,17 +1019,10 @@ test("Board Record link labels refresh after linked module invalidations", async
   const beforeInvalidation = linkRequests;
 
   label = "Cooling manifold updated";
-  await page.evaluate((targetModuleId) => {
-    type EventWindow = Window & {
-      __boardTestEventSources?: EventTarget[];
-    };
-    const source = (window as EventWindow).__boardTestEventSources?.[0];
-    source?.dispatchEvent(
-      new MessageEvent("invalidate", {
-        data: JSON.stringify({ entity: "records", module_id: targetModuleId }),
-      }),
-    );
-  }, moduleId);
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "records",
+    module_id: moduleId,
+  });
 
   await expect.poll(() => linkRequests).toBeGreaterThan(beforeInvalidation);
   await expect(
@@ -1059,20 +1034,10 @@ test("Board Record link labels refresh after linked module invalidations", async
 
   const beforeEligibilityInvalidation = linkRequests;
   label = "Record title after eligibility change";
-  await page.evaluate((targetModuleId) => {
-    type EventWindow = Window & {
-      __boardTestEventSources?: EventTarget[];
-    };
-    const source = (window as EventWindow).__boardTestEventSources?.[0];
-    source?.dispatchEvent(
-      new MessageEvent("invalidate", {
-        data: JSON.stringify({
-          entity: "group_access",
-          module_id: targetModuleId,
-        }),
-      }),
-    );
-  }, moduleId);
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "group_access",
+    module_id: moduleId,
+  });
 
   await expect
     .poll(() => linkRequests)

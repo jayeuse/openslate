@@ -21,6 +21,7 @@ from app.systems.access.policy.schemas import (
 )
 from app.systems.access.users.membership import bound_membership_join, bound_organization
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.comms.realtime.grants import lock_projection, revoke_stale
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 
@@ -93,6 +94,7 @@ def get_group(db: Session, group_id: UUID) -> Group:
 
 
 def lock_group(db: Session, group_id: UUID) -> Group:
+    lock_projection(db)
     try:
         row = db.scalar(
             select(Group)
@@ -224,8 +226,11 @@ def replace_group_members(
             db.delete(item)
     for user_id in desired:
         if user_id not in existing_ids:
-            db.add(GroupMember(org_id=row.org_id, group_id=row.id,
-                               user_id=user_id, performed_by=actor_id))
+            db.add(
+                GroupMember(
+                    org_id=row.org_id, group_id=row.id, user_id=user_id, performed_by=actor_id
+                )
+            )
     db.flush()
     notify_access_changes(db, before)
     return True
@@ -233,8 +238,12 @@ def replace_group_members(
 
 def create_group(db: Session, payload: GroupCreate, actor_id: UUID) -> Group:
     try:
-        row = Group(org_id=bound_organization(db),
-                    name=payload.name, description=payload.description, performed_by=actor_id)
+        row = Group(
+            org_id=bound_organization(db),
+            name=payload.name,
+            description=payload.description,
+            performed_by=actor_id,
+        )
         db.add(row)
         db.flush()
         replace_group_members(db, row, payload.member_ids, actor_id)
@@ -309,6 +318,7 @@ def delete_group(db: Session, group_id: UUID, if_match: str | None, actor_id: UU
     row.deleted_at = utc_now()
     row.revision += 1
     row.performed_by = actor_id
+    revoke_stale(db)
     commit(db, "Unable to delete group")
 
 
@@ -443,6 +453,7 @@ def replace_group_access(
             row.revision += 1
             row.performed_by = actor_id
         notify_access_changes(db, before)
+        revoke_stale(db)
         commit(db, "Unable to change group access")
         db.refresh(row)
         return row

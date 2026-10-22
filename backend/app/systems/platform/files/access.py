@@ -50,6 +50,9 @@ def authorize(
     archive/reopen. Hidden parents are reported as missing. Logos require admin.
     """
 
+    if purpose == "comms_attachment":
+        # Ordinary file UUID routes do not establish a private conversation context.
+        raise error("file_not_found", "File not found", 404)
     if purpose not in {"record_attachment", "library_document", "workspace_logo", "user_avatar"}:
         raise error("forbidden", "Forbidden", 403)
     if not is_active_account(db, user):
@@ -155,8 +158,17 @@ def authorize_contextual_file(
     board_id: UUID | None,
     write: bool,
     manage: bool = False,
+    conversation_id: UUID | None = None,
 ) -> None:
-    if file.purpose == "board_attachment":
+    if file.purpose == "comms_attachment":
+        if conversation_id is None or board_id is not None:
+            raise error("file_not_found", "File not found", 404)
+        from app.systems.comms.files.access import authorize_file
+
+        authorize_file(db, user, file, conversation_id, write=write)
+    elif conversation_id is not None:
+        raise error("file_not_found", "File not found", 404)
+    elif file.purpose == "board_attachment":
         if board_id is None or file.board_id != board_id:
             raise error("file_not_found", "File not found", 404)
         authorize_board_file(db, user, board_id, write=write)
@@ -176,6 +188,8 @@ def authorize_contextual_file(
 
 
 def require_unlinked(db: Session, file_id: UUID) -> None:
+    from app.systems.comms.messages.link_models import CommsMessageAttachment
+
     active_link = db.scalar(
         select(BoardAttachment.id)
         .where(
@@ -189,7 +203,10 @@ def require_unlinked(db: Session, file_id: UUID) -> None:
         .where(BoardPostRevisionAttachment.file_id == file_id)
         .limit(1)
     )
-    if active_link is not None or published_link is not None:
+    comms_link = db.scalar(select(CommsMessageAttachment.id).where(
+        CommsMessageAttachment.file_id == file_id,
+    ).limit(1))
+    if active_link is not None or published_link is not None or comms_link is not None:
         raise error("file_linked", "Detach the file from content before purging")
 
 
@@ -202,7 +219,12 @@ def parent(
     shared_lock: bool = False,
     board_id: UUID | None = None,
     department_id: UUID | None = None,
+    conversation_id: UUID | None = None,
 ) -> None:
+    if conversation_id is not None:
+        from app.systems.comms.files.access import parent as conversation_parent
+
+        conversation_parent(db, conversation_id, active=active, lock=lock, shared_lock=shared_lock)
     if department_id is not None:
         statement = select(Department).where(Department.id == department_id)
         if lock:
@@ -264,6 +286,7 @@ def load(
         shared_lock=shared_lock,
         board_id=file.board_id,
         department_id=file.department_id,
+        conversation_id=file.conversation_id,
     )
     if lock:
         db.refresh(file, with_for_update={"nowait": True, "read": shared_lock})

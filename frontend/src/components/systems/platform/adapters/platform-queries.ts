@@ -4,6 +4,8 @@ import {
   type QueryKey,
 } from "@tanstack/react-query";
 import { ApiContractError, ApiError } from "@/lib/api";
+import { currentOrganizationId } from "@/lib/organization-context";
+import { getConversation } from "../../comms/adapters/structure-api";
 import {
   authMeOptions,
   recordPageDenial,
@@ -363,21 +365,44 @@ export async function resetNotificationPages(
   await client.invalidateQueries({ queryKey: notificationKeys.count });
 }
 
-export function notificationTitleOptions(item: Notification) {
+export function notificationTitleOptions(item: Notification, userId?: string) {
   const source =
-    item.kind === "report-run" || item.kind === "report-run-failed"
-      ? ["report", item.reportId]
-      : item.kind === "post-publish"
-        ? ["board", item.boardId]
-        : item.kind === "event-reminder"
-          ? ["event", item.boardId, item.eventId]
-          : [item.kind, item.subjectId];
+    item.subjectType === "comms_message"
+      ? ["comms", item.orgId, item.conversationId]
+      : item.kind === "report-run" || item.kind === "report-run-failed"
+        ? ["report", item.reportId]
+        : item.kind === "post-publish"
+          ? ["board", item.boardId]
+          : item.kind === "event-reminder"
+            ? ["event", item.boardId, item.eventId]
+            : [item.kind, item.subjectId];
   return queryOptions({
     queryKey: [...notificationKeys.titles, ...source],
     queryFn: async ({ client, signal }): Promise<{ title: string }> => {
       try {
         let title: string;
         switch (item.kind) {
+          case "comms-mention":
+          case "comms-direct":
+          case "comms-thread-reply":
+          case "comms-keyword": {
+            if (!userId || item.orgId !== currentOrganizationId())
+              throw new ApiContractError();
+            const { data: conversation } = await getConversation(
+              { org_id: item.orgId, user_id: userId },
+              item.conversationId,
+              { signal },
+            );
+            if (item.orgId !== currentOrganizationId())
+              throw new ApiContractError();
+            // Only this bounded, currently authorized label enters the inbox cache.
+            // Directs have no name field; never fetch message bodies or member profiles.
+            title =
+              conversation.kind === "direct"
+                ? "Direct conversation"
+                : conversation.name || "Group conversation";
+            break;
+          }
           case "report-run":
           case "report-run-failed":
             title = (await getOpenViewReport(item.reportId)).name;

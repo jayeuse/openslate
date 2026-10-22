@@ -10,12 +10,14 @@ import app.main as main
 
 def test_lifespan_retains_database_pool_for_inflight_provider_signout(monkeypatch) -> None:
     app = FastAPI()
+
     def idle() -> SimpleNamespace:
         return SimpleNamespace(start=lambda: None, stop=lambda: True)
 
     app.state.events_listener = idle()
     app.state.smtp_outbox_worker = idle()
     app.state.trigger_worker = idle()
+    app.state.comms_publisher = idle()
     app.state.report_scheduling_worker = idle()
     app.state.provider_signout_worker = SimpleNamespace(start=lambda: None, stop=lambda: False)
     disposed: list[bool] = []

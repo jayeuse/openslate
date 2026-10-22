@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID
 
 from operations.sample.journal import append_event
+from operations.sample.verification.comms_routes import COMMS_ROUTES
 
 Route = tuple[str, str]
 
@@ -20,6 +21,7 @@ Route = tuple[str, str]
 # must acquire an executor and verification before it can be added here.
 SEEDER_ROUTES: frozenset[Route] = frozenset(
     {
+        *COMMS_ROUTES,
         ("PATCH", "/api/auth/me/profile"),
         ("GET", "/api/users/{user_id}/card"),
         ("GET", "/api/users/{user_id}/avatar"),
@@ -52,6 +54,19 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/workspace/appearance"),
         ("GET", "/api/workspace/security/caller-ip"),
         ("GET", "/api/notifications"),
+        ("GET", "/api/comms/conversations/{conversation_id}/messages/{message_id}/revisions"),
+        ("POST", "/api/comms/conversations/{conversation_id}/messages/{message_id}/reports"),
+        ("POST", "/api/comms/conversations/{conversation_id}/messages/{message_id}/removal"),
+        ("POST", "/api/comms/conversations/{conversation_id}/messages/{message_id}/restoration"),
+        ("GET", "/api/comms/conversations/{conversation_id}/removed-messages"),
+        ("PUT", "/api/comms/conversations/{conversation_id}/restrictions"),
+        ("POST", "/api/comms/conversations/{conversation_id}/purge/preview"),
+        ("POST", "/api/comms/conversations/{conversation_id}/purge"),
+        ("GET", "/api/comms/reports"),
+        ("GET", "/api/comms/reports/{report_id}"),
+        ("POST", "/api/comms/reports/{report_id}/resolution"),
+        ("POST", "/api/comms/reports/{report_id}/message-removal"),
+        ("POST", "/api/comms/reports/{report_id}/message-restoration"),
         ("GET", "/api/notifications/unread-count"),
         ("POST", "/api/notifications/{notification_id}/read"),
         ("POST", "/api/notifications/read-all"),

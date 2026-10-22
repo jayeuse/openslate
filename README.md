@@ -2,7 +2,7 @@
 
 OpenSlate is a self-hosted, single-installation application for each client. Its
 server stack runs with Docker Compose and includes Supabase Database, Auth,
-Storage, and Studio alongside the OpenSlate API, static frontend, and
+Storage, Studio, and Realtime alongside the OpenSlate API, static frontend, and
 Caddy. Development uses the same pinned Supabase services with FastAPI and
 Next.js run on the host. Supabase Database is PostgreSQL, so SQLAlchemy and
 Alembic remain the application persistence layer.
@@ -40,9 +40,11 @@ public issue.
 - **Files:** Supabase Storage holds file bytes in one private bucket. FastAPI
   checks the file type, decides upload and download authorization, and serves
   each download as an attachment. A file is ready when its upload request ends.
-- **Events:** Authenticated SSE remains the browser event stream. PostgreSQL
-  `LISTEN`/`NOTIFY` carries opaque invalidations without row snapshots.
-  Supabase Realtime is a future feature and is not part of the active stack.
+- **Events:** Other application pages retain authenticated SSE with opaque
+  PostgreSQL `LISTEN`/`NOTIFY` invalidations. OpenComms uses private Supabase
+  Realtime topics for opaque events and transient presence/typing signals;
+  authorized content reads and commands remain with FastAPI. These are
+  implemented transports, not proof of complete browser or capacity acceptance.
 - **Administration:** Supabase Studio replaces pgweb. It is a privileged
   operator surface, so keep its gateway loopback-only in development and
   protected in production.
@@ -51,8 +53,8 @@ public issue.
   operations, and file-byte operations are outside that audit boundary.
 
 FastAPI remains the authority for application data access, identity binding,
-authorization, file access, and SSE delivery. Do not write application data
-through provider APIs, Studio, or direct SQL.
+authorization, file access, SSE delivery, and private Comms publication. Do not
+write application data through provider APIs, Studio, or direct SQL.
 
 ## Configuration
 
@@ -259,6 +261,28 @@ stores it, and the file is ready when the upload request ends. Keep upload,
 reconciliation, download, and deletion behind the existing FastAPI file
 contracts.
 
+## OpenComms status and entrypoints
+
+Comms conversations/messages, scoped files/settings, administrator tools,
+moderation and durable jobs have implemented FastAPI contracts. The
+`/comms` page reads and changes them only through those APIs and receives private
+Realtime notifications; no part of it runs on browser-local example data. Private
+Realtime events do not grant content access. Complete integrated browser,
+provider-load and release acceptance remains separate.
+
+Use the existing [Supabase operator guide](infra/supabase/README.md#opencomms-ingress-and-private-publication)
+for ingress/publication and startup boundaries, and the
+[Comms API contract](docs/architecture/07-api-architecture.md#opencomms-http-boundary)
+for current reads, commands and privileged purposes. No additional service or
+operator bootstrap entrypoint is introduced for Comms.
+
+The [sample seeder](backend/operations/seed_sample_data.py) includes planners and
+[API executors](backend/operations/sample/controls/comms.py) for implemented core
+Comms controls, including primary/partner organization paths. Its plan is not a
+claim that every future UI tool is wired or that a full pack passed. Full Harbor
+and School pack execution remains deferred to S34; retain the other unsupported
+feature exclusions in the [operator plan](backend/operations/sample/plan_summary.py).
+
 ## Verification
 
 Use the repository's focused checks during development. The canonical release
@@ -282,7 +306,7 @@ for test boundaries and the pre-push gate.
 - `backend/app/common/` contains shared dependencies, exceptions, and
   utilities.
 - `backend/app/systems/` groups capabilities under `sandbox`, `access`,
-  `manage`, `openview`, `boards`, and `platform`.
+  `manage`, `openview`, `boards`, `platform`, and `comms`.
 - `backend/migrations/` is the Alembic path for the OpenSlate application
   schema. Supabase-owned Auth and Storage schemas stay provider-managed.
 - `frontend/src/app/` contains App Router routes; reusable primitives live

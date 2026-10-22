@@ -43,7 +43,9 @@ class CaddyGatewayTests(unittest.TestCase):
         self.assertLess(
             rendered.index("handle @backup_export_content"), rendered.index("handle @api")
         )
-        self.assertLess(rendered.index("handle @api"), rendered.index("    handle {"))
+        # Comms Realtime ingress is matched before every FastAPI route.
+        self.assertLess(rendered.index("handle @realtime"), rendered.index("handle @events"))
+        self.assertLess(rendered.index("handle @api"), rendered.index("\n    handle {"))
         self.assertIn("@events path /api/events", rendered)
         self.assertIn("@api path /api /api/*", rendered)
         # Health, events, backup export content, API and the static site.
@@ -52,7 +54,8 @@ class CaddyGatewayTests(unittest.TestCase):
         self.assertNotIn("frontend", rendered.lower())
         self.assertIn("bind 0.0.0.0", rendered)
         self.assertEqual(rendered.count("    bind "), 2)
-        self.assertEqual(rendered.count("https://"), 1)
+        # One HTTPS site; the Realtime origin expression also names the public origin.
+        self.assertEqual(rendered.count("\nhttps://"), 1)
         self.assertIn("http://127.0.0.1:3449 {\n    bind 127.0.0.1", rendered)
         self.assertIn("@health path /api/health", rendered)
         self.assertIn("auto_https disable_redirects", rendered)
@@ -100,16 +103,18 @@ class CaddyGatewayTests(unittest.TestCase):
 
     def test_forwarding_contract_is_present_for_every_upstream(self) -> None:
         rendered = self.render()
+        # Events, backup export content, API and static-site upstreams keep the host.
+        self.assertEqual(rendered.count("header_up Host {http.request.hostport}"), 4)
         for header in (
-            "header_up Host {http.request.hostport}",
-            "header_up Origin {http.request.header.Origin}",
-            "header_up X-Request-ID {http.request.header.X-Request-ID}",
             "header_up X-Forwarded-For {http.request.remote.host}",
             "header_up X-Forwarded-Host {http.request.hostport}",
             "header_up X-Forwarded-Proto {http.request.scheme}",
         ):
-            # Events, backup export content and API upstreams.
-            self.assertEqual(rendered.count(header), 4)
+            # The four FastAPI upstreams and the Comms Realtime upstream.
+            self.assertEqual(rendered.count(header), 5)
+        # Caddy passes these request headers through; setting them forged empty values.
+        self.assertNotIn("header_up Origin", rendered)
+        self.assertNotIn("header_up X-Request-ID", rendered)
 
     def test_both_https_modes_render_without_certificate_material(self) -> None:
         internal = self.render()

@@ -145,6 +145,43 @@ traceable procedures and artifacts for executed E2E acceptance, including comman
 working directory, revision, prerequisites, outcome, and report/trace locations;
 architecture docs do not record task-run counts or results.
 
+### OpenComms native checks and browser journey
+
+The existing runner's `--comms-realtime-only`, `--comms-jobs-only` and other
+`--comms-…-only` native selectors exercise their fixed backend/provider targets;
+they are not rendered-browser or complete integrated acceptance. The separate
+`--comms-browser-only` selector uses the same guarded disposable Supabase, real
+Auth/Mailpit, FastAPI/static export and Caddy/Realtime wiring, and selects only
+[`comms-two-account.spec.ts`](../../frontend/tests/fullstack/comms-two-account.spec.ts).
+It does not run backend coverage/batches, the admission burst or the operational
+checker. It is not a second runner or permission to use a developer's accounts.
+
+The browser fixture defines a journey that provisions its owned administrator, invites
+an ordinary member through the actual API/mail flow, and uses separate browser
+contexts for send/receive/reply/name assertions. An owned second-organization tab
+and independent logout exercise organization/session isolation. Messages, SSE and
+WebSockets are not mocked. Credentials remain in the runner's private handoff or
+test memory; auth traces, screenshots and video are disabled. Unit/collection/static
+checks of the fixture do not prove that the invitation or rendered journey has
+executed successfully. Integrated acceptance requires compatible frontend/backend
+artifacts and an actual run against the owned provider stack. Execution status and
+results belong in run evidence, not this test-boundary description.
+
+Integrated acceptance separately covers the full journey matrix, provider/sample
+packs, removal/expiry, reconnect behavior and capacity/latency. Capacity testing
+includes a **9000-delivery burst and latency distribution** and **600-event fan-out**;
+a two-account functional journey or service handshake does not cover those workloads.
+The existing [10k purge case](../../backend/tests/comms/routes/test_comms_purge.py)
+has a **15-second timing requirement**; see [active OpenComms risks](20-architecture-risks.md).
+
+Before an authorized measurement window, follow the [root test policy](../../AGENTS.md):
+record and stop only authorized development runtimes, preserve all volumes, obtain
+the common exclusive heavy-lane lock, and document machine headroom. Never overlap
+backend work with frontend tests/builds. Measure the purge case on the freed machine;
+if it misses the target, diagnose the actual ORM/driver path before repair and
+reverification. Preserve audit/confirmation controls and the timing assertion.
+Restore every runtime actually stopped and report any restoration failure.
+
 ## Release smoke suite
 
 The release smoke suite runs one main path per screen against seeded Harbor data. It
@@ -194,9 +231,13 @@ desktop app's terminal slowed the whole machine, so speed comes first:
   watch them in a visible browser; CI always runs them headless. Add `--headed` to
   `npm test` to watch the `http` project.
 
-The runners turn SIGTERM and SIGHUP into an interrupt, and they stop each command's whole
-process group before they remove the disposable stack, so a stopped run leaves
-nothing behind.
+The runners turn SIGTERM and SIGHUP into an interrupt and stop each command's whole
+process group before attempting owned-stack cleanup. Cleanup is ownership-guarded,
+not a promise that every interrupted run leaves nothing behind. The fullstack runner
+removes its private directory after success but can retain failed-run diagnostics,
+including credential-bearing files. Check safe cleanup metadata/resource labels;
+do not print raw logs, Settings representations or environment files to establish
+resource state. Retained diagnostics are not an authorization to delete general history.
 
 ## Acceptance boundaries
 
@@ -213,7 +254,10 @@ available. macOS is a development workstation only, not a supported server targe
 Acceptance must exercise provider outages, missing mail configuration, and caller
 deadlines without spawning replacement work. Production readiness still requires live acceptance; its response
 does not establish mail delivery, schema compatibility, or backup integrity. Supabase
-Realtime is not started; its future use needs its own authorization and acceptance design.
+Realtime and its Comms authorization/publication paths are implemented; readiness
+does not establish end-to-end Realtime delivery. Browser/provider delivery, capacity
+and configured gates each require separate acceptance evidence, alongside the
+target-platform boundaries above.
 Documentation-only edits require diff and link review, not application test execution.
 See [Deployment Architecture](12-deployment-architecture.md) for the current release and
 restore limits.

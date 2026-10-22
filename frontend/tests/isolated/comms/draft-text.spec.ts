@@ -5,6 +5,7 @@ import {
 } from "../../../src/components/systems/shared/runtime/workspace-identity";
 import {
   clearCommsDraftTextStore,
+  commsDraftOrganizationLeft,
   commsDraftTextKey,
   COMMS_DRAFT_TEXT_PREFIX,
   createCommsDraftTextStore,
@@ -27,6 +28,71 @@ function memoryStorage() {
     },
   };
 }
+
+test("the same composer cannot restore another organization's draft or a swapped envelope", () => {
+  const storage = memoryStorage();
+  const a = ownedCommsDraftTextId("user-a", "thread", "org-a");
+  const b = ownedCommsDraftTextId("user-a", "thread", "org-b");
+  const draftA = createCommsDraftTextStore(a, "", storage);
+  draftA.setValue("Organization A draft");
+  expect(createCommsDraftTextStore(b, "", storage).getSnapshot().value).toBe(
+    "",
+  );
+  storage.setItem(commsDraftTextKey(b), storage.getItem(commsDraftTextKey(a))!);
+  expect(createCommsDraftTextStore(b, "", storage).getSnapshot().value).toBe(
+    "",
+  );
+  expect(createCommsDraftTextStore(a, "", storage).getSnapshot().value).toBe(
+    "Organization A draft",
+  );
+});
+
+test("session reset retires captured draft writers as well as pending clears", async () => {
+  const memory = memoryStorage();
+  let blocked = false;
+  const storage = {
+    ...memory,
+    setItem(key: string, value: string) {
+      if (blocked) throw new DOMException("Blocked storage", "SecurityError");
+      memory.setItem(key, value);
+    },
+    removeItem(key: string) {
+      if (blocked) throw new DOMException("Blocked storage", "SecurityError");
+      memory.removeItem(key);
+    },
+  };
+  const id = ownedCommsDraftTextId("user-a", "thread", "org-a");
+  const store = createCommsDraftTextStore(id, "", storage);
+  store.setValue("Before cleanup");
+  store.reset();
+  store.setValue("Late callback");
+  store.applyStorageValue(JSON.stringify({ id, value: "Late storage event" }));
+  expect(await store.clear()).toBe(false);
+  expect(store.getSnapshot().value).toBe("");
+  expect(storage.getItem(commsDraftTextKey(id))).toBeNull();
+  const next = createCommsDraftTextStore(id, "", storage);
+  next.setValue("Newly admitted context");
+  expect(next.getSnapshot().value).toBe("Newly admitted context");
+
+  // A captured writer is not reachable through the UI after its owner unmounts.
+  // Keep this protection here; the HTTP reset journey owns remount/usability.
+  const capturedWriter = next.setValue;
+  const uncleared = storage.getItem(commsDraftTextKey(id));
+  blocked = true;
+  next.reset();
+  expect(next.getSnapshot().value).toBe("");
+  expect(next.getSnapshot().storageUnavailable).toBe(true);
+  expect(storage.getItem(commsDraftTextKey(id))).toBe(uncleared);
+
+  // Recovery of the dependency must not revive the pre-reset owner's authority.
+  blocked = false;
+  capturedWriter("Late callback after failed removal");
+  next.applyStorageValue(JSON.stringify({ id, value: "Late storage event" }));
+  expect(await next.clear()).toBe(false);
+  expect(next.getSnapshot().value).toBe("");
+  expect(next.getSnapshot().storageUnavailable).toBe(true);
+  expect(storage.getItem(commsDraftTextKey(id))).toBe(uncleared);
+});
 
 // A registered in-memory cleanup listener cannot be made to throw through a
 // supported UI action; exercise that boundary without injecting browser modules.
@@ -55,7 +121,9 @@ test("a failed workspace cleanup listener reports failure and still clears other
     value: storage,
   });
   const userId = "listener-cleanup-owner";
-  const key = commsDraftTextKey(ownedCommsDraftTextId(userId, "composer"));
+  const key = commsDraftTextKey(
+    ownedCommsDraftTextId(userId, "composer", "org-a"),
+  );
   storage.setItem(key, "Owned draft");
   let otherListenerCleared = false;
   const unregisterFailure = registerWorkspaceSessionClear(userId, () => {
@@ -80,6 +148,16 @@ test("a failed workspace cleanup listener reports failure and still clears other
   }
 });
 
+test("only a real organization switch releases a Comms client's drafts", () => {
+  for (const [tab, released, reason] of [
+    // A remount in a tab without a stored organization is not a switch.
+    [null, false, "no stored organization"],
+    ["org-a", false, "same organization"],
+    ["org-b", true, "switched organization"],
+  ] as const)
+    expect(commsDraftOrganizationLeft(tab, "org-a"), reason).toBe(released);
+});
+
 test("draft subscribers receive a new snapshot when text changes", () => {
   const storage = memoryStorage();
   const store = createCommsDraftTextStore("thread-immutable", "", storage);
@@ -100,8 +178,8 @@ test("draft subscribers receive a new snapshot when text changes", () => {
 test("owned Comms drafts restore for their account without crossing accounts", () => {
   const storage = memoryStorage();
   const composerId = "thread-identity";
-  const userA = ownedCommsDraftTextId("user-a", composerId);
-  const userB = ownedCommsDraftTextId("user-b", composerId);
+  const userA = ownedCommsDraftTextId("user-a", composerId, "org-a");
+  const userB = ownedCommsDraftTextId("user-b", composerId, "org-a");
   storage.setItem(commsDraftTextKey(composerId), "legacy unowned draft");
   const draftA = createCommsDraftTextStore(userA, "", storage);
   draftA.setValue("A's private draft");
@@ -151,8 +229,8 @@ test("owned Comms draft cleanup removes only the active account", () => {
   });
   try {
     const composerId = "thread-logout";
-    const userA = ownedCommsDraftTextId("user-a", composerId);
-    const userB = ownedCommsDraftTextId("user-b", composerId);
+    const userA = ownedCommsDraftTextId("user-a", composerId, "org-a");
+    const userB = ownedCommsDraftTextId("user-b", composerId, "org-a");
     const legacy = commsDraftTextKey(composerId);
     storage.setItem(commsDraftTextKey(userA), "A's draft");
     storage.setItem(commsDraftTextKey(userB), "B's draft");
@@ -195,7 +273,9 @@ test("legacy text migrates to the dedicated key before cleanup completes", async
   });
   await cleanupStarted;
 
-  expect(storage.getItem(commsDraftTextKey(id))).toBe("legacy draft");
+  expect(JSON.parse(storage.getItem(commsDraftTextKey(id))!).value).toBe(
+    "legacy draft",
+  );
   expect(store.getSnapshot().value).toBe("legacy draft");
   expect(store.getSnapshot().legacyPending).toBe(true);
 
@@ -238,9 +318,9 @@ test("accepted clear keeps newer text that arrived while legacy cleanup was pend
 
   expect(await clear).toBe(false);
   expect(store.getSnapshot().value).toBe("newer draft");
-  expect(storage.getItem(commsDraftTextKey("thread-stale-clear"))).toBe(
-    "newer draft",
-  );
+  expect(
+    JSON.parse(storage.getItem(commsDraftTextKey("thread-stale-clear"))!).value,
+  ).toBe("newer draft");
 });
 
 test("canceled legacy migration cannot update an old composer entry", async () => {

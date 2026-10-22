@@ -26,6 +26,17 @@ def _shape(path: str) -> str:
     return re.sub(r"\{[^{}]+\}", "{id}", path)
 
 
+def _served(path: str, operation: dict) -> set[str]:
+    """The template, plus each literal path a UI may send for an enum path parameter."""
+    paths = {path}
+    for parameter in operation.get("parameters", []):
+        values = parameter.get("schema", {}).get("enum")
+        if parameter.get("in") == "path" and values:
+            marker = "{" + parameter["name"] + "}"
+            paths |= {item.replace(marker, value) for item in paths for value in values}
+    return {_shape(item) for item in paths}
+
+
 def test_every_frontend_operation_exists_and_has_simulated_run_coverage() -> None:
     assert MANIFEST.is_file(), "The checked-in frontend route manifest is missing"
     from operations.sample.verification.route_coverage import DEFERRED_ROUTES, SEEDER_ROUTES
@@ -34,10 +45,11 @@ def test_every_frontend_operation_exists_and_has_simulated_run_coverage() -> Non
     assert isinstance(entries, list) and entries, "The frontend route manifest must be nonempty"
     frontend = {(entry["method"], _shape(entry["path"])) for entry in entries}
     registered = {
-        (method.upper(), _shape(path))
+        (method.upper(), served)
         for path, methods in app.openapi()["paths"].items()
-        for method in methods
+        for method, operation in methods.items()
         if method in {"get", "post", "put", "patch", "delete", "head", "options"}
+        for served in _served(path, operation)
     }
     covered = {(method, _shape(path)) for method, path in SEEDER_ROUTES}
     deferred = {(method, _shape(path)) for method, path in DEFERRED_ROUTES}

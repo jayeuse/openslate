@@ -5,6 +5,7 @@ import {
   test,
   type Page,
 } from "./helpers/test";
+import { seedTimeline } from "./helpers/comms-timeline-fixture";
 
 async function signIn(page: Page) {
   await signedInAs(page, {
@@ -57,6 +58,9 @@ async function signIn(page: Page) {
       },
     });
   });
+  return (value: string) => {
+    theme = value;
+  };
 }
 
 // Themes change look only. Compare the persistent shell and page, excluding
@@ -69,14 +73,26 @@ async function snapshot(page: Page) {
       .getByRole("navigation", { name: "Main navigation" })
       .getByRole("button", { name: /^Access/ }),
   ).toBeVisible();
-  return page.evaluate(() => {
-    const shell = document.querySelector(".app-shell");
-    if (!shell) throw new Error("Workspace shell is unavailable");
-    return {
-      elements: shell.querySelectorAll("*").length,
-      text: shell.textContent,
-    };
-  });
+  const capture = () =>
+    page.evaluate(() => {
+      const shell = document.querySelector(".app-shell");
+      if (!shell) throw new Error("Workspace shell is unavailable");
+      return {
+        elements: shell.querySelectorAll("*").length,
+        text: shell.textContent,
+      };
+    });
+  // Comms may refetch its conversations right after the first paint, and the
+  // "Refreshing conversations…" status then covers the connection strip for a
+  // moment. Capture a shell with no refresh in flight so looks compare settled.
+  let settled = await capture();
+  await expect
+    .poll(async () => {
+      settled = await capture();
+      return settled.text?.includes("Refreshing conversations…");
+    })
+    .toBe(false);
+  return settled;
 }
 
 const THEMES = [
@@ -84,6 +100,32 @@ const THEMES = [
   { name: "Triplicate", id: "triplicate", font: /Archivo/ },
   { name: "Stockroom", id: "stockroom", font: /Archivo/ },
 ] as const;
+
+test("Comms keeps the same words and structure across organization looks", async ({
+  page,
+}) => {
+  await seedTimeline(page, 2);
+  const setTheme = await signIn(page);
+  await page.goto("/comms");
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByRole("article")).toHaveCount(2);
+  const slate = await snapshot(page);
+  for (const look of THEMES) {
+    setTheme(look.id);
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", look.id);
+    await expect(
+      page.getByRole("textbox", { name: "Message", exact: true }),
+    ).toBeEnabled();
+    await expect(page.getByRole("article")).toHaveCount(2);
+    expect(await snapshot(page), look.id).toEqual(slate);
+    expect(
+      await page.evaluate(() => getComputedStyle(document.body).fontFamily),
+    ).toMatch(look.font);
+  }
+});
 
 test("each organization look keeps the same words and structure", async ({
   page,

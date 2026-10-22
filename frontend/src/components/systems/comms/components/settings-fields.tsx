@@ -10,8 +10,9 @@ import {
 } from "@/components/ui/field";
 import { Separator } from "@/components/ui/separator";
 import type { Person } from "../../shared/data/sample-people";
-import { INITIAL_RECORDS } from "../../shared/data/sample-data";
-import { useSampleState } from "../../shared/runtime/sample-state";
+import { useCommsClient } from "../state/client-context";
+import { useCommsRead } from "../state/runtime";
+import { complete } from "../state/workspace-view";
 import { Choice, Toggle } from "../../shared/components/ui";
 import { TextField } from "./ui";
 import type { CommsSettingKey, CommsSettings } from "../domain/configuration";
@@ -21,38 +22,42 @@ export const SETTINGS_SECTIONS: {
   label: string;
   description: string;
   keys: CommsSettingKey[];
+  common: CommsSettingKey[];
 }[] = [
   {
     id: "overview",
     label: "Overview",
     description: "Set the tone and defaults for conversations.",
-    keys: ["mode", "systemMessages", "pinnedRecordId"],
+    keys: [],
+    common: [],
   },
   {
     id: "messaging",
     label: "Messaging",
     description: "Control composition and message changes.",
     keys: [
-      "editWindowMinutes",
-      "deleteWindowMinutes",
+      "mode",
       "slowModeSeconds",
       "formatting",
       "linkPreviews",
       "allowedReactions",
       "mentionLimit",
     ],
+    common: ["mode"],
   },
   {
     id: "threads",
     label: "Threads",
     description: "Choose how conversations branch and stay visible.",
     keys: ["autoArchiveDays", "defaultThreadSubscription", "threadBranches"],
+    common: [],
   },
   {
     id: "members",
     label: "Members",
-    description: "Assign responsibility and set membership rules.",
-    keys: ["ownerId", "moderatorIds", "joinRule", "defaultMemberIds", "dmRule"],
+    description: "See who can take part and who manages each conversation.",
+    keys: ["dmRule"],
+    common: [],
   },
   {
     id: "notifications",
@@ -69,8 +74,8 @@ export const SETTINGS_SECTIONS: {
       "notificationBadges",
       "notificationPreview",
       "desktopNotifications",
-      "mobileNotifications",
     ],
+    common: ["notificationMode"],
   },
   {
     id: "files",
@@ -84,27 +89,28 @@ export const SETTINGS_SECTIONS: {
       "allowedRecordModules",
       "requireRecordLink",
       "recordCardFields",
+      "pinnedRecordId",
     ],
+    common: ["allowedFileTypes", "maxFileSizeMb"],
   },
   {
     id: "moderation",
     label: "Posting and history",
     description:
-      "Lock the channel, limit who can post, and set how long messages are kept. In this example, nothing is deleted automatically.",
+      "Lock the channel, limit who can post, and set how long messages are kept.",
     keys: [
+      "editWindowMinutes",
+      "deleteWindowMinutes",
       "locked",
       "restrictedPersonIds",
       "restrictionUntil",
-      "retentionDays",
       "allowExport",
     ],
+    common: ["editWindowMinutes", "deleteWindowMinutes"],
   },
 ];
 export const SETTINGS_LABELS: Record<CommsSettingKey, string> = {
   mode: "Channel mode",
-  ownerId: "Channel owner",
-  moderatorIds: "Channel moderators",
-  order: "Display order",
   editWindowMinutes: "Edit window (minutes)",
   deleteWindowMinutes: "Delete window (minutes)",
   slowModeSeconds: "Slow mode (seconds)",
@@ -115,8 +121,6 @@ export const SETTINGS_LABELS: Record<CommsSettingKey, string> = {
   autoArchiveDays: "Auto-archive after (days)",
   defaultThreadSubscription: "Follow threads by default",
   threadBranches: "Thread branches in sidebar",
-  joinRule: "Channel joining",
-  defaultMemberIds: "Default members",
   dmRule: "Direct message access",
   notificationMode: "Notify me about",
   keywords: "Notification keywords",
@@ -127,7 +131,6 @@ export const SETTINGS_LABELS: Record<CommsSettingKey, string> = {
   notificationBadges: "Notification badges",
   notificationPreview: "Message notification previews",
   desktopNotifications: "Desktop notifications",
-  mobileNotifications: "Mobile notifications",
   allowedFileTypes: "Allowed file types",
   maxFileSizeMb: "Maximum file size (MB)",
   filePreviews: "File previews",
@@ -138,14 +141,12 @@ export const SETTINGS_LABELS: Record<CommsSettingKey, string> = {
   locked: "Lock channel posting",
   restrictedPersonIds: "Restricted people",
   restrictionUntil: "Posting restriction ends",
-  retentionDays: "Retention period (days)",
   allowExport: "Allow history export",
-  systemMessages: "Allow system messages",
   pinnedRecordId: "Pinned record",
 };
 const hints: Partial<Record<CommsSettingKey, string>> = {
   mode: "Announcements reserve new messages for managers. Thread-first channels guide replies into threads.",
-  editWindowMinutes: "0 means no time limit. The default is 15 minutes.",
+  editWindowMinutes: "0 means no time limit; this is the default.",
   deleteWindowMinutes: "0 means no time limit.",
   slowModeSeconds:
     "0 turns slow mode off. Applies to new messages and thread replies.",
@@ -155,19 +156,14 @@ const hints: Partial<Record<CommsSettingKey, string>> = {
   autoArchiveDays:
     "0 disables auto-archive. Review the impact before applying the setting.",
   allowedFileTypes:
-    "Comma-separated extensions or MIME types, for example .pdf,image/*. Empty allows all file types.",
-  maxFileSizeMb:
-    "0 means no size limit for attachments shown here; files are not uploaded.",
+    "Comma-separated extensions: pdf, png, jpg, jpeg, docx, xlsx, pptx. Empty uses the platform allowlist.",
+  maxFileSizeMb: "At most 10 MB. Zero uses the platform's 10 MB limit.",
   allowedRecordModules:
-    "Comma-separated module names. Current records belong to Service requests. Empty permits all modules.",
+    "Choose allowed record modules. Empty permits every module you can read.",
   recordCardFields: "Choose which details appear on linked record cards.",
-  retentionDays:
-    "0 keeps all history. Saving never deletes messages; use the retention preview to inspect affected content.",
   pinnedRecordId: "Keep one record within reach of everyone in this channel.",
   restrictionUntil:
     "Leave empty for no expiry. Applies to the selected restricted people.",
-  ownerId:
-    "Eli owns OpenComms, so Eli always has every permission here. Channel locks and message limits still apply.",
   keywords: "Separate words or phrases with commas.",
 };
 const choices: Partial<Record<CommsSettingKey, [string, string][]>> = {
@@ -180,11 +176,6 @@ const choices: Partial<Record<CommsSettingKey, [string, string][]>> = {
     ["all", "All threads"],
     ["followed", "Followed threads"],
     ["none", "Hide thread branches"],
-  ],
-  joinRule: [
-    ["open", "Open joining"],
-    ["request", "Request approval"],
-    ["invite", "Invite only"],
   ],
   dmRule: [
     ["everyone", "Everyone"],
@@ -205,7 +196,6 @@ export function SettingsFields({
   workspace,
   people,
   onChange,
-  onLock,
 }: {
   keys: CommsSettingKey[];
   values: CommsSettings;
@@ -217,13 +207,27 @@ export function SettingsFields({
     key: K,
     value: CommsSettings[K],
   ) => void;
-  onLock?: (key: CommsSettingKey, value: boolean) => void;
 }) {
-  const [records] = useSampleState("records", INITIAL_RECORDS);
+  const { catalog } = useCommsClient();
+  const linked = useCommsRead("settings-records", (client, signal) =>
+    complete((offset) =>
+      client.listLinkedRecords({ limit: 100, offset }, { signal }),
+    ),
+  );
+  const records = [
+    ...new Map(
+      (linked.data ?? [])
+        .filter((record) => record.state === "available")
+        .map((record) => [record.record_id, record]),
+    ).values(),
+  ];
   return (
     <FieldGroup>
       {keys.map((key, index) => {
         const value = values[key];
+        const selectedValues: readonly string[] = Array.isArray(value)
+          ? value
+          : [];
         const label = SETTINGS_LABELS[key];
         const disabled = !workspace && locked.includes(key);
         const override = Object.hasOwn(overrides, key);
@@ -244,27 +248,27 @@ export function SettingsFields({
                   No pinned record
                 </NativeSelectOption>
                 {records.map((record) => (
-                  <NativeSelectOption key={record.id} value={record.id}>
+                  <NativeSelectOption
+                    key={record.record_id}
+                    value={record.record_id}
+                  >
                     {record.title}
                   </NativeSelectOption>
                 ))}
               </Choice>
-            ) : key === "recordCardFields" ? (
+            ) : key === "recordCardFields" || key === "allowedRecordModules" ? (
               <FieldSet disabled={disabled} className="rounded-md border px-3">
                 <FieldLegend className="px-1 text-sm font-medium">
                   {label}
                 </FieldLegend>
-                {Object.entries({
-                  title: "Record title",
-                  customer: "Customer",
-                  status: "Status",
-                  assignee: "Assignee",
-                  dueDate: "Due date",
-                }).map(([field, name]) => (
+                {(key === "recordCardFields"
+                  ? catalog.fields.map((field) => [field.id, field.label])
+                  : catalog.modules.map((module) => [module.id, module.name])
+                ).map(([field, name]) => (
                   <Toggle
                     key={field}
                     label={name}
-                    checked={Array.isArray(value) && value.includes(field)}
+                    checked={selectedValues.includes(field)}
                     onCheckedChange={(checked) =>
                       onChange(
                         key,
@@ -278,30 +282,7 @@ export function SettingsFields({
                   />
                 ))}
               </FieldSet>
-            ) : key === "ownerId" ? (
-              <Choice
-                label={label}
-                value={String(value)}
-                disabled={disabled}
-                onChange={(event) => onChange(key, event.target.value)}
-              >
-                <NativeSelectOption value="">
-                  Workspace owner
-                </NativeSelectOption>
-                {people
-                  .filter((person) => person.active || person.id === value)
-                  .map((person) => (
-                    <NativeSelectOption key={person.id} value={person.id}>
-                      {person.name}
-                      {person.active ? "" : " (inactive)"}
-                    </NativeSelectOption>
-                  ))}
-              </Choice>
-            ) : [
-                "moderatorIds",
-                "defaultMemberIds",
-                "restrictedPersonIds",
-              ].includes(key) ? (
+            ) : key === "restrictedPersonIds" ? (
               <FieldSet disabled={disabled} className="rounded-md border px-3">
                 <FieldLegend className="px-1 text-sm font-medium">
                   {label}
@@ -310,7 +291,7 @@ export function SettingsFields({
                   <Toggle
                     key={person.id}
                     label={`${person.name}${person.active ? "" : " (inactive)"}`}
-                    checked={Array.isArray(value) && value.includes(person.id)}
+                    checked={selectedValues.includes(person.id)}
                     onCheckedChange={(checked) =>
                       onChange(
                         key,
@@ -408,18 +389,37 @@ export function SettingsFields({
                 {disabled ? "Locked by workspace" : "Customized here"}
               </span>
             )}
-            {workspace && onLock && (
-              <Toggle
-                control="switch"
-                label={`Lock ${label} for categories and channels`}
-                checked={locked.includes(key)}
-                onCheckedChange={(checked) => onLock(key, checked)}
-              />
-            )}
             {index < keys.length - 1 && <Separator />}
           </Field>
         );
       })}
     </FieldGroup>
+  );
+}
+
+export function SettingsLocks({
+  keys,
+  locked,
+  onLock,
+}: {
+  keys: CommsSettingKey[];
+  locked: CommsSettingKey[];
+  onLock: (key: CommsSettingKey, value: boolean) => void;
+}) {
+  return (
+    <FieldSet>
+      <FieldLegend>Workspace locks</FieldLegend>
+      {keys
+        .filter((key) => key !== "dmRule")
+        .map((key) => (
+          <Toggle
+            key={key}
+            control="switch"
+            label={`Lock ${SETTINGS_LABELS[key].replace(/^Lock /, "")} for categories and channels`}
+            checked={locked.includes(key)}
+            onCheckedChange={(value) => onLock(key, value)}
+          />
+        ))}
+    </FieldSet>
   );
 }

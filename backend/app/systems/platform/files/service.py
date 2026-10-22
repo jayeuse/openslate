@@ -205,13 +205,16 @@ def upload(
     storage: StorageBackend,
     *,
     board_id: UUID | None = None,
+    conversation_id: UUID | None = None,
 ) -> FileResponse:
     candidate = load(db, file_id)
     authorize_contextual_file(
-        db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True
+        db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True,
+        conversation_id=conversation_id,
     )
     file = load(db, file_id, active_parent=True, lock=True)
-    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True)
+    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True,
+                              conversation_id=conversation_id)
     if file.is_deleted or file.state != "awaiting_upload":
         raise error("file_upload_conflict", "File cannot accept an upload")
     require_live_reservation(file)
@@ -222,10 +225,12 @@ def upload(
     validated = validate_bounded(filename, content, logo=logo)
     candidate = load(db, file_id)
     authorize_contextual_file(
-        db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True
+        db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True,
+        conversation_id=conversation_id,
     )
     file = load(db, file_id, active_parent=True, lock=True)
-    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True)
+    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True,
+                              conversation_id=conversation_id)
     if file.is_deleted or file.state != "awaiting_upload":
         raise error("file_upload_conflict", "File cannot accept an upload")
     require_live_reservation(file)
@@ -274,12 +279,15 @@ def upload(
         ) from exc
     candidate = load(db, file_id)
     authorize_contextual_file(
-        db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True
+        db, fresh_user(db, actor_id), candidate, board_id=board_id, write=True,
+        conversation_id=conversation_id,
     )
     file = _current(db, file_id, token, "uploading")
-    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True)
+    authorize_contextual_file(db, fresh_user(db, actor_id), file, board_id=board_id, write=True,
+                              conversation_id=conversation_id)
     parent(
-        db, file.record_id, active=True, board_id=file.board_id, department_id=file.department_id
+        db, file.record_id, active=True, board_id=file.board_id, department_id=file.department_id,
+        conversation_id=file.conversation_id,
     )
     if file.is_deleted:
         raise error("file_archived", "File was archived during upload")
@@ -414,3 +422,8 @@ def authorize_lifecycle(db: Session, actor_id: UUID, file: File) -> None:
             raise error("file_not_found", "File not found", 404)
     else:
         require_fresh_exact_admin(db, actor_id)
+        if file.purpose == "comms_attachment":
+            from app.systems.comms.files.access import authorize_parent
+
+            assert file.conversation_id is not None
+            authorize_parent(db, fresh_user(db, actor_id), file.conversation_id, write=False)

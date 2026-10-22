@@ -45,6 +45,7 @@ from app.systems.access.policy.service import (
 )
 from app.systems.access.users.membership import require_current_membership
 from app.systems.access.users.models import User, UserRole
+from app.systems.comms.realtime.grants import lock_projection, revoke_stale
 
 
 def _deny(db: Session) -> HTTPException:
@@ -106,6 +107,7 @@ def replace_members(
     not reveal the group's revision.
     """
 
+    lock_projection(db)
     if require_current_membership(db, actor).role == UserRole.ADMIN.value:
         require_fresh_exact_admin(db, actor.id)
         row = lock_group(db, group_id)
@@ -118,6 +120,7 @@ def replace_members(
         if replace_group_members(db, row, member_ids, actor.id):
             row.revision += 1
             row.performed_by = actor.id
+        revoke_stale(db)
         commit(db, "Unable to change group members")
         db.refresh(row)
         return row

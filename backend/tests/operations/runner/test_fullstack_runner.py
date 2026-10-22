@@ -13,6 +13,7 @@ from tests.postgres_runtime import DisposablePostgres
 
 class _RunnerPostgres:
     network = "test-network"
+    api_port = 58999
     mail_url = "http://127.0.0.1:58998"
 
     def __init__(self, root: Path) -> None:
@@ -232,6 +233,9 @@ def test_gateway_config_preserves_single_origin_routes_with_container_host_upstr
     assert "handle @backup_export_content" in rendered
     assert "@api path /api /api/*" in rendered
     assert "{{" not in rendered
+    # Caddy passes request headers through; a placeholder for an absent one sends it empty.
+    assert "header_up Origin" not in rendered
+    assert "header_up X-Request-ID" not in rendered
 
 
 def test_browser_acceptance_command_runs_full_suite_for_complete_acceptance(

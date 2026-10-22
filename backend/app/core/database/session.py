@@ -17,6 +17,7 @@ class AuditSession(Session):
     """Application session with transactional ORM audit hooks."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        from app.systems.comms.realtime import publication as _comms_publication  # noqa: F401
         from app.systems.manage.audit import listeners as _audit_listeners  # noqa: F401
 
         super().__init__(*args, **kwargs)

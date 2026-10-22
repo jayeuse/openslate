@@ -7,6 +7,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
+from urllib.parse import urlsplit
 
 from dotenv.parser import parse_stream
 
@@ -16,6 +17,75 @@ _REFERENCE: Final = re.compile(r"\$\{([^}]*)\}")
 
 class ConfigurationError(RuntimeError):
     """An environment configuration error that never includes a configured value."""
+
+
+def realtime_publisher_port(values: Mapping[str, str]) -> int:
+    """One non-colliding publisher port for the development projection and API."""
+    try:
+        if any(
+            not re.fullmatch(r"[0-9]+", values[key])
+            for key in (
+                "SUPABASE_API_PORT",
+                "SUPABASE_REALTIME_PUBLISH_PORT",
+            )
+            if key in values
+        ):
+            raise ValueError
+        api = (
+            int(values["SUPABASE_API_PORT"])
+            if "SUPABASE_API_PORT" in values
+            else urlsplit(values["SUPABASE_URL"]).port
+        )
+        if api is None or not 1 <= api <= 65535:
+            raise ValueError
+        selected = (
+            int(values["SUPABASE_REALTIME_PUBLISH_PORT"])
+            if "SUPABASE_REALTIME_PUBLISH_PORT" in values
+            else api + 100
+        )
+        occupied = {
+            int(values[key])
+            for key in (
+                "SUPABASE_API_PORT",
+                "SUPABASE_DB_PORT",
+                "POSTGRES_PORT",
+                "SUPABASE_MAIL_PORT",
+                "SMTP_PORT",
+                "GATEWAY_PORT",
+                "FRONTEND_DEV_PORT",
+                "BACKEND_PORT",
+            )
+            if key in values
+        } | {api}
+        if not 1 <= selected <= 65535 or selected in occupied:
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        raise ConfigurationError(
+            "SUPABASE_REALTIME_PUBLISH_PORT must be a valid distinct port"
+        ) from None
+    return selected
+
+
+def with_realtime_publisher(values: Mapping[str, str]) -> dict[str, str]:
+    """Project the approved private publisher binding without rewriting the root file."""
+    projected = dict(values)
+    if values.get("ENVIRONMENT") == "development":
+        port = realtime_publisher_port(values)
+        projected.setdefault(
+            "REALTIME_PUBLISH_URL", f"http://127.0.0.1:{port}/realtime/v1/api/broadcast"
+        )
+        try:
+            endpoint = urlsplit(projected["REALTIME_PUBLISH_URL"])
+            valid = endpoint.hostname in {"127.0.0.1", "localhost"} and endpoint.port == port
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ConfigurationError(
+                "Development REALTIME_PUBLISH_URL must target the owned loopback publisher"
+            )
+    elif values.get("ENVIRONMENT") == "production":
+        projected.setdefault("REALTIME_PUBLISH_URL", "http://api-gw:8001/realtime/v1/api/broadcast")
+    return projected
 
 
 def read_environment(path: Path) -> dict[str, str]:

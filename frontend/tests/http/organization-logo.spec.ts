@@ -1,6 +1,14 @@
-import { expect, heldResponse, test, type Page } from "./helpers/test";
+import {
+  defaultOrganization,
+  expect,
+  heldResponse,
+  test,
+  type Page,
+} from "./helpers/test";
+import { installSeededComms } from "./helpers/comms-seeded-world";
 import {
   installLogoApi,
+  logoActor,
   logoFile,
   oldLogoId,
   png,
@@ -117,6 +125,7 @@ test("Logo a direct Comms visit loads the organization brand", async ({
   const api = await installLogoApi(page);
   api.workspace.logo_file_id = oldLogoId;
   api.files.set(oldLogoId, logoFile(oldLogoId));
+  await installSeededComms(page, logoActor);
   await page.goto("/comms");
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
@@ -138,6 +147,7 @@ test("Logo warm workspace cache shows the organization brand in Comms and on ret
   const api = await installLogoApi(page);
   api.workspace.logo_file_id = oldLogoId;
   api.files.set(oldLogoId, logoFile(oldLogoId));
+  await installSeededComms(page, logoActor);
   await page.goto("/manage?view=organization");
   await expect(
     header(page).getByRole("img", {
@@ -421,6 +431,7 @@ test("Logo retained-candidate refusal rechecks the session before any further pu
       json: {
         authenticated: true,
         user_id: api.actor,
+        organization_id: defaultOrganization.org_id,
         setup_required: false,
         default_organization_blocked: null,
       },
@@ -817,6 +828,7 @@ test("Logo privacy curtain conceals a selected preview and restores only the sam
       json: {
         authenticated: true,
         user_id: api.actor,
+        organization_id: defaultOrganization.org_id,
         setup_required: false,
         default_organization_blocked: null,
       },

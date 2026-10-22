@@ -14,7 +14,7 @@ Agreed decisions:
 - Windows runtime acceptance is explicitly pending by user decision: no Windows test host is available yet. Implement and document the Windows path, but leave startup, reboot, persistent-volume recovery, and restore checks unverified until executed on Windows. Linux-container evidence from another operating system does not satisfy those checks.
 - Fresh application database, accounts, and files. No legacy account/password/data import and no seamless session migration. Fresh-start scope is not permission to delete an existing volume automatically.
 - Email-only password login, invitation-only onboarding, and Supabase email invitations/password recovery. Preserve session listing/revocation, application authorization, account eligibility, and privileged-action reauthentication.
-- Supabase Database, Auth, Storage, Studio, and the Realtime service now. Realtime product features (chat, presence) are a later phase; preserve working SSE for cache invalidation.
+- Supabase Database, Auth, Storage, Studio, and Realtime are implemented services. OpenComms now adds private event/topic and HTTP contracts; its complete integrated S32 acceptance remains pending. Preserve working SSE for the other application invalidations.
 - Retain synchronous SQLAlchemy, audited ORM transactions, Alembic, the static Next.js export, FastAPI, and Caddy.
 - No antivirus file scanning (decided 2026-10-05). FastAPI validates each upload's file type, and the file is ready when its upload request finishes.
 
@@ -100,19 +100,40 @@ Budget roughly **4–6 engineering weeks**, allowing **5–7 calendar weeks** fo
 
 Keep `/api/events`, opaque invalidations, reconnect behavior, and per-user authorization. Connect its LISTEN subscriber directly to Supabase PostgreSQL; do not route this session-affine connection through transaction pooling.
 
-Realtime runs in every stack (foundation plan S11, S12; decisions D22, D23, D24). The design is candidate A of D23, proven on the development stack on 2026-10-17:
+Realtime runs in every stack (foundation plan S11, S12; decisions D22, D23, D24).
+The implemented self-hosted design uses candidate A of D23, extended by OpenComms
+grants and the same-origin browser path. Service/native component evidence does
+not establish complete S32 browser/provider-pack, load, release-gate or target-OS acceptance:
 
 1. The browser asks FastAPI for a channel token: `POST /api/realtime/token` with `X-Org`. FastAPI admits the request through the normal session and membership checks (session, organization, MFA, IP policy).
 2. FastAPI signs a 5-minute ES256 token with its own key, `REALTIME_TOKEN_SIGNING_KEY`. The claims are `role: authenticated`, `sub` (local account id), `org_id`, `purpose: realtime`, `iat`, and `exp`. Only the public key is in `JWT_JWKS`. Supabase Auth signs and publishes only `JWT_KEYS`, so FastAPI and `/auth/v1/user` refuse the token.
-3. The client opens `/realtime/v1/websocket` through the gateway with a gateway key in the `apikey` header, then joins a private channel with the token in the join payload.
-4. Realtime checks each join and each send with RLS on `realtime.messages`. The two policies (`openslate_realtime_member_read`, `openslate_realtime_member_write`) call `public.can_join_realtime_topic(topic)`. This `SECURITY DEFINER` function requires `purpose: realtime`, a topic under `org:<org_id>:`, and an active, eligible membership of a live account in a live organization.
-5. Topic names are `org:<org_id>:<kind>:<id>` (D24). Phase 2 adds kinds.
+3. The browser opens the same-origin `/realtime/v1/websocket`, then joins private channels with the token in the join payload. Production Caddy validates the exact origin/upgrade and injects the gateway `apikey` header; the browser does not send a gateway key in a query string. Daily development uses the existing host-run frontend launcher upgrade proxy, not a Caddy requirement or a new FastAPI WebSocket route. Its exact origin uses the configured development hostname and `FRONTEND_DEV_PORT`; HTTP `/api` still reaches loopback FastAPI at the configured `BACKEND_PORT`.
+4. RLS on `realtime.messages` uses `public.can_join_realtime_topic(topic)`. The function requires `purpose: realtime` and an active, eligible account/membership in the claimed organization. Conversation joins additionally require a live, unarchived conversation and an unexpired `comms_realtime_grants` row produced by FastAPI's current access projection. This table backs join admission; it is not a separate content-authorization policy.
+5. Product topics are `org:<org>:conversation:<id>`, `org:<org>:user:<local-user-id>` for that user only, and `org:<org>:presence`. Unknown suffixes are refused. Browser Comms subscriptions are read-only: the INSERT policy retains only the foundation `org:<org>:probe` exception, not client message/presence/typing publication.
+6. FastAPI stages opaque private envelopes in the audited transaction. Request-buffered events publish after commit and response completion; resource-owned durable jobs submit committed events after closing their own SQL session, independently of any triggering HTTP response, including manual Send Now. Neither path retains a session or pooled connection through HTTP publication. The bounded HTTP publisher uses the separate `api-gw:8001/realtime/v1/api/broadcast` listener with the server key. It is unpublished in production and loopback-mapped by `SUPABASE_REALTIME_PUBLISH_PORT` in development. Neither Caddy nor the public gateway listener exposes this publisher route. Delivery is best effort; authoritative content remains on current-authorized HTTP reads.
 
-Provisioning (`provision_database_role.py`, as `supabase_admin`) creates the policies, because Realtime owns `realtime.messages`. It refuses any other policy on that table and needs a healthy Realtime service first. Alembic revision `071607de0f40` replaces the deny-all function body that provisioning creates.
+Provisioning (`provision_database_role.py`, as `supabase_admin`) manages the recognized policies,
+because Realtime owns `realtime.messages`; it requires a healthy Realtime service and refuses
+unexpected policy drift. Alembic revision `071607de0f40` replaces the initial deny-all application
+function, and forward revision `8410bb7874ff` adds the Comms topic/grant checks. Applied revisions
+remain immutable. Sources: [grant projection](../../backend/app/systems/comms/realtime/grants.py),
+[publication wrapper](../../backend/app/systems/comms/realtime/publication.py),
+[Caddy ingress](../caddy/Caddyfile.template), [development launcher](../../frontend/tooling/run-next.mjs)
+and the [operator boundary](README.md#opencomms-ingress-and-private-publication).
 
-Limits that stay: after a membership ends, a joined channel and its token stay usable until the token expires (at most 5 minutes); each new join reads the membership again. Realtime keeps public channels available to any connected client (the seed resets `private_only` at each start), so OpenSlate sends nothing on public channels. Browsers can send the gateway key only as a query parameter, and the gateway refuses `apikey` in a query; Phase 2 must decide the browser connection. Storage accepts the token as `authenticated` but has no policies for that role. Supabase Cloud handling of an imported signing key is not verified; that needs a Cloud project (owner action), and candidate B (the GoTrue access token) is the fallback for Cloud.
+Limits that stay: after membership/access removal, HTTP content is refused immediately, while
+already-joined ID-only subscriptions may persist until token expiry (at most five minutes).
+New joins recheck membership and grants. OpenSlate sends nothing on public channels. A Realtime
+token is not an ordinary Auth/API credential; Storage has no content policy granting this
+`authenticated` role access. Supabase Cloud imported-key handling remains unverified and needs
+owner-authorized Cloud evidence; candidate B is a future option, not a configured fallback.
 
-Database row-change subscriptions stay off: they can bypass backend authorization. Keep SSE for cache invalidation.
+Database row-change subscriptions stay off. SSE continues to carry opaque invalidations for
+other pages, while Comms uses the private topics above. Browser connection coordination does not
+change HTTP authorization. The `/comms` page and its administrator tools call the protected
+backend routes; no browser-local example tools remain. Native Linux/Windows acceptance and the
+full integrated browser/provider, load and purge-timing measurements remain deferred; see
+[acceptance status](README.md#acceptance-status).
 
 ## 4. Delivery sequence
 

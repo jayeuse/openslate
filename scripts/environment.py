@@ -28,7 +28,12 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.core.config.development import is_local_development_host  # noqa: E402
 from app.core.config.disposable_instance import SUPABASE_DB_IMAGE  # noqa: E402
-from app.core.config.environment import ConfigurationError, read_environment  # noqa: E402
+from app.core.config.environment import (  # noqa: E402
+    ConfigurationError,
+    read_environment,
+    realtime_publisher_port,
+    with_realtime_publisher,
+)
 
 __all__ = ("ConfigurationError", "read_environment")
 
@@ -37,6 +42,7 @@ SETTINGS_KEYS = (
     "LOG_DIR",
     "DATABASE_URL",
     "SUPABASE_URL",
+    "REALTIME_PUBLISH_URL",
     "SUPABASE_PUBLISHABLE_KEY",
     "SUPABASE_SECRET_KEY",
     "SUPABASE_AUTH_ISSUER",
@@ -111,6 +117,7 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "OPENSLATE_BACKUP_EXPORT_ROOT",
         "SUPABASE_DB_PORT",
         "SUPABASE_API_PORT",
+        "SUPABASE_REALTIME_PUBLISH_PORT",
         "SUPABASE_MAIL_PORT",
         "GATEWAY_PUBLIC_HOST",
         "GATEWAY_BIND_HOST",
@@ -256,11 +263,14 @@ def compose_environment(values: dict[str, str], *, services: set[str]) -> dict[s
                 for name in ("SUPABASE_DB_PORT", "SUPABASE_API_PORT", "SUPABASE_MAIL_PORT")
             }
         )
+        result["SUPABASE_REALTIME_PUBLISH_PORT"] = str(realtime_publisher_port(values))
     if "caddy" in services:
         result.update(
             {
                 "GATEWAY_BIND_HOST": required(values, "GATEWAY_BIND_HOST"),
                 "GATEWAY_PORT": str(port(values, "GATEWAY_PORT")),
+                "SUPABASE_API_PORT": str(port(values, "SUPABASE_API_PORT")),
+                "SUPABASE_PUBLISHABLE_KEY": required(values, "SUPABASE_PUBLISHABLE_KEY"),
             }
         )
     return result
@@ -665,6 +675,7 @@ def validate_gateway_ports(values: dict[str, str], generator: Any) -> None:
 
 
 def validate(values: dict[str, str], *, operations: bool = True) -> None:
+    values = with_realtime_publisher(values)
     unknown = sorted(set(values) - ROOT_ENVIRONMENT_KEYS)
     if unknown:
         raise ConfigurationError("Unknown configuration names: " + ", ".join(unknown))
@@ -674,6 +685,8 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
         required(values, name)
     for name in PORT_KEYS:
         port(values, name)
+    if "SUPABASE_REALTIME_PUBLISH_PORT" in values:
+        port(values, "SUPABASE_REALTIME_PUBLISH_PORT")
     for name in (
         "POSTGRES_DATABASE",
         "BACKEND_BIND_HOST",

@@ -139,6 +139,7 @@ def issue_challenge(
     impact_digest: str,
     *,
     now: datetime | None = None,
+    hex_token: bool = False,
 ) -> IssuedLifecycleChallenge:
     """Create a bounded five-minute challenge and return its opaque token once."""
 
@@ -161,7 +162,7 @@ def issue_challenge(
     # Cleanup can remove old failure events, so refresh the rolling count before
     # committing the new challenge and bucket state.
     _refresh_failure_bucket(db, actor_id, timestamp)
-    token = secrets.token_urlsafe(32)
+    token = secrets.token_hex(32) if hex_token else secrets.token_urlsafe(32)
     challenge = LifecycleConfirmationChallenge(
         org_id=bucket.org_id,
         actor_id=actor_id,

@@ -105,15 +105,8 @@ export function snapSandboxPosition(
   };
 }
 
-/**
- * Department identity: four colors per theme, cycled in department order and
- * always shown beside the department name. `--dept-n-band` fills the
- * department head and `--dept-n-card` the module header; each theme decides
- * how loud they are.
- */
-export function departmentTone(departmentIndex: number): number {
-  return (((departmentIndex % 4) + 4) % 4) + 1;
-}
+// Its own module, so marks outside the canvas need none of this geometry.
+export { departmentTone } from "./department-tone";
 
 export function truncateLabel(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;

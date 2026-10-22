@@ -23,7 +23,10 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "@/components/ui/toast";
-import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
+import {
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time-display";
 type OwnedFactor = { userId: string; factorId: string };
 type Mode = "hidden" | "workspace" | "gate";
 const cleanupMessage =

@@ -1,5 +1,4 @@
 "use client";
-
 import { useState } from "react";
 import { NativeSelectOption } from "@/components/ui/native-select";
 import {
@@ -10,212 +9,218 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
-import { Empty, EmptyHeader, EmptyDescription } from "@/components/ui/empty";
-import type { Person } from "../../shared/data/sample-people";
-import { Choice } from "../../shared/components/ui";
-import type { Category, Channel } from "../domain/model";
-import {
-  channelGroupAccess,
-  commsGroup,
-  EVERYONE_GROUP_ID,
-  personGroupAccess,
-} from "../domain/groups";
-import {
-  resolveCommsPermission,
-  type CommsConfiguration,
-  type CommsSettings,
-} from "../domain/configuration";
-import { previewCommsNotification } from "../domain/notification-policy";
+import { Action, Choice } from "../../shared/components/ui";
+import type { Channel } from "../domain/view-model";
+import { LevelBadge } from "./member-level";
+import { DepartmentList } from "./channel-scope";
+import type { CommsSettings } from "../domain/configuration";
+import { useCommsRead } from "../state/runtime";
+import { complete } from "../state/workspace-view";
 
-const PERSON_ID = "sample-eli";
-
-export type MembershipPreviewProps = {
-  config: CommsConfiguration;
-  channel?: Channel;
-  categories: Category[];
-  people: Person[];
-  settings: CommsSettings;
-};
-
+/**
+ * A channel's readers with their level. Manager rows are the only rows with a
+ * role to change: a reader can become a manager, a manager row can go back to
+ * the reader's own level. Admins, department managers and the creator manage
+ * by their role, so they have no action here.
+ */
 export function MembershipPreview({
-  config,
   channel,
-  categories,
-  people,
-  settings,
-}: MembershipPreviewProps) {
-  const [personId, setPersonId] = useState(
-    () =>
-      people.find(
-        (person) =>
-          person.active &&
-          person.id !== PERSON_ID &&
-          person.id !== settings.ownerId &&
-          !settings.defaultMemberIds.includes(person.id),
-      )?.id ??
-      people[0]?.id ??
-      "",
+  saved,
+  roles,
+  onRoleChange,
+}: {
+  channel: Channel;
+  saved: boolean;
+  roles: Record<string, "member" | "manager">;
+  onRoleChange: (userId: string, role: "member" | "manager") => void;
+}) {
+  const members = useCommsRead(
+    `members:${saved ? channel.id : "new"}`,
+    async (client, signal) =>
+      saved
+        ? {
+            members: await complete((offset) =>
+              client.listMembers(
+                channel.id,
+                { limit: 100, offset },
+                { signal },
+              ),
+            ),
+            viewer: await client.getCapabilities(channel.id, { signal }),
+          }
+        : null,
   );
-  const person = people.find((item) => item.id === personId);
-  const access = resolveCommsPermission(
-    config,
-    { person, channel, categories },
-    "viewChannel",
+  const [personId, setPersonId] = useState("");
+  const chosen =
+    members.data?.members.find((member) => member.user_id === personId) ??
+    members.data?.members[0];
+  const person = useCommsRead(
+    `membership:${saved ? channel.id : "new"}:${chosen?.user_id ?? ""}`,
+    async (client, signal) =>
+      saved && chosen && members.data?.viewer.capabilities.manageChannel.allowed
+        ? client.checkPerson(channel.id, chosen.user_id, { signal })
+        : null,
   );
-  const inviteAccess = resolveCommsPermission(
-    config,
-    {
-      person: people.find((item) => item.id === PERSON_ID),
-      channel,
-      categories,
-    },
-    "invite",
-  );
-  const membership = [...config.invites]
-    .reverse()
-    .find(
-      (invite) =>
-        invite.channelId === channel?.id &&
-        invite.personId === personId &&
-        invite.status !== "declined",
+  if (!saved)
+    return (
+      <p className="text-muted-foreground text-sm">
+        Save this channel to see who can use it.
+      </p>
     );
-  const defaultMember = settings.defaultMemberIds.includes(personId);
-  const assigned =
-    personId === PERSON_ID ||
-    personId === settings.ownerId ||
-    settings.moderatorIds.includes(personId);
-  // Groups decide first, in the same words as Who can use.
-  const groupAccess = channel
-    ? channelGroupAccess(channel, categories)
-    : { [EVERYONE_GROUP_ID]: "post" as const };
-  const groupLevel = person ? personGroupAccess(person, groupAccess) : "none";
-  const grantingGroup =
-    (groupAccess[EVERYONE_GROUP_ID] ?? "none") !== "none"
-      ? "Everyone"
-      : commsGroup(
-          person?.departments.find(
-            (group) => (groupAccess[group] ?? "none") !== "none",
-          ),
-        )?.name;
-  let path = "Can join without an invitation.";
-  if (groupLevel === "none") path = "Not in a group that can use this channel.";
-  else if (!access.allowed)
-    path = "Cannot join with the current access permissions.";
-  else if (channel?.archived)
-    path = "This channel is archived. Restore it before adding members.";
-  else if (assigned)
-    path = "Included through an owner or moderator assignment.";
-  else if (defaultMember) path = "Would join by default.";
-  else if (membership?.status === "accepted")
-    path = "An accepted membership record exists.";
-  else if (membership?.status === "pending")
-    path =
-      membership.type === "request"
-        ? "A join request is awaiting approval."
-        : "An invitation is awaiting acceptance.";
-  else if (settings.joinRule === "request")
-    path = "Can request to join; approval is required.";
-  else if (settings.joinRule === "invite")
-    path = "An invitation is required before joining.";
-  const defaults = people.filter((item) =>
-    settings.defaultMemberIds.includes(item.id),
-  );
+  const check = person.data;
+  const source = check?.manager_source ?? null;
+  const roleNote = !check
+    ? ""
+    : check.access_source.kind === "admin"
+      ? "Admins manage every channel."
+      : source === "creator"
+        ? "Created this channel, so manages it."
+        : source === "department_manager"
+          ? "Manages this channel through a department role."
+          : check.membership_role === "guest"
+            ? "Guests can only read."
+            : "";
+  const roleChangeable =
+    !!check &&
+    !roleNote &&
+    (source === "membership_manager" || check.conversation_level !== "manage");
   return (
-    <Card aria-label="Membership preview" className="w-full">
-      <CardHeader className="p-4">
-        <CardTitle>Membership preview</CardTitle>
-        <CardDescription>
-          Preview the current draft. This does not add members or send
-          invitations.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3 p-4">
-        <Choice
-          label="Preview membership for"
-          value={personId}
-          onChange={(event) => setPersonId(event.target.value)}
+    <section aria-label="Channel members" className="flex flex-col gap-4">
+      {members.error && (
+        <Alert role="alert" variant="destructive">
+          Members could not be loaded.{" "}
+          <Action onClick={members.reload}>Try again</Action>
+        </Alert>
+      )}
+      {members.status === "loading" && !members.data && (
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading members…
+        </p>
+      )}
+      {members.data?.members.length === 0 && (
+        <p className="text-muted-foreground text-sm">
+          No one can use this channel yet.
+        </p>
+      )}
+      {!!members.data?.members.length && (
+        <ul
+          aria-label="People who can use this channel"
+          className="border-card-edge divide-y overflow-hidden rounded-lg border"
         >
-          {people.map((item) => (
-            <NativeSelectOption key={item.id} value={item.id}>
-              {item.name}
-              {item.active ? "" : " (inactive)"}
-            </NativeSelectOption>
+          {members.data.members.map((member) => (
+            <li
+              key={member.user_id}
+              className="flex min-h-11 items-center justify-between gap-3 px-3 py-2"
+            >
+              <span className="flex min-w-0 flex-col">
+                <bdi className="truncate text-sm font-medium">
+                  {member.display_name}
+                </bdi>
+                <span className="text-muted-foreground text-xs">
+                  <DepartmentList
+                    names={member.departments.map((item) => item.name)}
+                  />
+                </span>
+              </span>
+              <LevelBadge level={member.level} />
+            </li>
           ))}
-        </Choice>
-        <Alert>{path}</Alert>
-        {grantingGroup && groupLevel !== "none" && (
-          <p className="text-muted-foreground text-xs">
-            Included through{" "}
-            {grantingGroup === "Everyone"
-              ? "Everyone"
-              : `the ${grantingGroup} group`}
-            .
-          </p>
+        </ul>
+      )}
+      {members.data?.viewer.capabilities.manageChannel.allowed &&
+        members.data.members.length > 0 && (
+          <Card aria-label="Channel managers" className="w-full">
+            <CardHeader className="p-4">
+              <CardTitle>Channel managers</CardTitle>
+              <CardDescription>
+                A manager can change this channel and its settings. Role changes
+                save with this dialog.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3 p-4">
+              <Choice
+                label="Person"
+                value={chosen?.user_id ?? ""}
+                onChange={(event) => setPersonId(event.target.value)}
+              >
+                {members.data.members.map((member) => (
+                  <NativeSelectOption
+                    key={member.user_id}
+                    value={member.user_id}
+                  >
+                    {member.display_name}
+                  </NativeSelectOption>
+                ))}
+              </Choice>
+              {person.error && (
+                <Alert role="alert" variant="destructive">
+                  This person could not be checked.{" "}
+                  <Action onClick={person.reload}>Try again</Action>
+                </Alert>
+              )}
+              {roleNote && (
+                <p className="text-muted-foreground text-sm">{roleNote}</p>
+              )}
+              {roleChangeable && chosen && (
+                <Choice
+                  label="Channel role"
+                  value={
+                    roles[chosen.user_id] ??
+                    (source === "membership_manager" ? "manager" : "member")
+                  }
+                  onChange={(event) =>
+                    onRoleChange(
+                      chosen.user_id,
+                      event.target.value === "manager" ? "manager" : "member",
+                    )
+                  }
+                >
+                  <NativeSelectOption value="member">
+                    Not a manager
+                  </NativeSelectOption>
+                  <NativeSelectOption value="manager">
+                    Manager
+                  </NativeSelectOption>
+                </Choice>
+              )}
+            </CardContent>
+          </Card>
         )}
-        <p className="text-muted-foreground text-xs">
-          Exceptions applied today: {access.allowed ? "Allowed" : "Denied"} ·{" "}
-          {access.reason}
-        </p>
-        <p className="text-muted-foreground text-xs">
-          Your invitation permission:{" "}
-          {inviteAccess.allowed ? "Allowed" : "Denied"}. Manage existing
-          invitations and requests in Channel management.
-        </p>
-        <Separator />
-        <div>
-          <h4 className="text-xs font-semibold">Default membership preview</h4>
-          {!defaults.length ? (
-            <Empty className="p-3">
-              <EmptyHeader>
-                <EmptyDescription>
-                  No default members selected.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            <ul className="mt-2 flex flex-col gap-1 text-xs">
-              {defaults.map((item) => {
-                const permission = resolveCommsPermission(
-                  config,
-                  { person: item, channel, categories },
-                  "viewChannel",
-                );
-                return (
-                  <li key={item.id}>
-                    {item.name} ·{" "}
-                    {permission.allowed
-                      ? "Would join by default"
-                      : "Excluded by access permissions"}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+    </section>
   );
 }
 
-export function NotificationPreview({
-  result,
-}: {
-  result: ReturnType<typeof previewCommsNotification>;
-}) {
+export function NotificationPreview({ settings }: { settings: CommsSettings }) {
   return (
     <Card aria-label="Notification preview" className="w-full">
       <CardHeader className="p-4">
         <CardTitle>Notification preview</CardTitle>
-        <CardDescription>No notification is delivered.</CardDescription>
+        <CardDescription>
+          Desktop alerts show the kind of activity and, for channels, the
+          channel name. They never show message text.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 p-4">
-        <Alert>{result.allowed ? result.title : result.reason}</Alert>
+        <Alert>
+          {settings.notificationPreview
+            ? "Mention in operations"
+            : "New activity in OpenComms"}
+        </Alert>
         <p className="text-muted-foreground text-xs">
-          {result.sound ? "Sound on" : "Silent"} ·{" "}
-          {result.badge ? "Badge on" : "No badge"} ·{" "}
-          {result.digest ? "Digest delivery" : "Immediate delivery"}
+          {settings.notificationSound
+            ? "Sound preference on"
+            : "Sound preference off"}{" "}
+          ·{" "}
+          {settings.notificationBadges
+            ? "Badge preference on"
+            : "Badge preference off"}{" "}
+          · {settings.notificationMode}
         </p>
+        {settings.quietHoursStart && (
+          <p className="text-muted-foreground text-xs">
+            Quiet hours: {settings.quietHoursStart}–{settings.quietHoursEnd}
+          </p>
+        )}
       </CardContent>
     </Card>
   );

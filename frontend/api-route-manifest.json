@@ -696,6 +696,810 @@
     "path": "/api/workspace"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/direct-candidates-api.ts",
+    "function": "listDirectCandidates",
+    "method": "GET",
+    "path": "/api/comms/direct-candidates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "bootstrap",
+    "method": "GET",
+    "path": "/api/comms/bootstrap"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "deleteMessage",
+    "method": "DELETE",
+    "path": "/api/comms/conversations/{param}/messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "editMessage",
+    "method": "PATCH",
+    "path": "/api/comms/conversations/{param}/messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "getHistory",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/messages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "getMessage",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "getMessageBySequence",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/messages/by-sequence/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "markRead",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/read"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "sendMessage",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/messages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "applyTemplate",
+    "method": "POST",
+    "path": "/api/comms/templates/{param}/applications"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "createTemplate",
+    "method": "POST",
+    "path": "/api/comms/templates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "getConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/category/{param}/history/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "getConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/channel/{param}/history/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "getConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace/history/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "getTemplate",
+    "method": "GET",
+    "path": "/api/comms/templates/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "listConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/category/{param}/history"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "listConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/channel/{param}/history"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "listConfigurationHistory",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace/history"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "listTemplates",
+    "method": "GET",
+    "path": "/api/comms/templates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "previewConfigurationRestore",
+    "method": "POST",
+    "path": "/api/comms/settings/category/{param}/restoration-preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "previewConfigurationRestore",
+    "method": "POST",
+    "path": "/api/comms/settings/channel/{param}/restoration-preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "previewConfigurationRestore",
+    "method": "POST",
+    "path": "/api/comms/settings/workspace/restoration-preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "previewTemplateApply",
+    "method": "POST",
+    "path": "/api/comms/templates/{param}/application-preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "restoreConfiguration",
+    "method": "POST",
+    "path": "/api/comms/settings/category/{param}/restoration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "restoreConfiguration",
+    "method": "POST",
+    "path": "/api/comms/settings/channel/{param}/restoration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "restoreConfiguration",
+    "method": "POST",
+    "path": "/api/comms/settings/workspace/restoration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
+    "function": "saveTemplate",
+    "method": "PUT",
+    "path": "/api/comms/templates/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "cancelSchedule",
+    "method": "POST",
+    "path": "/api/comms/scheduled-messages/{param}/cancellation"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "createSchedule",
+    "method": "POST",
+    "path": "/api/comms/scheduled-messages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "downloadExport",
+    "method": "GET",
+    "path": "/api/comms/exports/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "getExport",
+    "method": "GET",
+    "path": "/api/comms/exports/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "getSchedule",
+    "method": "GET",
+    "path": "/api/comms/scheduled-messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "listExports",
+    "method": "GET",
+    "path": "/api/comms/exports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "listSchedules",
+    "method": "GET",
+    "path": "/api/comms/scheduled-messages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "sendScheduleNow",
+    "method": "POST",
+    "path": "/api/comms/scheduled-messages/{param}/send"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "startExport",
+    "method": "POST",
+    "path": "/api/comms/exports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/jobs-api.ts",
+    "function": "updateSchedule",
+    "method": "PUT",
+    "path": "/api/comms/scheduled-messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/realtime-client.ts",
+    "function": "createCommsRealtime",
+    "method": "POST",
+    "path": "/api/realtime/token"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/retention-api.ts",
+    "function": "getRetention",
+    "method": "GET",
+    "path": "/api/comms/retention"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/retention-api.ts",
+    "function": "previewRetention",
+    "method": "POST",
+    "path": "/api/comms/retention/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/retention-api.ts",
+    "function": "updateRetention",
+    "method": "PUT",
+    "path": "/api/comms/retention"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "getReport",
+    "method": "GET",
+    "path": "/api/comms/reports/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "listMessageRevisions",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/messages/{param}/revisions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "listRemovedMessages",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/removed-messages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "listReports",
+    "method": "GET",
+    "path": "/api/comms/reports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "previewPurge",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "purgeConversation",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/purge"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "removeMessage",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/messages/{param}/removal"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "removeReportedMessage",
+    "method": "POST",
+    "path": "/api/comms/reports/{param}/message-removal"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "reportMessage",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/messages/{param}/reports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "resolveReport",
+    "method": "POST",
+    "path": "/api/comms/reports/{param}/resolution"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "restoreMessage",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/messages/{param}/restoration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "restoreReportedMessage",
+    "method": "POST",
+    "path": "/api/comms/reports/{param}/message-restoration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "setPostingRestrictions",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/restrictions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/presence-api.ts",
+    "function": "getPresence",
+    "method": "GET",
+    "path": "/api/comms/presence"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/presence-api.ts",
+    "function": "heartbeatPresence",
+    "method": "POST",
+    "path": "/api/comms/presence"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/presence-api.ts",
+    "function": "sendTyping",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/typing"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/search-api.ts",
+    "function": "search",
+    "method": "GET",
+    "path": "/api/comms/search"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
+    "function": "downloadAttachment",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/files/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
+    "function": "getRecordReference",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/record-references/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
+    "function": "listLinkedRecords",
+    "method": "GET",
+    "path": "/api/comms/record-references"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
+    "function": "reserveAttachment",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
+    "function": "uploadAttachment",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/files/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "addReaction",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/messages/{param}/reactions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "createThread",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/threads/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "followThread",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/threads/{param}/follow"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "getReplies",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/threads/{param}/replies"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "getThread",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/threads/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "listPins",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/pins"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "listThreads",
+    "method": "GET",
+    "path": "/api/comms/threads"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "removeReaction",
+    "method": "DELETE",
+    "path": "/api/comms/conversations/{param}/messages/{param}/reactions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "sendReply",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/threads/{param}/replies"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "setPin",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/messages/{param}/pin"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "updateThread",
+    "method": "PATCH",
+    "path": "/api/comms/conversations/{param}/threads/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "getCategoryPreferences",
+    "method": "GET",
+    "path": "/api/comms/categories/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "getMemberPreferences",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "getPersonalPreferences",
+    "method": "GET",
+    "path": "/api/comms/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "setCategoryPreferences",
+    "method": "PUT",
+    "path": "/api/comms/categories/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "setPersonalPreferences",
+    "method": "PUT",
+    "path": "/api/comms/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "updateMemberPreferences",
+    "method": "PATCH",
+    "path": "/api/comms/conversations/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "checkPerson",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/capabilities/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getCapabilities",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getCapabilityConfiguration",
+    "method": "GET",
+    "path": "/api/comms/settings/category/{param}/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getCapabilityConfiguration",
+    "method": "GET",
+    "path": "/api/comms/settings/channel/{param}/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getCapabilityConfiguration",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getCapabilityLocks",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace/capability-locks"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getChannelCreationCheck",
+    "method": "GET",
+    "path": "/api/comms/capabilities/channel-creation"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getDirectPolicy",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getSettings",
+    "method": "GET",
+    "path": "/api/comms/settings/category/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getSettings",
+    "method": "GET",
+    "path": "/api/comms/settings/channel/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getSettings",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "resetSettings",
+    "method": "POST",
+    "path": "/api/comms/settings/category/{param}/reset"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "resetSettings",
+    "method": "POST",
+    "path": "/api/comms/settings/channel/{param}/reset"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "resetSettings",
+    "method": "POST",
+    "path": "/api/comms/settings/workspace/reset"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setCapabilityConfiguration",
+    "method": "PUT",
+    "path": "/api/comms/settings/category/{param}/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setCapabilityConfiguration",
+    "method": "PUT",
+    "path": "/api/comms/settings/channel/{param}/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setCapabilityConfiguration",
+    "method": "PUT",
+    "path": "/api/comms/settings/workspace/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setCapabilityLocks",
+    "method": "PUT",
+    "path": "/api/comms/settings/workspace/capability-locks"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setDirectPolicy",
+    "method": "PATCH",
+    "path": "/api/comms/settings/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setSettingsLocks",
+    "method": "PUT",
+    "path": "/api/comms/settings/workspace/locks"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "updateSettings",
+    "method": "PATCH",
+    "path": "/api/comms/settings/category/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "updateSettings",
+    "method": "PATCH",
+    "path": "/api/comms/settings/channel/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "updateSettings",
+    "method": "PATCH",
+    "path": "/api/comms/settings/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "archiveConversation",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "blockDirect",
+    "method": "POST",
+    "path": "/api/comms/direct-blocks"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "createCategory",
+    "method": "POST",
+    "path": "/api/comms/categories"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "createChannel",
+    "method": "POST",
+    "path": "/api/comms/conversations"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "createGroup",
+    "method": "POST",
+    "path": "/api/comms/groups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "duplicateChannel",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/duplicates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "findOrCreateDirect",
+    "method": "POST",
+    "path": "/api/comms/directs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "getCategory",
+    "method": "GET",
+    "path": "/api/comms/categories/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "getConversation",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "listCategories",
+    "method": "GET",
+    "path": "/api/comms/categories"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "listConversations",
+    "method": "GET",
+    "path": "/api/comms/conversations"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "listDirectBlocks",
+    "method": "GET",
+    "path": "/api/comms/direct-blocks"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "listMembers",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/members"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "removeMember",
+    "method": "DELETE",
+    "path": "/api/comms/conversations/{param}/members/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "restoreConversation",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "setMemberRole",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/members/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "unblockDirect",
+    "method": "DELETE",
+    "path": "/api/comms/direct-blocks/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "updateCategory",
+    "method": "PUT",
+    "path": "/api/comms/categories/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "updateChannel",
+    "method": "PATCH",
+    "path": "/api/comms/conversations/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "listAccessCandidates",
+    "method": "GET",
+    "path": "/api/comms/categories/{param}/access-candidates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "listAccessCandidates",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/access-candidates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "listAccessGrants",
+    "method": "GET",
+    "path": "/api/comms/categories/{param}/access-grants"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "listAccessGrants",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/access-grants"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "removeAccessGrant",
+    "method": "DELETE",
+    "path": "/api/comms/categories/{param}/access-grants/group/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "removeAccessGrant",
+    "method": "DELETE",
+    "path": "/api/comms/categories/{param}/access-grants/user/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "removeAccessGrant",
+    "method": "DELETE",
+    "path": "/api/comms/conversations/{param}/access-grants/group/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "removeAccessGrant",
+    "method": "DELETE",
+    "path": "/api/comms/conversations/{param}/access-grants/user/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "setAccessGrant",
+    "method": "PUT",
+    "path": "/api/comms/categories/{param}/access-grants/group/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "setAccessGrant",
+    "method": "PUT",
+    "path": "/api/comms/categories/{param}/access-grants/user/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "setAccessGrant",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/access-grants/group/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/access-grants-api.ts",
+    "function": "setAccessGrant",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/access-grants/user/{param}"
+  },
+  {
     "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
     "function": "downloadManageAuditCsv",
     "method": "GET",
@@ -1584,8 +2388,8 @@
     "path": "/api/modules/{param}/purge/preview"
   },
   {
-    "adapter": "frontend/src/components/systems/shared/adapters/invalidation-events.ts",
-    "function": "subscribeWorkspaceInvalidations",
+    "adapter": "frontend/src/components/systems/shared/adapters/workspace-event-source.ts",
+    "function": "openWorkspaceEventStream",
     "method": "GET",
     "path": "/api/events"
   },

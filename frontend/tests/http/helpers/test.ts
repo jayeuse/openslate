@@ -136,18 +136,24 @@ export async function signedOut(target: Page | BrowserContext): Promise<void> {
  * Answers `/api/auth/session` with a signed-in session for `userId`. Use it
  * alone when the spec owns `/api/auth/me` separately or keeps the default
  * identity; otherwise use `signedInAs`. Stateful, held, counted, or failing
- * session reads stay inline in the spec.
+ * session reads stay inline in the spec. The session admits
+ * `defaultOrganization`, as the server does for anyone who can open a
+ * workspace page; pass `organizationId: null` for an undecided person.
  */
 export async function signedInSession(
   target: Page | BrowserContext,
   userId: string,
-  options: { setupRequired?: boolean } = {},
+  options: { setupRequired?: boolean; organizationId?: string | null } = {},
 ): Promise<void> {
   await target.route("**/api/auth/session", (route) =>
     route.fulfill({
       json: {
         authenticated: true,
         user_id: userId,
+        organization_id:
+          options.organizationId === undefined
+            ? defaultOrganization.org_id
+            : options.organizationId,
         default_organization_blocked: null,
         setup_required: options.setupRequired ?? false,
       },
@@ -159,9 +165,12 @@ export async function signedInSession(
 export async function signedInAs(
   target: Page | BrowserContext,
   identity: SignedInIdentity,
-  options: { setupRequired?: boolean } = {},
+  options: { setupRequired?: boolean; organizationId?: string | null } = {},
 ): Promise<void> {
-  await signedInSession(target, identity.id, options);
+  await signedInSession(target, identity.id, {
+    organizationId: defaultOrganization.org_id,
+    ...options,
+  });
   await target.route("**/api/auth/me", (route) =>
     route.fulfill({ json: authMeBody(identity) }),
   );
@@ -200,6 +209,7 @@ export async function controlledSession(
         ? {
             authenticated: true,
             user_id: session.identity.id,
+            organization_id: defaultOrganization.org_id,
             default_organization_blocked: null,
             setup_required: false,
           }
@@ -225,6 +235,7 @@ export const test = base.extend({
         json: {
           authenticated: true,
           user_id: defaultSignedInIdentity.id,
+          organization_id: defaultOrganization.org_id,
           default_organization_blocked: null,
           setup_required: false,
         },
@@ -276,6 +287,44 @@ export const test = base.extend({
     );
     await context.route("**/api/notifications/unread-count", (route) =>
       route.fulfill({ json: { unread_count: 0 } }),
+    );
+    // The shell's Comms badge and the leader tab's alert check read these on
+    // every signed-in route; journeys that vary them override at page level.
+    await context.route(
+      (url) => url.pathname === "/api/notifications",
+      (route) => {
+        const url = new URL(route.request().url());
+        return route.request().method() === "GET"
+          ? route.fulfill({
+              json: {
+                items: [],
+                pagination: {
+                  limit: Number(url.searchParams.get("limit") ?? 25),
+                  offset: Number(url.searchParams.get("offset") ?? 0),
+                  count: 0,
+                  total: 0,
+                  has_more: false,
+                },
+              },
+            })
+          : route.fallback();
+      },
+    );
+    // Only off Comms: there an unmocked bootstrap selects the sample runtime.
+    await context.route("**/api/comms/bootstrap", (route) =>
+      new URL(route.request().frame().url()).pathname.startsWith("/comms")
+        ? route.fallback()
+        : route.fulfill({
+            headers: { "Cache-Control": "no-store" },
+            json: {
+              org_id:
+                route.request().headers()["x-org"] ??
+                defaultOrganization.org_id,
+              user_id: defaultSignedInIdentity.id,
+              categories: [],
+              conversations: [],
+            },
+          }),
     );
     // The synthetic server has no event stream: proxied, it fails at a random
     // moment and the resync reloads whatever the journey is doing. Holding the

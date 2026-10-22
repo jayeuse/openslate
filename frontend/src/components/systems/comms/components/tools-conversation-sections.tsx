@@ -1,4 +1,11 @@
 import type { Dispatch, SetStateAction } from "react";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
+import { datetimeOffsets, formatWorkspaceDateTime } from "@/lib/date-time";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { ToolAdvanced } from "./tool-advanced";
 import {
   Card,
   CardHeader,
@@ -14,42 +21,37 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  type CommsConfiguration,
-  type CommsThreadMeta,
-  resolveCommsSettings,
-} from "../domain/configuration";
-import type { Category, Channel, Thread } from "../domain/model";
+import type { ThreadPatch, Settings, Schedule } from "../contract/types";
+import type { Thread } from "../domain/view-model";
 
+export type ThreadDraft = ThreadPatch & { followed: boolean };
 export function ThreadSettingsFields({
   thread,
   meta,
   setMeta,
   setDirty,
-  config,
-  channel,
-  categories,
+  settings,
 }: {
   thread: Thread | undefined;
-  meta: CommsThreadMeta;
-  setMeta: Dispatch<SetStateAction<CommsThreadMeta>>;
+  meta: ThreadDraft;
+  setMeta: Dispatch<SetStateAction<ThreadDraft>>;
   setDirty: Dispatch<SetStateAction<boolean>>;
-  config: CommsConfiguration;
-  channel: Channel | undefined;
-  categories: Category[];
+  settings?: Settings;
 }) {
-  return !thread ? (
-    <Empty>
-      <EmptyHeader>
-        <EmptyTitle>Thread no longer exists.</EmptyTitle>
-      </EmptyHeader>
-    </Empty>
-  ) : (
+  if (!thread)
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>Thread no longer exists.</EmptyTitle>
+        </EmptyHeader>
+      </Empty>
+    );
+  return (
     <>
       <Field>
-        <FieldLabel htmlFor="tools-dialog-field-1">Thread name</FieldLabel>
+        <FieldLabel htmlFor="tools-thread-name">Thread name</FieldLabel>
         <Input
-          id="tools-dialog-field-1"
+          id="tools-thread-name"
           value={meta.name ?? ""}
           onChange={(event) => {
             setMeta({ ...meta, name: event.target.value });
@@ -57,59 +59,39 @@ export function ThreadSettingsFields({
           }}
         />
       </Field>
-      {(["locked", "resolved", "archived"] as const).map((key) => (
+      {(["locked", "resolved", "archived", "followed"] as const).map((key) => (
         <Field key={key} className="flex-row items-center gap-2">
           <Checkbox
-            id={`tools-dialog-field-2-${key}`}
+            id={`tools-thread-${key}`}
             checked={meta[key] ?? false}
             onCheckedChange={(checked) => {
               setMeta({ ...meta, [key]: checked });
               setDirty(true);
             }}
           />
-          <FieldLabel htmlFor={`tools-dialog-field-2-${key}`}>
-            {key[0].toUpperCase() + key.slice(1)}
+          <FieldLabel htmlFor={`tools-thread-${key}`}>
+            {key === "followed"
+              ? "Follow thread"
+              : key[0].toUpperCase() + key.slice(1)}
           </FieldLabel>
         </Field>
       ))}
-      <Field className="flex-row items-center gap-2">
-        <Checkbox
-          id="tools-dialog-field-3"
-          checked={meta.followedBy?.includes("sample-eli") ?? false}
-          onCheckedChange={(checked) => {
-            setMeta({
-              ...meta,
-              followedBy: checked
-                ? [...new Set([...(meta.followedBy ?? []), "sample-eli"])]
-                : (meta.followedBy ?? []).filter((id) => id !== "sample-eli"),
-            });
-            setDirty(true);
-          }}
-        />
-        <FieldLabel htmlFor="tools-dialog-field-3">Follow thread</FieldLabel>
-      </Field>
-      <p className="text-muted-foreground text-sm">
-        Channel defaults: auto-archive{" "}
-        {resolveCommsSettings(config, channel, categories).values
-          .autoArchiveDays || "off"}
-        ; branches{" "}
-        {
-          resolveCommsSettings(config, channel, categories).values
-            .threadBranches
-        }
-        .
-      </p>
+      {settings && (
+        <p className="text-muted-foreground text-sm">
+          Channel defaults: auto-archive {settings.auto_archive_days || "off"};
+          branches {settings.thread_branches}.
+        </p>
+      )}
     </>
   );
 }
-
 export function MessageReportFields({
   messageText,
   reason,
   setReason,
   setDirty,
 }: {
-  messageText: string | undefined;
+  messageText?: string;
   reason: string;
   setReason: Dispatch<SetStateAction<string>>;
   setDirty: Dispatch<SetStateAction<boolean>>;
@@ -125,9 +107,9 @@ export function MessageReportFields({
         </CardContent>
       </Card>
       <Field>
-        <FieldLabel htmlFor="tools-dialog-field-4">Reason</FieldLabel>
+        <FieldLabel htmlFor="tools-report-reason">Reason</FieldLabel>
         <Textarea
-          id="tools-dialog-field-4"
+          id="tools-report-reason"
           className="min-h-28"
           value={reason}
           onChange={(event) => {
@@ -139,19 +121,18 @@ export function MessageReportFields({
     </>
   );
 }
-
-type ScheduledMessage = CommsConfiguration["schedules"][number];
-
 export function OutboxFields({
-  config,
+  schedules,
   selectedSchedule,
   creatingSchedule,
-  setCreatingSchedule,
-  setScheduleId,
+  onSelectSchedule,
   text,
   setText,
   sendAt,
   setSendAt,
+  timeUnchanged,
+  utcOffset,
+  setUtcOffset,
   dirty,
   setDirty,
   preview,
@@ -159,15 +140,17 @@ export function OutboxFields({
   onSendNow,
   onCancelSchedule,
 }: {
-  config: CommsConfiguration;
-  selectedSchedule: ScheduledMessage | undefined;
+  schedules: Schedule[];
+  selectedSchedule?: Schedule;
   creatingSchedule: boolean;
-  setCreatingSchedule: Dispatch<SetStateAction<boolean>>;
-  setScheduleId: Dispatch<SetStateAction<string>>;
+  onSelectSchedule: (schedule: Schedule) => void;
   text: string;
   setText: Dispatch<SetStateAction<string>>;
   sendAt: string;
   setSendAt: Dispatch<SetStateAction<string>>;
+  timeUnchanged: boolean;
+  utcOffset: string;
+  setUtcOffset: Dispatch<SetStateAction<string>>;
   dirty: boolean;
   setDirty: Dispatch<SetStateAction<boolean>>;
   preview: boolean;
@@ -175,63 +158,86 @@ export function OutboxFields({
   onSendNow: () => void;
   onCancelSchedule: (id: string) => void;
 }) {
+  const region = useWorkspaceDisplayRegion();
+  const timestamp = (value: string) =>
+    region ? formatWorkspaceDateTime(value, region) : value;
+  const offsets =
+    timeUnchanged || !region ? [] : datetimeOffsets(sendAt, region.timezone);
   return (
     <>
       <p className="text-muted-foreground text-sm">
-        Scheduled messages are not delivered automatically. Messages send only
-        when you choose Send Now.
+        Scheduled messages send at their time. Send Now sends one at once.
       </p>
-      {!config.schedules.length && (
+      {!schedules.length && (
         <Empty>
           <EmptyHeader>
             <EmptyTitle>No scheduled messages.</EmptyTitle>
           </EmptyHeader>
         </Empty>
       )}
-      {config.schedules.map((schedule) => (
-        <Card key={schedule.id} className="w-full">
+      {schedules.map((schedule) => (
+        <Card
+          key={schedule.id}
+          role="group"
+          aria-label={`Scheduled message: ${schedule.request.body}`}
+          className="w-full"
+        >
           <CardHeader>
             <CardTitle>Scheduled message</CardTitle>
             <CardDescription>
-              {new Date(schedule.sendAt).toLocaleString()}
+              {timestamp(schedule.request.send_at)} · {schedule.status}
+              {schedule.failure_code
+                ? ` · ${schedule.failure_code.replaceAll("_", " ")}`
+                : ""}
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <Button
-              variant="outline"
-              className="h-auto justify-start text-left whitespace-normal"
-              aria-label={`${schedule.text} · ${new Date(schedule.sendAt).toLocaleString()}`}
-              onClick={() => {
-                setScheduleId(schedule.id);
-                setCreatingSchedule(false);
-                setText(schedule.text);
-                setSendAt(
-                  new Date(
-                    schedule.sendAt -
-                      new Date(schedule.sendAt).getTimezoneOffset() * 60000,
-                  )
-                    .toISOString()
-                    .slice(0, 16),
-                );
-                setPreview(false);
-                setDirty(false);
-              }}
-            >
-              {schedule.text}
-            </Button>
+          <CardContent className="flex flex-col gap-3">
+            <p className="text-sm whitespace-pre-wrap">
+              {schedule.request.body}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={dirty || !region || schedule.status !== "pending"}
+                onClick={() => {
+                  onSelectSchedule(schedule);
+                  setPreview(true);
+                }}
+              >
+                Send Now
+              </Button>
+              <Button
+                variant="outline"
+                className="h-auto justify-start text-left whitespace-normal"
+                aria-label={`Edit scheduled message: ${schedule.request.body}`}
+                disabled={dirty || !region}
+                onClick={() => onSelectSchedule(schedule)}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="outline"
+                disabled={dirty || schedule.status !== "pending"}
+                onClick={() => onCancelSchedule(schedule.id)}
+              >
+                Cancel scheduled message
+              </Button>
+            </div>
           </CardContent>
         </Card>
       ))}
       {(selectedSchedule || creatingSchedule) && (
         <>
           <Field>
-            <FieldLabel htmlFor="tools-dialog-field-6">
+            <FieldLabel htmlFor="tools-scheduled-message">
               Scheduled message
             </FieldLabel>
             <Textarea
-              id="tools-dialog-field-6"
+              id="tools-scheduled-message"
               className="min-h-28"
               value={text}
+              disabled={
+                !!selectedSchedule && selectedSchedule.status !== "pending"
+              }
               onChange={(event) => {
                 setText(event.target.value);
                 setDirty(true);
@@ -240,19 +246,52 @@ export function OutboxFields({
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="tools-dialog-field-7">
+            <FieldLabel htmlFor="tools-scheduled-time">
               Scheduled time
             </FieldLabel>
             <Input
-              id="tools-dialog-field-7"
+              id="tools-scheduled-time"
               type="datetime-local"
               value={sendAt}
+              disabled={
+                !!selectedSchedule && selectedSchedule.status !== "pending"
+              }
               onChange={(event) => {
                 setSendAt(event.target.value);
+                setUtcOffset("");
                 setDirty(true);
+                setPreview(false);
               }}
             />
           </Field>
+          {offsets.length > 1 && (
+            <Field>
+              <FieldLabel htmlFor="tools-scheduled-offset">
+                Scheduled UTC offset
+              </FieldLabel>
+              <NativeSelect
+                id="tools-scheduled-offset"
+                className="w-full [&_select]:min-h-11"
+                required
+                value={utcOffset}
+                disabled={
+                  !!selectedSchedule && selectedSchedule.status !== "pending"
+                }
+                onChange={(event) => {
+                  setUtcOffset(event.target.value);
+                  setDirty(true);
+                  setPreview(false);
+                }}
+              >
+                <NativeSelectOption value="">Choose offset</NativeSelectOption>
+                {offsets.map((offset) => (
+                  <NativeSelectOption key={offset} value={offset}>
+                    {offset}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+          )}
           <Button
             variant="outline"
             disabled={dirty || !selectedSchedule}
@@ -266,26 +305,29 @@ export function OutboxFields({
               <CardHeader>
                 <CardTitle>Scheduled message preview</CardTitle>
                 <CardDescription>
-                  {new Date(selectedSchedule.sendAt).toLocaleString()}
+                  {timestamp(selectedSchedule.request.send_at)}
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
-                <p>{selectedSchedule.text}</p>
+                <p>{selectedSchedule.request.body}</p>
                 <Separator />
-                <Button onClick={onSendNow}>Send Now</Button>
+                <Button
+                  disabled={selectedSchedule.status !== "pending"}
+                  onClick={onSendNow}
+                >
+                  Confirm Send Now
+                </Button>
               </CardContent>
             </Card>
           )}
-          {selectedSchedule && (
-            <Button
-              variant="outline"
-              onClick={() => onCancelSchedule(selectedSchedule.id)}
-            >
-              Cancel scheduled message
-            </Button>
-          )}
         </>
       )}
+      <ToolAdvanced tool="outbox">
+        <p className="text-muted-foreground text-sm">
+          Time zone: {region?.timezone ?? "Loading regional settings…"}.
+          Scheduled times use your regional settings.
+        </p>
+      </ToolAdvanced>
     </>
   );
 }

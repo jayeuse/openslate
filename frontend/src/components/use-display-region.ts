@@ -3,7 +3,7 @@
 import { useUserPreferences } from "@/components/theme-provider";
 import { useQuery } from "@tanstack/react-query";
 import { workspaceCalendarQueryOptions } from "@/components/systems/manage/adapters/workspace-api";
-import { isIanaTimezone, type WorkspaceRegion } from "@/lib/date-time";
+import { isIanaTimezone, type WorkspaceRegion } from "@/lib/date-time-display";
 
 /** Presentation only: callers retain the original workspace query/input zone. */
 export function useDisplayRegion<T extends WorkspaceRegion>(
@@ -30,7 +30,15 @@ export function useDisplayWeekStart(workspace: "monday" | "sunday") {
     : workspace;
 }
 
-/** For signed-in display callers that do not already own a workspace read. */
+/**
+ * For signed-in display callers that do not already own a workspace read.
+ * Formatting needs only the zone and locale, so a mount reuses a read from the
+ * last 30 s instead of the calendar's recheck on every mount, which made one
+ * page load read `/workspace` once per mounted formatter. A saved workspace
+ * change still invalidates the read (`afterManageWorkspaceChange`).
+ */
 export function useWorkspaceDisplayRegion() {
-  return useDisplayRegion(useQuery(workspaceCalendarQueryOptions()).data);
+  return useDisplayRegion(
+    useQuery({ ...workspaceCalendarQueryOptions(), staleTime: 30_000 }).data,
+  );
 }

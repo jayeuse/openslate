@@ -1,6 +1,35 @@
 /** Existing commands owned by the Sandbox Build screen, not global shortcuts. */
 export const SANDBOX_SHORTCUT_SCOPE = "Sandbox · Build";
 
+export const COMMS_SHORTCUTS = {
+  switchConversation: {
+    key: "k",
+    label: "Switch conversation",
+    modifier: "Ctrl / Command",
+  },
+} as const;
+
+/** Match only unhandled, deliberate Comms commands; owners gate profile/context. */
+export function commsShortcutAction(
+  event: KeyboardEvent,
+  bindings: Record<string, string>,
+) {
+  if (event.defaultPrevented || event.repeat || event.isComposing)
+    return undefined;
+  const key = [
+    event.altKey ? "Alt" : "",
+    event.ctrlKey ? "Ctrl" : "",
+    event.metaKey ? "Meta" : "",
+    event.shiftKey ? "Shift" : "",
+    event.key.length === 1 ? event.key.toUpperCase() : event.key,
+  ]
+    .filter(Boolean)
+    .join("+");
+  return Object.entries(bindings).find(
+    ([, value]) => value.toLowerCase() === key.toLowerCase(),
+  )?.[0];
+}
+
 const undo = {
   key: "z",
   label: "Undo",

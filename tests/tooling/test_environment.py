@@ -62,6 +62,62 @@ def fixture() -> dict[str, str]:
 
 
 class SupabaseEnvironmentTests(unittest.TestCase):
+    def test_publisher_url_is_derived_for_root_validation_and_backend_startup(self) -> None:
+        values = fixture()
+        values.pop("SUPABASE_REALTIME_PUBLISH_PORT", None)
+        values.pop("REALTIME_PUBLISH_URL", None)
+        environment.validate(values)
+        from app.core.config import settings
+
+        with patch.object(settings, "environment_inputs", return_value=values):
+            settings.get_settings.cache_clear()
+            try:
+                self.assertEqual(
+                    settings.get_settings().realtime_publish_url,
+                    "http://127.0.0.1:58100/realtime/v1/api/broadcast",
+                )
+            finally:
+                settings.get_settings.cache_clear()
+
+    def test_explicit_publisher_url_keeps_the_owned_development_loopback_binding(self) -> None:
+        values = {
+            **fixture(),
+            "SUPABASE_REALTIME_PUBLISH_PORT": "58111",
+            "REALTIME_PUBLISH_URL": "http://localhost:58111/realtime/v1/api/broadcast",
+        }
+        environment.validate(values)
+        for url in (
+            "http://api-gw:8001/realtime/v1/api/broadcast",
+            "http://192.0.2.1:58111/realtime/v1/api/broadcast",
+            "http://127.0.0.1:58000/realtime/v1/api/broadcast",
+        ):
+            with (
+                self.subTest(url=url),
+                self.assertRaisesRegex(environment.ConfigurationError, "REALTIME_PUBLISH_URL"),
+            ):
+                environment.validate({**values, "REALTIME_PUBLISH_URL": url})
+
+    def test_dev_stop_validation_accepts_an_omitted_optional_publisher_override(self) -> None:
+        dev_spec = importlib.util.spec_from_file_location(
+            "dev_projection_probe", ROOT / "scripts/dev.py"
+        )
+        assert dev_spec is not None and dev_spec.loader is not None
+        dev = importlib.util.module_from_spec(dev_spec)
+        dev_spec.loader.exec_module(dev)
+        values = fixture()
+        values.pop("REALTIME_PUBLISH_URL", None)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic.env"
+            environment.write_environment(path, values)
+            command = dev.build_command("stop", env_file=path)
+            args = command[command.index(str(dev.ENVIRONMENT_HELPER)) + 1 :]
+            with (
+                patch.object(environment, "_preflight_compose_mutation"),
+                patch.object(environment, "run_compose", return_value=0) as run,
+            ):
+                self.assertEqual(environment.main(args), 0)
+                self.assertEqual(run.call_args.args[0], ["stop"])
+
     def test_all_example_keys_are_declared_and_retired_names_are_rejected(self) -> None:
         names = set(environment.read_environment(ROOT / ".env.example"))
         self.assertFalse(names - environment.ROOT_ENVIRONMENT_KEYS)
@@ -110,9 +166,7 @@ class SupabaseEnvironmentTests(unittest.TestCase):
                         "SITE_URL": origin,
                     }
                 )
-        for name, value in (
-            ("PUBLIC_ORIGIN", "http://localhost:3001"),
-        ):
+        for name, value in (("PUBLIC_ORIGIN", "http://localhost:3001"),):
             with self.subTest(name=name), self.assertRaises(environment.ConfigurationError):
                 environment.validate({**values, name: value})
 
@@ -188,6 +242,102 @@ class SupabaseEnvironmentTests(unittest.TestCase):
             environment.compose_environment(values, services={"caddy"})["GATEWAY_PORT"],
             values["GATEWAY_PORT"],
         )
+
+    def test_caddy_realtime_projection_contains_only_public_gateway_inputs(self) -> None:
+        values = {**fixture(), "GATEWAY_PORT": "3548", "SUPABASE_API_PORT": "58123"}
+        self.assertEqual(
+            environment.compose_environment(values, services={"caddy"}),
+            {
+                "OPENSLATE_INSTANCE_ID": values["OPENSLATE_INSTANCE_ID"],
+                "GATEWAY_BIND_HOST": "127.0.0.1",
+                "GATEWAY_PORT": "3548",
+                "SUPABASE_API_PORT": "58123",
+                "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_canary",
+            },
+        )
+
+    def test_realtime_publisher_port_is_optional_and_provider_only(self) -> None:
+        values = fixture()
+        values.pop("SUPABASE_REALTIME_PUBLISH_PORT", None)
+        environment.validate(values)
+        self.assertEqual(
+            environment.compose_environment(values, services={"db"})[
+                "SUPABASE_REALTIME_PUBLISH_PORT"
+            ],
+            "58100",
+        )
+        values["SUPABASE_REALTIME_PUBLISH_PORT"] = "58101"
+        try:
+            environment.validate(values)
+        except environment.ConfigurationError as error:
+            self.fail(f"Valid optional publisher port was rejected: {error}")
+        self.assertEqual(
+            environment.compose_environment(values, services={"db"})[
+                "SUPABASE_REALTIME_PUBLISH_PORT"
+            ],
+            "58101",
+        )
+        self.assertNotIn(
+            "SUPABASE_REALTIME_PUBLISH_PORT",
+            environment.compose_environment(values, services={"caddy"}),
+        )
+
+    def test_realtime_publisher_port_rejects_invalid_values_before_compose(self) -> None:
+        for value in ("", "0", "65536", "0.0.0.0:58001"):
+            values = {**fixture(), "SUPABASE_REALTIME_PUBLISH_PORT": value}
+            with self.subTest(value=value):
+                with self.assertRaises(environment.ConfigurationError):
+                    environment.validate(values)
+                with self.assertRaises(environment.ConfigurationError):
+                    environment.compose_environment(values, services={"db"})
+
+    def test_publisher_port_and_url_follow_the_public_api_without_collisions(self) -> None:
+        from app.core.config import settings
+
+        for api_port in (58000, 58001):
+            values = fixture()
+            values.pop("SUPABASE_REALTIME_PUBLISH_PORT", None)
+            values.pop("REALTIME_PUBLISH_URL", None)
+            gateway = f"http://127.0.0.1:{api_port}"
+            values.update(
+                SUPABASE_API_PORT=str(api_port),
+                SUPABASE_URL=gateway,
+                SUPABASE_PUBLIC_URL=gateway,
+                SUPABASE_AUTH_ISSUER=gateway + "/auth/v1",
+                API_EXTERNAL_URL=gateway + "/auth/v1",
+            )
+            environment.validate(values)
+            self.assertEqual(
+                environment.compose_environment(values, services={"db"})[
+                    "SUPABASE_REALTIME_PUBLISH_PORT"
+                ],
+                str(api_port + 100),
+            )
+            with patch.object(settings, "environment_inputs", return_value=values):
+                settings.get_settings.cache_clear()
+                try:
+                    self.assertEqual(
+                        settings.get_settings().realtime_publish_url,
+                        f"http://127.0.0.1:{api_port + 100}/realtime/v1/api/broadcast",
+                    )
+                finally:
+                    settings.get_settings.cache_clear()
+            for name in (*environment.PORT_KEYS, "GATEWAY_PORT"):
+                with (
+                    self.subTest(api_port=api_port, collision=name),
+                    self.assertRaisesRegex(
+                        environment.ConfigurationError, "SUPABASE_REALTIME_PUBLISH_PORT"
+                    ),
+                ):
+                    environment.validate({**values, "SUPABASE_REALTIME_PUBLISH_PORT": values[name]})
+
+    def test_caddy_realtime_inputs_are_required_and_validated(self) -> None:
+        for name, value in (("SUPABASE_PUBLISHABLE_KEY", ""), ("SUPABASE_API_PORT", "0")):
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(environment.ConfigurationError, name),
+            ):
+                environment.compose_environment({**fixture(), name: value}, services={"caddy"})
 
     def test_compose_paths_use_provider_files_and_keep_caddy_independent(self) -> None:
         self.assertEqual(

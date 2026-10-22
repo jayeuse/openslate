@@ -1,96 +1,190 @@
 "use client";
-
-import { useCallback } from "react";
 import {
-  sampleOperationMessage,
-  useSampleCommands,
-} from "../../shared/runtime/sample-async";
-import {
-  useSampleRuntime,
-  type SampleTransactionDraft,
-} from "../../shared/runtime/sample-state";
-import type { SampleRecord } from "../../shared/data/sample-data";
-import type { RecordThread } from "../domain/model";
-import {
-  normalizeCommsConfiguration,
-  type CommsConfiguration,
-} from "../domain/configuration";
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "@/lib/api";
+import type { CommsViewClient as CommsClient } from "../contract/client";
+import { composerFailure, sendRefusal } from "../domain/composer-input";
+import { useCommsClient } from "./client-context";
+import { failureStatus } from "../contract/failure-status";
 
-export const COMMS_CONFIGURATION_KEY = "comms-configuration";
-
-export type CommsRecipe<T> = (draft: SampleTransactionDraft) => T;
-
-export type CommsCommandResult = { ok: true } | { ok: false; error: string };
-
-/** Read the latest configuration inside an atomic runtime recipe. */
-export function readCommsConfiguration(
-  draft: Pick<SampleTransactionDraft, "read">,
-): CommsConfiguration {
-  return normalizeCommsConfiguration(
-    draft.read<unknown>(COMMS_CONFIGURATION_KEY, null),
-  );
-}
-
-/** Stage a normalized configuration update in the current atomic recipe. */
-export function stageCommsConfiguration(
-  draft: SampleTransactionDraft,
-  action: (current: CommsConfiguration) => CommsConfiguration,
-): CommsConfiguration {
-  const next = normalizeCommsConfiguration(
-    action(readCommsConfiguration(draft)),
-  );
-  draft.update(COMMS_CONFIGURATION_KEY, null, next);
-  return next;
-}
-
-/** Stage the Comms-owned record thread created from a Platform record action. */
-export function stageRecordDiscussion(
-  draft: SampleTransactionDraft,
-  record: Pick<SampleRecord, "id" | "title">,
-): RecordThread {
-  const current = draft.read<RecordThread[]>("commsRecordThreads", []);
-  const existing = current.find((item) => item.recordId === record.id);
-  if (existing) return existing;
-  const thread: RecordThread = {
-    id: `sample-record-thread-${crypto.randomUUID()}`,
-    recordId: record.id,
-    text: `Discuss ${record.title}`,
-  };
-  draft.update<RecordThread[]>("commsRecordThreads", [], (items) => [
-    ...items,
-    thread,
-  ]);
-  return thread;
-}
-
-/**
- * Feature-owned async command boundary for Comms. Recipes remain synchronous;
- * the runtime reads current state and commits all staged owners together.
- */
 export function useCommsCommands() {
-  const runtime = useSampleRuntime();
-  const { run: executeCommand, isPending, pendingKeys } = useSampleCommands();
+  const binding = useCommsClient();
+  const cache = useQueryClient();
+  const [pending] = useState(() => new Map<string, Promise<unknown>>());
+  const lifetime = useRef<AbortController | null>(null);
+  const [pendingKeys, setPendingKeys] = useState<string[]>([]);
+  useLayoutEffect(() => {
+    const controller = new AbortController();
+    lifetime.current = controller;
+    pending.clear();
+    setPendingKeys([]);
+    return () => controller.abort();
+  }, [binding.client, pending]);
+  useEffect(() => {
+    if (!pendingKeys.length) return;
+    const guard = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, [pendingKeys.length]);
   const run = useCallback(
-    <T>(
+    async <T>(
       key: string,
-      recipe: CommsRecipe<T>,
-      keys: readonly string[],
-    ): Promise<T> =>
-      executeCommand(key, (signal) =>
-        runtime.execute(recipe, { keys, signal }),
-      ),
-    [executeCommand, runtime],
+      action: (client: CommsClient, signal: AbortSignal) => Promise<T>,
+      options?: { hold?: boolean },
+    ): Promise<T> => {
+      const { client, scope, live } = binding;
+      const local = lifetime.current;
+      if (!client || !scope || !local)
+        throw new Error("Organization is not admitted");
+      const signal = AbortSignal.any([scope.signal, local.signal]);
+      signal.throwIfAborted();
+      const existing = pending.get(key);
+      if (existing) return existing as Promise<T>;
+      const task = Promise.resolve().then(async () => {
+        // A multi-step save opts in: the changes it causes arrive as events
+        // while it still writes and wait for its own follow-up refresh. Other
+        // commands (uploads, exports, sends) never delay a resync or revocation.
+        const release = options?.hold ? live?.hold() : undefined;
+        try {
+          signal.throwIfAborted();
+          const result = await action(client, signal);
+          signal.throwIfAborted();
+          // Follow-up reads never turn an accepted command into a failed write.
+          if (live) void live.refresh().catch(() => {});
+          else {
+            void cache.invalidateQueries({
+              queryKey: scope.keys.bootstrap,
+              exact: true,
+            });
+            void cache.invalidateQueries({
+              queryKey: scope.keys.all,
+              predicate: (query) => query.queryKey[5] === "read",
+            });
+          }
+          return result;
+        } finally {
+          release?.();
+          if (!local.signal.aborted) {
+            pending.delete(key);
+            setPendingKeys([...pending.keys()]);
+          }
+        }
+      });
+      pending.set(key, task);
+      setPendingKeys([...pending.keys()]);
+      return task;
+    },
+    [binding, cache, pending],
   );
   return {
     run,
-    isPending,
     pendingKeys,
+    isPending: (key?: string) => (key ? pending.has(key) : pending.size > 0),
   };
 }
-
+/** A stale preview must be previewed again, not merely reloaded. */
+export const STALE_PREVIEW_MESSAGE =
+  "Someone changed this after your preview. Preview the current state again.";
 export function messageFromCommsError(
   error: unknown,
   fallback: string,
+  conflict = "Someone changed this after you opened it. Your changes are still here. Load the latest version, then try again.",
 ): string {
-  return sampleOperationMessage(error, fallback);
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "kind" in error &&
+    error.kind === "cancelled"
+  )
+    return "The workspace changed before this operation finished. Try again.";
+  if (isCommsConflict(error)) return conflict;
+  // D44 A8: the server refuses a channel its category cannot hold.
+  const failure = composerFailure(error);
+  if (
+    failure?.status === 422 &&
+    typeof failure.body.detail === "object" &&
+    !Array.isArray(failure.body.detail) &&
+    failure.body.detail.code === "comms_invalid"
+  )
+    return /categor/i.test(failure.body.detail.message)
+      ? "This category is for another department's channels."
+      : "Check the channel details and try again.";
+  const refusal = sendRefusal(error);
+  if (refusal?.code === "comms_rate_limited")
+    return `Too many attempts. Try again in ${Math.max(1, refusal.seconds)}s.`;
+  return fallback;
+}
+/** A 412 precondition failure: the version the user saw is no longer current. */
+export function isCommsConflict(error: unknown): boolean {
+  return failureStatus(error) === 412;
+}
+
+export function useCommsRefusals() {
+  const { scope } = useCommsClient();
+  const state = useQuery({
+    ...(scope?.refusalOptions() ?? {
+      queryKey: ["comms-refusal", "unadmitted", "unadmitted"] as const,
+      queryFn: async (): Promise<Record<string, boolean>> => ({}),
+      enabled: false,
+    }),
+    select: (flags: Record<string, boolean>) => flags,
+  });
+  return state.data;
+}
+
+export function useCommsRead<T>(
+  key: string,
+  load: (client: CommsClient, signal: AbortSignal) => Promise<T>,
+  enabled = true,
+) {
+  const binding = useCommsClient();
+  const scope = binding.scope;
+  const result = useQuery({
+    queryKey: scope
+      ? [...scope.keys.conversation(key), "read"]
+      : ["comms-unadmitted", key],
+    enabled: enabled && !!binding.client && !!scope && !binding.error,
+    queryFn: ({ signal }) => {
+      if (!scope || !binding.client)
+        throw new Error("Organization is not admitted");
+      return scope.read(key, (signal) => load(binding.client!, signal), signal);
+    },
+  });
+  const refusals = useCommsRefusals();
+  const refused =
+    refusals?.bootstrap || refusals?.[key] || scope?.isRefused(key);
+  const error =
+    binding.error ||
+    (result.isError
+      ? messageFromCommsError(
+          result.error,
+          "This data could not be loaded. Try again.",
+        )
+      : "");
+  return {
+    data: binding.client && !refused ? result.data : undefined,
+    error,
+    status: error
+      ? ("error" as const)
+      : !binding.client || result.isPending
+        ? ("loading" as const)
+        : ("ready" as const),
+    refreshing: result.isFetching && !result.isPending,
+    reload: () => {
+      void result.refetch();
+    },
+  };
+}
+export function isCommsReadRefusal(error: unknown): boolean {
+  if (error instanceof ApiError) return [401, 403, 404].includes(error.status);
+  return [401, 403, 404].includes(failureStatus(error) ?? 0);
 }

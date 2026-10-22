@@ -38,11 +38,13 @@ def test_container_image_path_does_not_replace_host_manifest_identity(
             "SUPABASE_URL",
             "SUPABASE_AUTH_ISSUER",
             "SUPABASE_STORAGE_URL",
+            "REALTIME_PUBLISH_URL",
         )
     }
     process.update(
         SUPABASE_URL="http://api-gw:8000",
         SUPABASE_STORAGE_URL="http://api-gw:8000/storage/v1",
+        REALTIME_PUBLISH_URL="http://api-gw:8001/realtime/v1/api/broadcast",
     )
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", Path("/image"))
     original_is_file = Path.is_file
@@ -58,6 +60,7 @@ def test_container_image_path_does_not_replace_host_manifest_identity(
         process.update(
             SUPABASE_URL="http://127.0.0.1:49153",
             SUPABASE_STORAGE_URL="http://127.0.0.1:49153/storage/v1",
+            REALTIME_PUBLISH_URL="http://127.0.0.1:49155/realtime/v1/api/broadcast",
         )
     path.write_text(json.dumps(manifest))
     if alter is not None:

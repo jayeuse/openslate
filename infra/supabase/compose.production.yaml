@@ -2,6 +2,12 @@
 # schema, and private app environment before up.
 # The base Compose file owns provider services; this overlay adds OpenSlate.
 services:
+  api-gw:
+    # Realtime ingress does not grant gateway peers trusted API proxy status.
+    # The separate publisher listener on 8001 remains unpublished in production.
+    networks:
+      - realtime-ingress
+
   db:
     # A production application uses db:5432 on the provider network. Keep the
     # database out of host networking even if a future base file adds a port.
@@ -72,6 +78,9 @@ services:
         condition: service_healthy
     ports:
       - "${CADDY_PUBLIC_BIND_HOST:-0.0.0.0}:${CADDY_HTTPS_PORT:-443}:${CADDY_HTTPS_PORT:-443}"
+    environment:
+      OPENSLATE_REALTIME_UPSTREAM: api-gw:8000
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Generate the publishable gateway key}
     volumes:
       - type: bind
         source: ${CADDY_CONFIG_PATH:?Render an OpenSlate production Caddyfile first}
@@ -107,11 +116,14 @@ services:
     networks:
       - app-private
       - public-ingress
+      - realtime-ingress
 
 volumes:
   caddy-data:
 
 networks:
+  realtime-ingress:
+    internal: true
   app-private:
     internal: true
     ipam:

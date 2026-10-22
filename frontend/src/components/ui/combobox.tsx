@@ -69,3 +69,19 @@ export function ComboboxItem({ className, ...props }: Primitive.Item.Props) {
     />
   );
 }
+export const ComboboxGroup = Primitive.Group;
+export const ComboboxCollection = Primitive.Collection;
+export function ComboboxGroupLabel({
+  className,
+  ...props
+}: Primitive.GroupLabel.Props) {
+  return (
+    <Primitive.GroupLabel
+      {...props}
+      className={cn(
+        "text-muted-foreground px-2 pt-2 pb-1 text-xs font-medium",
+        className,
+      )}
+    />
+  );
+}

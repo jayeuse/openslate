@@ -104,7 +104,7 @@ Access decides who can see and change what. Backend package: `app/systems/access
 | Organization owner | `owner_user_id`, `require_organization_owner` | The first administrator of the organization. Only this account or the installation owner changes the organization's security settings. | Internal |
 | Installation owner | `PlatformOperator`, `platform_operators`, "operator" | The account that owns the installation. It sets installation-wide password and session rules and runs backups. On-premises, it is the first administrator. It gets no organization data from this role. | Internal |
 | Person card | `PersonCardPopover`, `/api/users/{id}/card` | A read-only disclosure for a person identified by an authorized source, not a searchable directory. Guests see display name, job title and avatar only; authorized members/admins also receive contact details and biography. | Customer |
-| Account role | `UserRole`: `admin`, `member`, `guest`; "Administrator", "Member", "Guest" | The role of a person in one organization, stored on the membership. An administrator manages everything in that organization only. A guest has a sponsor and an end date, and can only read. | Customer |
+| Account role | `UserRole`: `admin`, `member`, `guest`; "Administrator", "Member", "Guest" | The role of a person in one organization, stored on the membership. Administrator authority is organization-local and subject to resource-specific access boundaries; the role alone does not grant ordinary private OpenComms reads. A guest has a sponsor and an end date, and can only read. | Customer |
 | Group | `Group`, `GroupMember` | A named set of people. Groups get access levels on departments, modules, and project Boards. | Customer |
 | Access level | `AccessLevel`: `read`, `write`, `manage` | What a group can do on a department, module, or Board. `read` < `write` < `manage`. | Customer |
 | Group access row | `GroupAccess` | One access level for one group on one department, or on one module of it. The module row overrides the department row for that group. | Internal |
@@ -140,8 +140,9 @@ Shared services for every workspace. Backend package: `app/systems/platform/`. "
 | File | `File`, file purpose `record_attachment`, `board_attachment`, `library_document`, `workspace_logo` | Metadata in PostgreSQL for bytes in the private Storage bucket. FastAPI checks access on each download. | Customer |
 | File state | `awaiting_upload`, `uploading`, `ready`, `rejected`, `deleting`, `purged` | The upload and delete progress of a file. Only `ready` permits download. There is no virus-scan state. | Internal |
 | File library | "Department file library", `purpose='library_document'`, `department_id`, `/platform?section=files` | The private files belonging directly to a department, outside any record or Board. Department read permits listing/download, write permits upload, and manage permits archive/reopen; module-only access grants none of these library rights. | Customer |
-| Notification | `InAppNotification`, `NotificationKind` | A message in the app, for example a report run, a reminder, or a published design. | Customer |
-| Scheduled work | `ScheduledWork`, `WorkKind`, `WorkState` | A queued background job: a report run, a scheduled post publish, or an event reminder. | Internal |
+| Notification | `InAppNotification`, `NotificationKind` | A message in the app, for example a report run, a reminder, a published design, or an OpenComms mention, direct message, followed-thread reply or keyword match. | Customer |
+| Scheduled work | `ScheduledWork`, `WorkKind`, `WorkState` | Durable queued work for report runs, scheduled post publication, event reminders, and OpenComms scheduled sends, exports or link previews. Retention sweeps have separate progress state. | Internal |
+| Work claim | `WorkClaim`, `lease_token` | A work identity and lease token for a bounded execution attempt. The executor still checks the current source/version and authority; a claim is not a permission grant. | Internal |
 | Import & export | `record-import-api` | CSV import and export of records for one module. | Customer |
 | Search | `?section=search` | Search across the records that a person can read. | Customer |
 | Account | Platform → Account | The page for your own profile, sign-in sessions, and personal settings. | Customer |
@@ -150,8 +151,23 @@ Shared services for every workspace. Backend package: `app/systems/platform/`. "
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
-| OpenComms | `/comms`, `systems/comms`, `SampleComms`, "Comms" | Messages and channels. **Status:** sample only. It runs on browser-local sample state; the backend `comms` package is reserved and empty. Use "OpenComms" in all writing. | Customer |
-| Comms sample state | `SampleProvider`, "Example" chip | Example conversations, preferences, and tools that are stored in the browser for one account. They are not application data and do not grant access. | Internal |
+| OpenComms | `/comms`, `systems/comms`, "Comms" | Organization-scoped conversations and messages. The page, its settings and its administrator tools read and change data only through FastAPI APIs and receive private Realtime notifications; no part of it runs on browser-local example data. Use "OpenComms" in writing. | Customer |
+| Comms memory fake | `frontend/tests/support/comms-memory/` | A test-only in-memory implementation of the Comms client contract, used by isolated and HTTP specs. It is not part of the production bundle and is not backend behavior or an access rule. | Internal |
+| Conversation | `CommsConversation`, `/api/comms/conversations` | The organization-bound channel or direct/group conversation that owns messages and has its own current access rules. | Customer |
+| Channel scope | `scope` `organization` or `department`, "Organization", "Department" | A channel is organization-wide or belongs to one department (D44). Every member reads an organization channel; department roles decide read, post and manage in a department channel. On a channel, member rows are only the **manager roster**: the creator and people with the `manager` role. Direct and group messages keep their members. | Customer |
+| Message sequence | `seq`, `before_seq`, `after_seq`, `around_seq` | A message's conversation-local position, used for keyset paging and recovery. It is not a global order across organizations or conversations. | Internal |
+| Send key | `client_key` | Identity of an author's original send command in the bound organization. Retrying that command retains its key and payload; a different command must not reuse it. | Internal |
+| Send receipt | `SendResult`, HTTP 201/200 | A validated response acknowledging message creation or idempotent replay. It is not proof that another browser received/read the message; a later cache-repair failure does not undo acceptance. | Internal |
+| Client outbox | `createCommsOutbox`, `sending`, `not-sent` | Unacknowledged sends in an admitted account/organization client lifetime; a transport failure does not prove absence on the server. It is distinct from durable server-scheduled messages and from SMTP delivery. | Internal |
+| Read-refusal latch | `createCommsQueryScope`, `deniedAt`, `refusedThrough` | Conceals the affected protected cache after an authentication/access-refused read and rejects older in-flight successes. A fresh successful authorized read can clear the visible refusal, but does not remove the barrier against old bytes. | Internal |
+| Realtime grants projection | `CommsRealtimeGrant`, `comms_realtime_grants` | Expiring user/organization/conversation join-admission rows derived from FastAPI's current access rules. They do not replace current HTTP content authorization. | Internal |
+| Moderation report | `CommsReport`, `CommsReportResponse` | A message reference with a reporting reason and moderation status. It is not an OpenView Report or a private message projection, and gives its submitter no moderation-queue grant. | Customer |
+| Captured export authority | `CommsExportSource`, `authorization_digest`, `private_verified` | A source-bound record of a specific OpenComms export purpose/proof. Generation and download still require current authority; capture does not grant ordinary private reads or preserve access indefinitely. | Internal |
+| Retention anchor | `CommsMessage.retention_erased_at` | Minimal identity/linkage retained after irreversible content erasure while references need it. Later garbage collection can remove it; it is not a restorable copy of the message. | Internal |
+
+These terms describe the [implemented API boundaries](07-api-architecture.md#opencomms-http-boundary)
+and [recovery contract](15-error-handling-and-recovery.md#opencomms-refusals-and-command-recovery),
+not a separate permission system or an execution result.
 
 ## Themes and appearance
 
@@ -180,7 +196,8 @@ Shared services for every workspace. Backend package: `app/systems/platform/`. "
 | Ready object | — | Immutable private Storage object in `openslate-ready`, written after file-type validation; FastAPI still authorizes each download. | Internal |
 | Supabase Compose installation | — | One self-hosted Supabase and OpenSlate deployment with its own Compose project, credentials, networks, and persistent volumes. It is per client and can hold several organizations; it is not a hosted service. | Internal |
 | Supabase Storage | — | Provider-managed object API and persistent volume for OpenSlate's private file bytes. FastAPI, not the browser, uses its privileged credentials. | Internal |
-| Supabase Realtime | — | Provider WebSocket service for private organization channels (`org:<org_id>:…`). A client joins with a 5-minute FastAPI token; RLS on `realtime.messages` checks the membership at each join. Invalidations stay on SSE. | Internal |
+| Supabase Realtime | — | Provider WebSocket service for private OpenComms conversation, own-user and organization-presence topics. Joins use a five-minute purpose-specific FastAPI token and current membership/topic checks; conversation topics additionally require an expiring grant. Other application pages retain SSE. | Internal |
+| Realtime notification | `CommsEvent`, private event envelope | An opaque OpenComms invalidation or transient presence/typing signal, validated for its topic and bound identity. It carries no message body and is not an authoritative content read. | Internal |
 | SSE invalidation | `/api/events`, `platform/events` | Authenticated opaque signal asking a client to refetch authorized application data through FastAPI. It does not include protected row snapshots. | Internal |
 | `/api/ready` | — | Bounded component readiness report for Database, Auth, Storage, and SMTP configuration, all required; mail delivery, schema compatibility, and backup integrity need separate checks. | Internal |
 | `WEB_ASSETS_ROOT` | — | Server-side path to the static frontend export served by FastAPI in production. | Internal |
@@ -247,11 +264,11 @@ Each row is one word with more than one meaning. Add the qualifier in **Write** 
 | history | (1) Sandbox History (design versions); (2) audit log, also shown as "Record history"; (3) post "Edit history" (post revisions); (4) "Backup history" | Say **design history**, **audit log**, **post revisions**, or **backup list**. Do not use "history" alone. |
 | version / revision | (1) design version; (2) post revision; (3) the `revision` concurrency counter on the draft, groups, and Boards; (4) the software release (`GET /api/version`); (5) the document `schemaVersion` | **version** for 1 and 4, **post revision** for 2, **revision number** for 3. |
 | test | (1) Sandbox Test; (2) automated test suites; (3) `ENVIRONMENT=test`; (4) disposable test stacks | **Sandbox Test** for 1. **test suite**, **test environment**, and **disposable stack** for the others. |
-| sample | (1) browser-local example data (OpenComms, the "Example" chip); (2) organization data that a sample run writes through the real APIs | **example data** for 1, **sample data** for 2. |
+| sample | (1) organization data that a sample run writes through the real APIs; (2) the test-only Comms memory fake | **sample data** for 1, **Comms memory fake** for 2. |
 | template | (1) Sandbox organization template; (2) OpenComms channel and message templates; (3) Supabase Auth email templates | Always add the qualifier: **organization template**, **channel template**, **email template**. A template is never a sample pack. |
 | phase | (1) a sample-run control batch; (2) a stage inside the Tier 1 plan; (3) `PhaseName` end-of-run steps in sample code | **sample phase**, **Tier 1 phase**, or the code name. |
-| event | (1) Board calendar event; (2) the SSE stream `/api/events`; (3) a trigger event; (4) a security event | **event** for 1. **SSE invalidation**, **trigger event**, and **security event** for the others. |
-| export | (1) Platform CSV record export; (2) Manage encrypted export of a backup; (3) Sandbox design export (JSON); (4) Board configuration export; (5) audit CSV export | Name the source: **record export**, **backup export**, **design export**, **Board export**, **audit export**. |
+| event | (1) Board calendar event; (2) the SSE stream `/api/events` or a private Realtime notification; (3) a trigger event; (4) a security event | **event** for 1. **SSE invalidation**, **Realtime notification**, **trigger event**, and **security event** for the others. |
+| export | (1) Platform CSV record export; (2) Manage encrypted export of a backup; (3) Sandbox design export (JSON); (4) Board configuration export; (5) audit CSV export; (6) purpose-authorized OpenComms message export | Name the source: **record export**, **backup export**, **design export**, **Board export**, **audit export**, **OpenComms export**. |
 | recovery | (1) password recovery; (2) administrator recovery; (3) security recovery; (4) backup restore | Use the full name from the [Access](#access) and [Manage](#manage) tables. |
 | Manage | (1) the Manage workspace; (2) the `manage` access level | **Manage** (capital) for 1, **`manage` level** for 2. |
 | Platform | (1) the Platform workspace; (2) the backend `platform` package; (3) a word for the product | Meanings 1 and 2 only. Never use "platform" for the product. |

@@ -1,5 +1,6 @@
 import {
   controlledSession,
+  defaultOrganization,
   expect,
   expectNoHorizontalScroll,
   heldResponse,
@@ -9,7 +10,8 @@ import {
   type Route,
 } from "./helpers/test";
 import { mockAccessApi, ids, created } from "./helpers/access-api";
-import { profileSelf } from "./helpers/profile-api";
+import { avatarPng, profileSelf } from "./helpers/profile-api";
+import { installSeededComms } from "./helpers/comms-seeded-world";
 import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal-storage";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 import {
@@ -40,8 +42,14 @@ const workspaceSettings = {
 };
 const cleanupKeys = [
   accessDraftStorageKey(accountUser, "identity"),
-  workspaceSessionSnapshotStorageKey(accountUser),
-  commsDraftTextKey(ownedCommsDraftTextId(accountUser, "owned-composer")),
+  workspaceSessionSnapshotStorageKey(accountUser, defaultOrganization.org_id),
+  commsDraftTextKey(
+    ownedCommsDraftTextId(
+      accountUser,
+      "owned-composer",
+      defaultOrganization.org_id,
+    ),
+  ),
 ];
 
 const currentSession = {
@@ -77,6 +85,66 @@ const anotherSession = {
 // A revoked current session is signed out, so /login keeps the sign-in form
 // instead of sending a still-authenticated session to its start page. The
 // Profile route answers /api/auth/me itself.
+/**
+ * Answers the Comms attachment reservation and content upload for any
+ * conversation, as the server does for an accepted file. The seeded Comms
+ * world has no file routes.
+ */
+async function acceptCommsAttachments(page: Page) {
+  const created = "2026-10-21T00:00:00Z";
+  const fileId = "00000000-0000-4000-8000-000000000901";
+  let file: Record<string, unknown> | null = null;
+  await page.route(
+    (url) => /^\/api\/comms\/conversations\/[^/]+\/files$/.test(url.pathname),
+    async (route) => {
+      const request = route.request();
+      if (request.method() !== "POST") return route.fallback();
+      const conversation = new URL(request.url()).pathname.split("/")[4];
+      const body = request.postDataJSON() as {
+        filename: string;
+        expected_size: number;
+      };
+      file = {
+        id: fileId,
+        org_id: request.headers()["x-org"],
+        conversation_id: conversation,
+        creator_id: accountUser,
+        purpose: "comms_attachment",
+        filename: body.filename,
+        expected_size: body.expected_size,
+        actual_size: null,
+        media_type: null,
+        state: "awaiting_upload",
+        failure_code: null,
+        is_deleted: false,
+        created_at: created,
+        updated_at: created,
+      };
+      await route.fulfill({
+        status: 201,
+        json: file,
+        headers: {
+          Location: `/api/comms/conversations/${conversation}/files/${fileId}`,
+        },
+      });
+    },
+  );
+  await page.route(
+    (url) => url.pathname.endsWith(`/files/${fileId}/content`),
+    (route) =>
+      route.request().method() === "PUT" && file
+        ? route.fulfill({
+            json: {
+              ...file,
+              actual_size: file.expected_size,
+              media_type: "image/png",
+              state: "ready",
+            },
+          })
+        : route.fallback(),
+  );
+}
+
 function accountSession(page: Page) {
   return controlledSession(
     page,
@@ -678,16 +746,34 @@ test("current-session revocation clears owned drafts and attachment URLs through
     };
   });
   await openAccount(page);
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        ...profileSelf(accountUser, "admin"),
+        memberships: [{ ...defaultOrganization, role: "admin" }],
+        current_organization: {
+          ...defaultOrganization,
+          role: "admin",
+          access: [],
+          owner: true,
+        },
+      },
+    }),
+  );
+  await installSeededComms(page, accountUser);
+  await acceptCommsAttachments(page);
   await page.goto("/comms");
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Owned unsent draft");
   await page.getByLabel("Upload files", { exact: true }).setInputFiles({
-    name: "owned-note.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("Owned synthetic attachment"),
+    name: "owned-image.png",
+    mimeType: "image/png",
+    buffer: avatarPng,
   });
-  await expect(page.getByText("owned-note.txt", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("owned-image.png", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "Your profile", exact: true })
@@ -701,7 +787,7 @@ test("current-session revocation clears owned drafts and attachment URLs through
   );
   const persistedComms = await page.evaluate(() =>
     Object.keys(sessionStorage).filter((key) =>
-      key.startsWith("openslate.sample.draft-text.v1."),
+      key.startsWith("openslate.sample.draft-text.v2."),
     ),
   );
   expect(persistedComms.length).toBeGreaterThan(0);

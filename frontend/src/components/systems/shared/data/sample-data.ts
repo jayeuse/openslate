@@ -5,6 +5,8 @@ export type SampleRecord = {
   status: string;
   assignee: string;
   dueDate: string;
+  moduleName?: string;
+  fields?: { id: string; label: string; displayValue: string }[];
 };
 
 export const INITIAL_RECORDS: SampleRecord[] = [

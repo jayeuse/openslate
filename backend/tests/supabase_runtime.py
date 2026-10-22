@@ -13,6 +13,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from secrets import token_urlsafe
+from threading import Event
+from time import monotonic
 from typing import IO, Any
 
 from app.core.config.disposable_instance import (
@@ -114,6 +116,7 @@ class DisposablePostgres:
         }
         self.port: int | None = None
         self.api_port: int | None = None
+        self.publisher_port: int | None = None
         self.mail_port: int | None = None
         # Auth fetches email templates from a host listener: the runner API's fixed port
         # when one serves them, otherwise a port derived from this stack's network block.
@@ -186,6 +189,7 @@ class DisposablePostgres:
             "JWT_EXPIRY": "45",
             "SUPABASE_DB_PORT": str(self.port),
             "SUPABASE_API_PORT": str(self.api_port),
+            "SUPABASE_REALTIME_PUBLISH_PORT": str(self.publisher_port),
             "SUPABASE_MAIL_PORT": str(self.mail_port),
             "API_EXTERNAL_URL": f"{api_url}/auth/v1",
             "SUPABASE_PUBLIC_URL": api_url,
@@ -293,8 +297,54 @@ class DisposablePostgres:
                 return block
         raise RuntimeError("No free disposable Supabase network block")
 
+    def _wait_existing_health(self, deadline: float) -> bool:
+        """Realtime's seed/main handoff may flap health; never restart or reset the budget."""
+        while monotonic() < deadline:
+            identifiers = self._run(
+                [
+                    "ps",
+                    "-aq",
+                    "--filter",
+                    f"label=com.docker.compose.project={self.project}",
+                ],
+                capture=True,
+                timeout=5,
+            ).stdout.splitlines()
+            if not identifiers:
+                return False
+            output = self._run(
+                [
+                    "inspect",
+                    "--format",
+                    '{{index .Config.Labels "com.docker.compose.service"}} '
+                    "{{.State.Running}} {{.State.ExitCode}} "
+                    "{{if .State.Health}}{{.State.Health.Status}}{{end}}",
+                    *identifiers,
+                ],
+                capture=True,
+                timeout=5,
+            ).stdout.splitlines()
+            states = [line.split() for line in output]
+            ready = len(states) == len(PROVIDER_IMAGES) and {
+                row[0] for row in states if row
+            } == set(PROVIDER_IMAGES)
+            ready = ready and all(
+                row == ["provider-volume-init", "false", "0"]
+                if row[0] == "provider-volume-init"
+                else len(row) == 4 and row[1] == "true" and row[3] == "healthy"
+                for row in states
+            )
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return False
+            if ready:
+                return True
+            Event().wait(min(0.5, remaining))
+        return False
+
     def start(self) -> None:
-        self.port, self.api_port, self.mail_port = (
+        self.port, self.api_port, self.mail_port, self.publisher_port = (
+            _available_port(),
             _available_port(),
             _available_port(),
             _available_port(),
@@ -305,13 +355,29 @@ class DisposablePostgres:
             self.template_port = self.fixed_template_port or (
                 TEMPLATE_PORT_BASE + self.network_block
             )
-            if len({self.port, self.api_port, self.mail_port, self.template_port}) != 4:
+            if (
+                len(
+                    {
+                        self.port,
+                        self.api_port,
+                        self.mail_port,
+                        self.template_port,
+                        self.publisher_port,
+                    }
+                )
+                != 5
+            ):
                 raise RuntimeError("Disposable Supabase host ports collided")
             self._write_inputs()
             self._compose(["config", "--quiet"], timeout=30)
             self._compose(["create"], timeout=120)
+        deadline = monotonic() + 180
         try:
-            self._compose(["up", "-d", "--wait", "--wait-timeout", "180"], timeout=210)
+            try:
+                self._compose(["up", "-d", "--wait", "--wait-timeout", "180"], timeout=210)
+            except subprocess.CalledProcessError:
+                if not self._wait_existing_health(deadline):
+                    raise
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             # Capture failures before guarded teardown removes their containers.
             # This output stays in the runner's private log, never the console.
@@ -324,6 +390,7 @@ class DisposablePostgres:
         for service, internal, expected in (
             ("db", DB_PORT, self.port),
             ("api-gw", 8000, self.api_port),
+            ("api-gw", 8001, self.publisher_port),
             ("mailpit", 8025, self.mail_port),
         ):
             mapping = self._compose(["port", service, str(internal)], capture=True, timeout=15)
@@ -357,6 +424,7 @@ class DisposablePostgres:
         api_url = f"http://127.0.0.1:{self.api_port}"
         return {
             "SUPABASE_URL": api_url,
+            "REALTIME_PUBLISH_URL": f"http://127.0.0.1:{self.publisher_port}/realtime/v1/api/broadcast",
             "SUPABASE_AUTH_ISSUER": f"{api_url}/auth/v1",
             "SUPABASE_STORAGE_URL": f"{api_url}/storage/v1",
             "SUPABASE_PUBLISHABLE_KEY": self.keys["SUPABASE_PUBLISHABLE_KEY"],
@@ -407,6 +475,7 @@ class DisposablePostgres:
             "db_port": self.port,
             "api_port": self.api_port,
             "mail_port": self.mail_port,
+            "publisher_port": self.publisher_port,
             "cluster_name": self.project,
         }
         try:
@@ -439,6 +508,7 @@ class DisposablePostgres:
                         "auth_issuer": f"{api_url}/auth/v1",
                         "storage_url": f"{api_url}/storage/v1",
                         "mail_url": self.mail_url,
+                        "publish_url": self.provider_environment()["REALTIME_PUBLISH_URL"],
                     },
                     "ownership": ownership,
                 }

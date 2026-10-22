@@ -242,6 +242,26 @@ components:
     textColor: "{colors.ink}"
     typography: "{typography.canvas-field}"
     height: "26px"
+  radio-card:
+    textColor: "{colors.ink}"
+    typography: "{typography.control}"
+    rounded: "{rounded.md}"
+    padding: "12px"
+  radio-card-selected:
+    backgroundColor: "{colors.action-tint}"
+    textColor: "{colors.action-text}"
+  summary-block:
+    backgroundColor: "{colors.surface-sunken}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.lg}"
+    padding: "10px 12px"
+  badge-level-manager:
+    backgroundColor: "{colors.action-tint}"
+    textColor: "{colors.action-text}"
+    typography: "{typography.label}"
+    rounded: "{rounded.md}"
+    padding: "2px 8px"
 ---
 
 # Design System: OpenSlate
@@ -345,6 +365,18 @@ Correct: Tab lands on the selected module; ArrowDown reaches its first field; "e
 
 Wrong: Tab walks through every department, module, field, and "Add field" button.
 
+**The Read-Only Is Text Rule.** A value that is fixed after save, or that only someone else can change, shows as text on a sunken block: the label, the value, and the description that the choice had. A disabled control is different: the viewer could use it, but not now or not with this role, so it stays focusable and says why through `DisabledReason`. The two never look the same.
+
+Correct: Channel settings shows "Who can use this channel: Department · Sales" (with the Sales mark) on a sunken block, and the scope description under it.
+
+Wrong: Channel settings shows the two scope radio cards greyed out, so the viewer looks for a way to turn them on.
+
+**The Same Answer Rule.** A resource that the viewer cannot read gets one state, whether it exists or not: one title, one line, and one recovery action. Nothing on the page (the header, a member count, a request-to-join action) confirms that it exists.
+
+Correct: an unknown id and a private channel both show "This conversation is not available." and "It may have been removed, or you may not have access.", with Retry history.
+
+Wrong: a private channel shows "You need access to #payroll" and a Request access button.
+
 **The page pass (pattern kit).** To bring a workspace page to these rules, take its panels one at a time, with the Sandbox as the worked example (`docs/specs/sandbox-ui-ux-pass.md`):
 
 1. Inventory every control and helper line per panel and selection state, and measure helper words and default-visible controls with one script on fixed data before you change anything.
@@ -365,7 +397,7 @@ The palette is a set of semantic roles, not a hue list. Each look supplies its o
 
 ### Primary
 
-- **Action** (`--action`, with `--action-ink`, `--action-text`, `--action-tint`): the one color that acts. It fills primary buttons, draws focus (`--focus`), marks the active navigation item (`--action-text`, weight 600), traces hovered canvas lines, and draws the minimap viewport. `--action-text` is the text-safe shade for links and active labels on a surface. `--action-tint` is a quiet fill for drop targets and selected states.
+- **Action** (`--action`, with `--action-ink`, `--action-text`, `--action-tint`): the one color that acts. It fills primary buttons, draws focus (`--focus`), marks the active navigation item (`--action-text`, weight 600), traces hovered canvas lines, draws the minimap viewport, and fills the shell's unread count pill. `--action-text` is the text-safe shade for links and active labels on a surface. `--action-tint` is a quiet fill for drop targets, selected states, and the one tinted level chip (Manager).
 
 ### Secondary
 
@@ -410,6 +442,12 @@ Slate and Stockroom stripe alternate field rows; Whiteboard and Triplicate set t
 Correct: Whiteboard's `--dept-2` is a teal marker pastel (`#8fcfc6`), so Commerce stays teal-family in every look.
 
 Wrong: Whiteboard's `--dept-2` is lavender, so Commerce is teal in Slate and lavender on the board.
+
+**Outside the canvas.** `DepartmentMark` (`components/sandbox/department-mark.tsx`) is the canvas identity mark at 8px: a small square with the extra-small corner, filled with `--dept-n` by the department's canvas position, so a department has the same color in the Sandbox and in OpenComms. It is `aria-hidden`, and the department name follows it as text. OpenComms shows it in category rows of the conversation list and, through `DepartmentName`, in the channel scope label, the Access summary, and the grants list; `DepartmentList` gives each of a person's departments its mark in the member panel, the channel's Members tab, and person rows of the grants list, in department order, with names that wrap and are never cut. A followed record has no department here, so its row shows the record's table glyph instead of a mark. Inside a native select option or a search option description, the name stands alone.
+
+Correct: `<DepartmentName id={channel.departmentId} />` renders the mark, then "Sales".
+
+Wrong: a category row with only a colored left edge, or a second, larger mark drawn for the same department.
 
 ### Look-private tokens
 
@@ -499,6 +537,8 @@ The rhythm is a 4px base: 8px and 12px gaps inside groups, 16px between groups, 
 Targets stay reachable: sidebar items are at least 44px tall. Below 640px, shell buttons and inputs are at least 44px. In the Sandbox and its dialogs, controls are at least 44px below 1280px, and inline toggles inside a list row keep 24px so rows keep one rhythm. Breadcrumb links keep a 24px target.
 
 **The Sandbox.** The canvas owns at least 65% of the work area. One right workbench switches between Structure and Properties; creation actions live in the workbench, not on the canvas. Narrow screens switch among Canvas, Structure, and Properties as tabs. The canvas snaps to a 24px unit and shows a dot grid (minor dots every 24px, major dots every 120px, each dot on a snap point). It scales uniformly from 50% to 150%; the floor keeps field text readable, and the minimap shows what does not fit. There is no overview level: every zoom shows the same tables with their fields. The canvas and Properties always open on the same item: with no link, Build selects the first module of the busiest department (the most modules and lines, `openingModuleId`), and the canvas opens at 100% on the selected item's department, lifting it when the selected table would sit below the fold; if the department is wider than the view, it shows the selected table whole, with the department's left edge when it fits. Fit shows the whole design and never zooms past 100%. When Fit reaches the floor, or a trace is pinned from Test, a small notice bar at the top of the canvas says so, with Dismiss, or Back to result and Clear. The minimap sits bottom right from 640px up; the Key sits bottom left at every width.
+
+**OpenComms.** The workspace fills the main region: a 44px connection strip on top, then panes that scroll on their own (`comms-layout.tsx`, `use-comms-panel-layout.ts`). From 768px up, the conversation list and the conversation sit side by side with a resize handle; below 768px a phone shows the list or the conversation, and the conversation header has a Back button to the list. From 1280px up, the members, thread, or record pane opens as a third resizable pane; below 1280px it opens as a dialog. The list is at least 200px; the conversation keeps a minimum of 280px to 360px, by the space there is; members take 200px to 360px; a thread or record takes 320px to 560px. Each person's pane widths are saved with their preferences. Inside OpenComms, buttons are at least 24px, and at least 44px below 640px.
 
 ## Elevation & Depth
 
@@ -695,11 +735,67 @@ Hairline rows with 14px cells. Cells stay `--ink` in every look, so stored data 
 
 Card surface (popover surface for menus), a `--border` edge, and a large shadow; dialogs and menus take the large radius. Whiteboard frames dialogs and sheets in 3px aluminium (`--wb-frame`) with a 1px highlight and the raised lift. Triplicate makes them carbon slips: an `--ink` edge, a 2px dashed `--ink` top (the perforation), and square corners; its dropdown menus take a square 1px `--ink` edge. Stockroom gives dialogs and sheets a 5px inset steel band on top and the raised lift.
 
+### Radio cards
+
+A choice of two to four options, drawn as cards with `RadioGroupItem`. Color mode in Appearance (`look-behavior.tsx`) and "Who can use this channel" (`channel-scope.tsx`) use it.
+
+- **Shape:** a bordered card at least 44px tall, medium radius, 12px padding. A described option is left-aligned: an 18px line icon, the title (14px, weight 600) over a one-line description in muted body text, and a 15px check at the right. An option without a description (color mode) stacks the icon, label, and check in the center.
+- **States:** unselected takes a `--border` edge, and the sunken fill on hover. Selected takes an `--action` edge, the `--action-tint` fill, `--action-text` ink, and the check. Focus is the standard ring.
+- **Locked option:** `DisabledReason` wraps it with `reasonId`, so it stays focusable, ignores the click, and opens the reason on hover, focus, or tap. Its ink turns muted, hover adds no fill, a lock icon takes the check's place, and the reason shows as 12px muted text under the card; the card points at that text, so a screen reader reads it once.
+- **Order and columns:** one column on phones, two from 640px. When only one option is open to the viewer, it comes first, so the selected card shows without scrolling.
+- **Follow-up field:** a field that only one option needs (Department) appears under the group only while that option is chosen.
+
+Correct: "Who can use this channel" shows Organization and Department as two radio cards; a member sees Department first and Organization locked, with "Only admins can create organization channels." under it.
+
+Wrong: the same choice as a select, or as a segmented control with the descriptions in tooltips.
+
+### Read-only summaries
+
+What the viewer cannot change here is text on a sunken block (The Read-Only Is Text Rule).
+
+- **Block:** the sunken fill (`bg-muted`), large radius, 10px by 12px padding, 14px text, at most `max-w-prose` wide.
+- **Value line:** "Label: value", with the label at weight 500, then the description in muted ink. The channel scope summary repeats the description of the radio card that made the choice (`SCOPE_COPY`), so the words match.
+- **Access list:** a `dl` in a two-column grid: who (`dt`, weight 500) and what they can do (`dd`, muted), 16px between the columns and 6px between rows. The outcome is a phrase ("can read", "can post", "can manage"); no color carries it.
+- **Where to change it:** when the viewer can change the source in another workspace, one underlined text link names the place ("Change department roles in Access → Groups"). Other viewers see no link and no control.
+- **A list that someone else edits:** rows show a word chip instead of a select, and one muted line names who can change it ("Only an admin or a manager of Sales can change this list.").
+
+### Level badges
+
+An access level is always a word in a chip (`LevelBadge`, `member-level.tsx`). The member panel and the channel's Members tab use the same chip.
+
+- **Read:** outline chip. **Post:** secondary chip. **Manager:** the one tinted level, with the `--action-tint` fill and `--action-text` ink.
+- **Grants:** access given to people outside the department uses two words of its own, "Read" and "Read and post": a select on rows the viewer can change, a chip on the rest.
+- **Place:** in the member panel, the chip follows the person's departments on the row's second line; in the Members tab, it ends the row.
+
+### Grouped search
+
+`SearchSelect` lists options under headings when the options carry a `group`; groups keep the order given (Groups, then People). Headings are 12px muted at weight 500. Each option row is at least 44px, with the name and an optional 12px muted description (a person's departments). An option that cannot be chosen stays in the list, disabled, and its description says why ("Already has access"). The empty line follows the query: "Type a name to find them." before typing, "No groups or people match." after. Loading, an error with Retry, and Load more keep the SearchSelect pattern.
+
+### Access grants list
+
+"Also has access" (`access-grants.tsx`) lists the groups and people outside the department who can also read or post.
+
+- **List:** a bordered list with hairline dividers, large radius, at most `max-w-prose` wide. A row has a 16px muted icon (group or person), the name at weight 500, and a 12px muted line under it: "Group · 3 people", the person's departments with their marks ("No department" when none), or "From category <name>" for an inherited row.
+- **Inherited first:** grants from the channel's category come first and are read-only. The channel's own grants follow and are editable.
+- **Per-row save:** the level select and a ghost text Remove (named "Remove access for <name>") save at once; there is no form-level Save. While a row saves, it is `aria-busy`, its controls lock, its line adds "· Saving…", and the chosen level stays shown. A failure shows under that row in danger text with `role="alert"`; a conflict says "Someone changed access first. Check the list, then try again."
+- **Empty:** one muted line that names the department with its mark ("Only people with a role in Sales can use this channel.").
+- **Give access:** an outline button opens an inline panel on the sunken fill, not a second dialog: the grouped search, a Level radio pair (Read, Read and post; Read is the default), then a primary "Give access" (pending label "Giving access…") and a ghost Cancel.
+- **Hidden:** organization channels have no grants list, because everyone already has access. A viewer whose read is refused sees nothing.
+- **Phones:** the name stacks above the controls, the select fills the width, and the targets are 44px.
+
 ### Navigation
 
 The sidebar holds workspaces and their sections. Each closed workspace row shows a one-line description of its job under its name in `text-xs` sidebar-muted ink ("Who can see and change what"); an open row shows its sections instead, and the collapsed rail shows the description in the tooltip. The name alone stays the row's accessible name. Items are at least 44px tall with 1.65-weight line icons. The active section uses `--action-text` at weight 600 on the gliding `--sidebar-accent` fill; the active workspace row keeps its own fill. The scrollbar is 6px, thin, in muted ink. The breadcrumbs read Workspace › workspace › section.
 
 The top bar (`data-skin="topbar"`) and sidebar carry the look's frame. Whiteboard puts a 1px frame rule under the top bar. Triplicate prints the top bar as a form header with a double `--ink` rule and rules the sidebar edge in `--ink`. Stockroom paints the sidebar steel through the `--sidebar` token (so the pinned OpenComms block matches) with a 1px `--sr-steel` edge on `sidebar-container`, and sets the top bar on a 3px `--sr-steel` rail.
+
+### Counts
+
+An unread count is a number, at most "99+", and the control's accessible name carries it.
+
+- **Shell:** the notification bell and the OpenComms sidebar link show a fully round count pill: `--action` fill, `--action-ink` text, 12px tabular figures, 16px tall. The pill is `aria-hidden`; the control's name says "Notifications, 3 unread" or "OpenComms, 3 unread". The collapsed sidebar rail shows an 8px action dot with a sidebar-colored ring instead.
+- **Tab title:** on every signed-in page, the OpenComms unread count prefixes the title ("(3) Sandbox | OpenSlate", "(99+) " at most), and the prefix goes when the count clears.
+- **Conversation rows:** a secondary chip at the end of the row, with its own name ("3 unread", "1 mention"). A mention count takes the unread count's place; a muted row shows no unread count but still shows mentions. Unread rows are at weight 600; read rows are muted at weight 500.
 
 ### Sample data note
 
@@ -717,6 +813,19 @@ A radio group of four tiles (two columns from 640px, four from 1280px). Each til
 
 An ERD-style canvas of the owner's own structure, drawn in the same materials as the website and the film. Departments are named frames on their own sheet (`--dept-n-sheet`) with a head band (`--dept-n-band`), a 3px top edge in the department color (the frame's own shape, clipped), an identity mark, and the name in `--font-display`. Modules are compact 232px table cards on `--dept-n-module`: a 34px header (`--dept-n-card`) with a table glyph and the table name, then 26px field rows with the name on the left in `--canvas-field-ink` and the type label on the right in `--font-code` and `--canvas-type-ink`, on `--dept-n-stripe` for alternate rows. A filled dot marks a required field; a hollow dot marks an optional one. Lines join tables at 1.6px and end in an arrowhead: a relationship is dashed in `--action`, a handoff is solid in `--canvas-edge` (the Dash Means Link Rule). Each line has a label chip (`--canvas-label-*`; `--action-text` ink on relationships) at the middle of the line, or at the first stop along it (35%, 65%, 20%, 80%) that no other line crosses, no table covers, and no other label overlaps. Hovering a module or line traces its connections in `--flow`, and only traced lines drift (2.4s per cycle) in Slate and Triplicate; Whiteboard and Stockroom turn the drift off. The Key (closed by default, opens upward) names relationship, handoff, required field, and optional field, and says in one line what a module and a line are. The minimap hides text and lines and shows frames and tables. When department frames or module tables cover each other, the canvas notice bar says "Some departments or modules overlap." with Auto-arrange and Dismiss; Dismiss holds until the layout changes, and Auto-arrange spaces rows by the drawn table height, so it never makes an overlap itself. Under reduced motion, the drift and the trace fade stop.
 
+### OpenComms conversation (signature)
+
+A conversation is a header, a timeline, and a composer between the conversation list and the right pane (Layout). Every refusal says why, in place, and keeps the draft.
+
+- **Header:** at least 56px tall: the conversation icon, the name as a section title (`data-slot="section-title"`), and the description in 12px muted text from 1024px up. A channel shows its scope chip, "Organization" or "Department · Sales" (with the Sales mark): 12px muted text on the sunken fill, an inset `--border` hairline, 28px tall, the `--radius` corner, at most 256px wide. For a viewer who manages the channel, the chip is a button that opens channel settings; for others it is text. Below 640px the chip hides, and a Details button shows the menu, the description, and the scope as text lines.
+- **Connection strip:** a 44px `role="status"` strip above the panes: the organization name, a muted "Connection" label, then one state: Connecting, Live, Reconnecting (only after 3 seconds, so a short drop shows nothing), Offline with a ghost Retry, or "Live updates paused in this tab" with a ghost Refresh. It is `aria-busy` while it connects.
+- **Timeline dividers:** a day divider is a 12px muted label between hairlines. The "New messages" divider is a named separator in `--action-text` at weight 600.
+- **Cannot post:** a default notice above the composer gives the reason ("This channel is archived. Restore it to post.", "Your role cannot post in this channel."), and the input is disabled.
+- **Slow mode:** Send is disabled, and a 12px muted `role="status"` line under the composer counts down ("Send available in 12s"); the input's description points at it.
+- **Other refusals:** a compact destructive notice above the input, with the server's wait when there is one ("Too many attempts. Try again in 5s."), or the mention limit ("This conversation allows 3 mentions per message."). A send that fails after it left shows "Not sent" in a destructive notice with Retry message.
+- **Mention picker:** "@" opens an inline listbox above the input: a hairline border, medium radius, at most 160px tall and 8 names, 44px rows. The active row takes the secondary fill, and the input keeps focus through `aria-activedescendant`. The query may hold spaces while a name still matches; Escape, a choice, or no match closes the list.
+- **Unavailable conversation:** the shared `Empty` state with "This conversation is not available.", "It may have been removed, or you may not have access.", and one Retry history action. The header reads "Not available", there is no composer, and the member, thread, and pinned lists stay empty (The Same Answer Rule).
+
 ## Do's and Don'ts
 
 ### Do:
@@ -729,6 +838,8 @@ An ERD-style canvas of the owner's own structure, drawn in the same materials as
 - **Do** time every transition with the motion tokens and give it a `prefers-reduced-motion` path that keeps meaning (fades, color) and drops travel.
 - **Do** show `SampleDataNote` on every screen that runs on sample data, and name the real publish state in the Sandbox header.
 - **Do** put a panel's less common controls in its one closed Advanced block, last in the panel, and give every disabled control its reason.
+- **Do** show a value that the viewer cannot change here as text on a sunken block, and keep disabled controls for actions the viewer cannot take now.
+- **Do** show an access level or a count as a word or a number; Manager is the one tinted level.
 
 ### Don't:
 
@@ -742,3 +853,5 @@ An ERD-style canvas of the owner's own structure, drawn in the same materials as
 - **Don't** use a sideways or solid block shadow; a zero-blur lift is a vertical ledge of at most 2px.
 - **Don't** use warn and danger hues closer than 30°, or an action color that reads like body ink.
 - **Don't** copy token values into other documents; point to `globals.css`, `themes/*.css`, and this file.
+- **Don't** put two choices that each need a description in a select or a segmented control; use radio cards.
+- **Don't** give a missing resource and a forbidden one different states, names, or actions.

@@ -14,7 +14,6 @@ events and change their own. ``manage`` also lets them pin posts, change tiles a
 change the posts and events of other users.
 """
 
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import Select, and_, false, or_, select
@@ -198,25 +197,46 @@ def board_reader_ids(db: Session, board: Board) -> frozenset[UUID]:
     This is the set of users for whom :func:`board_level` is not None.
     """
 
-    if board.is_deleted or board.deleted_at is not None:
+    if board.is_deleted or board.deleted_at is not None or board.scope not in {
+        BoardScope.COMPANY.value, BoardScope.DEPARTMENT.value, BoardScope.PROJECT.value,
+    }:
         return frozenset()
-    admins: Any = Membership.role == UserRole.ADMIN.value
-    statement = _active_accounts()
-    if board.scope == BoardScope.COMPANY.value:
-        return frozenset(db.scalars(statement).all())
+    return frozenset(db.scalars(board_reader_statement(select(Board.id).where(
+        Board.id == board.id,
+    ))))
+
+
+def board_reader_statement(board_ids: Select[tuple[UUID]]) -> Select[tuple[UUID]]:
+    """Readers of a caller-scoped set of live Boards; an empty set has no readers."""
+    boards = select(Board.id).where(
+        Board.id.in_(board_ids), Board.org_id == bound_organization_column(),
+        Board.is_deleted.is_(False), Board.deleted_at.is_(None),
+    ).correlate(None)
     member_groups = (
         select(GroupMember.user_id)
         .join(Group, Group.id == GroupMember.group_id)
-        .where(GroupMember.is_deleted.is_(False), Group.is_deleted.is_(False))
+        .where(
+            GroupMember.is_deleted.is_(False), Group.is_deleted.is_(False),
+            GroupMember.org_id == bound_organization_column(),
+            Group.org_id == bound_organization_column(),
+        )
     )
-    if board.scope == BoardScope.DEPARTMENT.value and board.department_id is not None:
-        readers = member_groups.join(GroupAccess, GroupAccess.group_id == Group.id).where(
-            GroupAccess.is_deleted.is_(False), GroupAccess.department_id == board.department_id
-        )
-    elif board.scope == BoardScope.PROJECT.value:
-        readers = member_groups.join(BoardGroup, BoardGroup.group_id == Group.id).where(
-            BoardGroup.is_deleted.is_(False), BoardGroup.board_id == board.id
-        )
-    else:
-        return frozenset()
-    return frozenset(db.scalars(statement.where(or_(admins, User.id.in_(readers)))).all())
+    departments = select(Board.department_id).where(
+        Board.id.in_(boards), Board.scope == BoardScope.DEPARTMENT.value,
+    )
+    department_readers = member_groups.join(GroupAccess, GroupAccess.group_id == Group.id).where(
+        GroupAccess.org_id == bound_organization_column(),
+        GroupAccess.is_deleted.is_(False), GroupAccess.department_id.in_(departments),
+    )
+    project_readers = member_groups.join(BoardGroup, BoardGroup.group_id == Group.id).where(
+        BoardGroup.org_id == bound_organization_column(), BoardGroup.is_deleted.is_(False),
+        BoardGroup.board_id.in_(boards.where(Board.scope == BoardScope.PROJECT.value)),
+    )
+    return _active_accounts().where(
+        boards.exists(),
+        or_(
+            Membership.role == UserRole.ADMIN.value,
+            boards.where(Board.scope == BoardScope.COMPANY.value).exists(),
+            User.id.in_(department_readers), User.id.in_(project_readers),
+        ),
+    )

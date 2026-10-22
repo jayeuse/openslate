@@ -479,6 +479,51 @@ class AnalyzeTests(unittest.TestCase):
         )
         self.assertEqual(violations, [])
 
+    def test_only_the_real_service_comms_specs_may_raise_timeouts(self):
+        measured = "frontend/tests/fullstack/comms-measurements.spec.ts"
+        journey = "frontend/tests/fullstack/comms-two-account.spec.ts"
+        for path, line, expected in (
+            (measured, "test.setTimeout(1_200_000);", 0),
+            (measured, "await expect(row).toBeVisible({ timeout: 200_000 });", 0),
+            (journey, "test.setTimeout(300_000);", 0),
+            (journey, "await page.waitForTimeout(100);", 1),
+            (
+                "frontend/tests/fullstack/sandbox-workspace.spec.ts",
+                "await expect(row).toBeVisible({ timeout: 200_000 });",
+                1,
+            ),
+            (measured, "test.skip('later', async () => {});", 1),
+            (measured, "await page.waitForTimeout(100);", 1),
+            (measured, "expect(value).toBeTruthy();", 1),
+            (measured, "// eslint-disable-next-line playwright/no-wait-for-timeout", 1),
+        ):
+            with self.subTest(path=path, line=line):
+                violations = self.analyze([change(path, added=[line])])
+                self.assertEqual(len(violations), expected, violations)
+
+    def test_only_the_live_preview_lane_may_poll_with_a_sleep(self):
+        live = "backend/tests/realtime/comms_previews_live.py"
+        for path, line, expected in (
+            (live, "                time.sleep(0.05)", 0),
+            (live, "    pytest.skip('later')", 1),
+            (live, "    time.sleep(0.05)  # noqa: S311", 1),
+            ("backend/tests/realtime/comms_live.py", "                time.sleep(0.05)", 1),
+        ):
+            with self.subTest(path=path, line=line):
+                violations = self.analyze([change(path, added=[line])])
+                self.assertEqual(len(violations), expected, violations)
+
+    def test_measurement_spec_still_needs_ledger_rows_for_removed_assertions(self):
+        violations = self.analyze(
+            [
+                change(
+                    "frontend/tests/fullstack/comms-measurements.spec.ts",
+                    removed=["expect(misses).toBe(3);"],
+                )
+            ]
+        )
+        self.assertEqual(len(violations), 1, violations)
+
     def test_changed_snapshot_needs_a_snapshot_ledger_row(self):
         snapshot = "frontend/tests/http/a.spec.ts-snapshots/board.aria.yml"
         self.assertEqual(len(self.analyze([change(snapshot, added=["- heading"])])), 1)

@@ -70,6 +70,8 @@ def purge_impact(
         require_unlinked(db, file.id)
     elif board_id is not None:
         raise error("file_not_found", "File not found", 404)
+    if file.purpose == "comms_attachment":
+        require_unlinked(db, file.id)
     if not file.is_deleted:
         raise error("close_required", "Archive the file before purging")
     if file.state == "uploading" or file.operation_id is not None:
@@ -88,6 +90,7 @@ def purge_impact(
                 "parent": str(file.record_id),
                 "board": str(file.board_id),
                 "department": str(file.department_id),
+                "conversation": str(file.conversation_id),
                 "bytes": file.actual_size,
             },
             sort_keys=True,

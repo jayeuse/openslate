@@ -9,7 +9,7 @@ import {
   type SetStateAction,
 } from "react";
 
-export const COMMS_DRAFT_TEXT_PREFIX = "openslate.sample.draft-text.v1.";
+export const COMMS_DRAFT_TEXT_PREFIX = "openslate.sample.draft-text.v2.";
 
 export type CommsDraftTextSnapshot = {
   value: string;
@@ -60,8 +60,9 @@ export function commsDraftTextKey(id: string): string {
 export function ownedCommsDraftTextId(
   userId: string,
   composerId: string,
+  organizationId: string,
 ): string {
-  return `${userId}:${composerId}`;
+  return `${userId}:${organizationId}:${composerId}`;
 }
 
 export function legacyCommsDraftTextKey(id: string): string {
@@ -125,18 +126,42 @@ function createCommsDraftTextStore(
   id: string,
   legacyValue: string,
   storage: CommsDraftTextStorage | undefined = browserSessionStorage(),
+  afterFailedReset = false,
 ): DraftTextStore {
   const storageKey = commsDraftTextKey(id);
-  const stored = readStoredValue(storage, storageKey);
+  // This generation must not adopt bytes that its predecessor could not erase.
+  const stored = afterFailedReset
+    ? { value: null, unavailable: true }
+    : readStoredValue(storage, storageKey);
+  function decode(raw: string | null): string | null {
+    if (raw === null) return null;
+    try {
+      const value: unknown = JSON.parse(raw);
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "id" in value &&
+        value.id === id &&
+        "value" in value &&
+        typeof value.value === "string"
+      )
+        return value.value;
+    } catch {
+      // Unowned, swapped or malformed text is never adopted into this composer.
+    }
+    return null;
+  }
+  const encode = (value: string) => JSON.stringify({ id, value });
   const hasDedicatedValue = stored.value !== null;
   let snapshot: CommsDraftTextSnapshot = {
-    value: hasDedicatedValue ? (stored.value ?? "") : legacyValue,
+    value: hasDedicatedValue ? (decode(stored.value) ?? "") : legacyValue,
     storageUnavailable: stored.unavailable,
     legacyPending: !hasDedicatedValue && legacyValue.length > 0,
     revision: 0,
   };
   const listeners = new Set<() => void>();
   let lifecycle = 0;
+  let retired = false;
   let cleanupSequence = 0;
   let pendingCleanup: { token: number; promise: Promise<boolean> } | undefined;
 
@@ -180,8 +205,8 @@ function createCommsDraftTextStore(
   }
 
   function migrate(cleanup?: CommsDraftTextCleanup): () => void {
-    if (!snapshot.legacyPending) return () => undefined;
-    if (!writeStoredValue(storage, storageKey, snapshot.value)) {
+    if (retired || !snapshot.legacyPending) return () => undefined;
+    if (!writeStoredValue(storage, storageKey, encode(snapshot.value))) {
       publish({ storageUnavailable: true });
       return () => undefined;
     }
@@ -206,7 +231,7 @@ function createCommsDraftTextStore(
     expectedRevision = snapshot.revision,
     cleanup?: CommsDraftTextCleanup,
   ): Promise<boolean> {
-    if (snapshot.revision !== expectedRevision) return false;
+    if (retired || snapshot.revision !== expectedRevision) return false;
     const startLifecycle = lifecycle;
     const legacyCleared = await cleanupPromise(cleanup);
     if (lifecycle !== startLifecycle || snapshot.revision !== expectedRevision)
@@ -215,7 +240,7 @@ function createCommsDraftTextStore(
     const removed = removeStoredValue(storage, storageKey);
     let markerWritten = true;
     if (!removed || !legacyCleared)
-      markerWritten = writeStoredValue(storage, storageKey, "");
+      markerWritten = writeStoredValue(storage, storageKey, encode(""));
     publish(
       {
         value: "",
@@ -228,6 +253,7 @@ function createCommsDraftTextStore(
   }
 
   function reset(): void {
+    retired = true;
     lifecycle += 1;
     cleanupSequence += 1;
     pendingCleanup = undefined;
@@ -251,11 +277,12 @@ function createCommsDraftTextStore(
       return () => listeners.delete(listener);
     },
     setValue(action: SetStateAction<string>) {
+      if (retired) return;
       const nextValue =
         typeof action === "function"
           ? (action as (previous: string) => string)(snapshot.value)
           : action;
-      const stored = writeStoredValue(storage, storageKey, nextValue);
+      const stored = writeStoredValue(storage, storageKey, encode(nextValue));
       publish(
         {
           value: nextValue,
@@ -268,7 +295,8 @@ function createCommsDraftTextStore(
     clear,
     reset,
     applyStorageValue(value: string | null) {
-      const nextValue = value ?? "";
+      if (retired || afterFailedReset) return;
+      const nextValue = decode(value) ?? "";
       publish(
         {
           value: nextValue,
@@ -365,16 +393,37 @@ export function useCommsDraftText(
   ];
 }
 
+/**
+ * Whether a released Comms client left its organization, so its drafts must be
+ * cleared. `tabOrganizationId` is the tab's stored organization.
+ */
+export function commsDraftOrganizationLeft(
+  tabOrganizationId: string | null,
+  organizationId: string,
+): boolean {
+  // No stored organization means the tab follows the session; that is not a
+  // switch. Sign-out clears drafts through its own session cleanup listener.
+  return tabOrganizationId !== null && tabOrganizationId !== organizationId;
+}
+
 /** Clear one account's dedicated draft values during logout/reset. */
-export function clearCommsDraftTextStore(userId?: string): boolean {
+export function clearCommsDraftTextStore(
+  userId?: string,
+  organizationId?: string,
+): boolean {
   let cleared = true;
-  const ownedIdPrefix = userId === undefined ? null : `${userId}:`;
+  const ownedIdPrefix =
+    userId === undefined
+      ? null
+      : `${userId}:${organizationId === undefined ? "" : `${organizationId}:`}`;
   for (const [id, entry] of entries) {
     if (ownedIdPrefix !== null && !id.startsWith(ownedIdPrefix)) continue;
     try {
       entry.reset();
-      if (entry.getSnapshot().storageUnavailable) cleared = false;
-      else entries.delete(id);
+      if (entry.getSnapshot().storageUnavailable) {
+        cleared = false;
+        entries.set(id, createCommsDraftTextStore(id, "", entry.storage, true));
+      } else entries.delete(id);
     } catch {
       cleared = false;
     }
@@ -388,9 +437,17 @@ export function clearCommsDraftTextStore(userId?: string): boolean {
         userId === undefined
           ? COMMS_DRAFT_TEXT_PREFIX
           : `${COMMS_DRAFT_TEXT_PREFIX}${encodeURIComponent(ownedIdPrefix!)}`;
+      const legacyPrefix =
+        userId === undefined
+          ? "openslate.sample.draft-text.v1."
+          : `openslate.sample.draft-text.v1.${encodeURIComponent(`${userId}:`)}`;
       for (let index = 0; index < storage.length; index++) {
         const key = storage.key(index);
-        if (key?.startsWith(ownedStoragePrefix)) keys.push(key);
+        if (
+          key?.startsWith(ownedStoragePrefix) ||
+          key?.startsWith(legacyPrefix)
+        )
+          keys.push(key);
       }
     } catch {
       cleared = false;

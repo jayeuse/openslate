@@ -13,6 +13,19 @@ export function notificationPresentation(
 ): NotificationPresentation {
   let label: string, href: string | null, actionLabel: string;
   switch (item.kind) {
+    case "comms-mention":
+    case "comms-direct":
+    case "comms-thread-reply":
+    case "comms-keyword":
+      label = {
+        "comms-mention": "Mention",
+        "comms-direct": "Direct message",
+        "comms-thread-reply": "Thread reply",
+        "comms-keyword": "Keyword match",
+      }[item.kind];
+      href = `/comms?conversation=${item.conversationId}&message=${item.messageId}`;
+      actionLabel = "Open message";
+      break;
     case "report-run":
       label = "Scheduled report run";
       href = `/openview?section=reports&report=${item.reportId}&run=${item.runId}`;

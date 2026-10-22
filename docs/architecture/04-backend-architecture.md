@@ -32,7 +32,9 @@ listeners publish opaque PostgreSQL notifications on Supabase Database through
 [`publisher.py`](../../backend/app/systems/platform/events/publisher.py).
 [`hub.py`](../../backend/app/systems/platform/events/hub.py) reauthorizes
 subscribers and bounds queues. Event streams contain invalidation data only.
-Supabase Realtime is not the current transport.
+OpenComms additionally uses private Supabase Realtime topics for opaque message,
+membership, presence and typing notifications; it does not replace the other
+systems' SSE transport or move authorized content reads out of FastAPI.
 
 File services use the server-only [Supabase Storage adapter](../../backend/app/systems/platform/files/supabase_storage.py)
 and the private `openslate-ready` bucket. They validate the file type in a
@@ -76,10 +78,11 @@ services add their object, audience and lifecycle checks. See
 | Sandbox | Operational schema, Records, relationships, lifecycle, design documents, publication, record triggers and test-run evidence | `app/systems/sandbox/` |
 | OpenView | Department Dashboards, shared saved Views, report definitions, frozen runs and schedules | `app/systems/openview/` |
 | Boards | Scoped Boards and project Board groups, posts and their revisions, events with author-set reminders, tiles, attachments, record links and configuration portability | `app/systems/boards/` |
+| Comms | Conversations, messages/threads, scoped people/search/files, settings/capabilities, moderation, durable jobs and optional link metadata | `app/systems/comms/` |
 | Manage | Workspace profile, transactional audit and security-event inspection | `app/systems/manage/` |
 | Platform | Private Storage files, authenticated invalidations, and in-app scheduled-work references | `app/systems/platform/` |
 
-Comms remains reserved. Report and Dashboard configurations do not grant access
+Report and Dashboard configurations do not grant access
 to their source Records. Report capture uses a repeatable-read snapshot, then
 rechecks authorization and recipe state before storing the run and the users who
 can read its module. A scheduled run acts as the workspace. Stored report rows
@@ -115,7 +118,138 @@ paging. It then batches only the returned page's post and reminder
 reference columns, with at most one lookup for each kind present. These maps
 last only for that response and contain no content bodies; they do not cache
 authorization or change the separately locked, audited mark-read operation.
-The implementation is `platform/scheduling/notification_router.py`.
+The implementation is `platform/scheduling/notification_router.py`. Comms notifications
+store only recipient/message/conversation references, in the message send transaction.
+`comms/notifications.py` selects current eligible members using the resolved notification
+policy; quiet hours do not remove inbox rows. List, count and mark-read recheck the stored
+conversation against the current message parent and current conversation access. Page
+hydration repeats that check without copying message content. IDs-only notification events
+use the existing Comms after-response publisher on each recipient's private user topic.
+
+## OpenComms backend contract
+
+**Status:** backend contracts are implemented. Complete integrated frontend,
+provider-pack, capacity and target-platform acceptance remain separate. This
+source-backed description is not a claim that those acceptance gates have run.
+
+[`comms/router.py`](../../backend/app/systems/comms/router.py) assembles the
+`/api/comms` route families. Bootstrap and conversation/message reads, sends,
+replies, edits, reactions, search, files, settings, templates,
+moderation and jobs all use the current application session and organization.
+`X-Org` selects the request organization, otherwise the session's active
+organization applies. RLS backs explicit organization predicates; neither a
+browser's selected tab nor possession of a Realtime token is permission to read
+content. Message and reply history use exclusive sequence keysets; ordinary
+catalogs retain the standard list contract. See the registered response schemas
+and [API architecture](07-api-architecture.md), rather than deriving endpoints
+from a UI label.
+
+[`comms/access.py`](../../backend/app/systems/comms/access.py) derives readable,
+postable and manageable conversations from the current organization membership,
+the conversation scope and the central department-access policy. Every member
+posts in an organization channel. In a department channel, the department level
+gives read, post (department `write`) or manage; module rows give no channel
+access. Direct and group messages use their member rows. On a channel, member
+rows are only a manager roster: the creator's row and `manager` rows. Guests are
+capped at read. An administrator manages every channel but has no blanket read of
+a direct or group message without membership; report-scoped moderation does not
+grant ordinary conversation readability. Capabilities and settings add operation-specific restrictions, not
+a replacement authorization system. Private person, attachment, record-link,
+search and notification projections recheck their current source access.
+
+Report-bound `POST /api/comms/reports/{report_id}/message-removal` and
+`message-restoration` take **no request body** and return only
+`CommsReportResponse`, not a message projection. That response contains report
+identity/linkage, reason and status, not private message text, and the action
+grants no ordinary conversation read access. See
+[`moderation/router.py:133–144`](../../backend/app/systems/comms/moderation/router.py#L133-L144)
+and the [`report response schema`](../../backend/app/systems/comms/moderation/schemas.py#L27-L36).
+
+The send transaction in [`messages/service.py`](../../backend/app/systems/comms/messages/service.py)
+serializes the conversation counter, validates references and current authority,
+then commits the message, required related rows and audit changes together.
+The author/client-key identity makes retry idempotent; reusing it for a different
+command is a conflict. Edits/deletes advance a source generation. Mutation code
+continues to use individual `AuditSession` ORM changes, never a bulk-delete
+shortcut. Message bodies, fingerprints and cached preview text are audit-redacted.
+
+[`realtime/publication.py`](../../backend/app/systems/comms/realtime/publication.py)
+validates private envelopes against the bound organization/actor, buffers them
+through transaction/savepoint completion and discards rolled-back work.
+[`publisher.py`](../../backend/app/systems/comms/realtime/publisher.py) submits
+after the response, outside SQL locks, through a bounded server-only HTTP client.
+Delivery is best effort, not an atomic database-plus-network commit: a publish
+failure cannot undo an accepted message. Clients must recover using current
+authorized sequence/history reads, not trust an event as a content snapshot.
+
+The private topic families are `org:<org>:conversation:<id>`,
+`org:<org>:user:<id>` and `org:<org>:presence`. FastAPI's current-access projection
+in [`realtime/grants.py`](../../backend/app/systems/comms/realtime/grants.py)
+supplies joins; browsers do not publish authoritative messages or presence.
+[`POST /api/realtime/token`](../../backend/app/systems/platform/realtime/router.py)
+rechecks account/session/membership and issues a five-minute purpose-specific
+token. After removal, content reads are refused immediately; already-joined
+ID-only delivery can continue until token expiry. This bound is not immediate
+socket revocation. Presence snapshots remain current-authorized HTTP projections.
+
+### Protected configuration and durable work
+
+- Templates validate bounded JSON at write time. Multi-channel apply binds one
+  aggregate preview and current versions, skips locked keys, and commits atomically.
+  Configuration history reconstructs real organization audit changes; incomplete
+  reconstruction is unavailable, not invented history. Restore requires current
+  exact-administrator/source authority, preview/version/password confirmation,
+  and the same validated settings writers. See `comms/templates/` and
+  `comms/settings/{history,history_replay,service}.py`.
+- [`jobs/worker.py`](../../backend/app/systems/comms/jobs/worker.py) adds scheduled
+  sends, exports, retention and preview work to the existing organization-bound
+  scheduling worker. Durable claims use leases and source/actor/version fences;
+  a stale claim cannot overwrite a newer source. Scheduled sends re-enter the
+  ordinary send path. Private Storage artifacts and cleanup state are not
+  bypassed on failure.
+- Exports produce real CSV or XLSX with an **inclusive 8 MiB encoded-artifact
+  bound**, never a truncated result; see [`jobs/encoding.py`](../../backend/app/systems/comms/jobs/encoding.py).
+  They use the export-only **exact-administrator purpose (D31)**, separate from
+  ordinary conversation readability (D43), and grant no ordinary read access.
+  Private-source export creation additionally requires fresh password confirmation
+  and a recorded reason. Captured source/authority bindings and current
+  administrator/source eligibility are rechecked for generation and download;
+  see [`exports.py`](../../backend/app/systems/comms/jobs/exports.py) and
+  [`export_service.py`](../../backend/app/systems/comms/jobs/export_service.py).
+- Retention uses audited, bounded individual mutations and durable cleanup
+  progress. Expired message content and revisions are irreversibly erased;
+  attachment access is fenced immediately and Storage-byte erasure completes
+  through durable cleanup, not assumed success. Minimal identity/linkage anchors
+  remain while references, including younger replies or quotes, need them;
+  later bounded garbage collection removes anchors when message/export references
+  permit. Expired content cannot be restored. See
+  [`retention_worker.py`](../../backend/app/systems/comms/jobs/retention_worker.py),
+  [`retention_files.py`](../../backend/app/systems/comms/jobs/retention_files.py) and
+  [`moderation/service.py`](../../backend/app/systems/comms/moderation/service.py#L129-L131).
+  Purge retains archived-state, exact-administrator, password,
+  preview/digest and current-version protections through its existing lifecycle
+  path. Neither cleanup failure nor performance pressure authorizes raw SQL
+  deletion, a provider-volume reset or weaker confirmation.
+- Link previews default off. The existing message projection carries optional
+  `url/title/description/site_name`; no preview-fetch endpoint is exposed.
+  [`previews/`](../../backend/app/systems/comms/previews/) accepts public HTTP(S)
+  targets only, validates every DNS answer, pins the connection while retaining
+  original Host/TLS hostname verification, refuses redirects, and bounds total
+  fetching/parsing to five seconds and content to 512 KiB. It stores plain
+  metadata only. Unavailable egress yields no preview, not a failed message.
+  Current message generation, URL, settings, actor/source access and lease are
+  checked before applying the result; reads never trigger network work.
+
+Operational limits are not product entitlements: messages have a 4,000-character
+body bound and at most ten attachments; the server file ceiling remains 10 MiB
+subject to the resolved file policy; sends are capped at twenty committed sends
+per actor/organization per ten seconds. There are at most one hundred pending
+schedules per author/organization and six Realtime token issuances per minute
+per actor/organization. Templates have a 64 KiB raw/canonical JSON bound.
+Refusals and `Retry-After` must be respected; do not increase limits to conceal
+failed acceptance measurements. Authoritative definitions live in
+`messages/mutations.py`, `rate_limit.py`, `jobs/schedules.py`,
+`templates/schemas.py` and `platform/realtime/router.py`.
 
 ## Background ownership and failure boundaries
 

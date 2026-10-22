@@ -14,6 +14,9 @@ from typing import Any, cast
 from uuid import UUID
 
 from operations.sample.client import SampleClient
+from operations.sample.controls.comms_content_verification import verify_content_runs
+from operations.sample.controls.comms_search import verify_search_runs
+from operations.sample.controls.comms_settings import verify_settings_runs
 from operations.sample.controls.verification import configuration_mappings, verify_controls
 from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.registry import default_pack, get_pack
@@ -300,6 +303,24 @@ def verify_sample_data(
                 )
                 observed.update(control_counts)
                 issues.extend(control_issues)
+                settings_counts, settings_issues = verify_settings_runs(
+                    client, dataset, manifest, expected_admin_id, api_url=api_url, origin=origin,
+                    journal=journal, admin_login=(admin_email, admin_password),
+                )
+                observed.update(settings_counts)
+                issues.extend(settings_issues)
+                content_counts, content_issues = verify_content_runs(
+                    client, dataset, manifest, expected_admin_id, api_url=api_url, origin=origin,
+                    journal=journal, admin_login=(admin_email, admin_password),
+                )
+                observed.update(content_counts)
+                issues.extend(content_issues)
+                search_counts, search_issues = verify_search_runs(
+                    client, dataset, manifest, expected_admin_id, api_url=api_url, origin=origin,
+                    journal=journal, admin_login=(admin_email, admin_password),
+                )
+                observed.update(search_counts)
+                issues.extend(search_issues)
                 try:
                     configuration_maps = configuration_mappings(manifest, dataset)
                 except SampleVerificationError:

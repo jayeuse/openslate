@@ -339,7 +339,7 @@ def test_control_plan_and_result_must_match_the_pack_derived_action(
 
 @pytest.mark.parametrize(
     "mutation",
-    ("actor", "method", "path"),
+    ("actor", "method", "path", "empty_evidence"),
 )
 def test_control_request_rejects_inconsistent_actor_method_or_path(
     tmp_path: Path, monkeypatch, mutation: str
@@ -352,6 +352,8 @@ def test_control_request_rejects_inconsistent_actor_method_or_path(
         evidence["actor_id"] = MANAGER_ID
     elif mutation == "method":
         evidence["method"] = "GET"
+    elif mutation == "empty_evidence":
+        manifest["control_results"][0]["request_evidence"] = []
     else:
         evidence["path"] = "/api/unregistered"
 

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { isIP } from "node:net";
 import { resolve } from "node:path";
 import { parseEnv } from "node:util";
@@ -91,6 +91,36 @@ function resolveEnvironmentValue(name, values, chain = []) {
       throw new Error(`${name} references missing ${reference}`);
     return resolved;
   });
+}
+
+function developmentRealtime() {
+  const configured = readEnvironmentFile();
+  const value = (name) =>
+    process.env[name] ?? resolveEnvironmentValue(name, configured);
+  const origin = value("SUPABASE_URL");
+  const publishableKey = value("SUPABASE_PUBLISHABLE_KEY");
+  if (!origin || !publishableKey) return null;
+  let gateway;
+  try {
+    gateway = new URL(origin);
+  } catch {
+    throw new Error("SUPABASE_URL must be an owned HTTP loopback origin");
+  }
+  if (
+    gateway.protocol !== "http:" ||
+    !["127.0.0.1", "localhost", "[::1]"].includes(gateway.hostname) ||
+    !isValidPort(gateway.port) ||
+    gateway.username ||
+    gateway.password ||
+    gateway.pathname !== "/" ||
+    gateway.search ||
+    gateway.hash
+  )
+    throw new Error("SUPABASE_URL must be an owned HTTP loopback origin");
+  if (!/^sb_publishable_[A-Za-z0-9_-]+$/.test(publishableKey))
+    throw new Error("SUPABASE_PUBLISHABLE_KEY must be a publishable key");
+  // Only this server-side closure retains the key; Next's environment is unchanged.
+  return { gateway, publishableKey };
 }
 
 function developmentOriginHost(value) {
@@ -260,13 +290,152 @@ function sanitizeForwardingHeaders(request) {
   return true;
 }
 
+function realtimeTarget(request) {
+  try {
+    const target = new URL(request.url, "http://localhost");
+    const path = decodeURIComponent(target.pathname);
+    if (
+      path === "/realtime" ||
+      path.startsWith("/realtime/") ||
+      path === "/api/broadcast" ||
+      path.startsWith("/api/broadcast/")
+    )
+      return target;
+  } catch {
+    /* Other malformed paths remain with Next's normal request handling. */
+  }
+  return null;
+}
+
+function rejectUpgrade(socket, status) {
+  if (!socket.destroyed)
+    socket.end(
+      `HTTP/1.1 ${status} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+    );
+}
+
+function proxyRealtime(
+  request,
+  downstream,
+  head,
+  target,
+  realtime,
+  origin,
+  sockets,
+) {
+  if (
+    request.method !== "GET" ||
+    target.pathname !== "/realtime/v1/websocket" ||
+    request.url.split("?", 1)[0] !== target.pathname ||
+    request.headers.upgrade?.toLowerCase() !== "websocket"
+  )
+    return rejectUpgrade(downstream, 404);
+  if (
+    [...target.searchParams.keys()].some(
+      (name) => name.toLowerCase() === "apikey",
+    )
+  )
+    return rejectUpgrade(downstream, 400);
+  if (!origin || request.headers.origin !== origin)
+    return rejectUpgrade(downstream, 403);
+  if (!realtime) return rejectUpgrade(downstream, 503);
+  const { gateway, publishableKey } = realtime;
+  const headers = {
+    host: gateway.host,
+    apikey: publishableKey,
+    connection: "Upgrade",
+    upgrade: "websocket",
+  };
+  for (const name of [
+    "origin",
+    "sec-websocket-key",
+    "sec-websocket-version",
+    "sec-websocket-protocol",
+    "sec-websocket-extensions",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-proto",
+  ]) {
+    if (request.headers[name] !== undefined)
+      headers[name] = request.headers[name];
+  }
+  downstream.pause();
+  let upgraded = false;
+  const upstream = httpRequest({
+    hostname: gateway.hostname.startsWith("[")
+      ? gateway.hostname.slice(1, -1)
+      : gateway.hostname,
+    port: gateway.port,
+    method: "GET",
+    path: target.pathname + target.search,
+    headers,
+    timeout: 10_000,
+  });
+  upstream.on("socket", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  downstream.once("close", () => upstream.destroy());
+  downstream.on("error", () => upstream.destroy());
+  upstream.on("timeout", () => upstream.destroy());
+  upstream.on("error", () =>
+    upgraded ? downstream.destroy() : rejectUpgrade(downstream, 502),
+  );
+  upstream.on("response", (response) => {
+    rejectUpgrade(downstream, response.statusCode ?? 502);
+    response.resume();
+  });
+  upstream.on("upgrade", (response, socket, upstreamHead) => {
+    upgraded = true;
+    if (downstream.destroyed) {
+      socket.destroy();
+      return;
+    }
+    socket.setTimeout(0);
+    downstream.setTimeout(0);
+    const allowed = new Set([
+      "connection",
+      "upgrade",
+      "sec-websocket-accept",
+      "sec-websocket-protocol",
+      "sec-websocket-extensions",
+    ]);
+    let reply = "HTTP/1.1 101 Switching Protocols\r\n";
+    for (let index = 0; index < response.rawHeaders.length; index += 2) {
+      if (allowed.has(response.rawHeaders[index].toLowerCase()))
+        reply += `${response.rawHeaders[index]}: ${response.rawHeaders[index + 1]}\r\n`;
+    }
+    downstream.write(reply + "\r\n");
+    if (upstreamHead.length) downstream.write(upstreamHead);
+    if (head.length) socket.write(head);
+    downstream.once("close", () => socket.destroy());
+    socket.on("error", () => downstream.destroy());
+    socket.once("close", () => downstream.destroy());
+    downstream.pipe(socket).pipe(downstream);
+    downstream.resume();
+  });
+  upstream.end();
+}
+
 async function startDevelopmentServer(argumentsToInspect) {
   const options = developmentOptions(argumentsToInspect);
+  const realtime = developmentRealtime();
+  const originHost = process.env.OPENSLATE_DEV_ORIGIN_HOST;
+  const realtimeOrigin = originHost
+    ? new URL(`http://${originHost}:${options.port}`).origin
+    : null;
   const { default: next } = await import("next");
+  const sockets = new Set();
   let handler;
   const server = createServer((request, response) => {
     if (!sanitizeForwardingHeaders(request)) {
       response.writeHead(400, { Connection: "close" });
+      response.end();
+      return;
+    }
+    if (realtimeTarget(request)) {
+      response.writeHead(404);
       response.end();
       return;
     }
@@ -276,9 +445,23 @@ async function startDevelopmentServer(argumentsToInspect) {
       response.end();
     });
   });
-  // Installed Next owns upgrade dispatch; this listener only sanitizes ingress.
-  server.prependListener("upgrade", (request, socket) => {
-    if (!sanitizeForwardingHeaders(request)) socket.destroy();
+  // Installed Next leaves unmatched upgrades to custom handlers; it still owns HMR.
+  server.prependListener("upgrade", (request, socket, head) => {
+    if (!sanitizeForwardingHeaders(request)) {
+      socket.destroy();
+      return;
+    }
+    const target = realtimeTarget(request);
+    if (target)
+      proxyRealtime(
+        request,
+        socket,
+        head,
+        target,
+        realtime,
+        realtimeOrigin,
+        sockets,
+      );
   });
   const application = next({
     dev: true,
@@ -286,7 +469,6 @@ async function startDevelopmentServer(argumentsToInspect) {
     ...options,
     httpServer: server,
   });
-  const sockets = new Set();
   server.on("connection", (socket) => {
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));

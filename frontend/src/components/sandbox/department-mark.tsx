@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { departmentTone } from "@/lib/sandbox/canvas-geometry";
+import { departmentTone } from "@/lib/sandbox/department-tone";
 
 // Static class names, so Tailwind emits every tone and a look can restyle
 // the mark through `--dept-n`.

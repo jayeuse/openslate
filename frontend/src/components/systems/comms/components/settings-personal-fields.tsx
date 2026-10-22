@@ -24,7 +24,7 @@ import { Slider } from "@/components/ui/slider";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Choice, Toggle } from "../../shared/components/ui";
 import { TextField } from "./ui";
-import type { Channel } from "../domain/model";
+import type { Channel } from "../domain/view-model";
 import {
   DEFAULT_COMMS_PREFERENCES,
   type CommsPreferences,
@@ -41,6 +41,16 @@ export type PersonalFieldsProps = {
   search: string;
   modifiedOnly: boolean;
   channels: Channel[];
+  tier?: "common" | "advanced" | "all";
+};
+
+export const PERSONAL_ADVANCED_KEYS: Record<
+  string,
+  (keyof CommsPreferences)[]
+> = {
+  appearance: ["timestamps", "groupMessages", "avatars", "previews"],
+  navigation: ["channelWidth", "memberWidth", "threadWidth"],
+  shortcuts: ["shortcuts"],
 };
 
 export function PersonalFields({
@@ -51,6 +61,7 @@ export function PersonalFields({
   search,
   modifiedOnly,
   channels,
+  tier = "all",
 }: PersonalFieldsProps) {
   const controls: {
     key: keyof CommsPreferences;
@@ -121,7 +132,7 @@ export function PersonalFields({
   ];
   return (
     <FieldGroup>
-      {section === "appearance" && (
+      {section === "appearance" && tier === "advanced" && (
         <Card aria-label="Appearance preview" className="w-full">
           <CardHeader className="p-4">
             <CardTitle>Appearance preview</CardTitle>
@@ -177,7 +188,7 @@ export function PersonalFields({
           </CardContent>
         </Card>
       )}
-      {section === "navigation" && (
+      {section === "navigation" && tier === "advanced" && (
         <Card aria-label="Panel layout preview" className="w-full">
           <CardHeader className="p-4">
             <CardTitle>Panel layout preview</CardTitle>
@@ -212,6 +223,10 @@ export function PersonalFields({
       {controls
         .filter(
           (control) =>
+            (tier === "all" ||
+              (PERSONAL_ADVANCED_KEYS[control.section]?.includes(control.key) ??
+                false) ===
+                (tier === "advanced")) &&
             (section === "all" || control.section === section) &&
             (!search || control.label.toLowerCase().includes(search)) &&
             (!modifiedOnly ||
@@ -283,71 +298,76 @@ export function PersonalFields({
             </div>
           );
         })}
-      {(section === "navigation" ||
-        (section === "all" && /favorite|hidden|channel/.test(search))) && (
-        <>
-          {["favorites", "hiddenChannels"].map((key) => (
-            <FieldSet key={key} className="rounded-md border px-3">
-              <FieldLegend className="px-1 text-sm font-medium">
-                {key === "favorites" ? "Favorite channels" : "Hidden channels"}
-              </FieldLegend>
-              {channels.map((channel) => (
-                <Toggle
-                  key={channel.id}
-                  label={`#${channel.name}`}
-                  checked={preferences[
-                    key as "favorites" | "hiddenChannels"
-                  ].includes(channel.id)}
-                  onCheckedChange={(checked) =>
-                    setPreferences((current) => ({
-                      ...current,
-                      [key]: checked
-                        ? [
-                            ...current[key as "favorites" | "hiddenChannels"],
-                            channel.id,
-                          ]
-                        : current[key as "favorites" | "hiddenChannels"].filter(
-                            (id) => id !== channel.id,
-                          ),
-                    }))
-                  }
-                />
-              ))}
-            </FieldSet>
-          ))}
-        </>
-      )}
-      {(section === "shortcuts" ||
-        (section === "all" && /shortcut|search|new message/.test(search))) && (
-        <>
-          {Object.entries(preferences.shortcuts).map(([key, value]) => (
-            <TextField
-              key={key}
-              label={
-                key === "search"
-                  ? "Search shortcut"
-                  : key === "newMessage"
-                    ? "New message shortcut"
-                    : key
-              }
-              value={value}
-              onChange={(event) =>
-                setPreferences((current) => ({
-                  ...current,
-                  shortcuts: {
-                    ...current.shortcuts,
-                    [key]: event.target.value,
-                  },
-                }))
-              }
-            />
-          ))}
-          <p className="text-muted-foreground text-xs">
-            Use combinations such as Ctrl+K, Alt+N, or Meta+K. Leave empty to
-            disable a shortcut.
-          </p>
-        </>
-      )}
+      {tier !== "advanced" &&
+        (section === "navigation" ||
+          (section === "all" && /favorite|hidden|channel/.test(search))) && (
+          <>
+            {["favorites", "hiddenChannels"].map((key) => (
+              <FieldSet key={key} className="rounded-md border px-3">
+                <FieldLegend className="px-1 text-sm font-medium">
+                  {key === "favorites"
+                    ? "Favorite channels"
+                    : "Hidden channels"}
+                </FieldLegend>
+                {channels.map((channel) => (
+                  <Toggle
+                    key={channel.id}
+                    label={`#${channel.name}`}
+                    checked={preferences[
+                      key as "favorites" | "hiddenChannels"
+                    ].includes(channel.id)}
+                    onCheckedChange={(checked) =>
+                      setPreferences((current) => ({
+                        ...current,
+                        [key]: checked
+                          ? [
+                              ...current[key as "favorites" | "hiddenChannels"],
+                              channel.id,
+                            ]
+                          : current[
+                              key as "favorites" | "hiddenChannels"
+                            ].filter((id) => id !== channel.id),
+                      }))
+                    }
+                  />
+                ))}
+              </FieldSet>
+            ))}
+          </>
+        )}
+      {tier !== "common" &&
+        (section === "shortcuts" ||
+          (section === "all" &&
+            /shortcut|search|new message/.test(search))) && (
+          <>
+            {Object.entries(preferences.shortcuts).map(([key, value]) => (
+              <TextField
+                key={key}
+                label={
+                  key === "search"
+                    ? "Search shortcut"
+                    : key === "newMessage"
+                      ? "New message shortcut"
+                      : key
+                }
+                value={value}
+                onChange={(event) =>
+                  setPreferences((current) => ({
+                    ...current,
+                    shortcuts: {
+                      ...current.shortcuts,
+                      [key]: event.target.value,
+                    },
+                  }))
+                }
+              />
+            ))}
+            <p className="text-muted-foreground text-xs">
+              Use combinations such as Ctrl+K, Alt+N, or Meta+K. Leave empty to
+              disable a shortcut.
+            </p>
+          </>
+        )}
       {section === "all" && !search && !changed(baseline, preferences) && (
         <p className="text-muted-foreground text-xs">
           Your saved preferences are shown.

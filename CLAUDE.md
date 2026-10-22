@@ -21,7 +21,7 @@ Claude is the design and frontend agent for this repository: UI, UX, visual desi
 
 ## Design work
 
-- **Design skills: `impeccable` and `ui-ux-pro-max` only.** Impeccable owns design, redesign, critique, audit, polish, and the design-system files; `ui-ux-pro-max` is its reference catalog and never decides or writes design files. Load no other design skill for any design operation, including plugin and personal skills (`design:*`, `frontend-design*`, `artifact-design` outside Artifact pages). `react-frontend-patterns` holds implementation rules, not design direction.
+- **Design skills: `ui-ux-pro-max` and `impeccable` only. `ui-ux-pro-max` always has priority over `impeccable`.** `ui-ux-pro-max` owns system layout, information architecture, flows, interface and UI changes, interaction patterns, responsive behavior, accessibility, and UX improvements that make the product easier to use. `impeccable` owns design choices and visual presentation inside that structure: typography, color, tokens, spacing rhythm, motion, polish, and brand voice. `impeccable` stays the only writer of the design-system files (`DESIGN.md`, `.impeccable/design.json`) and records `ui-ux-pro-max` layout decisions there. On any conflict, the `ui-ux-pro-max` decision wins and `impeccable` adjusts the visuals; `impeccable` never overrides a layout, flow, or usability decision. Load no other design skill for any design operation, including plugin and personal skills (`design:*`, `frontend-design*`, `artifact-design` outside Artifact pages). `react-frontend-patterns` holds implementation rules, not design direction.
 - **Design truth** lives in `.impeccable/design.json`, `PRODUCT.md`, and the tokens in `frontend/src/app/globals.css`. Point to these files; never copy token values into other documents.
 - **No image generation** exists in this harness. Build code-led: SVG for marks, icons, and illustrations; CSS and canvas for texture and motion. The existing comps in `.impeccable/mocks/` are valid references. If a flow needs a new raster comp or asset, say so and continue code-led; never fake one.
 - **Library facts.** This is Next.js 16, React 19, and Tailwind v4 (CSS-first). Before writing framework code from memory, check `node_modules/next/dist/docs/` (per `frontend/AGENTS.md`) or Context7. For a shadcn primitive, check `src/components/ui/` first, then the shadcn MCP.
@@ -29,7 +29,8 @@ Claude is the design and frontend agent for this repository: UI, UX, visual desi
 Correct: `Checked Context7 for the Tailwind v4 @theme syntax, then added the token to globals.css.`
 Wrong: `Added a tailwind.config.ts with the new color.` (v4 here has no config file.)
 
-Correct: `Ran impeccable critique on /boards; pulled two chart-type options from ui-ux-pro-max for the summary widget.`
+Correct: `Settled the /boards filter layout and keyboard flow with ui-ux-pro-max, then had impeccable choose type, color, and spacing within that layout.`
+Wrong: `Let impeccable move the /boards filters into a side panel for visual balance, against the ui-ux-pro-max layout.`
 Wrong: `Ran design:design-critique on /boards, then design:accessibility-review.`
 
 ## Visual verification loop
@@ -45,6 +46,51 @@ Required for every change that affects rendered UI. Code review alone is not ver
 
 Correct: `Screenshots at 1440 and 390 show the toolbar wraps on mobile; moved actions into the overflow menu; second round clean; ui-reviewer: ship.`
 Wrong: `Updated the toolbar styles; should look good on mobile now.`
+
+## Hands-on testing
+
+Claude owns hands-on testing: using the real app as each role would, on the live development stack. It complements the automated suites and never replaces them; mocked HTTP suites passed while hands-on tests found lost messages and wrong author names.
+
+Run two kinds of passes:
+
+- **Feature pass**, right after each feature or slice that changes user-visible behavior is implemented (including a cutover from mocks to real APIs, and after a defect fix lands). Purpose: find errors, bugs and UX issues early, so they are fixed inside the implementation phase, not after it.
+- **Release smoke pass**, once implementation is essentially done and before the pre-push gate. Purpose: smoke out underlying and cross-feature issues before anything is pushed. Cover every role end to end on both a fresh organization (create a new one; never reset development data for this) and an existing sample-pack organization (Harbor, and School when its pack is loaded), plus the flows that span features.
+
+Fresh organizations expose first-run and empty-state defects; sample-pack organizations expose defects that need real volume, many people, groups, records and history. A feature pass uses the sample-pack organization by default, and adds a fresh organization when the feature touches first-run or empty states. Order: smoke pass, then its fixes, then free the machine and run the gate (rule zero forbids running them together).
+
+1. Check preconditions: owned dev stack up (`python3 scripts/dev.py db`), database at head (provision role, `uv run alembic upgrade head`), API `/api/ready` ready. Start nothing beside a heavy test lane or a measurement run (rule zero in `AGENTS.md`).
+2. Use one Next dev server per checkout. If another agent needs the port, stop yours; stop it after the pass either way.
+3. Sign in with the hands-on accounts below. Use the second account of a two-account test in the playwright MCP browser so its cookies stay separate.
+4. Before testing, write down what each account should see and do for the feature under test; then check it against what the app does.
+5. A feature pass covers the changed feature for the account levels it affects. A release smoke pass covers, per account level: first-run and empty states, the core flow, permission edges, two-account real-time delivery with measured latency, persistence after reload, desktop 1440x900 and mobile 390x844, console errors, and API request counts on a cold load.
+6. Report each defect with steps, expected versus actual, evidence (network, console, screenshot), and severity.
+7. Every defect becomes a failing-first automated test in its fix commit. The implementing agent fixes it; Claude retests it by hand.
+8. Leave test data in the development database and list what was created.
+
+### Hands-on accounts
+
+Each sample-pack organization keeps one dedicated account per access level (`ho-` means hands-on). Leave the sample people untouched.
+
+| Account | Level | Expected |
+|---|---|---|
+| `ho-admin` | Organization admin | Manages the organization; cannot read others' DMs or private channels (D43) |
+| `ho-manager` | Member, manage on one department | Manages that department's conversations only |
+| `ho-writer` | Member, write on some modules | Posts where readable; no admin or manager tools |
+| `ho-reader` | Member, read only | Reads; cannot post where posting needs write |
+| `ho-noaccess` | Member, no group access | Sees only conversations they belong to |
+| `ho-guest` | Guest in one group | Read-capped; no admin or manager actions |
+
+- Create them by inviting in Access → People and completing each invitation through Mailpit (`127.0.0.1:<SUPABASE_MAIL_PORT>`). The owner signs in once to invite `ho-admin`; `ho-admin` invites the rest, so later passes need no owner sign-in.
+- Keep the generated passwords only in `~/.config/openslate-handson/accounts.json` (mode 600, outside the repo). If the file is lost, reset through Forgot password and Mailpit.
+- Never read `.env` or sample-run credential files (SEC-R3).
+- The S34 guarded reset removes these accounts' organization data; recreate them afterwards.
+
+Correct: `Admin in the pane, invited member in playwright MCP: delivery 250 ms, reply live; B7 first send after load dropped with no POST and no "Not sent" (high); sent to the implementer as a failing-first test; retest after the fix.`
+Correct: `Release smoke pass on a fresh organization and on Harbor before the gate: admin, member and guest end to end in both; one cross-feature defect (scheduled message ignores a later block) fixed with a failing-first test; then the gate ran on the freed machine.`
+Wrong: `HTTP suite is green, so the cutover works.`
+Wrong: `Ran the release smoke pass while prepush.py was running.`
+Wrong: `Logged in as a sample person using the password from the sample-run file.`
+Wrong: `Tested only as admin; the feature works.`
 
 ## Advisor (Fable)
 

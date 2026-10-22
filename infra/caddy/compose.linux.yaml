@@ -7,3 +7,5 @@ services:
     ports: !reset []
     extra_hosts: !reset []
     networks: !reset []
+    environment:
+      OPENSLATE_REALTIME_UPSTREAM: 127.0.0.1:${SUPABASE_API_PORT:-58000}

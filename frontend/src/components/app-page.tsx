@@ -739,13 +739,18 @@ export function AppPage({ children }: AppPageProps) {
   }
 
   /** Opens `orgId` in this tab. A gated organization still opens its gate. */
-  async function openOrganization(orgId: string) {
+  async function openOrganization(
+    orgId: string,
+    accountId = verifiedUserIdRef.current,
+  ) {
     try {
       await selectOrganization(orgId);
     } catch (caught) {
       // A refused entry (MFA, network) still opens: the gate explains it.
       if (!(caught instanceof ApiError && caught.status === 403)) throw caught;
     }
+    if (signOutAccepted.current || verifiedUserIdRef.current !== accountId)
+      throw new Error("The account changed while opening the organization");
     setCurrentOrganizationId(orgId);
   }
 
@@ -771,11 +776,12 @@ export function AppPage({ children }: AppPageProps) {
   async function switchOrganization(orgId: string): Promise<void> {
     if (
       signOutAccepted.current ||
-      verifiedUserIdRef.current === null ||
-      orgId === organizationIdRef.current
+      verifiedUserId === null ||
+      verifiedUserIdRef.current !== verifiedUserId
     )
-      return;
-    await openOrganization(orgId);
+      throw new Error("The workspace account is no longer available");
+    if (orgId === organizationIdRef.current) return;
+    await openOrganization(orgId, verifiedUserId);
     requestSessionRecheck();
   }
 
@@ -918,6 +924,7 @@ export function AppPage({ children }: AppPageProps) {
         <VerifiedWorkspaceIdentityProvider
           key={`${verifiedUserId}:${organizationId}`}
           userId={verifiedUserId}
+          organizationId={organizationId}
           suspended={checking}
         >
           <AppQueryProvider>

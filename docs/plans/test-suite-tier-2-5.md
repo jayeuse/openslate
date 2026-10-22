@@ -1,6 +1,6 @@
 # Tier 2.5: test suite refactor plan
 
-Implementation status: item 13 covers the eight frontend `http` families (F1 to F8) and the backend areas B2 to B13 (section 9; B1 removed no test, F9 and I4 stay deferred with OpenComms). Items 12, 16, 21, 24, 25 and 26 are implemented; item 23 describes the final testing shape. Item 27's optional workflow and controller are implemented within the lean scope below: 288 baselines remain deferred, while general cache-hiding protection and proposal mutant diffs remain OPEN follow-ups. The retained item 21 parity proof applies only to `ab5bad22006786a7222b559779e94eb6110093cd`, not later revisions. Hosted scheduled execution, artifact transport, issue handling and real timeout-retry behavior for item 27 remain unverified; local controller/report tests are not hosted acceptance. Gate, push and merge status are separate from this implementation record.
+Implementation status: item 13 covers the eight frontend `http` families (F1 to F8) and the backend areas B2 to B13 (section 9; B1 removed no test; F9 and I4 are superseded by the [OpenComms plan](opencomms.md)). Items 12, 16, 21, 24, 25 and 26 are implemented; item 23 describes the final testing shape. Item 27's optional workflow and controller are implemented within the lean scope below: 288 baselines remain deferred, while general cache-hiding protection and proposal mutant diffs remain OPEN follow-ups. The retained item 21 parity proof applies only to `ab5bad22006786a7222b559779e94eb6110093cd`, not later revisions. Hosted scheduled execution, artifact transport, issue handling and real timeout-retry behavior for item 27 remain unverified; local controller/report tests are not hosted acceptance. Gate, push and merge status are separate from this implementation record.
 
 This plan refactors every test suite in the repository and the CI that runs them: backend pytest, frontend Playwright (`isolated`, `http`, `fullstack`, smoke), the pre-push gate, and the GitHub workflows. The plan has three goals: less bloat, less duplicated setup, and shorter run times. Protection must stay the same or improve.
 
@@ -200,7 +200,7 @@ Counts come from the inventory of 2026-10-11. "Routes" counts `.route(` calls. "
 | F6 | Manage | 5 | 5,142 | 75 | 32 | 4 | 22 | 2 | 0 | Audit and backup exports. |
 | F7 | Auth | 6 | 2,756 | 58 | 49 | 14 | 15 | 0 | 0 | Session and MFA mocks into the base fixture. |
 | F8 | Shell and settings | 14 | 7,413 | 150 | 80 | 17 | 1 | 3 | 31 | Organization, user theme preferences (20 style checks), profile, help, person card, aggregate calendar, workspace, appearance. Keep a style check only where it is the contract (contrast, 44 px hit area). |
-| F9 | Comms | 1 | 594 | 21 | 1 | 1 | 0 | 0 | 0 | OpenComms is deferred and will be rebuilt. Keep it as it is; do not spend work here. |
+| F9 | Comms | 1 | 594 | 21 | 1 | 1 | 0 | 0 | 0 | **Superseded.** The [OpenComms plan](opencomms.md) replaced these Comms `http` tests; removed assertions have [test ledger](test-ledger.md) rows. The counts are the pre-OpenComms baseline. |
 
 ### Frontend `isolated`, `fullstack`, and helpers
 
@@ -209,7 +209,7 @@ Counts come from the inventory of 2026-10-11. "Routes" counts `.route(` calls. "
 | I1 | OpenView, Boards, Sandbox | 50 | 14,393 | 314 | These become the owners of the matrices that leave F1 to F3. Merge same-branch cases into tables. |
 | I2 | Contracts and API | 11 | 4,348 | 16 | Fix the `fixme`. Check that the generated contract tests cover each operation once. `route-manifest-source.ts` (1,459 lines) is data; leave it unless it is generated twice. |
 | I3 | Access, runtime, security, others | 31 | 5,035 | 160 | Remove the duplicate Access contract. Check the 120 s launcher timeout. |
-| I4 | Comms | 8 | 1,109 | 38 | Deferred with OpenComms. |
+| I4 | Comms | 8 | 1,109 | 38 | **Superseded.** The [OpenComms plan](opencomms.md) replaced these Comms isolated tests; removed assertions have [test ledger](test-ledger.md) rows. The counts are the pre-OpenComms baseline. |
 | S1 | Full stack | 3 | 3,069 | 5 | Item 16. Split long journeys; no timeout above the default without a measured reason. |
 | S2 | Smoke | 8 | 478 | 17 | Item 16. Faster seed. |
 | H1 | `http/helpers` and `tests/helpers` | 17 | 4,772 | 0 | The target of item 8. Each helper has one owner and one purpose. |

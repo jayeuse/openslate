@@ -201,6 +201,12 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("needs: [changes, build]", test)
         self.assertIn("uses: actions/download-artifact@", test)
         self.assertIn("name: frontend-export", test)
+        # The asset budget test reads the client build manifests beside the export.
+        self.assertIn("name: frontend-build-manifests", build)
+        self.assertIn("frontend/.next/server/app/**/page_client-reference-manifest.js", build)
+        self.assertIn("frontend/.next/BUILD_ID", build)
+        self.assertIn("name: frontend-build-manifests", test)
+        self.assertIn("path: frontend/.next/", test)
         # The export server is the production StaticSite code from the backend.
         self.assertIn("run: uv sync --locked", test)
         self.assertIn('version: "0.12.x"', test)
@@ -238,8 +244,9 @@ class CiWorkflowContractTests(unittest.TestCase):
         test = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
         upload = test.split("uses: actions/upload-artifact@", 1)
 
-        # The export and two native reports supplement the existing failure context.
-        self.assertEqual(source.count("upload-artifact"), 4)
+        # The export, the client build manifests and two native reports supplement
+        # the existing failure context.
+        self.assertEqual(source.count("upload-artifact"), 5)
         self.assertEqual(test.count("upload-artifact"), 2)
         self.assertIn("if: failure()", upload[0].rsplit("- name:", 1)[1])
         self.assertIn("path: frontend/test-results/playwright/", upload[1])

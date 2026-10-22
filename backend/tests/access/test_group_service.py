@@ -212,6 +212,7 @@ def test_group_deletion_blocks_members_and_soft_deletes_an_empty_group(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
+    db.info = {}  # A real Session has an audit-context dictionary, even without an actor.
     group = _group()
     db.scalar.side_effect = [1]
     with pytest.raises(HTTPException) as in_use:

@@ -28,13 +28,17 @@ type ControlProps = {
  * With a reason, the control stays focusable (`aria-disabled`, not
  * `disabled`), ignores activation, and shows the reason on hover, focus, and
  * tap; screen readers hear it as the control's description. Without a
- * reason, the control renders unchanged.
+ * reason, the control renders unchanged. When the reason is already visible
+ * text, pass its id as `reasonId`: the control points at that text instead of
+ * a hidden copy, so the reason is announced once.
  */
 export function DisabledReason({
   reason,
+  reasonId,
   children,
 }: {
   reason: string | null | undefined;
+  reasonId?: string;
   children: ReactElement<ControlProps>;
 }) {
   const id = useId();
@@ -42,7 +46,7 @@ export function DisabledReason({
   // control is where the user asks why nothing happened.
   const [open, setOpen] = useState(false);
   if (!reason) return children;
-  const describedBy = [children.props["aria-describedby"], id]
+  const describedBy = [children.props["aria-describedby"], reasonId ?? id]
     .filter(Boolean)
     .join(" ");
   const control = cloneElement(children, {
@@ -60,9 +64,11 @@ export function DisabledReason({
         <TooltipTrigger render={control} />
         <TooltipContent>{reason}</TooltipContent>
       </Tooltip>
-      <span id={id} className="sr-only">
-        {reason}
-      </span>
+      {!reasonId && (
+        <span id={id} className="sr-only">
+          {reason}
+        </span>
+      )}
     </>
   );
 }

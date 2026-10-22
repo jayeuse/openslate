@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/popover";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { PersonAvatar } from "@/components/person-avatar";
+import { AvatarBadge } from "@/components/ui/avatar";
 import {
   useVerifiedWorkspaceUserId,
   useWorkspaceInteractionSuspended,
@@ -45,6 +46,11 @@ type PersonCardPopoverProps = {
   className?: string;
   /** "none" when the name sits in a row that has its own link action. */
   decoration?: "underline" | "none";
+  /** Optional current, source-authorized presence; never an identity grant. */
+  presence?: string;
+  /** Keep an open card attached to its actor when a live list regroups them. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 /** One read-only identity disclosure. The account QueryClient deduplicates known visible targets. */
@@ -75,6 +81,9 @@ function BoundPersonCard({
   unavailableLabel = "Person unavailable",
   className,
   decoration = "underline",
+  presence,
+  open: controlledOpen,
+  onOpenChange,
   viewerId,
 }: PersonCardPopoverProps & { viewerId: string }) {
   const suspended = useWorkspaceInteractionSuspended();
@@ -84,11 +93,20 @@ function BoundPersonCard({
   const admitted =
     !suspended && !identity.error && identity.data?.id === viewerId;
   const [intent, setIntent] = useState(false);
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = useCallback(
+    (value: boolean) => {
+      setLocalOpen(value);
+      onOpenChange?.(value);
+    },
+    [onOpenChange],
+  );
   const options = personCardOptions(viewer, personId);
   const read = useQuery({
     ...options,
-    enabled: (query) => admitted && (intent || !label) && !query.state.error,
+    enabled: (query) =>
+      admitted && (open || intent || !label) && !query.state.error,
   });
   const current =
     admitted &&
@@ -148,7 +166,7 @@ function BoundPersonCard({
       exact: true,
       refetchType: "none",
     });
-  }, [suspended, client, viewerId, personId, viewerRole]);
+  }, [suspended, client, viewerId, personId, viewerRole, setOpen]);
 
   function prepare() {
     if (!admitted) return;
@@ -196,7 +214,24 @@ function BoundPersonCard({
           className,
         )}
       >
-        <PersonAvatar name={name} avatarUrl={current?.data.avatar_url} />
+        <span className="relative shrink-0">
+          <PersonAvatar name={name} avatarUrl={current?.data.avatar_url} />
+          {presence && admitted && !read.error && (
+            <AvatarBadge
+              role="img"
+              aria-label={presence}
+              title={presence}
+              className={cn(
+                "size-2",
+                presence === "Offline"
+                  ? "bg-muted-foreground"
+                  : presence === "Away"
+                    ? "bg-warn"
+                    : "bg-flow",
+              )}
+            />
+          )}
+        </span>
         <span
           className={cn(
             "min-w-0",
@@ -253,13 +288,18 @@ function BoundPersonCard({
             }
           >
             {current ? (
-              <PersonCardDetails
-                key={`${viewerId}:${viewer.role}:${personId}`}
-                card={current}
-                active={open && admitted}
-                onRefused={refuse}
-                onAccepted={accept}
-              />
+              <>
+                <PersonCardDetails
+                  key={`${viewerId}:${viewer.role}:${personId}`}
+                  card={current}
+                  active={open && admitted}
+                  onRefused={refuse}
+                  onAccepted={accept}
+                />
+                {presence && (
+                  <p className="text-muted-foreground text-sm">{presence}</p>
+                )}
+              </>
             ) : null}
           </LoadingRegion>
         )}

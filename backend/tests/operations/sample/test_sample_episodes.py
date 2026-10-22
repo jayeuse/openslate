@@ -113,7 +113,10 @@ def test_the_plan_is_repeatable() -> None:
     )
 
 
-def test_plan_summary_reports_sessions_and_writes_per_person() -> None:
+def test_plan_summary_reports_sessions_and_writes_per_person(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from operations.sample.plan_summary import print_plan
     from operations.seed_sample_data import build_plan_summary
 
     first = build_plan_summary(_dataset("small"))
@@ -128,4 +131,18 @@ def test_plan_summary_reports_sessions_and_writes_per_person() -> None:
     assert (first["session_count"], first["writes_by_person"]) == (
         second["session_count"],
         second["writes_by_person"],
+    )
+    print_plan(
+        _dataset("small"),
+        {"instance": "owned-offline-plan", "alembic_head": "synthetic-head",
+         "admin_eligible": True, "storage_objects": 0, "provider_accounts": 0},
+        "http://127.0.0.1:58025",
+    )
+    exclusions = next(
+        line for line in capsys.readouterr().out.splitlines() if line.startswith("exclusions:")
+    )
+    assert exclusions == (
+        "exclusions: custom roles; service identities/metadata; access rules/defaults; "
+        "saved chart preferences; direct database writes other than creating the pack "
+        "organization; provider-admin user creation"
     )

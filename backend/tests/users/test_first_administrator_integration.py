@@ -32,8 +32,10 @@ from app.core.integrations.supabase_auth import ProviderUser
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Membership, PlatformOperator, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
-from app.systems.manage.audit.models import AuditLog
+from app.systems.boards.models import Board
+from app.systems.manage.audit.models import AuditLog, SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.sandbox.designs.models import SandboxDocument
 from operations import bootstrap_admin as bootstrap
 from tests.conftest import guarded_create_engine
 from tests.organization_scope_support import in_context
@@ -107,7 +109,17 @@ def empty_installation(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Engine
                 with Session(owner) as db:
                     if invited:
                         invited_ids = select(User.id).where(User.email.in_(invited))
+                        # A successful bootstrap commits its own organization with the
+                        # administrator's membership; remove that organization too.
+                        bootstrapped = set(db.scalars(select(Membership.org_id).where(
+                            Membership.user_id.in_(invited_ids), Membership.org_id != org_id,
+                        )))
                         db.execute(delete(Membership).where(Membership.user_id.in_(invited_ids)))
+                        for model in (Board, SandboxDocument, AuditLog, SecurityEvent):
+                            db.execute(delete(model).where(model.org_id.in_(bootstrapped)))
+                        db.execute(
+                            delete(WorkspaceProfile).where(WorkspaceProfile.id.in_(bootstrapped))
+                        )
                         # Bootstrap also records its administrator as a platform operator.
                         db.execute(
                             delete(PlatformOperator).where(PlatformOperator.user_id.in_(invited_ids))

@@ -1,6 +1,6 @@
 import type { Page, Route } from "@playwright/test";
 import { pageOf } from "../../helpers/pagination";
-import { appearanceUrl, authMeBody } from "./test";
+import { appearanceUrl, authMeBody, defaultOrganization } from "./test";
 
 export const logoActor = "11111111-1111-4111-8111-111111111111";
 export const oldLogoId = "22222222-2222-4222-8222-222222222222";
@@ -87,6 +87,7 @@ export async function installLogoApi(page: Page) {
           json: {
             authenticated: true,
             user_id: api.actor,
+            organization_id: defaultOrganization.org_id,
             default_organization_blocked: null,
             setup_required: false,
           },

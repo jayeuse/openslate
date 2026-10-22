@@ -38,6 +38,7 @@ Use an owner-only, ignored environment file generated for **each** installation.
 | `AUTH_TEMPLATE_BASE_URL` | Internal URL of the OpenSlate template handler at `/api/auth/email-templates`; Auth fetches `invite.html` and `recovery.html` from it. For host-run development use `http://host.docker.internal:<backend-port>/api/auth/email-templates`; for a unified API container use its internal address. |
 | `SMTP_ADMIN_EMAIL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SENDER_NAME` | Provider invitation and recovery mailer. Production requires a real SMTP service. Development overlay uses `SMTP_HOST=mailpit`, `SMTP_PORT=1025`, and empty credentials. |
 | `SUPABASE_DB_PORT`, `SUPABASE_API_PORT`, `SUPABASE_MAIL_PORT` | Optional loopback host ports, defaulting to `55432`, `58000`, and `58025`. Each concurrently running instance needs different ports. |
+| `SUPABASE_REALTIME_PUBLISH_PORT` | Projected loopback port for the separate development-only publisher listener. Keep it distinct from the ordinary gateway port; production does not publish it. |
 
 `JWT_EXPIRY` defaults to 900 seconds. `SUPABASE_URL` in the host-run backend normally points to `http://127.0.0.1:${SUPABASE_API_PORT}`; a containerized backend uses `http://api-gw:8000`. Do not substitute the public Auth issuer for the internal backend URL. The application runtime and migration database roles are provisioned separately and use direct PostgreSQL connections, never the service key for ordinary domain queries. The database and Storage bytes live in the named volumes `supabase-db-data` and `supabase-storage-data` (prefixed by the supplied Compose project name). Studio snippets and a PostgreSQL configuration key also have named volumes.
 
@@ -155,4 +156,80 @@ An installation from before Realtime lacks three names. Add them once, then rest
 4. When Realtime is healthy, run `provision_database_role.py`, then `alembic upgrade head`.
 5. Give the API process `REALTIME_TOKEN_SIGNING_KEY` (production: the application environment file), then start it.
 
-The channel design and its limits are in [PLAN.md](PLAN.md#realtime-boundary).
+The foundation design history is in [PLAN.md](PLAN.md#realtime-boundary). The
+implemented OpenComms boundary below supersedes its earlier open browser-path
+decision; full integrated and target-platform acceptance remains separate.
+
+### OpenComms ingress and private publication
+
+| Path/listener | Implemented boundary |
+| --- | --- |
+| Public Caddy `/realtime/v1/websocket` | Exact same-origin WebSocket upgrade only. Caddy injects the gateway publishable key in a header; it strips caller cookies/authorization and refuses an `apikey` query parameter. Other public Realtime/publisher paths are refused. |
+| Provider gateway `api-gw:8000` | Existing Auth/Storage/operator routing plus the restricted Realtime WebSocket route. It is not the server broadcast listener. |
+| Private publisher `api-gw:8001/realtime/v1/api/broadcast` | Exact POST with the server's opaque secret key. Envoy translates that key internally; the provider service-role JWT is not given to the browser or API process. Production leaves this listener unpublished. |
+| Development publisher loopback port | The development overlay publishes listener8001 on `127.0.0.1:${SUPABASE_REALTIME_PUBLISH_PORT}` for host-run FastAPI. Loopback is not a claim that browsers/local processes cannot reach it; server-key admission remains required. |
+
+Source boundaries are [`Caddyfile.template`](../caddy/Caddyfile.template),
+[`lds.template.yaml`](upstream/envoy/lds.template.yaml),
+[`compose.dev.yaml`](compose.dev.yaml) and
+[`compose.production.yaml`](compose.production.yaml). Caddy joins the separate
+Realtime ingress network without granting provider gateway peers trusted API
+proxy status. Never route the private publisher through Caddy, publish it on a
+LAN address, copy its server key into frontend configuration, or enable public
+channels as a connectivity workaround.
+
+The API uses `REALTIME_PUBLISH_URL` for that private listener and
+`REALTIME_TOKEN_SIGNING_KEY` for short-lived browser channel tokens. Neither is
+a new identity/session service. Browsers obtain tokens through the normal
+cookie/CSRF-protected `/api/realtime/token` route, then read message content only
+through authorized FastAPI routes. Realtime carries opaque conversation/user
+invalidations and transient presence/typing signals, not application row-change
+subscriptions or message bodies. SSE remains active for other application
+invalidations. See the [backend contract](../../docs/architecture/04-backend-architecture.md#opencomms-backend-contract).
+
+### Upgrade and recovery boundaries
+
+Use the existing explicit provisioning sequence during an approved installation
+outage: healthy providers, role provisioning, `alembic upgrade head`,
+`alembic check`, private Storage provisioning, then API/Caddy startup and
+readiness/authentication checks. Apply the complete reviewed application
+migration chain, including the durable-job, configuration/admission and preview
+revisions; do not stamp past them or edit an already-applied revision. Alembic
+owns only application objects. Provider Auth/Storage/Realtime schemas retain
+their upstream ownership. New repairs require a forward model-derived revision,
+not a speculative downgrade/re-upgrade of live data.
+
+Before changing keys or upgrading, retain the complete protected installation
+configuration and a valid backup using [RESTORE.md](RESTORE.md). Realtime must
+restart after its verification-key set changes. This is not authorization to
+rotate keys automatically during diagnosis. Do not print environment files,
+connection strings, Docker inspection environments, token-bearing WebSocket
+frames or unsanitized process/Settings exception output.
+
+The bounded API publisher is best effort. An accepted database write is not
+rolled back when Realtime is unavailable. Recovery uses fresh authorized reads
+and sequence reconciliation; do not replay private content through an alternate
+public channel. Operational attention records use reason codes such as
+`comms_publish_transport_failed` and `comms_publish_queue_full`, not upstream
+bodies or credentials. `/api/health` proves API liveness; `/api/ready` covers
+Database/Auth/Storage/SMTP configuration, not end-to-end Realtime delivery or
+actual SMTP delivery. Test those paths separately with owned accounts.
+
+Scheduled messages, exports, retention and optional link-preview jobs reuse the
+existing organization-bound scheduling worker and durable leases. A job failure
+does not grant permission to reset provider volumes, bypass current source
+authorization or run bulk/raw application mutations. Keep existing Tier2
+safeguards: exact organization binding, current administrator/source checks,
+audited individual changes, version/digest preconditions, password confirmation
+where required, and the configured lifecycle-purge gate. Link previews remain
+off by default; a LAN-only installation can simply have no previews.
+
+### Acceptance status
+
+The checked-in gateway/publisher and backend contracts are implemented, but that
+does not certify the final browser integration, full provider/sample-pack
+journeys or capacity/latency budgets. Native Linux host boot/reboot and Windows
+Docker Desktop/WSL2 acceptance remain pending. A Linux-container rehearsal on
+macOS is not either target-platform certification. Do not describe this stack
+as production-ready based on configuration, unit tests or a single local
+Realtime connection alone.

@@ -18,6 +18,7 @@ def settings_values(**overrides: Any) -> dict[str, Any]:
         "log_dir": "/tmp/openslate-test-logs",
         "database_url": "postgresql+psycopg://test:test-password@127.0.0.1/test",
         "supabase_url": "http://127.0.0.1:58000",
+        "realtime_publish_url": "http://127.0.0.1:58001/realtime/v1/api/broadcast",
         "supabase_publishable_key": "sb_publishable_isolated_test_only",
         "supabase_secret_key": "sb_secret_isolated_test_only",
         "supabase_auth_issuer": "http://127.0.0.1:58000/auth/v1",

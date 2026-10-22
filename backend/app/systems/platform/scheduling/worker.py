@@ -47,7 +47,9 @@ def _each_organization(job: Callable[[], object]) -> bool:
 class ReportSchedulingWorker:
     """Run both bounded work kinds in one thread without sharing request sessions."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self, settings: Settings, *, comms_poll: Callable[[datetime | None], object] | None = None
+    ) -> None:
         self._enabled = settings.environment != "test" or settings.e2e_background_workers
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -58,6 +60,9 @@ class ReportSchedulingWorker:
         self._post_failure_reported = False
         self._reminder_retry_seconds = _POLL_SECONDS
         self._reminder_failure_reported = False
+        self._comms_poll = comms_poll
+        self._comms_retry_seconds = _POLL_SECONDS
+        self._comms_failure_reported = False
 
     @property
     def running(self) -> bool:
@@ -106,10 +111,16 @@ class ReportSchedulingWorker:
     def run_once(self, *, now: datetime | None = None) -> list[UUID]:
         """Poll both kinds; retain the Report run IDs as this method's result."""
 
-        return self._poll(now=now, reports=True, posts=True, reminders=True)
+        return self._poll(now=now, reports=True, posts=True, reminders=True, comms=True)
 
     def _poll(
-        self, *, now: datetime | None, reports: bool, posts: bool, reminders: bool
+        self,
+        *,
+        now: datetime | None,
+        reports: bool,
+        posts: bool,
+        reminders: bool,
+        comms: bool = False,
     ) -> list[UUID]:
         completed: list[UUID] = []
         if reports:
@@ -118,6 +129,20 @@ class ReportSchedulingWorker:
             self._poll_posts(now=now)
         if reminders and not self._stop.is_set():
             self._poll_reminders(now=now)
+        comms_poll = self._comms_poll
+        if comms and comms_poll is not None and not self._stop.is_set():
+            if not _each_organization(lambda: comms_poll(now)):
+                self._comms_retry_seconds = min(self._comms_retry_seconds * 2, _MAX_RETRY_SECONDS)
+                if not self._comms_failure_reported:
+                    log_event(
+                        "operational_attention",
+                        reason_code="comms_scheduling_poll_failed",
+                        upstream="comms-jobs",
+                    )
+                    self._comms_failure_reported = True
+            else:
+                self._comms_retry_seconds = _POLL_SECONDS
+                self._comms_failure_reported = False
         return completed
 
     def _poll_reports(self, *, now: datetime | None) -> list[UUID]:
@@ -171,17 +196,20 @@ class ReportSchedulingWorker:
         next_report_poll = time.monotonic()
         next_post_poll = next_report_poll
         next_reminder_poll = next_report_poll
+        next_comms_poll = next_report_poll
         try:
             while not self._stop.is_set():
                 current = time.monotonic()
                 reports_due = current >= next_report_poll
                 posts_due = current >= next_post_poll
                 reminders_due = current >= next_reminder_poll
+                comms_due = self._comms_poll is not None and current >= next_comms_poll
                 self._poll(
                     now=None,
                     reports=reports_due,
                     posts=posts_due,
                     reminders=reminders_due,
+                    comms=comms_due,
                 )
                 completed_at = time.monotonic()
                 if reports_due:
@@ -190,9 +218,17 @@ class ReportSchedulingWorker:
                     next_post_poll = completed_at + self._post_retry_seconds
                 if reminders_due:
                     next_reminder_poll = completed_at + self._reminder_retry_seconds
+                if comms_due:
+                    next_comms_poll = completed_at + self._comms_retry_seconds
                 wait_seconds = max(
                     0.0,
-                    min(next_report_poll, next_post_poll, next_reminder_poll) - time.monotonic(),
+                    min(
+                        next_report_poll,
+                        next_post_poll,
+                        next_reminder_poll,
+                        next_comms_poll if self._comms_poll is not None else float("inf"),
+                    )
+                    - time.monotonic(),
                 )
                 self._stop.wait(wait_seconds)
         finally:

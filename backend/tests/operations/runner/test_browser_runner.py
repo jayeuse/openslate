@@ -138,3 +138,64 @@ def test_failed_browser_command_retains_partial_results_and_cleans_owned_process
     backend.assert_not_called()
     gateway.stop.assert_called_once()
     process.wait.assert_called_once()
+
+
+@pytest.mark.parametrize("browser_exit", [0, 3])
+def test_comms_browser_preparation_selects_only_reserved_journey_without_load_or_coverage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, browser_exit: int,
+) -> None:
+    commands, backend, process, gateway = _browser_runtime(monkeypatch, tmp_path, browser_exit)
+    seed = MagicMock(return_value={"admin": {"email": "owned@example.test"}})
+    monkeypatch.setattr(runner, "seed", seed)
+    admission = MagicMock(
+        side_effect=AssertionError("Comms fixture must not run an admission burst")
+    )
+    monkeypatch.setattr(runner, "measure_admission", admission)
+    batches = MagicMock(side_effect=AssertionError("Comms fixture must not run backend batches"))
+    monkeypatch.setattr(runner, "run_backend_batches", batches)
+    browser_environments = []
+    stream = runner.run_streamed
+
+    def observed(command, cwd, env, log, **kwargs):
+        if command[:3] == ["npx", "playwright", "test"]:
+            browser_environments.append(env)
+        return stream(command, cwd, env, log, **kwargs)
+
+    monkeypatch.setattr(runner, "run_streamed", observed)
+    api_environments = []
+    start = runner.subprocess.Popen
+
+    def started(command, **kwargs):
+        if "app.main:app" in command:
+            api_environments.append(kwargs["env"])
+        return start(command, **kwargs)
+
+    monkeypatch.setattr(runner.subprocess, "Popen", started)
+    try:
+        result = runner.main(("--comms-browser-only",))
+    except SystemExit:
+        result = "requested narrow mode is not supported"
+    assert result == (0 if browser_exit == 0 else 1)
+    backend.assert_not_called()
+    batches.assert_not_called()
+    admission.assert_not_called()
+    assert seed.call_args.args[3:] == (("admin",), True)
+    browser_commands = [item for item in commands if item[:3] == ["npx", "playwright", "test"]]
+    assert len(browser_commands) == 1
+    assert browser_commands[0][-1] == "tests/fullstack/comms-two-account.spec.ts"
+    assert not any(
+        "check_operational_health.py" in part for command in commands for part in command
+    )
+    assert len(browser_environments) == 1
+    private_names = {
+        "DATABASE_URL", "MIGRATION_DATABASE_URL", "DATABASE_BOOTSTRAP_URL", "SUPABASE_SECRET_KEY",
+    }
+    assert not (private_names & browser_environments[0].keys())
+    # The journey's scheduled message is delivered by the real test-stack scheduler worker.
+    assert [env.get("E2E_BACKGROUND_WORKERS") for env in api_environments] == ["true"]
+    gateway.start.assert_called_once()
+    gateway.stop.assert_called_once()
+    process.wait.assert_called_once()
+    report = json.loads((tmp_path / "frontend/test-results/fullstack-summary.json").read_text())
+    assert report["backend_tests_rerun"] is False
+    assert report["result"] == ("passed" if browser_exit == 0 else "failed")
