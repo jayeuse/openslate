@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import {
   Card,
@@ -12,6 +13,7 @@ import {
   CollapsibleContent,
 } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Alert } from "@/components/ui/alert";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -125,10 +127,16 @@ export function RetentionPreviewFields({
   onApply,
   disabled,
   inherited,
+  proof,
+  previewReason,
 }: {
   days: number;
   setDays: (days: number) => void;
   preview?: RetentionPreview;
+  /** The step-up password field, shown once there is a change to preview. */
+  proof?: ReactNode;
+  /** Why Preview impact cannot run yet, when the user can fix it. */
+  previewReason?: string;
   onPreview: () => void;
   onApply: () => void;
   disabled: boolean;
@@ -153,9 +161,12 @@ export function RetentionPreviewFields({
           onChange={(event) => setDays(Number(event.target.value))}
         />
       </Field>
-      <Button variant="outline" disabled={disabled} onClick={onPreview}>
-        Preview impact
-      </Button>
+      {proof}
+      <DisabledReason reason={previewReason}>
+        <Button variant="outline" disabled={disabled} onClick={onPreview}>
+          Preview impact
+        </Button>
+      </DisabledReason>
       {preview && (
         <>
           <Alert role="status">

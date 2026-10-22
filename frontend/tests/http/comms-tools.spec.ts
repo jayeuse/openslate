@@ -4,6 +4,7 @@ import {
   test,
   signedInAs,
   defaultOrganization,
+  defaultSignedInIdentity,
   expectNoHorizontalScroll,
   type Page,
 } from "./helpers/test";
@@ -405,15 +406,27 @@ test("retention previews the org policy before applying and keeps file overrides
   await expect(
     tool.getByLabel("Retention applies to", { exact: true }),
   ).toBeHidden();
+  const previewImpact = tool.getByRole("button", {
+    name: "Preview impact",
+    exact: true,
+  });
+  await expect(previewImpact).toBeDisabled();
+  await expect(previewImpact).toHaveAccessibleDescription(
+    "Change the retention days to preview.",
+  );
+  // The step-up password is asked for only once there is a change to preview.
   await expect(
-    tool.getByRole("button", { name: "Preview impact", exact: true }),
-  ).toBeDisabled();
-  await tool
-    .getByLabel("Current password", { exact: true })
-    .fill(freshPassword);
+    tool.getByLabel("Current password", { exact: true }),
+  ).toHaveCount(0);
   await tool
     .getByLabel("Retention days (0 keeps everything)", { exact: true })
     .fill("7");
+  await expect(previewImpact).toHaveAccessibleDescription(
+    "Enter your current password to preview.",
+  );
+  await tool
+    .getByLabel("Current password", { exact: true })
+    .fill(freshPassword);
   await tool
     .getByRole("button", { name: "Preview impact", exact: true })
     .click();
@@ -520,6 +533,48 @@ test("templates apply a saved preview before advanced authoring and preserve inv
   );
 });
 
+test("channel templates with no saved template say so beside a labelled channel search", async ({
+  page,
+}) => {
+  const owner = {
+    user_id: defaultSignedInIdentity.id,
+    org_id: defaultOrganization.org_id,
+  };
+  const runtime = createMemoryCommsRuntime({
+    owner,
+    initial: createMemorySeed(owner, {
+      role: "admin",
+      display_name: "Templates owner",
+    }),
+  });
+  const server = await installCommsLiveApi(page, { runtime });
+  try {
+    await page.goto("/comms?tool=templates");
+    const tool = page.getByRole("region", {
+      name: "Channel templates",
+      exact: true,
+    });
+    await expect(
+      tool.getByLabel("Template", { exact: true }),
+    ).toHaveAccessibleDescription(
+      "No templates yet. Create one in Advanced settings.",
+    );
+    await expect(
+      tool.getByRole("textbox", { name: "Find channels", exact: true }),
+    ).toBeVisible();
+    const preview = tool.getByRole("button", {
+      name: "Preview changes",
+      exact: true,
+    });
+    await expect(preview).toBeDisabled();
+    await expect(preview).toHaveAccessibleDescription(
+      "No templates yet. Create one in Advanced settings.",
+    );
+  } finally {
+    server.close();
+  }
+});
+
 test("a template changed by someone else refuses the stale save and keeps the draft", async ({
   page,
 }) => {
@@ -589,13 +644,27 @@ test("settings history shows before and after then requires an advanced versione
   await expect(
     tool.getByRole("button", { name: "Preview restoration", exact: true }),
   ).toHaveCount(0);
-  await tool
-    .getByLabel("Current password", { exact: true })
-    .fill(freshPassword);
   await tool.getByRole("button", { name: /Advanced settings/ }).click();
+  // The step-up password is asked for only once a change to restore is chosen.
+  await expect(
+    tool.getByLabel("Current password", { exact: true }),
+  ).toHaveCount(0);
+  const previewRestore = tool.getByRole("button", {
+    name: "Preview restoration",
+    exact: true,
+  });
+  await expect(previewRestore).toHaveAccessibleDescription(
+    "Select a saved change first.",
+  );
   await tool
     .getByLabel("Change to restore", { exact: true })
     .selectOption({ index: 1 });
+  await expect(previewRestore).toHaveAccessibleDescription(
+    "Enter your current password to preview.",
+  );
+  await tool
+    .getByLabel("Current password", { exact: true })
+    .fill(freshPassword);
   await tool
     .getByRole("button", { name: "Preview restoration", exact: true })
     .click();

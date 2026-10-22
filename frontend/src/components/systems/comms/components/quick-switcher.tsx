@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,16 @@ import { useUserPreferences } from "@/components/theme-provider";
 import { COMMS_SHORTCUTS } from "@/lib/shortcuts";
 import type { SidebarRow } from "../state/use-comms-sidebar";
 
+const noSubscription = () => () => {};
+/** Apple keyboards say Command; the static export renders Ctrl until hydrated. */
+function useAppleKeyboard() {
+  return useSyncExternalStore(
+    noSubscription,
+    () => /mac|iphone|ipad/i.test(navigator.platform),
+    () => false,
+  );
+}
+
 export function QuickSwitcher({
   rows,
   select,
@@ -23,6 +33,9 @@ export function QuickSwitcher({
   const [open, setOpen] = useState(false),
     [search, setSearch] = useState("");
   const { keyboardShortcuts, disabled } = useUserPreferences();
+  const apple = useAppleKeyboard();
+  // The hint shows only while the shortcut works.
+  const shortcut = keyboardShortcuts === true && !disabled;
   const opener = useRef<HTMLElement | null>(null);
   function show() {
     opener.current =
@@ -61,12 +74,28 @@ export function QuickSwitcher({
     <>
       <Button
         variant="ghost"
-        className="min-h-11 w-full justify-start"
+        className="@container min-h-11 w-full justify-start px-2"
+        aria-keyshortcuts={shortcut ? "Control+K Meta+K" : undefined}
+        title={
+          shortcut
+            ? `Switch conversation (${apple ? "⌘K" : "Ctrl+K"})`
+            : undefined
+        }
         onClick={show}
       >
         <Search className="size-4" />
-        Switch conversation
-        <span className="text-muted-foreground ml-auto text-xs">Ctrl/⌘K</span>
+        <span className="min-w-0 truncate">Switch conversation</span>
+        {/* A touch screen has no keyboard to press it on. */}
+        {shortcut && (
+          <span className="ml-auto shrink-0 [@media(pointer:coarse)]:hidden">
+            <kbd
+              aria-hidden="true"
+              className="text-muted-foreground hidden font-sans text-xs font-normal @min-[12.25rem]:inline"
+            >
+              {apple ? "⌘K" : "Ctrl K"}
+            </kbd>
+          </span>
+        )}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent

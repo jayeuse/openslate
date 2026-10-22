@@ -11,6 +11,7 @@ import { ToolAdvanced } from "./tool-advanced";
 import { Alert } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Input } from "@/components/ui/input";
 import {
   NativeSelect,
@@ -20,6 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Field,
+  FieldDescription,
   FieldGroup,
   FieldLabel,
   FieldSet,
@@ -94,6 +96,7 @@ export function ManagementTools({
       return { templates };
     },
   );
+  const noTemplates = resource.data?.templates.length === 0;
   function parse() {
     return parseTemplateImport(
       `{"name":${JSON.stringify(name)},"description":${JSON.stringify(description)},"settings":${json}}`,
@@ -459,6 +462,7 @@ export function ManagementTools({
           <FieldLabel htmlFor="tools-template">Template</FieldLabel>
           <NativeSelect
             id="tools-template"
+            aria-describedby={noTemplates ? "tools-template-empty" : undefined}
             className="w-full [&_select]:min-h-11"
             value={active}
             disabled={edited || isPending()}
@@ -471,6 +475,11 @@ export function ManagementTools({
               </NativeSelectOption>
             ))}
           </NativeSelect>
+          {noTemplates && (
+            <FieldDescription id="tools-template-empty">
+              No templates yet. Create one in Advanced settings.
+            </FieldDescription>
+          )}
         </Field>
         <Field>
           <FieldLabel htmlFor="tools-find-channels">Find channels</FieldLabel>
@@ -510,13 +519,23 @@ export function ManagementTools({
               </Field>
             ))}
         </FieldSet>
-        <Button
-          variant="outline"
-          disabled={isPending()}
-          onClick={() => void previewChanges()}
+        {/* Without a template there is nothing to preview; the hint says why. */}
+        <DisabledReason
+          reason={
+            noTemplates
+              ? "No templates yet. Create one in Advanced settings."
+              : undefined
+          }
+          reasonId="tools-template-empty"
         >
-          Preview changes
-        </Button>
+          <Button
+            variant="outline"
+            disabled={isPending()}
+            onClick={() => void previewChanges()}
+          >
+            Preview changes
+          </Button>
+        </DisabledReason>
         {preview && (
           <Card aria-label="Change preview" className="w-full">
             <CardHeader>

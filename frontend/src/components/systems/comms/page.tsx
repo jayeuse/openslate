@@ -217,12 +217,12 @@ function CommsScreen({
           !navigation.threadId ? (
           <Empty
             role="region"
-            aria-label="Choose a conversation"
+            aria-label="No conversation open"
             className="h-full"
           >
-            <h2 className="text-sm font-semibold">Choose a conversation</h2>
+            <h2 className="text-sm font-semibold">No conversation open</h2>
             <EmptyDescription>
-              Select a channel or start a direct conversation.
+              Conversations you open appear here.
             </EmptyDescription>
           </Empty>
         ) : (

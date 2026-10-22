@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { FieldGroup } from "@/components/ui/field";
 import { NativeSelectOption } from "@/components/ui/native-select";
 import { Choice, Toggle } from "../../shared/components/ui";
@@ -440,7 +441,18 @@ function LifecycleTools({
   const names = Object.fromEntries(
     [...people, ...channels].map((item) => [item.id, item.name]),
   );
-  const protectedView = view === "history" || view === "retention";
+  // The step-up password appears with the protected action it confirms:
+  // a chosen change to restore, or a retention change to preview.
+  const proofField = (
+    <TextField
+      label="Current password"
+      type="password"
+      autoComplete="current-password"
+      value={password}
+      onChange={(event) => setPassword(event.target.value)}
+      disabled={isPending()}
+    />
+  );
   return (
     <ConfigurationFrame
       embedded={embedded}
@@ -487,16 +499,6 @@ function LifecycleTools({
         )}
         {!resource.data && resource.status === "loading" && (
           <p role="status">Loading tool…</p>
-        )}
-        {protectedView && (
-          <TextField
-            label="Current password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            disabled={isPending()}
-          />
         )}
         {view === "thread" && (
           <ThreadSettingsFields
@@ -547,36 +549,48 @@ function LifecycleTools({
                   </NativeSelectOption>
                 ))}
               </Choice>
-              <Button
-                variant="outline"
-                disabled={!proofReady || isPending() || !historyId}
-                onClick={() => {
-                  const entry = resource.data?.history.find(
-                    (row) => row.id === historyId,
-                  );
-                  if (!entry) return;
-                  void action(
-                    `history-preview:${entry.id}`,
-                    async (client, signal) => {
-                      const current = await client.getSettings(entry.scope, {
-                        signal,
-                      });
-                      const preview = await client.previewConfigurationRestore(
-                        entry.scope,
-                        entry.id,
-                        {
-                          signal,
-                          if_match: current.etag,
-                          password,
-                        },
-                      );
-                      setRestore({ entry, preview });
-                    },
-                  );
-                }}
+              {historyId && proofField}
+              <DisabledReason
+                reason={
+                  !historyId
+                    ? "Select a saved change first."
+                    : !proofReady
+                      ? "Enter your current password to preview."
+                      : undefined
+                }
               >
-                Preview restoration
-              </Button>
+                <Button
+                  variant="outline"
+                  disabled={!proofReady || isPending() || !historyId}
+                  onClick={() => {
+                    const entry = resource.data?.history.find(
+                      (row) => row.id === historyId,
+                    );
+                    if (!entry) return;
+                    void action(
+                      `history-preview:${entry.id}`,
+                      async (client, signal) => {
+                        const current = await client.getSettings(entry.scope, {
+                          signal,
+                        });
+                        const preview =
+                          await client.previewConfigurationRestore(
+                            entry.scope,
+                            entry.id,
+                            {
+                              signal,
+                              if_match: current.etag,
+                              password,
+                            },
+                          );
+                        setRestore({ entry, preview });
+                      },
+                    );
+                  }}
+                >
+                  Preview restoration
+                </Button>
+              </DisabledReason>
               {restore && (
                 <Card aria-label="Restoration preview" className="w-full">
                   <CardHeader>
@@ -649,6 +663,14 @@ function LifecycleTools({
                 setRetentionPreview(undefined);
               }}
               preview={retentionPreview?.value}
+              proof={dirty ? proofField : undefined}
+              previewReason={
+                !dirty
+                  ? "Change the retention days to preview."
+                  : !proofReady
+                    ? "Enter your current password to preview."
+                    : undefined
+              }
               disabled={!proofReady || isPending() || !resource.data?.retention}
               inherited={retentionTarget !== "workspace" && inheritRetention}
               onPreview={() => {

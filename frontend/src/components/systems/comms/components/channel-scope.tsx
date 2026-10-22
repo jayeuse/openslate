@@ -206,15 +206,20 @@ export function DepartmentList({ names }: { names: readonly string[] }) {
   );
 }
 
-/** "Organization" or "Department · Sales", for compact places like the header. */
+/**
+ * "Organization" or "Department · Sales", for compact places like the header.
+ * A department the viewer cannot name (a guest with a grant) reads "Department".
+ */
 export function ScopeLabel({ channel }: { channel: Channel }) {
-  return channel.scope === "department" ? (
+  const { catalog } = useCommsClient();
+  if (channel.scope !== "department") return <span>Organization</span>;
+  if (!catalog.departments.some((item) => item.id === channel.departmentId))
+    return <span>Department</span>;
+  return (
     <span className="inline-flex min-w-0 items-center gap-1">
       <span className="shrink-0">Department ·</span>{" "}
       <DepartmentName id={channel.departmentId} />
     </span>
-  ) : (
-    <span>Organization</span>
   );
 }
 

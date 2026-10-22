@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ChevronDown, Plus, Table } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,7 @@ import { newChannel, threadMessages, type Thread } from "../domain/view-model";
 import { recordContext } from "../domain/records";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 import { useCommsClient } from "../state/client-context";
+import { useCommsRead } from "../state/runtime";
 import type { CommsConversation } from "../state/use-comms-conversation";
 import type { NavigationState } from "../state/use-comms-navigation";
 import { useCommsListActions } from "../state/use-comms-list-actions";
@@ -51,11 +52,49 @@ export function ConversationList({
   const [search, setSearch] = useState("");
   const { moveCategory } = useCommsListActions();
   const actions = useCommsSidebar();
+  // The same workspace creation check the conversation reads (one request);
+  // it names the viewer's role, so a guest is never offered a conversation.
+  const creationCheck = useCommsRead(
+    "channel-creation:workspace",
+    (client, signal) =>
+      client.getChannelCreationCheck({ kind: "workspace" }, { signal }),
+  );
+  const role = creationCheck.data?.membership_role;
+  const guest = role === "guest";
+  const startTitleId = useId();
   const visible = actions.rows.filter(
     (row) =>
       !row.preferences.hidden &&
       row.name.toLowerCase().includes(search.toLowerCase()),
   );
+  const hasChannels = actions.rows.some(
+    (item) => item.conversation.kind === "channel",
+  );
+  // Channels exist but the viewer hid every one of them.
+  const channelsHidden =
+    !search &&
+    hasChannels &&
+    !visible.some((item) => item.conversation.kind === "channel");
+  const firstRun = !search && !visible.length && !hasChannels;
+  const hasDirect = visible.some(
+    (item) => item.conversation.kind !== "channel",
+  );
+  // Direct-message actions wait for the role: a guest never sees them, even
+  // while the check loads or after it fails (D3).
+  const startsDirect = !!role && !guest;
+  const openDirect = () => {
+    dialogs.setDirectError("");
+    dialogs.setDmOpen(true);
+  };
+  const createChannel = (opener: HTMLElement) =>
+    dialogs.setEditor({
+      opener,
+      kind: "channel",
+      value: newChannel(undefined),
+    });
+  const startGuidance = menuAccess.canCreate
+    ? "Create the first channel for this organization."
+    : "Channels you can read appear here.";
   const starred = visible.filter((row) => row.preferences.starred);
   const uncategorized = visible.filter(
     (item) =>
@@ -101,20 +140,16 @@ export function ConversationList({
           {...menuAccess}
           onSelect={dialogs.openSetting}
         />
-        {menuAccess.canCreate && (
+        {/* An empty list carries its own labelled Create channel action. */}
+        {menuAccess.canCreate && !firstRun && (
           <Action
             aria-label="Create channel"
             size="icon"
             variant="ghost"
+            className="max-sm:min-w-11"
             onPointerEnter={preloadChannelEditor}
             onFocus={preloadChannelEditor}
-            onClick={(event) =>
-              dialogs.setEditor({
-                opener: event.currentTarget,
-                kind: "channel",
-                value: newChannel(undefined),
-              })
-            }
+            onClick={(event) => createChannel(event.currentTarget)}
           >
             <Plus className="size-4" />
           </Action>
@@ -153,22 +188,61 @@ export function ConversationList({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-2 pb-4">
-          <section aria-label="Starred" className="mb-3">
-            <h2 className="text-muted-foreground px-2 py-2 text-xs font-semibold">
-              Starred
-            </h2>
-            {starred.map(row)}
-            {!starred.length && (
-              <p className="text-muted-foreground px-2 text-xs">
-                Star conversations to find them here.
-              </p>
-            )}
-          </section>
-          {!visible.length && (
+          {firstRun ? (
+            <section
+              aria-labelledby={startTitleId}
+              className="flex flex-col gap-3 px-2 pt-2 pb-4"
+            >
+              <div className="flex flex-col gap-1">
+                <h2
+                  id={startTitleId}
+                  data-slot="empty-title"
+                  className="text-sm font-semibold"
+                >
+                  {guest ? "No conversations yet" : "No channels yet"}
+                </h2>
+                <p className="text-muted-foreground text-sm">{startGuidance}</p>
+              </div>
+              {menuAccess.canCreate ? (
+                <Action
+                  variant="default"
+                  className="w-full"
+                  onPointerEnter={preloadChannelEditor}
+                  onFocus={preloadChannelEditor}
+                  onClick={(event) => createChannel(event.currentTarget)}
+                >
+                  <Plus aria-hidden="true" className="size-4" />
+                  Create channel
+                </Action>
+              ) : (
+                startsDirect && (
+                  <Action className="w-full" onClick={openDirect}>
+                    Start direct message
+                  </Action>
+                )
+              )}
+            </section>
+          ) : (
+            <section aria-label="Starred" className="mb-3">
+              <h2 className="text-muted-foreground px-2 py-2 text-xs font-semibold">
+                Starred
+              </h2>
+              {starred.map(row)}
+              {!starred.length && (
+                <p className="text-muted-foreground px-2 text-xs">
+                  Star conversations to find them here.
+                </p>
+              )}
+            </section>
+          )}
+          {search && !visible.length && (
             <p className="text-muted-foreground px-2 py-3 text-sm">
-              {search
-                ? "No conversations match."
-                : "No conversations yet. Browse channels or start a conversation."}
+              No conversations match.
+            </p>
+          )}
+          {channelsHidden && (
+            <p className="text-muted-foreground px-2 py-3 text-sm">
+              Channels are hidden. Browse channels to show them.
             </p>
           )}
           {actions.categories.map(({ category, preferences }, index) => {
@@ -314,7 +388,7 @@ export function ConversationList({
               {uncategorized.map(row)}
             </section>
           )}
-          {menuAccess.canCreateCategory && (
+          {menuAccess.canCreateCategory && !firstRun && (
             <Action
               variant="ghost"
               className="text-muted-foreground min-h-11 w-full justify-start"
@@ -374,33 +448,38 @@ export function ConversationList({
               </ul>
             </section>
           )}
-          <div className="mt-5 flex items-center justify-between px-2">
-            <h2 className="text-muted-foreground text-xs font-semibold">
-              Direct messages
-            </h2>
-            <Action
-              size="icon"
-              variant="ghost"
-              aria-label="Start direct message"
-              onClick={() => {
-                dialogs.setDirectError("");
-                dialogs.setDmOpen(true);
-              }}
-            >
-              <Plus className="size-4" />
-            </Action>
-          </div>
-          {visible
-            .filter(
-              (item) =>
-                item.conversation.kind !== "channel" &&
-                !item.preferences.starred,
-            )
-            .map(row)}
-          {!visible.some((item) => item.conversation.kind !== "channel") && (
-            <p className="text-muted-foreground px-2 text-xs">
-              Start a direct or group conversation.
-            </p>
+          {/* A guest cannot start one (D3); others may still add them to one. */}
+          {(startsDirect || hasDirect) && (
+            <>
+              <div className="mt-5 flex min-h-11 items-center justify-between px-2">
+                <h2 className="text-muted-foreground text-xs font-semibold">
+                  Direct messages
+                </h2>
+                {startsDirect && (
+                  <Action
+                    size="icon"
+                    variant="ghost"
+                    className="max-sm:min-w-11"
+                    aria-label="Start direct message"
+                    onClick={openDirect}
+                  >
+                    <Plus className="size-4" />
+                  </Action>
+                )}
+              </div>
+              {visible
+                .filter(
+                  (item) =>
+                    item.conversation.kind !== "channel" &&
+                    !item.preferences.starred,
+                )
+                .map(row)}
+              {!hasDirect && !firstRun && startsDirect && (
+                <p className="text-muted-foreground px-2 text-xs">
+                  Start a direct or group conversation.
+                </p>
+              )}
+            </>
           )}
         </div>
       </ScrollArea>

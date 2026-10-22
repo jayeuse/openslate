@@ -241,6 +241,9 @@ test("live retention uses an ephemeral password proof instead of the example con
       exact: true,
     });
     await expect(preview).toBeDisabled();
+    await tools
+      .getByLabel("Retention days (0 keeps everything)", { exact: true })
+      .fill("7");
     const password = tools.getByLabel("Current password", { exact: true });
     await password.fill("owned-synthetic-proof");
     await preview.click();

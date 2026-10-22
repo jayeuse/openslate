@@ -616,3 +616,34 @@ test("the Members tab says while members load, and when no one can use the chann
     read.release();
   }
 });
+
+test("a department channel whose department the viewer cannot name shows Department alone", async ({
+  page,
+}) => {
+  await seedDepartments(page, "admin");
+  // The viewer's department read names neither department (a guest holding a
+  // grant reads it the same way).
+  await page.route(
+    (url) => url.pathname === "/api/departments",
+    (route) =>
+      route.fulfill({
+        json: {
+          items: [],
+          pagination: {
+            limit: 25,
+            offset: 0,
+            count: 0,
+            total: 0,
+            has_more: false,
+          },
+        },
+      }),
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/comms");
+  const scope = page.getByRole("button", { name: /^Department\b/ });
+  await expect(scope).toHaveAccessibleName(
+    /^Department\s?\. Open channel settings\.$/,
+  );
+  await expect(page.getByText("a department")).toHaveCount(0);
+});
