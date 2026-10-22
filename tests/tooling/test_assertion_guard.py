@@ -479,6 +479,36 @@ class AnalyzeTests(unittest.TestCase):
         )
         self.assertEqual(violations, [])
 
+    def test_only_the_measurement_spec_may_raise_timeouts(self):
+        measured = "frontend/tests/fullstack/comms-measurements.spec.ts"
+        for path, line, expected in (
+            (measured, "test.setTimeout(1_200_000);", 0),
+            (measured, "await expect(row).toBeVisible({ timeout: 200_000 });", 0),
+            (
+                "frontend/tests/fullstack/comms-two-account.spec.ts",
+                "await expect(row).toBeVisible({ timeout: 200_000 });",
+                1,
+            ),
+            (measured, "test.skip('later', async () => {});", 1),
+            (measured, "await page.waitForTimeout(100);", 1),
+            (measured, "expect(value).toBeTruthy();", 1),
+            (measured, "// eslint-disable-next-line playwright/no-wait-for-timeout", 1),
+        ):
+            with self.subTest(path=path, line=line):
+                violations = self.analyze([change(path, added=[line])])
+                self.assertEqual(len(violations), expected, violations)
+
+    def test_measurement_spec_still_needs_ledger_rows_for_removed_assertions(self):
+        violations = self.analyze(
+            [
+                change(
+                    "frontend/tests/fullstack/comms-measurements.spec.ts",
+                    removed=["expect(misses).toBe(3);"],
+                )
+            ]
+        )
+        self.assertEqual(len(violations), 1, violations)
+
     def test_changed_snapshot_needs_a_snapshot_ledger_row(self):
         snapshot = "frontend/tests/http/a.spec.ts-snapshots/board.aria.yml"
         self.assertEqual(len(self.analyze([change(snapshot, added=["- heading"])])), 1)

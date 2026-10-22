@@ -472,6 +472,9 @@ def main(arguments=()):
             timed("static frontend build")
             run(["npm", "run", "build", "--", "--webpack"], FRONTEND)
             api_env["WEB_ASSETS_ROOT"] = str(FRONTEND / "out")
+            if comms_browser_only:
+                # The journey's scheduled message needs the test-stack scheduler worker.
+                api_env["E2E_BACKGROUND_WORKERS"] = "true"
             timed("FastAPI startup")
             processes.append(
                 subprocess.Popen(

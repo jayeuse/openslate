@@ -33,6 +33,11 @@ _TS_CONFIG_FILES: Final = frozenset(
 )
 _SNAPSHOT: Final = re.compile(r"(-snapshots/|__snapshots__/|\.snap$|\.aria\.yml$)")
 _DEFAULT_TIMEOUT_MS: Final = 5_000
+# Owner-approved 2026-10-22: this file measures plan section-6 limits of 150 s (offline)
+# and 5 minutes (Realtime token lifetime) against real services, so it may raise
+# timeouts. The exemption covers only the "timeout raise" rule; assertion removal,
+# skips, retries, fixed waits, suppressions and loose matchers stay refused there.
+_LONG_TIMEOUT_EXEMPT: Final = frozenset({"frontend/tests/fullstack/comms-measurements.spec.ts"})
 
 _PY_ASSERTIONS: Final = (
     re.compile(r"^\s*assert\b"),
@@ -388,6 +393,8 @@ def analyze(changes: list[FileChange], ledger: list[LedgerRow], root: Path) -> l
                 f"{LEDGER_PATH} with an owner test"
             )
         new_hits = _pattern_hits(item.path, item.added) - _pattern_hits(item.path, item.removed)
+        if item.path in _LONG_TIMEOUT_EXEMPT:
+            new_hits.pop("timeout raise", None)
         for name, count in sorted(new_hits.items()):
             violations.append(f"{item.path}: {count} new {name}")
     return violations

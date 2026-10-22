@@ -162,6 +162,15 @@ def test_comms_browser_preparation_selects_only_reserved_journey_without_load_or
         return stream(command, cwd, env, log, **kwargs)
 
     monkeypatch.setattr(runner, "run_streamed", observed)
+    api_environments = []
+    start = runner.subprocess.Popen
+
+    def started(command, **kwargs):
+        if "app.main:app" in command:
+            api_environments.append(kwargs["env"])
+        return start(command, **kwargs)
+
+    monkeypatch.setattr(runner.subprocess, "Popen", started)
     try:
         result = runner.main(("--comms-browser-only",))
     except SystemExit:
@@ -182,6 +191,8 @@ def test_comms_browser_preparation_selects_only_reserved_journey_without_load_or
         "DATABASE_URL", "MIGRATION_DATABASE_URL", "DATABASE_BOOTSTRAP_URL", "SUPABASE_SECRET_KEY",
     }
     assert not (private_names & browser_environments[0].keys())
+    # The journey's scheduled message is delivered by the real test-stack scheduler worker.
+    assert [env.get("E2E_BACKGROUND_WORKERS") for env in api_environments] == ["true"]
     gateway.start.assert_called_once()
     gateway.stop.assert_called_once()
     process.wait.assert_called_once()
