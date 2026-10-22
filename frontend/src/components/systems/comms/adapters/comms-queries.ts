@@ -2,6 +2,7 @@ import {
   infiniteQueryOptions,
   queryOptions,
   type QueryClient,
+  type QueryKey,
 } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { failureStatus } from "../contract/failure-status";
@@ -254,4 +255,25 @@ export function createCommsQueryScope(
       client.removeQueries({ queryKey: refusals });
     },
   };
+}
+
+/**
+ * Resolves once the query under `queryKey` is not fetching, or is gone: a
+ * query removed mid-read (sign-out clears the cache) never reports idle.
+ */
+export function querySettled(cache: QueryClient, queryKey: QueryKey) {
+  const queries = cache.getQueryCache();
+  const query = queries.find({ queryKey, exact: true });
+  if (!query || query.state.fetchStatus === "idle") return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const stop = queries.subscribe((event) => {
+      if (
+        event.query !== query ||
+        (event.type !== "removed" && query.state.fetchStatus !== "idle")
+      )
+        return;
+      stop();
+      resolve();
+    });
+  });
 }

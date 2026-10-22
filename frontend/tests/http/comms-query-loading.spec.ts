@@ -211,6 +211,8 @@ test("cold Comms reads are deduplicated and configuration catalogs wait for inte
         .length;
     const gets = api.calls.filter((call) => call.method === "GET");
     expect(count("/api/departments")).toBe(1);
+    // Comms reuses the shell's verified identity read.
+    expect(count("/api/auth/me")).toBe(1);
     expect(count("/api/comms/bootstrap")).toBe(1);
     expect(count("/api/comms/preferences")).toBe(1);
     expect(count("/api/comms/settings/workspace")).toBe(1);
@@ -1041,6 +1043,444 @@ test("a cold load without department categories reads no department names", asyn
     ).toEqual([]);
   } finally {
     await testInfo.attach("departmentless cold query evidence", {
+      body: JSON.stringify(api.calls),
+      contentType: "application/json",
+    });
+    await page.close();
+    api.server.close();
+  }
+});
+
+test("a cold load reads a thread root that also links a record once", async ({
+  page,
+}, testInfo) => {
+  const world = fourRoomWorld();
+  const api = await prepare(page, "admin", undefined, world.runtime);
+  // No join repair: only the cold reads count.
+  const token = heldResponse();
+  await page.route("**/api/realtime/token", async (route) => {
+    await token.released;
+    return route.fallback();
+  });
+  const root = `/api/comms/conversations/${world.ids.operations}/messages/${world.root.id}`;
+  try {
+    await page.goto("/comms");
+    await expect(
+      page.getByRole("list", { name: "Records you follow", exact: true }),
+    ).toContainText("Riverside service visit");
+    await expect
+      .poll(() =>
+        api.calls.some(
+          (call) => call.path === "/api/comms/search" && call.completedAt,
+        ),
+      )
+      .toBe(true);
+    await settleReact(page);
+    expect(api.calls.filter((call) => call.path === root)).toHaveLength(1);
+  } finally {
+    token.release();
+    await testInfo.attach("thread root record evidence", {
+      body: JSON.stringify(api.calls),
+      contentType: "application/json",
+    });
+    await page.close();
+    api.server.close();
+  }
+});
+
+test("two quick thread replies read no thread root again", async ({
+  page,
+}, testInfo) => {
+  const world = fourRoomWorld();
+  const api = await prepare(page, "admin", undefined, world.runtime);
+  const root = `/api/comms/conversations/${world.ids.operations}/messages/${world.root.id}`;
+  const lists = heldResponse();
+  try {
+    await page.goto("/comms");
+    await ready(page, world.root.body);
+    const before = api.calls.length;
+    await page.route("**/api/comms/threads?**", async (route) => {
+      lists.enter();
+      await lists.released;
+      return route.fallback().catch(() => {});
+    });
+    const noah = world.runtime.controls.clientFor(world.peer.user_id);
+    await noah.sendReply(world.ids.operations, world.root.id, {
+      client_key: "77000000-0000-4000-8000-000000000030",
+      body: "First quick reply",
+    });
+    await lists.entered;
+    await noah.sendReply(world.ids.operations, world.root.id, {
+      client_key: "77000000-0000-4000-8000-000000000031",
+      body: "Second quick reply",
+    });
+    // The second event restarts the held read of both lists.
+    const listReads = () =>
+      api.calls
+        .slice(before)
+        .filter((call) => call.path === "/api/comms/threads");
+    await expect.poll(() => listReads().length).toBe(4);
+    lists.release();
+    await expect
+      .poll(() => listReads().filter((call) => call.completedAt).length)
+      .toBeGreaterThanOrEqual(2);
+    await settleReact(page);
+    expect(
+      api.calls.slice(before).filter((call) => call.path === root),
+    ).toEqual([]);
+  } finally {
+    lists.release();
+    await testInfo.attach("thread burst evidence", {
+      body: JSON.stringify(api.calls),
+      contentType: "application/json",
+    });
+    await page.close();
+    api.server.close();
+  }
+});
+
+test("a change to a held message reads it once, and a purged one reloads every list that held it", async ({
+  page,
+}, testInfo) => {
+  const world = fourRoomWorld();
+  const { operations } = world.ids;
+  // A second top-level message links the same record; it is not a thread.
+  const linked = {
+    ...world.root,
+    id: "77000000-0000-4000-8000-000000000040",
+    client_key: "77000000-0000-4000-8000-000000000041",
+    seq: 3,
+    body: "The Riverside visit needs a second van.",
+    record_links: [
+      {
+        id: "77000000-0000-4000-8000-000000000042",
+        record_id: world.root.record_links[0].record_id,
+      },
+    ],
+  };
+  world.initial.messages[linked.id] = linked;
+  world.initial.high_water_seq[operations] = 3;
+  const owner = {
+    user_id: defaultSignedInIdentity.id,
+    org_id: defaultOrganization.org_id,
+  };
+  const api = await prepare(
+    page,
+    "admin",
+    undefined,
+    createMemoryCommsRuntime({ owner, initial: world.initial }),
+  );
+  const author = api.server.runtime.controls.clientFor(world.root.author_id);
+  const noah = api.server.runtime.controls.clientFor(world.peer.user_id);
+  const edit = (id: string, body: string) =>
+    author.editMessage(operations, id, {
+      body,
+      mention_user_ids: [],
+      mentions_channel: false,
+      mentions_here: false,
+    });
+  const bySequence = (seq: number) => (start: number) =>
+    api.calls
+      .slice(start)
+      .filter(
+        (call) =>
+          call.path ===
+          `/api/comms/conversations/${operations}/messages/by-sequence/${seq}`,
+      );
+  const listReads = (start: number) =>
+    api.calls
+      .slice(start)
+      .filter(
+        (call) =>
+          call.path === "/api/comms/threads" ||
+          call.path === "/api/comms/search",
+      )
+      .map((call) => call.path)
+      .sort();
+  async function change(
+    action: () => Promise<unknown>,
+    reads: (start: number) => typeof api.calls,
+  ) {
+    const start = api.calls.length;
+    await action();
+    await expect
+      .poll(() => reads(start).filter((call) => call.completedAt).length)
+      .toBeGreaterThan(0);
+    await settleReact(page);
+    return start;
+  }
+  const record = page.getByRole("complementary", {
+    name: "Record",
+    exact: true,
+  });
+  try {
+    await page.goto("/comms");
+    await ready(page, linked.body);
+    await page
+      .getByRole("list", { name: "Records you follow", exact: true })
+      .getByRole("button", { name: /Riverside service visit/ })
+      .click();
+    await expect(
+      record.getByRole("button", { name: /Two vans are loaded/ }),
+    ).toBeVisible();
+    // An edit and a reaction on the open conversation's thread root: its
+    // history and the held thread list share one read of that message.
+    let start = await change(
+      () => edit(world.root.id, "Three vans are loaded."),
+      bySequence(1),
+    );
+    await expect(
+      record.getByRole("button", { name: /Three vans are loaded/ }),
+    ).toBeVisible();
+    expect(bySequence(1)(start)).toHaveLength(1);
+    expect(listReads(start)).toEqual([]);
+    start = await change(
+      () => noah.addReaction(operations, world.root.id, { emoji: "\u{1F44D}" }),
+      bySequence(1),
+    );
+    expect(bySequence(1)(start)).toHaveLength(1);
+    expect(listReads(start)).toEqual([]);
+    // An unavailable read is not a purge: no list is read again.
+    api.server.failNext(/\/by-sequence\/1$/, 503);
+    start = await change(
+      () => edit(world.root.id, "Four vans are loaded."),
+      bySequence(1),
+    );
+    expect(listReads(start)).toEqual([]);
+    // The linked message becomes a thread root: both lists now hold it.
+    start = await change(
+      () => author.createThread(operations, linked.id),
+      (from) =>
+        api.calls
+          .slice(from)
+          .filter(
+            (call) =>
+              call.path ===
+              `/api/comms/conversations/${operations}/messages/${linked.id}`,
+          ),
+    );
+    // A purged message has no DTO: every list that held it is read again.
+    api.server.failNext(/\/by-sequence\/3$/, 404);
+    start = await change(
+      () => edit(linked.id, "Purged before the read."),
+      bySequence(3),
+    );
+    await expect
+      .poll(() => listReads(start))
+      .toEqual([
+        "/api/comms/search",
+        "/api/comms/threads",
+        "/api/comms/threads",
+      ]);
+    // A deleted root leaves the record's linked messages.
+    start = await change(
+      () => author.deleteMessage(operations, world.root.id),
+      bySequence(1),
+    );
+    await expect(
+      record.getByRole("button", { name: /vans are loaded/ }),
+    ).toHaveCount(0);
+    expect(bySequence(1)(start)).toHaveLength(1);
+  } finally {
+    await testInfo.attach("held message evidence", {
+      body: JSON.stringify(api.calls),
+      contentType: "application/json",
+    });
+    await page.close();
+    api.server.close();
+  }
+});
+
+test("a later change to a held message never takes the read of an earlier one", async ({
+  page,
+}, testInfo) => {
+  const world = fourRoomWorld();
+  const api = await prepare(page, "admin", undefined, world.runtime);
+  const { operations } = world.ids;
+  const author = world.runtime.controls.clientFor(world.root.author_id);
+  const edit = (body: string) =>
+    author.editMessage(operations, world.root.id, {
+      body,
+      mention_user_ids: [],
+      mentions_channel: false,
+      mentions_here: false,
+    });
+  const record = page.getByRole("complementary", {
+    name: "Record",
+    exact: true,
+  });
+  // Each read answers with the message as it was when the read arrived.
+  const held: (() => void)[] = [];
+  let holding = true;
+  await page.route(
+    `**/api/comms/conversations/${operations}/messages/by-sequence/1`,
+    async (route) => {
+      const result = await world.runtime.client.getMessageBySequence(
+        operations,
+        1,
+      );
+      if (holding) await new Promise<void>((done) => held.push(done));
+      await route.fulfill({
+        json: result.data,
+        headers: { ETag: result.etag, "Cache-Control": "private, no-store" },
+      });
+    },
+  );
+  const bySequence = () =>
+    api.calls.filter((call) => call.path.endsWith("/by-sequence/1"));
+  try {
+    await page.goto("/comms");
+    await ready(page, world.root.body);
+    await page
+      .getByRole("list", { name: "Records you follow", exact: true })
+      .getByRole("button", { name: /Riverside service visit/ })
+      .click();
+    await expect(
+      record.getByRole("button", { name: /Two vans are loaded/ }),
+    ).toBeVisible();
+    await edit("Three vans are loaded.");
+    await expect.poll(() => held.length).toBe(1);
+    // A second edit arrives while the first edit's read is still open.
+    await edit("Four vans are loaded.");
+    await settleReact(page);
+    held.shift()!();
+    await expect
+      .poll(() => bySequence().filter((call) => call.completedAt).length)
+      .toBeGreaterThan(0);
+    holding = false;
+    for (const release of held.splice(0)) release();
+    await expect(
+      page
+        .getByLabel("Messages", { exact: true })
+        .getByText("Four vans are loaded.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      record.getByRole("button", { name: /Four vans are loaded/ }),
+    ).toBeVisible();
+  } finally {
+    holding = false;
+    for (const release of held.splice(0)) release();
+    await testInfo.attach("held message order evidence", {
+      body: JSON.stringify(api.calls),
+      contentType: "application/json",
+    });
+    await page.close();
+    api.server.close();
+  }
+});
+
+test("after a session re-check Comms waits for a fresh identity read", async ({
+  page,
+}, testInfo) => {
+  const api = await prepare(page);
+  const identity = heldResponse();
+  try {
+    await page.goto("/comms");
+    await ready(page);
+    await page.route("**/api/auth/me", async (route) => {
+      identity.enter();
+      await identity.released;
+      return route.fallback();
+    });
+    const before = api.calls.length;
+    const since = (path: string) =>
+      api.calls.slice(before).filter((call) => call.path === path);
+    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    await identity.entered;
+    await expect
+      .poll(() => since("/api/auth/session").filter((call) => call.completedAt))
+      .not.toEqual([]);
+    await settleReact(page, 4);
+    // The cached identity predates the re-check: Comms does not start on it.
+    expect(since("/api/comms/bootstrap")).toEqual([]);
+    identity.release();
+    await expect.poll(() => since("/api/comms/bootstrap").length).toBe(1);
+    await ready(page);
+  } finally {
+    identity.release();
+    await testInfo.attach("re-check identity evidence", {
+      body: JSON.stringify(api.calls),
+      contentType: "application/json",
+    });
+    await page.close();
+    api.server.close();
+  }
+});
+
+test("an older read of a held message that lands last does not replace a newer one", async ({
+  page,
+}, testInfo) => {
+  const world = fourRoomWorld();
+  const api = await prepare(page, "admin", undefined, world.runtime);
+  const { operations } = world.ids;
+  const author = world.runtime.controls.clientFor(world.root.author_id);
+  const edit = (body: string) =>
+    author.editMessage(operations, world.root.id, {
+      body,
+      mention_user_ids: [],
+      mentions_channel: false,
+      mentions_here: false,
+    });
+  const record = page.getByRole("complementary", {
+    name: "Record",
+    exact: true,
+  });
+  // Each read answers with the message as it was when the read arrived.
+  const held: (() => void)[] = [];
+  let holding = true;
+  await page.route(
+    `**/api/comms/conversations/${operations}/messages/by-sequence/1`,
+    async (route) => {
+      const result = await world.runtime.client.getMessageBySequence(
+        operations,
+        1,
+      );
+      if (holding) await new Promise<void>((done) => held.push(done));
+      await route.fulfill({
+        json: result.data,
+        headers: { ETag: result.etag, "Cache-Control": "private, no-store" },
+      });
+    },
+  );
+  const completed = () =>
+    api.calls.filter(
+      (call) => call.path.endsWith("/by-sequence/1") && call.completedAt,
+    ).length;
+  try {
+    await page.goto("/comms");
+    await ready(page, world.root.body);
+    await page
+      .getByRole("list", { name: "Records you follow", exact: true })
+      .getByRole("button", { name: /Riverside service visit/ })
+      .click();
+    await expect(
+      record.getByRole("button", { name: /Two vans are loaded/ }),
+    ).toBeVisible();
+    await edit("Three vans are loaded.");
+    await expect.poll(() => held.length).toBe(1);
+    await edit("Four vans are loaded.");
+    await expect.poll(() => held.length).toBe(2);
+    // The newer read lands first; the older one lands after it.
+    held.splice(1, 1)[0]();
+    await expect(
+      record.getByRole("button", { name: /Four vans are loaded/ }),
+    ).toBeVisible();
+    holding = false;
+    for (const release of held.splice(0)) release();
+    await expect.poll(completed).toBeGreaterThanOrEqual(2);
+    await expect(
+      page
+        .getByLabel("Messages", { exact: true })
+        .getByText("Four vans are loaded.", { exact: true }),
+    ).toBeVisible();
+    await settleReact(page);
+    await expect(
+      record.getByRole("button", { name: /Four vans are loaded/ }),
+    ).toBeVisible();
+  } finally {
+    holding = false;
+    for (const release of held.splice(0)) release();
+    await testInfo.attach("out-of-order read evidence", {
       body: JSON.stringify(api.calls),
       contentType: "application/json",
     });

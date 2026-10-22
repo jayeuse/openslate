@@ -6,7 +6,10 @@ import {
 } from "@tanstack/react-query";
 import { ApiError } from "../../../src/lib/api";
 import { installFetch } from "../helpers/fake-fetch";
-import { createCommsQueryScope } from "../../../src/components/systems/comms/adapters/comms-queries";
+import {
+  createCommsQueryScope,
+  querySettled,
+} from "../../../src/components/systems/comms/adapters/comms-queries";
 import type {
   CommsContext,
   HistoryPage,
@@ -370,5 +373,31 @@ test("Comms infinite history uses exclusive cursors in both directions and retai
     scope.dispose();
     cache.clear();
     fetch.restore();
+  }
+});
+
+test("waiting for a bootstrap read ends when sign-out clears it mid-read", async () => {
+  const cache = client(),
+    scope = createCommsQueryScope(cache, owner);
+  const held = deferred<never>();
+  try {
+    void cache
+      .fetchQuery({
+        queryKey: scope.keys.bootstrap,
+        queryFn: () => held.promise,
+      })
+      .catch(() => {});
+    const waiting = querySettled(cache, scope.keys.bootstrap);
+    cache.clear();
+    await expect(
+      Promise.race([
+        waiting.then(() => "settled"),
+        new Promise((done) => setTimeout(() => done("still waiting"), 1_000)),
+      ]),
+    ).resolves.toBe("settled");
+  } finally {
+    held.reject(new Error("Test finished"));
+    scope.dispose();
+    cache.clear();
   }
 });

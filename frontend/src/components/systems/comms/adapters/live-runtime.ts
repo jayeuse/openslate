@@ -20,7 +20,35 @@ export function createLiveCommsRuntime(
   context: CommsContext,
 ) {
   const scope = createCommsQueryScope(cache, context);
-  const http = createReadyHttpCommsClient(scope.context, scope.signal);
+  const ready = createReadyHttpCommsClient(scope.context, scope.signal);
+  // One read of an event's message serves both the open history and the
+  // workspace's held lists: they ask for it at the same moment. Each message
+  // event drops the entry first, so a later change never joins an older read.
+  // The caller's signal is ignored on purpose: `scope.read` checks its
+  // combined signal again after the load.
+  const reading = new Map<
+    string,
+    ReturnType<typeof ready.getMessageBySequence>
+  >();
+  const http = {
+    ...ready,
+    getMessageBySequence(id: string, seq: number) {
+      const key = `${id}:${seq}`;
+      let read = reading.get(key);
+      if (!read) {
+        const own = ready.getMessageBySequence(id, seq, {
+          signal: scope.signal,
+        });
+        // A newer event's read may hold the key by now; leave it.
+        const done = () => {
+          if (reading.get(key) === own) reading.delete(key);
+        };
+        own.then(done, done);
+        reading.set(key, (read = own));
+      }
+      return read;
+    },
+  };
   const bridge = createCommsCacheBridge(cache, scope, http);
   const outbox = createCommsOutbox(http, scope.signal);
   const observers = new Set<EventObserver>();
@@ -42,6 +70,7 @@ export function createLiveCommsRuntime(
     scope.signal.throwIfAborted();
     // A conversation detail nobody shows is dropped, not kept stale: its
     // checks and members may have changed. A shown one is read again.
+    // Presence is removed: a reset would restore an older read's states.
     const unshown = new Set(
       cache
         .getQueryCache()
@@ -53,6 +82,8 @@ export function createLiveCommsRuntime(
             !query.isActive(),
         ),
     );
+    for (const query of unshown)
+      if (query.queryKey[5] === "presence") cache.getQueryCache().remove(query);
     if (unshown.size)
       await cache.resetQueries({
         queryKey: scope.keys.all,
@@ -98,6 +129,8 @@ export function createLiveCommsRuntime(
   };
   const observer: EventObserver = {
     on_event(event) {
+      if (event.event === "message")
+        reading.delete(`${event.payload.conversation_id}:${event.payload.seq}`);
       if (event.event === "grants" || event.event === "membership")
         releaseAllLocalAttachments();
       void bridge

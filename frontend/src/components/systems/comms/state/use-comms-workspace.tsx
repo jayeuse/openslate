@@ -13,6 +13,7 @@ import {
 
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
+import { ApiError } from "@/lib/api";
 import { createCommsConfiguration } from "../domain/configuration-model";
 import type {
   Bootstrap,
@@ -105,30 +106,33 @@ export function useCommsWorkspace() {
     recordsKey = "workspace-records";
   const readKey = (name: string) =>
     binding.scope ? [...binding.scope.keys.conversation(name), "read"] : [];
+  const threadsData = () =>
+    cache.getQueryData<WorkspaceThreads>(readKey(threadsKey));
   // A thread event re-reads the lists and only the roots it lacks; a repair
-  // reads every root again.
-  const reuseRoots = useRef(false);
+  // reads every root again. `fullRead` says which kind started last.
+  const reuseRoots = useRef(false),
+    fullRead = useRef(false);
   const threadRead = useCommsRead(threadsKey, (client, signal) => {
-    const previous = reuseRoots.current
-      ? cache.getQueryData<WorkspaceThreads>(readKey(threadsKey))
-      : undefined;
+    const previous = reuseRoots.current ? threadsData() : undefined;
     reuseRoots.current = false;
+    fullRead.current = !previous;
     return loadWorkspaceThreads(
       client,
       signal,
       new Map((previous?.roots ?? []).map((root) => [root.id, root])),
     );
   });
-  const recordRead = useCommsRead(recordsKey, (client, signal) =>
-    loadWorkspaceRecords(
-      client,
-      signal,
-      new Set(
-        cache
-          .getQueryData<WorkspaceThreads>(readKey(threadsKey))
-          ?.roots.map((root) => root.id),
+  // Record links wait for the first thread read: roots it holds are not
+  // read twice.
+  const recordRead = useCommsRead(
+    recordsKey,
+    (client, signal) =>
+      loadWorkspaceRecords(
+        client,
+        signal,
+        new Set(threadsData()?.roots.map((root) => root.id)),
       ),
-    ),
+    threadRead.status !== "loading",
   );
   // The sidebar, channels and direct names follow the live bootstrap query.
   const loaded = read.data;
@@ -326,6 +330,9 @@ export function useCommsWorkspace() {
           (query) =>
             query.queryKey[5] === kind && query.state.data !== undefined,
         );
+    // The read started last for each held message; numbers never repeat.
+    const latest = new Map<string, number>();
+    let reads = 0;
     return client.events.subscribe({
       on_event(event) {
         if (scope.signal.aborted) return;
@@ -356,10 +363,12 @@ export function useCommsWorkspace() {
         if (kind === "pin" || (kind !== "created" && pinned))
           void cache.invalidateQueries({ queryKey: detailKey, exact: true });
         if (kind === "thread") {
-          // A repair's full root read in flight is not replaced by a reuse.
-          reuseRoots.current =
-            cache.isFetching({ queryKey: readKey(threadsKey), exact: true }) ===
-            0;
+          // A full root read in flight (a repair's) is not replaced by a
+          // reuse; a reuse in flight restarts as one.
+          reuseRoots.current = !(
+            fullRead.current &&
+            cache.isFetching({ queryKey: readKey(threadsKey), exact: true })
+          );
           void cache.invalidateQueries({
             queryKey: readKey(threadsKey),
             exact: true,
@@ -371,11 +380,12 @@ export function useCommsWorkspace() {
           !!rows?.some(
             (message) => message.conversation_id === id && message.seq === seq,
           );
-        const inThreads = holds(
-            cache.getQueryData<WorkspaceThreads>(readKey(threadsKey))?.roots,
-          ),
+        const inThreads = holds(threadsData()?.roots),
           inRecords = holds(cache.getQueryData<Message[]>(readKey(recordsKey)));
         if (!inThreads && !inRecords) return;
+        const key = `${id}:${seq}`,
+          read = ++reads;
+        latest.set(key, read);
         void scope
           .read(
             id,
@@ -384,6 +394,10 @@ export function useCommsWorkspace() {
             false,
           )
           .then(({ data: message }) => {
+            // Assumes the server answers reads in the order they were sent:
+            // an older read that lands after a newer one is dropped.
+            if (latest.get(key) !== read) return;
+            latest.delete(key);
             const swap = (rows: readonly Message[]) =>
               rows.map((row) => (row.id === message.id ? message : row));
             if (inThreads)
@@ -398,12 +412,19 @@ export function useCommsWorkspace() {
                 (current) => current && swap(current),
               );
           })
-          .catch(() => {
-            // A purged message has no DTO; read its list again.
-            void cache.invalidateQueries({
-              queryKey: readKey(inThreads ? threadsKey : recordsKey),
-              exact: true,
-            });
+          .catch((error) => {
+            // A purged message has no DTO: read every list that held it again.
+            // Another failure leaves them to the next repair.
+            if (error instanceof ApiError && error.status === 404)
+              for (const name of [
+                inThreads && threadsKey,
+                inRecords && recordsKey,
+              ])
+                if (name)
+                  void cache.invalidateQueries({
+                    queryKey: readKey(name),
+                    exact: true,
+                  });
           });
       },
       on_connection() {},
@@ -439,6 +460,8 @@ export function useCommsWorkspace() {
     workspace: {
       ...displayed,
       people,
+      // Thread lists are still being read: no thread is known yet.
+      threadsLoading: threadRead.status === "loading",
       invalidateTypingRead,
       isTypingReadCurrent,
     },

@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useLayoutEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -107,6 +108,7 @@ function OwnedClient({
   const [departmentsOwner, setDepartmentsOwner] =
     useState<CommsViewClient | null>(null);
   const reload = useCallback(() => setGeneration((value) => value + 1), []);
+  const reverify = useRef(false);
   const role = identity.data?.currentOrganization?.role;
   const organization = identity.data?.currentOrganization?.orgId;
   useLayoutEffect(() => {
@@ -129,14 +131,26 @@ function OwnedClient({
     const unregister = registerWorkspaceSessionClear(userId, dispose);
     setRuntime(null);
     setError("");
+    // This cache belongs to one verified account and organization, so the
+    // first admission reuses the shell's identity read while it is fresh (or
+    // joins it in flight). After a session re-check or a retry, a
+    // pre-verification read cannot admit: read again.
+    if (suspended || generation) reverify.current = true;
     if (!suspended && !identity.isError)
-      void cache
-        .cancelQueries({ queryKey: authMeOptions().queryKey, exact: true })
-        .then(() =>
-          retired
-            ? undefined
-            : cache.fetchQuery({ ...authMeOptions(), staleTime: 0 }),
-        )
+      void (
+        reverify.current
+          ? cache
+              .cancelQueries({
+                queryKey: authMeOptions().queryKey,
+                exact: true,
+              })
+              .then(() =>
+                retired
+                  ? undefined
+                  : cache.fetchQuery({ ...authMeOptions(), staleTime: 0 }),
+              )
+          : cache.fetchQuery({ ...authMeOptions(), staleTime: 30_000 })
+      )
         .then((account) => {
           if (retired || !account) return;
           if (
