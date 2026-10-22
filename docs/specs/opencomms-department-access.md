@@ -139,12 +139,13 @@ Owner words: "if inventory member has granted access to read and send messages i
 | G4 | A grant exists | A manager removes the grant | The channel returns 404 for that person at once. Realtime ids stop within the token lifetime (D34). |
 | G5 | A person with a grant | Someone mentions them, posts @channel, or opens the member list | They are a reader: mentionable, notified by the existing kinds, and listed with their level. |
 | G6 | A member who cannot manage the channel | Try to add or remove a grant | The API refuses (403); the UI shows no editor. |
+| G8 | A category grant to an Inventory group | Open any channel in that category; move one channel out | Every channel in the category is readable at the granted level; the moved channel loses the category grant. |
 | G7 | A channel manager | Search for a person to grant | The search finds active members of the organization by name and shows name and departments only. People outside the organization are never found. |
 
 ### Design (proposed)
 
-1. One table of channel grants: organization, channel, subject (group or person), level (read or post). One row per subject per channel. Direct and group messages cannot have grants.
-2. `access.py`: a channel's level is the higher of its scope level and its best grant level for the person (through their groups or their own row), capped at post; the guest cap and the admin rule stay. D43 is unchanged.
+1. One table of access grants: organization, target (a channel or a category), subject (group or person), level (read or post). One row per subject per target. A category grant applies to every channel in that category, and a channel can add more grants (owner, 2026-10-22, like Discord category sync). Grants only add access; there are no deny grants (owner, 2026-10-22). Direct and group messages cannot have grants.
+2. `access.py`: a channel's level is the higher of its scope level and the best grant level for the person from the channel's grants and its category's grants (through their groups or their own row), capped at post; the guest cap and the admin rule stay. Moving a channel to another category changes which category grants apply. D43 is unchanged.
 3. Routes: list, add or change, and remove grants on a channel; all need `manageChannel`. A person search for grants needs `manageChannel` on that channel and returns name and departments only.
 4. Everything keyed on readers (notifications, mentions, member list, Realtime grants, search, files) follows automatically, because grants feed the same reader relation.
 5. Channel settings → Access: the read-only department summary stays, and a list "Also has access" shows each grant with its level and a remove action; "Give access" opens a search over groups and people with a level choice. Layout from ui-ux-pro-max; visual choices from impeccable (owner instruction).
