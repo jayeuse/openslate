@@ -257,6 +257,8 @@ def test_unbound_provider_identity_cannot_open_event_stream(
         ({"origin": "https://app.example", "sec-fetch-site": "same-origin"}, True),
         ({}, False),
         ({"origin": "null"}, False),
+        # An empty Origin (a proxy that forwards a missing header as "") stays refused.
+        ({"origin": "", "sec-fetch-site": "same-origin"}, False),
         ({"origin": "http://localhost:3001"}, False),
         ({"origin": "https://other.example"}, False),
         ({"sec-fetch-site": "same-site"}, False),

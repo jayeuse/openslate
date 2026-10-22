@@ -233,6 +233,9 @@ def test_gateway_config_preserves_single_origin_routes_with_container_host_upstr
     assert "handle @backup_export_content" in rendered
     assert "@api path /api /api/*" in rendered
     assert "{{" not in rendered
+    # Caddy passes request headers through; a placeholder for an absent one sends it empty.
+    assert "header_up Origin" not in rendered
+    assert "header_up X-Request-ID" not in rendered
 
 
 def test_browser_acceptance_command_runs_full_suite_for_complete_acceptance(

@@ -66,8 +66,6 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
             stream_timeout 24h
             header_up -Accept-Encoding
             header_up Host {http.request.hostport}
-            header_up Origin {http.request.header.Origin}
-            header_up X-Request-ID {http.request.header.X-Request-ID}
             header_up X-Forwarded-For {http.request.remote.host}
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
@@ -88,8 +86,6 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
             flush_interval -1
             header_up -Accept-Encoding
             header_up Host {http.request.hostport}
-            header_up Origin {http.request.header.Origin}
-            header_up X-Request-ID {http.request.header.X-Request-ID}
             header_up X-Forwarded-For {http.request.remote.host}
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
@@ -105,8 +101,6 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
     handle @api {
         reverse_proxy {{UPSTREAM_HOST}}:{{BACKEND_PORT}} {
             header_up Host {http.request.hostport}
-            header_up Origin {http.request.header.Origin}
-            header_up X-Request-ID {http.request.header.X-Request-ID}
             header_up X-Forwarded-For {http.request.remote.host}
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
@@ -120,8 +114,6 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
     handle {
         reverse_proxy {{UPSTREAM_HOST}}:{{BACKEND_PORT}} {
             header_up Host {http.request.hostport}
-            header_up Origin {http.request.header.Origin}
-            header_up X-Request-ID {http.request.header.X-Request-ID}
             header_up X-Forwarded-For {http.request.remote.host}
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
