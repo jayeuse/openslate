@@ -29,6 +29,8 @@ from app.systems.comms.access import (
     conversation_reader_statement,
     error,
     organization_member_ids,
+    readable_category_ids,
+    visible_category_clause,
 )
 from app.systems.comms.conversations.models import (
     CommsCategory,
@@ -108,7 +110,22 @@ def categories(db: Session, rows: Sequence[CommsCategory]) -> list[Category]:
     ]
 
 
-def category_page(db: Session, query: CategoryQuery) -> StandardListResponse[Category]:
+def visible_category(db: Session, user: User, row: CommsCategory) -> Category:
+    """One category read, hidden (404) like ``category_page`` hides it."""
+    shown = db.scalar(
+        select(CommsCategory.id).where(
+            CommsCategory.id == row.id,
+            visible_category_clause(db, user, readable_category_ids(db, user)),
+        )
+    )
+    if shown is None:
+        raise error("comms_not_found", "Category not found")
+    return categories(db, [row])[0]
+
+
+def category_page(
+    db: Session, user: User, query: CategoryQuery
+) -> StandardListResponse[Category]:
     c = CommsCategory
     result = execute_standard_list(
         db,
@@ -116,6 +133,7 @@ def category_page(db: Session, query: CategoryQuery) -> StandardListResponse[Cat
             c.org_id == bound_organization_column(),
             c.is_deleted.is_(False),
             c.deleted_at.is_(None),
+            visible_category_clause(db, user, readable_category_ids(db, user)),
         ),
         query.standard(),
         ListQuerySpec(

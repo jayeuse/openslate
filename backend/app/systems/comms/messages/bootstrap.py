@@ -16,6 +16,7 @@ from app.systems.comms.access import (
     LEVELS,
     _conversation_access_statement,
     conversation_reader_counts,
+    visible_category_clause,
 )
 from app.systems.comms.conversations.models import (
     CommsCategory,
@@ -171,6 +172,9 @@ def bootstrap(db: Session, user: User) -> BootstrapResponse:
             CommsCategory.org_id == org,
             CommsCategory.is_deleted.is_(False),
             CommsCategory.deleted_at.is_(None),
+            visible_category_clause(
+                db, user, {row[0].category_id for row in rows if row[0].category_id}
+            ),
         )
         .order_by(CommsCategory.position, CommsCategory.id)
     ).all()

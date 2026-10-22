@@ -83,13 +83,13 @@ def list_categories(
     db: DB, actor: Actor, response: Response, query: Annotated[CategoryQuery, Query()]
 ) -> Any:
     service.private(response)
-    return reads.category_page(db, query)
+    return reads.category_page(db, actor, query)
 
 
 @router.get("/categories/{category_id}", response_model=Category, responses=VERSIONED)
 def get_category(category_id: UUID, db: DB, actor: Actor, response: Response) -> Category:
     row = service.category(db, category_id)
-    result = reads.categories(db, [row])[0]
+    result = reads.visible_category(db, actor, row)
     service.headers(db, response, row)
     return result
 

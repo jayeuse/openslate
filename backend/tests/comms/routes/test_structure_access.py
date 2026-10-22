@@ -6,8 +6,12 @@ import pytest
 from sqlalchemy import select
 
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
-from app.systems.comms.conversations.models import CommsConversation
-from app.systems.comms.settings.models import CommsCapabilityGrant
+from app.systems.comms.conversations.models import (
+    CommsCategory,
+    CommsChannelAccess,
+    CommsConversation,
+)
+from app.systems.comms.settings.models import CommsCapabilityGrant, CommsSettingLock
 from app.systems.sandbox.departments.models import Department
 from tests.comms.routes.structure_support import (
     ROOT,
@@ -311,3 +315,91 @@ def test_channel_lifecycle_filters_visible_rows_before_stable_pages_and_totals(s
     _error(peer.get(hidden_path), 404, "comms_not_found")
     with case.world.session(org) as db:
         assert db.get(CommsConversation, UUID(hidden["id"])).archived_at is not None
+
+
+def test_department_bound_categories_reach_only_people_who_can_see_into_them(structure_routes):
+    """A department's category name is not shown to people who cannot read anything in it."""
+    case, org, home = structure_routes, structure_routes.world.first, structure_routes.world.second
+    case.add_home_members(home.author, home.peer)
+    with case.world.session(org) as db:
+        finance = Department(org_id=org.id, department_name="Category finance")
+        readers = Group(org_id=org.id, name="Category readers")
+        db.add_all([finance, readers])
+        db.flush()
+        bound = CommsCategory(
+            org_id=org.id, name="Finance category", position=1, department_id=finance.id
+        )
+        unbound = CommsCategory(org_id=org.id, name="Shared category", position=2)
+        db.add_all([bound, unbound])
+        db.flush()
+        channel = db.get(CommsConversation, org.other_conversation)
+        assert channel is not None
+        channel.scope, channel.department_id = "department", finance.id
+        channel.category_id = bound.id
+        # home.author manages another department; home.peer has one channel grant.
+        db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=home.author))
+        db.add(
+            GroupAccess(
+                org_id=org.id, group_id=org.group, department_id=org.department, level="manage"
+            )
+        )
+        db.add(
+            CommsChannelAccess(
+                org_id=org.id, conversation_id=channel.id, subject="user",
+                user_id=home.peer, level="read", created_by=org.author,
+            )
+        )
+        db.add(GroupMember(org_id=org.id, group_id=readers.id, user_id=org.peer))
+        ids = {"bound": str(bound.id), "unbound": str(unbound.id), "home": str(org.category)}
+        ids.update(finance=str(finance.id), readers=str(readers.id))
+        db.commit()
+
+    def seen(actor):
+        api = case.client(actor, org.id)
+        listed = _ok(api.get(ROOT + "/categories", params={"limit": 100}))["items"]
+        booted = _ok(api.get(ROOT + "/bootstrap"))["categories"]
+        names = {row["category"]["id"] for row in booted}
+        assert names == {row["id"] for row in listed}
+        found = api.get(ROOT + "/categories/" + ids["bound"])
+        assert found.status_code == (200 if ids["bound"] in names else 404), found.text
+        return ids["bound"] in names, {ids["unbound"], ids["home"]} <= names
+
+    # (actor, sees Finance): the unbound and readable categories stay for everyone.
+    expected = {
+        org.author: True,  # Administrator.
+        org.peer: False,  # Member with no Finance role, channel or grant.
+        home.author: False,  # Manager of another department.
+        home.peer: True,  # A D45 grant reads one Finance channel.
+    }
+    assert {actor: seen(actor) for actor in expected} == {
+        actor: (finance, True) for actor, finance in expected.items()
+    }
+
+    def change(*rows, remove=()):
+        with case.world.session(org) as db:
+            db.add_all(rows)
+            for model, key in remove:
+                db.delete(db.scalars(select(model).where(key)).one())
+            db.commit()
+
+    group, department = UUID(ids["readers"]), UUID(ids["finance"])
+    category = UUID(ids["bound"])
+    manage = CommsCapabilityGrant(
+        org_id=org.id, scope="category", category_id=category, subject="group",
+        group_id=group, capability="manageChannel", granted=True,
+    )
+    # Managing the category through a manageChannel group grant shows it ...
+    change(manage)
+    assert seen(org.peer) == (True, True)
+    # ... unless the workspace locks that capability.
+    change(CommsSettingLock(org_id=org.id, namespace="capability", key="manageChannel"))
+    assert seen(org.peer) == (False, True)
+    change(
+        remove=[
+            (CommsSettingLock, CommsSettingLock.org_id == org.id),
+            (CommsCapabilityGrant, CommsCapabilityGrant.category_id == category),
+        ]
+    )
+    # A department read role shows the category even without a channel.
+    change(GroupAccess(org_id=org.id, group_id=group, department_id=department, level="read"))
+    assert seen(org.peer) == (True, True)

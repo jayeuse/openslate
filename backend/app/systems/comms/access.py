@@ -6,7 +6,7 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy import Select, and_, case, exists, false, func, literal, or_, select, true
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -21,11 +21,13 @@ from app.systems.access.users.membership import (
 )
 from app.systems.access.users.models import Membership, User
 from app.systems.comms.conversations.models import (
+    CommsCategory,
     CommsChannelAccess,
     CommsConversation,
     CommsDirectBlock,
     CommsMember,
 )
+from app.systems.comms.settings.models import CommsCapabilityGrant, CommsSettingLock
 
 ConversationLevel = Literal["none", "read", "post", "manage"]
 ManagerSource = Literal["creator", "membership_manager", "department_manager"]
@@ -257,6 +259,79 @@ def readable_conversation_ids(db: Session, user: User) -> set[UUID]:
                 visible_conversation_clause(db, user),
             )
         )
+    )
+
+
+def readable_category_ids(db: Session, user: User) -> Select[tuple[UUID | None]]:
+    """Categories holding a channel the person reads, as one subquery."""
+    return select(CommsConversation.category_id).where(
+        visible_conversation_clause(db, user),
+        CommsConversation.category_id.is_not(None),
+    )
+
+
+def visible_category_clause(
+    db: Session,
+    user: User,
+    readable: Collection[UUID] | Select[tuple[UUID | None]],
+) -> ColumnElement[bool]:
+    """A department's category is shown only to people who can see into it.
+
+    Visible: every unbound category; for an administrator, all; otherwise a category
+    whose department the person reads, that holds a channel they read (``readable``,
+    for example through a D45 grant), or that they manage through a manageChannel
+    group grant (as ``scope_management_decision``: no guest, no workspace lock).
+    Department managers read their department, so the department arm covers them.
+    """
+    membership = current_membership(db, user)
+    if membership is None:
+        return false()
+    if membership.role == "admin":
+        return true()
+    org, category, grant, lock = (
+        bound_organization_column(), CommsCategory, CommsCapabilityGrant, CommsSettingLock,
+    )
+    groups = (
+        select(GroupMember.group_id)
+        .join(Group, Group.id == GroupMember.group_id)
+        .where(
+            GroupMember.org_id == org,
+            Group.org_id == org,
+            GroupMember.user_id == user.id,
+            GroupMember.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+        )
+    )
+    manages = and_(
+        exists(
+            select(grant.id).where(
+                grant.org_id == org,
+                grant.is_deleted.is_(False),
+                grant.scope == "category",
+                grant.category_id == category.id,
+                grant.capability == "manageChannel",
+                grant.granted.is_(True),
+                grant.subject == "group",
+                grant.group_id.in_(groups),
+            )
+        ),
+        ~exists(
+            select(lock.id).where(
+                lock.org_id == org,
+                lock.is_deleted.is_(False),
+                lock.namespace == "capability",
+                lock.key == "manageChannel",
+            )
+        ),
+    )
+    return or_(
+        category.department_id.is_(None),
+        category.id.in_(readable),
+        department_level_clause(
+            literal(user.id), literal(membership.role), category.department_id.expression,
+            AccessLevel.READ,
+        ),
+        manages if membership.role != "guest" else false(),
     )
 
 
