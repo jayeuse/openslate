@@ -92,6 +92,7 @@ jobs:
         with:
           name: frontend-build-manifests
           path: |
+            frontend/.next/BUILD_ID
             frontend/.next/build-manifest.json
             frontend/.next/server/app/**/page_client-reference-manifest.js
           if-no-files-found: error

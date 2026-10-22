@@ -520,6 +520,14 @@ test("a partially saved new channel keeps unsaved settings and retries without c
   await expect(row).toHaveCount(1);
   await page.reload();
   await row.click();
+  // The header's settings button belongs to the open channel; wait for the switch.
+  await expect(
+    page.getByRole("heading", {
+      level: 2,
+      name: "partial-save-room",
+      exact: true,
+    }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();

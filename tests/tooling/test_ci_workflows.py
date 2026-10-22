@@ -204,6 +204,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         # The asset budget test reads the client build manifests beside the export.
         self.assertIn("name: frontend-build-manifests", build)
         self.assertIn("frontend/.next/server/app/**/page_client-reference-manifest.js", build)
+        self.assertIn("frontend/.next/BUILD_ID", build)
         self.assertIn("name: frontend-build-manifests", test)
         self.assertIn("path: frontend/.next/", test)
         # The export server is the production StaticSite code from the backend.

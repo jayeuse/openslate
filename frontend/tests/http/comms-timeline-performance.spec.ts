@@ -330,7 +330,10 @@ for (const mode of openingDiagnostic
         JSON.stringify(report, null, 2),
       );
       console.info(JSON.stringify(report));
-      expect.soft(opening.readyAt! - opening.dataAt!).toBeLessThanOrEqual(200);
+      // Owner decision 2026-10-23: 200 ms stays the plan section 6 goal (about
+      // 100 ms alone on the development machine); the suite and CI runners share
+      // the CPU, so this check fails above 300 ms.
+      expect.soft(opening.readyAt! - opening.dataAt!).toBeLessThanOrEqual(300);
       expect.soft(opening.newestVisible).toBe(true);
       if (scroll) {
         expect.soft(scroll.wheel_delta_pixels).toBe(-3000);
