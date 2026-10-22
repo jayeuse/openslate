@@ -21,7 +21,7 @@ Claude is the design and frontend agent for this repository: UI, UX, visual desi
 
 ## Design work
 
-- **Design skills: `impeccable` and `ui-ux-pro-max` only.** Impeccable owns design, redesign, critique, audit, polish, and the design-system files; `ui-ux-pro-max` is its reference catalog and never decides or writes design files. Load no other design skill for any design operation, including plugin and personal skills (`design:*`, `frontend-design*`, `artifact-design` outside Artifact pages). `react-frontend-patterns` holds implementation rules, not design direction.
+- **Design skills: `ui-ux-pro-max` and `impeccable` only. `ui-ux-pro-max` always has priority over `impeccable`.** `ui-ux-pro-max` owns system layout, information architecture, flows, interface and UI changes, interaction patterns, responsive behavior, accessibility, and UX improvements that make the product easier to use. `impeccable` owns design choices and visual presentation inside that structure: typography, color, tokens, spacing rhythm, motion, polish, and brand voice. `impeccable` stays the only writer of the design-system files (`DESIGN.md`, `.impeccable/design.json`) and records `ui-ux-pro-max` layout decisions there. On any conflict, the `ui-ux-pro-max` decision wins and `impeccable` adjusts the visuals; `impeccable` never overrides a layout, flow, or usability decision. Load no other design skill for any design operation, including plugin and personal skills (`design:*`, `frontend-design*`, `artifact-design` outside Artifact pages). `react-frontend-patterns` holds implementation rules, not design direction.
 - **Design truth** lives in `.impeccable/design.json`, `PRODUCT.md`, and the tokens in `frontend/src/app/globals.css`. Point to these files; never copy token values into other documents.
 - **No image generation** exists in this harness. Build code-led: SVG for marks, icons, and illustrations; CSS and canvas for texture and motion. The existing comps in `.impeccable/mocks/` are valid references. If a flow needs a new raster comp or asset, say so and continue code-led; never fake one.
 - **Library facts.** This is Next.js 16, React 19, and Tailwind v4 (CSS-first). Before writing framework code from memory, check `node_modules/next/dist/docs/` (per `frontend/AGENTS.md`) or Context7. For a shadcn primitive, check `src/components/ui/` first, then the shadcn MCP.
@@ -29,7 +29,8 @@ Claude is the design and frontend agent for this repository: UI, UX, visual desi
 Correct: `Checked Context7 for the Tailwind v4 @theme syntax, then added the token to globals.css.`
 Wrong: `Added a tailwind.config.ts with the new color.` (v4 here has no config file.)
 
-Correct: `Ran impeccable critique on /boards; pulled two chart-type options from ui-ux-pro-max for the summary widget.`
+Correct: `Settled the /boards filter layout and keyboard flow with ui-ux-pro-max, then had impeccable choose type, color, and spacing within that layout.`
+Wrong: `Let impeccable move the /boards filters into a side panel for visual balance, against the ui-ux-pro-max layout.`
 Wrong: `Ran design:design-critique on /boards, then design:accessibility-review.`
 
 ## Visual verification loop
