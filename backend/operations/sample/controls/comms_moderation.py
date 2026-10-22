@@ -62,7 +62,7 @@ def execute_moderation_control(
                         step=step, expected=expected, on_substep=on_substep, **kwargs)
 
     created = call("POST", "/api/comms/conversations", "create_owned_room", 201, json_body={
-        "name": "Owned moderation check", "scope": "members", "member_ids": [person],
+        "name": "Owned moderation check", "scope": "organization",
         "position": 0, "topic": "", "category_id": None,
     }).json()
     check(created["org_id"] == org, "room_org")

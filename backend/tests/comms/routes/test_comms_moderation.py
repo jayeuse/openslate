@@ -87,7 +87,7 @@ def test_moderator_removal_restoration_preserves_identity_and_hides_retained_con
 def test_report_bound_private_admin_action_does_not_open_ordinary_private_reads(message_routes):
     case, org = message_routes, message_routes.world.first
     private = case.private_conversations()
-    conversation, source = private["channel"]
+    conversation, source = private["group"]
     reporter, admin = case.client(org.peer, org.id), case.client(org.author, org.id)
     path = f"/api/comms/conversations/{conversation}/messages/{source}"
     assert admin.get(path).status_code == 404

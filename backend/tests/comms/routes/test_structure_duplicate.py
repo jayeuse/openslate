@@ -5,7 +5,8 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-from app.systems.comms.conversations.models import CommsConversation, CommsConversationGroup
+from app.systems.access.policy.models import GroupAccess, GroupMember
+from app.systems.comms.conversations.models import CommsConversation, CommsMember
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
 from app.systems.comms.settings.models import CommsCapabilityGrant, CommsSettingLock, CommsSettings
 from app.systems.manage.audit.models import AuditLog
@@ -25,36 +26,45 @@ from tests.comms.routes.structure_support import (
 pytestmark = pytest.mark.integration
 
 
-def test_private_channel_duplicate_copies_member_access_but_not_roles_or_content(structure_routes):
+def test_duplicate_copies_scope_but_not_manager_roles_or_content(structure_routes):
     case, org = structure_routes, structure_routes.world.first
     admin, peer = case.client(org.author, org.id), case.client(org.peer, org.id)
-    _, path = _created(
+    with case.world.session(org) as db:
+        db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
+        db.add(
+            GroupAccess(
+                org_id=org.id, group_id=org.group, department_id=org.department, level="write"
+            )
+        )
+        db.commit()
+    source, path = _created(
         admin,
         ROOT + "/conversations",
-        _channel(
-            "Private source",
-            scope="members",
-            member_ids=[str(org.peer)],
-        ),
+        _channel("Department source", scope="department", department_id=str(org.department)),
     )
-    _ok(
-        admin.put(
-            path + f"/members/{org.peer}",
-            headers={"If-Match": _tag(_read(admin, path))},
-            json={"role": "manager"},
+    with case.world.session(org) as db:
+        db.add(
+            CommsMember(
+                org_id=org.id, conversation_id=UUID(source["id"]), user_id=org.peer, role="manager"
+            )
         )
-    )
+        db.commit()
+    assert _ok(peer.get(path))["level"] == "manage"
     copied = _ok(
         admin.post(
             path + "/duplicates",
             headers={"If-Match": _tag(_read(admin, path))},
-            json={"name": "Private copy", "category_id": None},
+            json={"name": "Department copy", "category_id": None},
         ),
         201,
     )
     copy_path = ROOT + "/conversations/" + copied["id"]
     current = _ok(peer.get(copy_path))
-    assert current["scope"] == "members" and current["level"] == "post"
+    assert (current["scope"], current["department_id"], current["level"]) == (
+        "department",
+        str(org.department),
+        "post",
+    )
     assert current["member_role"] == "member" and current["member_count"] == 2
     assert _ok(peer.get(copy_path + "/messages"))["items"] == []
 
@@ -130,15 +140,16 @@ def test_duplicate_checks_both_scopes_and_copies_configuration_without_content(d
         copied["topic"],
         copied["scope"],
         copied["category_id"],
+        copied["department_id"],
         copied["level"],
     ) == (
         "Copied room",
         "Current source",
-        "groups",
+        "department",
         str(destination),
+        str(org.department),
         "manage",
     )
-    assert copied["access"] == [{"subject": "group", "group_id": str(org.group), "level": "read"}]
     settings, grants = _configuration(case, identity)
     assert settings["overrides"] == {"edit_window_minutes": 17}
     assert settings["effective"]["formatting"] is False
@@ -169,7 +180,7 @@ def test_duplicate_checks_both_scopes_and_copies_configuration_without_content(d
             == []
         )
         copied_ids = {identity}
-        for model in (CommsSettings, CommsConversationGroup, CommsCapabilityGrant):
+        for model in (CommsSettings, CommsCapabilityGrant):
             new = set(db.scalars(select(model.id).where(model.conversation_id == identity)))
             old = set(db.scalars(select(model.id).where(model.conversation_id == org.conversation)))
             assert new and new.isdisjoint(old)

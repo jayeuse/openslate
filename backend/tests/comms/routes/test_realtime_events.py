@@ -141,7 +141,7 @@ def test_structure_has_no_identifiers_and_personal_preferences_do_not_fan_out(st
     api.app.state.comms_publisher.submit = lambda rows: events.extend(rows)
     created = api.post(
         "/api/comms/conversations",
-        json=_channel("Private event room", scope="members", member_ids=[str(org.peer)]),
+        json=_channel("Private event room"),
     )
     assert created.status_code == 201
     identity = created.json()["id"]
@@ -162,6 +162,15 @@ def test_structure_has_no_identifiers_and_personal_preferences_do_not_fan_out(st
             "payload": {"conversation_id": identity},
         }
     ]
+    current = api.get(path)
+    assert (
+        api.put(
+            path + f"/members/{org.peer}",
+            headers={"If-Match": current.headers["etag"]},
+            json={"role": "manager"},
+        ).status_code
+        == 200
+    )
     events.clear()
     current = api.get(path)
     assert (

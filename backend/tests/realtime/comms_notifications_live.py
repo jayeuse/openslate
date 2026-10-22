@@ -37,8 +37,8 @@ def test_primary_partner_notification_samples_and_user_topic_delivery(native_roo
         db.commit()
     partner_headers = {**room.headers[0], "X-Org": str(room.other_org)}
     response = room.client.post("/api/comms/conversations", headers=partner_headers, json={
-        "name": "Owned partner notification room", "scope": "members", "category_id": None,
-        "position": 0, "topic": "", "member_ids": [str(room.people[1].id)],
+        "name": "Owned partner notification room", "scope": "organization", "category_id": None,
+        "position": 0, "topic": "",
     })
     assert response.status_code == 201
     partner_conversation = response.json()["id"]

@@ -7,8 +7,6 @@ import pytest
 from tests.comms.routes.settings_support import stored
 from tests.comms.routes.structure_support import (
     ROOT,
-    _channel,
-    _created,
     _error,
     _ok,
     _race,
@@ -131,21 +129,8 @@ def test_preferences_reject_context_injection_invalid_pairs_and_private_nonmembe
         assert stored(case) == before
     _error(admin.put(category, json={"collapsed": True}), 422)
     _error(admin.put(category, json={"collapsed": "true", "mute": {"kind": "off"}}), 422)
-    _, path = _created(
-        admin,
-        ROOT + "/conversations",
-        _channel(
-            "Private preferences",
-            scope="members",
-            member_ids=[str(org.peer)],
-        ),
-    )
-    assert (
-        admin.delete(
-            path + f"/members/{org.author}", headers={"If-Match": _tag(_read(admin, path))}
-        ).status_code
-        == 204
-    )
+    private = case.private_conversations()["group"][0]
+    path = f"{ROOT}/conversations/{private}"
     before = stored(case)
     _error(admin.get(path + "/preferences"), 404, "comms_not_found")
     _error(admin.patch(path + "/preferences", json={"starred": True}), 404, "comms_not_found")

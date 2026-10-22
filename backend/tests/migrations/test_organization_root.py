@@ -5,9 +5,10 @@ from sqlalchemy import inspect, text
 
 pytestmark = pytest.mark.integration
 
-# S15's accepted inventory; row-security imports this same organization inventory.
+# S15's accepted inventory without D44's dropped channel access table; row-security imports
+# this same organization inventory.
 COMMS_TABLES = frozenset(
-    "comms_categories comms_conversations comms_conversation_groups comms_members "
+    "comms_categories comms_conversations comms_members "
     "comms_direct_blocks comms_settings comms_setting_locks comms_capability_grants "
     "comms_personal_preferences comms_member_preferences comms_read_states "
     "comms_conversation_counters comms_threads comms_thread_follows comms_messages "
@@ -45,7 +46,6 @@ ORGANIZATION_TABLES = (
         "comms_retention_sweeps",
         "comms_expired_sends",
         "comms_templates",
-        "comms_admissions",
     }
 )
 MIXED_TABLES = frozenset({"audit_logs", "files", "security_events", "in_app_notifications"})

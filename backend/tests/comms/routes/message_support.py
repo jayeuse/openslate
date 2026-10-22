@@ -185,9 +185,8 @@ def _bootstrap(client, org, actor):
             "name",
             "position",
             "department_id",
-            "default_access",
         }
-        assert category["org_id"] == str(org) and category["default_access"] == []
+        assert category["org_id"] == str(org)
         assert set(entry["preferences"]) == {"collapsed", "mute"}
     by_id = {}
     for summary in body["conversations"]:

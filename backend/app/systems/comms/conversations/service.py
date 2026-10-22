@@ -13,9 +13,8 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.database.organization_scope import bound_organization_column
-from app.systems.access.policy.models import Group
 from app.systems.access.policy.readers import active_account_clause
-from app.systems.access.users.membership import bound_membership_join, bound_organization
+from app.systems.access.users.membership import bound_membership_join
 from app.systems.access.users.models import Membership, User
 from app.systems.comms.access import error, require_conversation_access
 from app.systems.comms.capabilities import (
@@ -26,10 +25,8 @@ from app.systems.comms.capabilities import (
 from app.systems.comms.conversations.models import (
     CommsCategory,
     CommsConversation,
-    CommsConversationGroup,
     CommsMember,
 )
-from app.systems.comms.messages.schemas import EveryoneAccess, GroupAccess
 from app.systems.comms.realtime.grants import lock_projection
 from app.systems.comms.settings.models import CommsCapabilityGrant, CommsSettings
 from app.systems.comms.settings.resolution import Scope
@@ -56,9 +53,26 @@ def creation_scope(category_id: UUID | None) -> Scope:
     return {"kind": "category", "id": category_id} if category_id else {"kind": "workspace"}
 
 
-def require_creation(db: Session, user: User, category_id: UUID | None) -> None:
-    if not channel_creation_check(db, user, creation_scope(category_id))["decision"]["allowed"]:
+def require_creation(
+    db: Session,
+    user: User,
+    category_id: UUID | None,
+    department_id: UUID | None = None,
+    *,
+    channel: bool = True,
+) -> None:
+    scope = creation_scope(category_id)
+    check = channel_creation_check(db, user, scope, department_id, channel=channel)
+    if not check["decision"]["allowed"]:
         raise error("comms_capability_denied", "Channel creation is not permitted", 403)
+
+
+def require_category_binding(
+    db: Session, category_id: UUID | None, department_id: UUID | None,
+) -> None:
+    """D44 A8: a department's category holds only its channels; others hold organization ones."""
+    if category_id is not None and category(db, category_id).department_id != department_id:
+        raise error("comms_invalid", "The channel does not match its category's department", 422)
 
 
 def require_management(db: Session, user: User, scope: Scope) -> None:
@@ -140,51 +154,6 @@ def require_people(db: Session, identities: Collection[UUID]) -> None:
         raise error("comms_not_found", "Person not found")
 
 
-def validate_access(db: Session, rows: list[EveryoneAccess | GroupAccess]) -> None:
-    keys = [(row.subject, row.group_id if isinstance(row, GroupAccess) else None) for row in rows]
-    ids = {row.group_id for row in rows if isinstance(row, GroupAccess)}
-    if (
-        len(set(keys)) != len(keys)
-        or set(
-            db.scalars(
-                select(Group.id).where(
-                    Group.org_id == bound_organization_column(),
-                    Group.is_deleted.is_(False),
-                    Group.id.in_(ids),
-                )
-            )
-        )
-        != ids
-    ):
-        raise error("comms_invalid", "Invalid access groups", 422)
-
-
-def replace_access(
-    db: Session,
-    owner: CommsCategory | CommsConversation,
-    rows: list[EveryoneAccess | GroupAccess],
-) -> None:
-    validate_access(db, rows)
-    field = "category_id" if isinstance(owner, CommsCategory) else "conversation_id"
-    existing = db.scalars(
-        select(CommsConversationGroup).where(
-            CommsConversationGroup.org_id == bound_organization_column(),
-            getattr(CommsConversationGroup, field) == owner.id,
-        )
-    ).all()
-    for row in existing:
-        db.delete(row)
-    db.flush()
-    for grant in rows:
-        db.add(
-            CommsConversationGroup(
-                org_id=bound_organization(db),
-                **{field: owner.id},
-                **grant.model_dump(),
-            )
-        )
-
-
 def version(db: Session, row: CommsCategory | CommsConversation) -> str:
     """Actor-independent configuration token, excluding messages and personal state."""
     db.flush()
@@ -192,10 +161,7 @@ def version(db: Session, row: CommsCategory | CommsConversation) -> str:
         "resource": {column.name: getattr(row, column.name) for column in row.__table__.columns},
     }
     field = "category_id" if isinstance(row, CommsCategory) else "conversation_id"
-    models: tuple[
-        type[CommsConversationGroup | CommsSettings | CommsCapabilityGrant | CommsMember], ...
-    ] = (
-        CommsConversationGroup,
+    models: tuple[type[CommsSettings | CommsCapabilityGrant | CommsMember], ...] = (
         CommsSettings,
         CommsCapabilityGrant,
     )

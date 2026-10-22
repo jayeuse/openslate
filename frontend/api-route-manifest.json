@@ -750,36 +750,6 @@
     "path": "/api/comms/conversations/{param}/messages"
   },
   {
-    "adapter": "frontend/src/components/systems/comms/adapters/admissions-api.ts",
-    "function": "decideAdmission",
-    "method": "POST",
-    "path": "/api/comms/conversations/{param}/admissions/{param}/decision"
-  },
-  {
-    "adapter": "frontend/src/components/systems/comms/adapters/admissions-api.ts",
-    "function": "getAdmission",
-    "method": "GET",
-    "path": "/api/comms/conversations/{param}/admissions/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/comms/adapters/admissions-api.ts",
-    "function": "invitePerson",
-    "method": "POST",
-    "path": "/api/comms/conversations/{param}/invitations"
-  },
-  {
-    "adapter": "frontend/src/components/systems/comms/adapters/admissions-api.ts",
-    "function": "listAdmissions",
-    "method": "GET",
-    "path": "/api/comms/conversations/{param}/admissions"
-  },
-  {
-    "adapter": "frontend/src/components/systems/comms/adapters/admissions-api.ts",
-    "function": "submitJoinRequest",
-    "method": "POST",
-    "path": "/api/comms/join-requests"
-  },
-  {
     "adapter": "frontend/src/components/systems/comms/adapters/configuration-api.ts",
     "function": "applyTemplate",
     "method": "POST",
@@ -946,6 +916,12 @@
     "function": "updateSchedule",
     "method": "PUT",
     "path": "/api/comms/scheduled-messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/realtime-client.ts",
+    "function": "createCommsRealtime",
+    "method": "POST",
+    "path": "/api/realtime/token"
   },
   {
     "adapter": "frontend/src/components/systems/comms/adapters/retention-api.ts",
@@ -1426,12 +1402,6 @@
     "function": "restoreConversation",
     "method": "POST",
     "path": "/api/comms/conversations/{param}/restore"
-  },
-  {
-    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
-    "function": "setChannelAccess",
-    "method": "PUT",
-    "path": "/api/comms/conversations/{param}/access"
   },
   {
     "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
@@ -2500,11 +2470,5 @@
     "function": "saveUserPreferences",
     "method": "PATCH",
     "path": "/api/users/{param}/preferences"
-  },
-  {
-    "adapter": "frontend/src/components/systems/comms/adapters/realtime-client.ts",
-    "function": "createCommsRealtime",
-    "method": "POST",
-    "path": "/api/realtime/token"
   }
 ]

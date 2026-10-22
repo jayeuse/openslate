@@ -203,10 +203,10 @@ class SearchCase:
                 CommsConversation(
                     id=ids["private_room"],
                     org_id=first.id,
-                    kind="channel",
+                    # D44: hand-picked people are a group message, never a channel.
+                    kind="group",
                     scope="members",
                     name="S19 private",
-                    category_id=first.category,
                     created_by=first.author,
                 )
             )

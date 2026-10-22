@@ -108,7 +108,6 @@ def execute_partner(
             "name": action.values["category_name"],
             "position": 0,
             "department_id": None,
-            "default_access": [],
         },
         "create_partner_category",
     )
@@ -122,8 +121,7 @@ def execute_partner(
             "topic": "",
             "position": 0,
             "category_id": category["id"],
-            "scope": "members",
-            "member_ids": people,
+            "scope": "organization",
         },
         "create_partner_channel",
     )

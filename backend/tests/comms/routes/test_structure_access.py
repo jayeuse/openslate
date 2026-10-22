@@ -5,9 +5,10 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-from app.systems.access.policy.models import GroupAccess, GroupMember
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.comms.conversations.models import CommsConversation
 from app.systems.comms.settings.models import CommsCapabilityGrant
+from app.systems.sandbox.departments.models import Department
 from tests.comms.routes.structure_support import (
     ROOT,
     _channel,
@@ -24,27 +25,33 @@ from tests.comms.routes.structure_support import (
 pytestmark = pytest.mark.integration
 
 
-def test_id27_channel_responses_refuse_read_loss_but_commit_readable_downgrade(structure_routes):
+def test_id27_channel_responses_keep_department_read_and_commit_readable_downgrade(
+    structure_routes,
+):
     case, org = structure_routes, structure_routes.world.first
     admin, actor = case.client(org.author, org.id), case.client(org.peer, org.id)
-    access = [{"subject": "group", "group_id": str(org.group), "level": "read"}]
     with case.world.session(org) as db:
         db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
+        db.add(
+            GroupAccess(
+                org_id=org.id, group_id=org.group, department_id=org.department, level="read"
+            )
+        )
         db.commit()
     row, path = _created(
         admin,
         f"{ROOT}/conversations",
         _channel(
-            "Sole group read",
+            "Sole department read",
             org.category,
-            "groups",
-            access=access,
+            "department",
+            department_id=str(org.department),
         ),
     )
     original = _read(actor, path)
     assert original.json()["level"] == "read"
     _error(
-        actor.put(path + "/access", headers={"If-Match": _tag(original)}, json={"access": []}),
+        actor.patch(path, headers={"If-Match": _tag(original)}, json={"topic": "No grant"}),
         403,
         "comms_capability_denied",
     )
@@ -70,19 +77,11 @@ def test_id27_channel_responses_refuse_read_loss_but_commit_readable_downgrade(s
     current = _read(actor, path)
     before = _snapshot(case)
     _error(
-        actor.put(path + "/access", headers={"If-Match": _tag(original)}, json={"access": []}),
+        actor.patch(path, headers={"If-Match": _tag(original)}, json={"topic": "Stale"}),
         412,
         "comms_precondition_failed",
     )
-    _error(actor.put(path + "/access", json={"access": []}), 428, "comms_precondition_required")
-    refused = actor.put(path + "/access", headers={"If-Match": _tag(current)}, json={"access": []})
-    _error(refused, 409, "comms_conflict")
-    assert refused.json() == {
-        "detail": {
-            "code": "comms_conflict",
-            "message": "This change would remove your read access. No changes were saved.",
-        }
-    }
+    _error(actor.patch(path, json={"topic": "Unversioned"}), 428, "comms_precondition_required")
     assert _snapshot(case) == before
     _unchanged_read(actor, path, current)
     # Category capability authority may disappear, but category placement is never base read access.
@@ -90,11 +89,11 @@ def test_id27_channel_responses_refuse_read_loss_but_commit_readable_downgrade(s
         path, headers={"If-Match": _tag(current)}, json={"category_id": None, "position": 7}
     )
     saved = _ok(moved)
-    assert (saved["category_id"], saved["position"], saved["level"], saved["access"]) == (
+    assert (saved["category_id"], saved["position"], saved["level"], saved["department_id"]) == (
         None,
         7,
         "read",
-        access,
+        str(org.department),
     )
     assert _tag(moved) != _tag(current)
     _unchanged_read(actor, path, moved)
@@ -144,16 +143,20 @@ def test_department_management_does_not_reach_private_category_siblings(structur
             department_id=str(org.department),
         ),
     )
-    hidden, hidden_path = _created(
-        admin,
-        ROOT + "/conversations",
-        _channel(
-            "Private sibling",
-            org.category,
-            "members",
-            member_ids=[],
-        ),
-    )
+    with case.world.session(org) as db:
+        # D44: another department's channel stored in this category (setup bypasses A8).
+        other = Department(org_id=org.id, department_name="Sibling department")
+        db.add(other)
+        db.flush()
+        sibling = CommsConversation(
+            org_id=org.id, kind="channel", scope="department", department_id=other.id,
+            category_id=org.category, name="Other department sibling", created_by=org.author,
+        )
+        db.add(sibling)
+        db.flush()
+        hidden = {"id": str(sibling.id)}
+        db.commit()
+    hidden_path = ROOT + "/conversations/" + hidden["id"]
     assert _ok(manager.get(path))["level"] == "manage"
     _error(manager.get(hidden_path), 404, "comms_not_found")
     _error(
@@ -179,13 +182,28 @@ def test_channel_lifecycle_filters_visible_rows_before_stable_pages_and_totals(s
     collection = ROOT + "/conversations"
     first, first_path = _created(admin, collection, _channel("Lifecycle twin"))
     second, _ = _created(admin, collection, _channel("Lifecycle twin"))
+    with case.world.session(org) as db:
+        # D44: the peer reads one department's channels; nobody but the admin reads the other.
+        readers, other = Group(org_id=org.id, name="Lifecycle readers"), Department(
+            org_id=org.id, department_name="Lifecycle hidden department"
+        )
+        db.add_all([readers, other])
+        db.flush()
+        db.add(GroupMember(org_id=org.id, group_id=readers.id, user_id=org.peer))
+        db.add(
+            GroupAccess(
+                org_id=org.id, group_id=readers.id, department_id=org.department, level="read"
+            )
+        )
+        hidden_department = str(other.id)
+        db.commit()
     restricted, restricted_path = _created(
         admin,
         collection,
         _channel(
             "Lifecycle private",
-            scope="members",
-            member_ids=[str(org.peer)],
+            scope="department",
+            department_id=str(org.department),
             position=1,
         ),
     )
@@ -194,8 +212,8 @@ def test_channel_lifecycle_filters_visible_rows_before_stable_pages_and_totals(s
         collection,
         _channel(
             "Lifecycle hidden",
-            scope="members",
-            member_ids=[],
+            scope="department",
+            department_id=hidden_department,
             position=2,
         ),
     )

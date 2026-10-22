@@ -3,15 +3,17 @@
 from uuid import UUID
 
 import pytest
+from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import GroupAccess, GroupMember
+from app.systems.comms.conversations.models import CommsConversation, CommsMember
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.comms.conftest import NOW
 from tests.comms.routes.message_support import send
-from tests.comms.routes.structure_support import ROOT, _channel, _created, _error, _ok, _read, _tag
+from tests.comms.routes.structure_support import ROOT, _channel, _created, _error, _ok
 
 pytestmark = pytest.mark.integration
 
@@ -63,7 +65,7 @@ def test_live_record_cards_capture_module_and_recheck_record_and_conversation_so
     _, c = _created(
         admin,
         ROOT + "/conversations",
-        _channel("Cards", scope="members", member_ids=[str(org.peer)]),
+        _channel("Cards"),
     )
     conversation = UUID(c.rsplit("/", 1)[-1])
     case.settings({"record_card_fields": [str(field)]}, conversation)
@@ -118,8 +120,11 @@ def test_live_record_cards_capture_module_and_recheck_record_and_conversation_so
         db.get(Record, record).module_id = destination
         db.commit()
     assert _ok(admin.get(ref_path)) == unavailable  # Even an admin cannot rebind a captured source.
-    response = admin.delete(c + f"/members/{org.peer}", headers={"If-Match": _tag(_read(admin, c))})
-    assert response.status_code == 204
+    with case.world.session(org) as db:
+        # D44: conversation access is the department role; the peer's module row is not one.
+        room = db.get(CommsConversation, conversation)
+        room.scope, room.department_id = "department", org.department
+        db.commit()
     _error(peer.get(ref_path), 404)
     assert _ok(peer.get(ROOT + "/record-references"))["items"] == []
     _ok(admin.delete(c + "/messages/" + created["id"]))
@@ -171,15 +176,19 @@ def test_source_purge_inventory_blocks_retained_links_without_exposing_private_c
     _, path = _created(
         admin,
         ROOT + "/conversations",
-        _channel("Private reference", scope="members", member_ids=[str(org.peer)]),
+        _channel("Private reference"),
     )
     message = send(peer, path + "/messages", "", record_ids=[str(record)])
-    assert (
-        admin.delete(
-            path + f"/members/{org.author}", headers={"If-Match": _tag(_read(admin, path))}
-        ).status_code
-        == 204
-    )
+    with case.world.session(org) as db:
+        # D43: a group message the admin left; D44 has no private channel.
+        room = db.get(CommsConversation, UUID(path.rsplit("/", 1)[-1]))
+        room.kind, room.scope, room.category_id = "group", "members", None
+        db.add(CommsMember(org_id=org.id, conversation_id=room.id, user_id=org.peer))
+        for member in db.scalars(select(CommsMember).where(
+            CommsMember.conversation_id == room.id, CommsMember.user_id == org.author,
+        )):
+            db.delete(member)
+        db.commit()
     _error(admin.get(path), 404)
     with case.world.session(org) as db:
         source = db.get(Record, record)

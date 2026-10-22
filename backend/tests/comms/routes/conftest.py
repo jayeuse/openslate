@@ -29,7 +29,6 @@ from app.systems.access.users.models import Membership, User
 from app.systems.comms.conversations.models import (
     CommsCategory,
     CommsConversation,
-    CommsConversationGroup,
     CommsMember,
 )
 from app.systems.comms.messages.interaction_models import CommsMention, CommsThread
@@ -46,6 +45,7 @@ from app.systems.comms.settings.models import (
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.sandbox.departments.models import Department
 from tests.comms.conftest import NOW, CommsWorld
 from tests.conftest import create_member
 
@@ -219,13 +219,11 @@ class MessageRoutes:
         with self.world.session(org) as db:
             conversation = db.get(CommsConversation, org.other_conversation)
             assert conversation is not None
-            conversation.scope = "members"
-            member = db.scalars(select(CommsMember).where(
-                CommsMember.org_id == org.id,
-                CommsMember.conversation_id == org.other_conversation,
-                CommsMember.user_id == org.peer,
-            )).one()
-            member.is_deleted, member.deleted_at = True, NOW
+            # D44: a channel of a department where nobody but the admin has a role.
+            hidden = Department(org_id=org.id, department_name="Hidden Comms department")
+            db.add(hidden)
+            db.flush()
+            conversation.scope, conversation.department_id = "department", hidden.id
             db.commit()
 
     def add_visited_guest(self) -> None:
@@ -274,10 +272,10 @@ class MessageRoutes:
         people = [org.peer, self.world.second.author, self.world.second.peer]
         identities = {}
         with self.world.session(org) as db:
-            for kind, count in (("channel", 1), ("direct", 2), ("group", 3)):
+            # D44: direct and group messages are the only conversations of hand-picked people.
+            for kind, count in (("direct", 2), ("group", 3)):
                 conversation = CommsConversation(
                     org_id=org.id, kind=kind, scope="members", name=f"Private {kind}",
-                    category_id=org.category if kind == "channel" else None,
                     created_by=org.author,
                 )
                 db.add(conversation)
@@ -333,13 +331,6 @@ class MessageRoutes:
                     CommsMember.id, CommsMember.conversation_id, CommsMember.user_id,
                     CommsMember.role, CommsMember.is_deleted,
                 ).where(CommsMember.org_id == org.id).order_by(CommsMember.id)).all(),
-                "access": db.execute(select(
-                    CommsConversationGroup.id, CommsConversationGroup.category_id,
-                    CommsConversationGroup.conversation_id, CommsConversationGroup.subject,
-                    CommsConversationGroup.group_id, CommsConversationGroup.level,
-                    CommsConversationGroup.is_deleted,
-                ).where(CommsConversationGroup.org_id == org.id)
-                    .order_by(CommsConversationGroup.id)).all(),
                 "audit": list(db.scalars(select(AuditLog.id).where(
                     AuditLog.org_id == org.id,
                 ).order_by(AuditLog.id))),
@@ -369,23 +360,20 @@ def message_routes(comms_world) -> Iterator[MessageRoutes]:
         for client in case.clients:
             client.close()
             client.app.dependency_overrides.clear()
-        # Parent fixture cleans both owned orgs after all request sessions close.
-
-
-@pytest.fixture
-def structure_routes(message_routes) -> Iterator[MessageRoutes]:
-    """No duplicate auth fixture. Adds cleanup for the two new setup row families."""
-    try:
-        yield message_routes
-    finally:
-        for org in (message_routes.world.first, message_routes.world.second):
-            with message_routes.world.session(org) as db:
+        # D44 setups grant department roles; remove them before CommsWorld removes groups.
+        for org in (comms_world.first, comms_world.second):
+            with comms_world.session(org) as db:
                 for model in (GroupAccess, GroupMember):
                     for row in db.scalars(select(model).where(model.org_id == org.id)):
                         db.delete(row)
                 db.commit()
-        # message_routes then closes clients; CommsWorld removes owned domain rows,
-        # added memberships, audit, groups/orgs and the original four accounts.
+        # Parent fixture cleans both owned orgs after all request sessions close.
+
+
+@pytest.fixture
+def structure_routes(message_routes) -> MessageRoutes:
+    """No duplicate auth fixture; message_routes owns the group access cleanup."""
+    return message_routes
 
 
 @pytest.fixture
@@ -394,15 +382,17 @@ def duplicate_source(structure_routes):
     case.seed_roots()
     with case.world.session(org) as db:
         source = db.get(CommsConversation, org.conversation)
-        source.scope, source.name, source.topic = "groups", "Copy source", "Source topic"
-        destination = CommsCategory(org_id=org.id, name="Copy destination", position=1)
+        source.scope, source.department_id = "department", org.department
+        source.name, source.topic = "Copy source", "Source topic"
+        destination = CommsCategory(
+            org_id=org.id, name="Copy destination", position=1, department_id=org.department,
+        )
         db.add(destination)
         db.flush()
         destination_id = destination.id
         db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
-        db.add(CommsConversationGroup(
-            org_id=org.id, conversation_id=org.conversation,
-            subject="group", group_id=org.group, level="read",
+        db.add(GroupAccess(
+            org_id=org.id, group_id=org.group, department_id=org.department, level="read",
         ))
         db.add(CommsSettings(
             org_id=org.id, scope="channel", conversation_id=org.conversation,

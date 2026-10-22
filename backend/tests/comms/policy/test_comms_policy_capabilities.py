@@ -33,10 +33,7 @@ CONVERSATION_CAPABILITIES = (
 def test_manager_sources_are_distinct_and_immutable_without_org_promotion(policy_case, source):
     c, db = policy_case, policy_case.db
     channel = c.conversation(
-        category=c.category,
-        creator=c.actor if source == "creator" else None,
-        scope="department" if source == "department_manager" else "members",
-        department=c.department if source == "department_manager" else None,
+        category=c.category, creator=c.actor if source == "creator" else None,
     )
     if source == "creator":
         c.member(channel, c.actor)
@@ -83,7 +80,6 @@ def test_guest_cap_and_admin_eligibility_precede_manager_and_grant_shortcuts(pol
         decision == {"allowed": False, "source": {"kind": "guest_cap"}}
         for decision in check["capabilities"].values()
     )
-    c.member(channel, c.admin)
     admin = inspect_capabilities(db, c.admin, channel.id)
     assert all(
         decision == {"allowed": True, "source": {"kind": "admin"}}
@@ -173,21 +169,17 @@ def test_everyone_switches_grants_and_person_specific_locks(policy_case):
 
 def test_reader_grants_never_supply_missing_read_or_parent_authority(policy_case):
     c, db = policy_case, policy_case.db
-    channel = c.conversation(scope="groups", category=c.category)
-    hidden = c.conversation(category=c.category)
+    channel = c.conversation(category=c.category)
+    hidden = c.conversation(category=c.category, department=c.other_department())
     group = c.group(c.actor)
-    c.access(channel, group=group, level="read")
+    make_group_access(db, [], c.department, level="read", group=group)
     c.settings({"kind": "channel", "id": channel.id}, {"mode": "announcements"})
     category = {"kind": "category", "id": c.category.id}
     c.grant(category, "reply", group=group)
     c.grant({"kind": "channel", "id": channel.id}, "manageChannel", group=group)
     check = inspect_capabilities(db, c.actor, channel.id)
     assert check["conversation_level"] == "read"
-    assert check["access_source"] == {
-        "kind": "group",
-        "group_id": group.id,
-        "group_name": group.name,
-    }
+    assert check["access_source"] == {"kind": "department", "department_id": c.department.id}
     assert check["capabilities"]["reply"]["allowed"] is True
     assert check["capabilities"]["attachFiles"]["allowed"] is False
     assert scope_management_decision(db, c.actor, category)["allowed"] is False
@@ -197,12 +189,16 @@ def test_reader_grants_never_supply_missing_read_or_parent_authority(policy_case
     workspace_creation = channel_creation_check(db, c.actor, {"kind": "workspace"})
     assert workspace_creation["decision"]["allowed"] is False
     c.grant({"kind": "workspace"}, "createChannel", group=group)
-    assert channel_creation_check(db, c.actor, {"kind": "workspace"})["decision"]["allowed"] is True
+    # Owner decision 2026-10-22: a grant never creates an organization channel; the
+    # workspace grant reaches the department where the actor holds a role.
+    workspace = {"kind": "workspace"}
+    assert channel_creation_check(db, c.actor, workspace)["decision"]["allowed"] is False
+    in_department = channel_creation_check(db, c.actor, workspace, c.department.id)
+    assert in_department["decision"]["allowed"] is True
     with pytest.raises(HTTPException) as refused:
         inspect_capabilities(db, c.actor, hidden.id)
     assert refused.value.status_code == 404
     # Inspectors may explain a known eligible nonreader, but cannot discover foreign people.
-    c.member(hidden, c.admin)
     no_access = inspect_capabilities(db, c.admin, hidden.id, user_id=c.actor.id)
     assert no_access["conversation_level"] == "none"
     assert no_access["capabilities"]["reply"]["allowed"] is False
@@ -212,7 +208,7 @@ def test_reader_grants_never_supply_missing_read_or_parent_authority(policy_case
     with pytest.raises(HTTPException) as refused:
         inspect_capabilities(db, c.peer, channel.id, user_id=c.actor.id)
     assert refused.value.status_code == 404  # Inspector itself cannot read.
-    c.access(channel, level="read")
+    make_group_access(db, [c.peer], c.department, level="read")
     with pytest.raises(HTTPException) as refused:
         inspect_capabilities(db, c.peer, channel.id, user_id=c.actor.id)
     assert refused.value.status_code == 403

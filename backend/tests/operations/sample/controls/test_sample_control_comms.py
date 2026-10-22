@@ -52,7 +52,6 @@ STRUCTURE_ROUTES = {
     ("POST", "/api/comms/directs"),
     ("POST", "/api/comms/groups"),
     ("GET", C + "/members"),
-    ("PUT", C + "/access"),
     ("PUT", C + "/members/{user_id}"),
     ("DELETE", C + "/members/{user_id}"),
     ("POST", C + "/duplicates"),
@@ -203,25 +202,22 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                 "name": action.values["category_name"],
                 "position": 0,
                 "department_id": None,
-                "default_access": [],
             }
             created[CATEGORY] = {**_resource(CATEGORY, PARTNER), **body}
             return response(201, created[CATEGORY], tag='"category"', location=f"{path}/{CATEGORY}")
         if (method, path) == ("POST", "/api/comms/conversations"):
-            assert {key: value for key, value in body.items() if key != "member_ids"} == {
+            assert body == {
                 "name": action.values["channel_name"],
                 "topic": "",
                 "position": 0,
                 "category_id": CATEGORY,
-                "scope": "members",
+                "scope": "organization",
             }
-            assert len(body["member_ids"]) == 2
-            assert set(body["member_ids"]) == {ids[key] for key in members}
             assert admitted == set(members)
             created[CHANNEL] = {
                 **_resource(CHANNEL, PARTNER),
                 "kind": "channel",
-                "scope": "members",
+                "scope": "organization",
                 "name": body["name"],
                 "topic": "",
                 "position": 0,

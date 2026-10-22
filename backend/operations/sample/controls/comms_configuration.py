@@ -1,7 +1,6 @@
-"""Real primary/partner template, audit-history and managed-admission journeys."""
+"""Real primary/partner template and audit-history journeys on owned channels."""
 
 from typing import Any
-from uuid import uuid4
 
 import httpx
 
@@ -74,7 +73,7 @@ def execute_configuration_control(
     org = _id(
         {"org": context.clients["admin"].organization_id}, "org", label="org", step=action.key
     )
-    person = _id(context.user_ids, member, label="member", step=action.key)
+    _id(context.user_ids, member, label="member", step=action.key)
     evidence: list[dict[str, object]] = []
 
     def call(
@@ -102,7 +101,6 @@ def execute_configuration_control(
             "name": "Owned configuration category",
             "position": 0,
             "department_id": None,
-            "default_access": [],
         },
     ).json()
     rooms = [
@@ -113,8 +111,7 @@ def execute_configuration_control(
             201,
             json_body={
                 "name": f"Owned configuration {index}",
-                "scope": "members",
-                "member_ids": [],
+                "scope": "organization",
                 "position": index,
                 "topic": "",
                 "category_id": category["id"],
@@ -237,69 +234,29 @@ def execute_configuration_control(
         check(restored == entry["before"], "restored_complete_snapshot")
     call("GET", "/api/comms/settings/workspace/history", "member_history_denied", 403, actor=member)
 
-    for index, kind in enumerate(("request", "invitation")):
-        root = "/api/comms/conversations/" + rooms[index]["id"]
-        settings_path = "/api/comms/settings/channel/" + rooms[index]["id"]
-        current = call("GET", settings_path, "admission_policy:" + kind)
-        call(
-            "PATCH",
-            settings_path,
-            "set_admission_policy:" + kind,
-            json_body={"join_rule": "request" if kind == "request" else "invite"},
-            headers={"If-Match": current.headers["ETag"]},
-        )
-        call("GET", root, "private_before_admission:" + kind, 404, actor=member)
-        if kind == "request":
-            for suffix, identity in (("unknown", str(uuid4())), ("known", rooms[index]["id"])):
-                check(
-                    call(
-                        "POST",
-                        "/api/comms/join-requests",
-                        "join_request:" + suffix,
-                        204,
-                        actor=member,
-                        json_body={"conversation_id": identity},
-                    ).content
-                    == b"",
-                    "neutral_ack",
-                )
-        else:
-            call("POST", root + "/invitations", "invite", 201, json_body={"user_id": person})
-        admissions = call("GET", root + "/admissions", "admission_list:" + kind).json()["items"]
-        check(len(admissions) == 1 and admissions[0]["kind"] == kind, "pending_admission")
-        item_path = root + "/admissions/" + admissions[0]["id"]
-        item = call("GET", item_path, "admission_detail:" + kind)
-        accepted = call(
-            "POST",
-            item_path + "/decision",
-            "admission_accept:" + kind,
-            json_body={"decision": "accept"},
-            headers={"If-Match": item.headers["ETag"]},
-        ).json()
-        check(
-            accepted["status"] == "accepted" and accepted["resolved_at"] is not None,
-            "resolved_admission",
-        )
-        call("GET", root, "new_member_reads:" + kind, actor=member)
-        current = call("GET", root, "before_archive:" + kind)
+    for index, room in enumerate(rooms):
+        root = "/api/comms/conversations/" + room["id"]
+        # D44: an organization channel is readable by every member, with no admission.
+        call("GET", root, f"member_reads:{index}", actor=member)
+        current = call("GET", root, f"before_archive:{index}")
         call(
             "POST",
             root + "/archive",
-            "archive:" + kind,
+            f"archive:{index}",
             headers={"If-Match": current.headers["ETag"]},
         )
-        impact = call("POST", root + "/purge/preview", "purge_preview:" + kind).json()
+        impact = call("POST", root + "/purge/preview", f"purge_preview:{index}").json()
         call(
             "POST",
             root + "/purge",
-            "purge:" + kind,
+            f"purge:{index}",
             json_body={
                 "token": impact["token"],
                 "confirmation_name": impact["confirmation_name"],
                 "password": context.admin_password,
             },
         )
-        call("GET", root, "owned_room_gone:" + kind, 404)
+        call("GET", root, f"owned_room_gone:{index}", 404)
     return _result(
         action,
         context,

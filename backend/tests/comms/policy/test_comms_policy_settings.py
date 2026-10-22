@@ -211,7 +211,6 @@ def test_reference_admission_uses_real_bound_organization_rows(policy_case, fore
     db.add_all([field, record])
     db.flush()
     valid = {
-        "default_member_ids": [str(c.peer.id)],
         "restricted_person_ids": [str(c.peer.id)],
         "allowed_record_modules": [str(module.id)],
         "record_card_fields": [str(field.id)],
@@ -220,7 +219,6 @@ def test_reference_admission_uses_real_bound_organization_rows(policy_case, fore
     # Admission returns a patch; the owner will later authorize, recheck and persist it.
     assert validate_settings_patch(db, scope, valid) == valid
     for key, value in (
-        ("default_member_ids", [str(c.world.second.peer)]),
         ("restricted_person_ids", [str(c.world.second.peer)]),
         ("allowed_record_modules", [str(foreign_references["module"])]),
         ("record_card_fields", [str(foreign_references["field"])]),
@@ -232,7 +230,7 @@ def test_reference_admission_uses_real_bound_organization_rows(policy_case, fore
     c.peer.status = "disabled"
     db.flush()
     with pytest.raises(HTTPException) as refused:
-        validate_settings_patch(db, scope, {"default_member_ids": [str(c.peer.id)]})
+        validate_settings_patch(db, scope, {"restricted_person_ids": [str(c.peer.id)]})
     assert refused.value.status_code == 422
     foreign = {"kind": "category", "id": c.world.second.category}
     for operation in (

@@ -73,7 +73,6 @@ def test_new_dirty_and_deleted_parent_chains_stamp_current_department_and_keep_h
     from app.systems.comms.conversations.models import (
         CommsCategory,
         CommsConversation,
-        CommsConversationGroup,
         CommsMember,
     )
     from app.systems.comms.messages.link_models import (
@@ -107,8 +106,6 @@ def test_new_dirty_and_deleted_parent_chains_stamp_current_department_and_keep_h
         ("channel", {"conversation_id": conversation.id}),
     ):
         children += [
-            CommsConversationGroup(id=uuid7(), org_id=org.id, subject="group", group_id=org.group,
-                                   level="read", **owner),
             CommsSettings(id=uuid7(), org_id=org.id, scope=scope, values={}, **owner),
             CommsCapabilityGrant(id=uuid7(), org_id=org.id, scope=scope, capability="reply",
                                  subject="group", group_id=org.group, granted=True, **owner),
@@ -329,7 +326,6 @@ def test_persisted_parent_reads_are_batched_across_distinct_message_chains(
 def test_direct_group_workspace_and_unrelated_link_targets_do_not_invent_a_department(comms_world):
     from app.systems.comms.conversations.models import (
         CommsConversation,
-        CommsConversationGroup,
         CommsDirectBlock,
     )
     from app.systems.comms.messages.link_models import (
@@ -348,7 +344,7 @@ def test_direct_group_workspace_and_unrelated_link_targets_do_not_invent_a_depar
     with comms_world.session(org) as db:
         for kind, scope in (
             ("direct", "members"), ("group", "members"),
-            ("channel", "organization"), ("channel", "groups"),
+            ("channel", "organization"),
         ):
             conversation = CommsConversation(
                 id=uuid7(), org_id=org.id, kind=kind, scope=scope,
@@ -360,14 +356,9 @@ def test_direct_group_workspace_and_unrelated_link_targets_do_not_invent_a_depar
                 id=uuid7(), org_id=org.id, message_id=message.id,
                 record_id=org.record, module_id=org.module,
             ))
-            if scope == "groups":
-                rows += [
-                    CommsConversationGroup(id=uuid7(), org_id=org.id,
-                                           conversation_id=conversation.id, subject="group",
-                                           group_id=org.group, level="post"),
-                    CommsMessageAttachment(id=uuid7(), org_id=org.id,
-                                           message_id=message.id, file_id=org.file),
-                ]
+            if scope == "organization":
+                rows.append(CommsMessageAttachment(id=uuid7(), org_id=org.id,
+                                                   message_id=message.id, file_id=org.file))
             expected.update({row.id: None for row in rows})
             db.add_all(rows)
         workspace = [

@@ -34,10 +34,6 @@ def _complete_graph(world, org):
             tables["comms_conversations"].c.id == org.conversation,
         ).values(category_id=org.category, scope="department", department_id=org.department))
         # Cover both ID13/ID15 ownership variants and a self-referencing reply/quote.
-        connection.execute(tables["comms_conversation_groups"].insert().values(
-            id=uuid7(), org_id=org.id, conversation_id=org.conversation,
-            subject="group", group_id=org.group, level="post",
-        ))
         connection.execute(tables["comms_member_preferences"].insert().values(
             id=uuid7(), org_id=org.id, category_id=org.category, user_id=org.author,
             collapsed=True, mute="indefinite",

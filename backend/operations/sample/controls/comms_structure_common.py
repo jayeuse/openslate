@@ -116,7 +116,6 @@ class StructureRun:
             expected_audit_rows=1,
             related_entity_types=(
                 "comms_members",
-                "comms_conversation_groups",
                 "comms_settings",
                 "comms_capability_grants",
             ),

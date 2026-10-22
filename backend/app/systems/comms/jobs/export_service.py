@@ -27,7 +27,8 @@ from app.systems.platform.scheduling.models import ScheduledWork, WorkKind, Work
 
 
 def private_source(room: CommsConversation) -> bool:
-    return room.kind != "channel" or room.scope == "members"
+    # D44: every channel is organization or department; DMs and groups are private.
+    return room.kind != "channel"
 
 
 def selected_sources(

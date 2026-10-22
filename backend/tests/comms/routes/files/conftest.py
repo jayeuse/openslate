@@ -67,8 +67,8 @@ class FileRoutes:
                 for identity in (org.conversation, org.other_conversation):
                     row = db.get(CommsConversation, identity)
                     assert row is not None
-                    row.scope = "members"
-                    row.category_id = None
+                    # D44: member-only conversations are group messages, never channels.
+                    row.kind, row.scope, row.category_id = "group", "members", None
                 db.commit()
         for org, visitor in (
             (self.world.second, self.world.first.peer),

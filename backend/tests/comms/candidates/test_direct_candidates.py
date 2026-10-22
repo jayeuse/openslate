@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import event, select
 from uuid6 import uuid7
 
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.models import Membership, User
 from app.systems.comms.conversations.models import CommsConversation, CommsDirectBlock, CommsMember
 from app.systems.comms.settings.models import CommsSettings
@@ -36,17 +37,30 @@ def person(case, name, *, shared=False, role="member", **values):
         )
         identity = user.id
         if shared:
-            db.add(CommsMember(org_id=org.id, conversation_id=org.conversation, user_id=identity))
+            # D44: sharing a department channel is a department role; a separate group keeps
+            # the shared-group fallback out of the result.
+            group = Group(org_id=org.id, name=f"Candidate share {identity}")
+            db.add(group)
+            db.flush()
+            db.add(GroupMember(org_id=org.id, group_id=group.id, user_id=identity))
+            db.add(GroupAccess(
+                org_id=org.id, group_id=group.id, department_id=org.department, level="read",
+            ))
         db.commit()
     case.world.additional_users.append(identity)
     return identity
 
 
 def private_rooms(case):
+    """Department channels that only the peer and shared people can read (D44)."""
     org = case.world.first
     with case.world.session(org) as db:
         for room in db.scalars(select(CommsConversation)):
-            room.scope = "members"
+            room.scope, room.department_id = "department", org.department
+        db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
+        db.add(GroupAccess(
+            org_id=org.id, group_id=org.group, department_id=org.department, level="read",
+        ))
         db.commit()
 
 

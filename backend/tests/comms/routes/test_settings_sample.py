@@ -6,6 +6,7 @@ from shutil import copyfile
 import httpx
 import pytest
 
+from app.systems.access.policy.models import GroupAccess, GroupMember
 from operations.sample.client import SampleClient
 from operations.sample.controls.actions import plan_controls
 from operations.sample.packs.registry import get_pack
@@ -35,14 +36,22 @@ def test_settings_sample_uses_owned_context_restores_values_and_reconciles_readb
     plans = list(plan_controls(dataset))
     assert plans.index(_planned(dataset, "partner_conversations")) < plans.index(action)
     api = case.client(org.author, org.id)
+    with case.world.session(org) as db:
+        db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
+        db.add(
+            GroupAccess(
+                org_id=org.id, group_id=org.group, department_id=org.department, level="write"
+            )
+        )
+        db.commit()
     created, _ = _created(
         api,
         ROOT + "/conversations",
         _channel(
             "Sample settings",
             org.category,
-            "members",
-            member_ids=[str(org.peer)],
+            "department",
+            department_id=str(org.department),
         ),
     )
     journal = tmp_path / "requests.jsonl"

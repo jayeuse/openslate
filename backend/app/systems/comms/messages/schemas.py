@@ -235,17 +235,6 @@ class CategoryPreferences(WireModel):
     mute: MuteOff | MuteUntil = Field(default_factory=MuteOff)
 
 
-class EveryoneAccess(WireModel):
-    subject: Literal["everyone"]
-    level: Literal["read", "post"]
-
-
-class GroupAccess(WireModel):
-    subject: Literal["group"]
-    group_id: UUID
-    level: Literal["read", "post"]
-
-
 class ResourceIdentity(WireModel):
     id: UUID
     org_id: UUID
@@ -257,7 +246,6 @@ class Category(ResourceIdentity):
     name: str
     position: int
     department_id: UUID | None
-    default_access: list[EveryoneAccess | GroupAccess]
 
 
 class ConversationIdentity(ResourceIdentity):
@@ -284,15 +272,6 @@ class DepartmentChannel(ChannelIdentity):
     department_id: UUID
 
 
-class GrantedChannel(ChannelIdentity):
-    scope: Literal["groups"]
-    access: list[EveryoneAccess | GroupAccess]
-
-
-class PrivateChannel(ChannelIdentity):
-    scope: Literal["members"]
-
-
 class DirectConversation(ConversationIdentity):
     kind: Literal["direct"]
     participant_ids: list[UUID]
@@ -307,8 +286,6 @@ class GroupConversation(ConversationIdentity):
 Conversation = (
     OrganizationChannel
     | DepartmentChannel
-    | GrantedChannel
-    | PrivateChannel
     | DirectConversation
     | GroupConversation
 )

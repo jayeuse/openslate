@@ -11,6 +11,7 @@ from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.core.database.session import AuditSession
+from app.systems.access.policy.models import GroupAccess, GroupMember
 from app.systems.access.users.models import Membership
 from app.systems.comms.conversations.models import CommsConversation
 from app.systems.comms.messages.models import CommsMessage
@@ -113,7 +114,13 @@ def test_inflight_preview_cannot_survive_source_or_policy_revocation(job_routes,
     case, org = job_routes, job_routes.world.first
     admin, author = case.client(org.author, org.id), case.client(org.peer, org.id)
     with case.world.session(org) as db:
-        db.get(CommsConversation, org.conversation).scope = "members"
+        # D44: the author posts through a department role that access-loss revokes.
+        room = db.get(CommsConversation, org.conversation)
+        room.scope, room.department_id = "department", org.department
+        db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
+        db.add(GroupAccess(
+            org_id=org.id, group_id=org.group, department_id=org.department, level="write",
+        ))
         db.commit()
     setting(admin, org.conversation, True)
     root = f"/api/comms/conversations/{org.conversation}"
@@ -137,14 +144,10 @@ def test_inflight_preview_cannot_survive_source_or_policy_revocation(job_routes,
             if change == "setting-off-on":
                 setting(admin, org.conversation, True)
         elif change == "access-loss":
-            current = admin.get(root)
-            assert (
-                admin.delete(
-                    root + "/members/" + str(org.peer),
-                    headers={"If-Match": current.headers["etag"]},
-                ).status_code
-                == 204
-            )
+            with case.world.session(org) as db:
+                for row in db.scalars(select(GroupAccess).where(GroupAccess.org_id == org.id)):
+                    row.is_deleted = True
+                db.commit()
         elif change == "archive":
             current = admin.get(root)
             assert (

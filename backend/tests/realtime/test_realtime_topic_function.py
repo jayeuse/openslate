@@ -225,7 +225,7 @@ def test_conversation_join_needs_a_live_subject_grant_and_purge_removes_projecti
     conversation = CommsConversation(
         id=uuid7(),
         org_id=org.id,
-        kind="channel",
+        kind="group",
         scope="members",
         name="Owned grant",
         created_by=actor.id,

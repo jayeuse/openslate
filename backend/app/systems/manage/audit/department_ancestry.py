@@ -18,7 +18,6 @@ from app.systems.boards.reminder_models import BoardEventReminder
 from app.systems.comms.conversations.models import (
     CommsCategory,
     CommsConversation,
-    CommsConversationGroup,
     CommsMember,
 )
 from app.systems.comms.messages.interaction_models import CommsMention, CommsReaction, CommsThread
@@ -50,7 +49,7 @@ _BOARD_CHILDREN = (
     BoardEventReminder,
 )
 _REVISION_CHILDREN = (BoardPostRevisionAttachment, BoardPostRevisionRecordLink)
-_COMMS_SCOPED_CHILDREN = (CommsConversationGroup, CommsSettings, CommsCapabilityGrant)
+_COMMS_SCOPED_CHILDREN = (CommsSettings, CommsCapabilityGrant)
 _COMMS_CONVERSATION_CHILDREN = (CommsMember, CommsMessage, CommsThread)
 _COMMS_MESSAGE_CHILDREN = (
     CommsMessageRevision,

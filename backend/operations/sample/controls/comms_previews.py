@@ -74,7 +74,7 @@ def execute_preview_control(
     org = _id(
         {"org": context.clients["admin"].organization_id}, "org", label="org", step=action.key
     )
-    person = _id(context.user_ids, member, label="member", step=action.key)
+    _id(context.user_ids, member, label="member", step=action.key)
     evidence: list[dict[str, object]] = []
 
     def call(
@@ -100,8 +100,7 @@ def execute_preview_control(
         201,
         json_body={
             "name": "Owned default-off preview",
-            "scope": "members",
-            "member_ids": [person],
+            "scope": "organization",
             "position": 0,
             "topic": "",
             "category_id": None,

@@ -21,7 +21,7 @@ def test_comms_inventory_contains_the_foundation_and_current_approved_extensions
 ):
     tables = inspect(integration_owner_db.connection()).get_table_names(schema="public")
     assert {name for name in tables if name.startswith("comms_")} == CURRENT_COMMS_TABLES
-    assert len(COMMS_TABLES) == 20
+    assert len(COMMS_TABLES) == 19
 
 
 def test_message_search_and_feed_indexes_exist_on_the_actual_database(integration_owner_db):

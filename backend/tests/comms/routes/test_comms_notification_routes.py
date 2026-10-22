@@ -16,7 +16,7 @@ from app.systems.comms.messages.models import CommsMessage
 from app.systems.comms.realtime.models import CommsPresence
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.comms.conftest import NOW
-from tests.comms.routes.message_support import _ok, _payload, send
+from tests.comms.routes.message_support import _bootstrap, _ok, _payload, send
 
 pytestmark = pytest.mark.integration
 
@@ -209,14 +209,19 @@ def test_channel_readers_without_member_rows_are_mentionable_and_notified(struct
         ))
         db.commit()
     granted = send(author, restricted, "After access", mentions_channel=True)
+    # A department reader without a member row is a valid @name target (D44 A4).
+    named = send(author, restricted, "Named", mention_user_ids=[str(org.peer)])
 
     def received(api):
         return sorted((row["kind"], row["message_id"]) for row in notices(api))
 
     assert received(peer) == sorted([
         ("comms-mention", mention["id"]), ("comms-keyword", keyword["id"]),
-        ("comms-mention", granted["id"]),
+        ("comms-mention", granted["id"]), ("comms-mention", named["id"]),
     ])
+    # Bootstrap counts both @channel messages and the @name for a reader without rows.
+    summary = _bootstrap(peer, org.id, org.peer)[str(org.other_conversation)]
+    assert (summary["unread_count"], summary["mention_count"]) == (3, 3)
     assert received(outsider) == [("comms-keyword", keyword["id"])]
 
 
@@ -237,11 +242,8 @@ def test_notifications_recheck_current_source_before_count_page_and_read(message
         elif loss == "conversation":
             conversation.is_deleted, conversation.deleted_at = True, NOW
         elif loss == "access":
-            conversation.scope = "members"
-            row = db.scalars(select(CommsMember).where(
-                CommsMember.conversation_id == org.conversation, CommsMember.user_id == org.peer,
-            )).one()
-            row.is_deleted, row.deleted_at = True, NOW
+            # D44: a department channel the peer has no department role in.
+            conversation.scope, conversation.department_id = "department", org.department
         elif loss == "reparent":
             db.get(CommsMessage, UUID(source["id"])).conversation_id = org.other_conversation
         else:
@@ -283,7 +285,8 @@ def test_notification_organization_and_private_admin_boundaries(message_routes):
     # An admin is not entitled to a private conversation merely by receiving a stale reference.
     with case.world.session(first) as db:
         conversation = db.get(CommsConversation, first.conversation)
-        conversation.scope = "members"
+        # D43: a group message of the admin and the peer; D44 has no private channel.
+        conversation.kind, conversation.scope, conversation.category_id = "group", "members", None
         db.commit()
     first_peer = inbox_client(case, first.peer, first.id)
     send(first_peer, f"/api/comms/conversations/{first.conversation}/messages",

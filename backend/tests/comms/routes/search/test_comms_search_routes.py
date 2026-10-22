@@ -4,9 +4,11 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
+from sqlalchemy import select
 from uuid6 import uuid7
 
-from tests.comms.routes.structure_support import ROOT, _channel, _created, _ok, _read, _tag
+from app.systems.comms.conversations.models import CommsConversation, CommsMember
+from tests.comms.routes.structure_support import ROOT, _channel, _created, _ok
 
 pytestmark = pytest.mark.integration
 HIT_KEYS = {
@@ -279,20 +281,20 @@ def test_search_rechecks_current_source_access_without_leaking_hidden_hits(searc
     )
     assert denied.status_code == 404, denied.text
     assert message_ids(search(admin)) == [str(ids[k]) for k in ("revocable", "reply", "private")]
-    _, private = _created(
-        admin,
-        ROOT + "/conversations",
-        _channel("D43 search", scope="members", member_ids=[str(first.peer)]),
-    )
+    _, private = _created(admin, ROOT + "/conversations", _channel("D43 search"))
     sent = _ok(
         reader.post(private + "/messages", json={"client_key": str(uuid7()), "body": "starfruit"}),
         201,
     )
-    assert (
-        admin.delete(
-            private + f"/members/{first.author}", headers={"If-Match": _tag(_read(admin, private))}
-        ).status_code
-        == 204
-    )
+    with case.world.session(first) as db:
+        # D43: a group message the admin left; D44 has no private channel.
+        room = db.get(CommsConversation, UUID(private.rsplit("/", 1)[-1]))
+        room.kind, room.scope, room.category_id = "group", "members", None
+        db.add(CommsMember(org_id=first.id, conversation_id=room.id, user_id=first.peer))
+        for member in db.scalars(select(CommsMember).where(
+            CommsMember.conversation_id == room.id, CommsMember.user_id == first.author,
+        )):
+            db.delete(member)
+        db.commit()
     assert search(admin, q="starfruit")["items"] == []
     assert message_ids(search(reader, q="starfruit")) == [sent["id"]]

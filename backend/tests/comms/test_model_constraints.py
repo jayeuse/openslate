@@ -141,6 +141,7 @@ def test_direct_pair_key_is_scoped_lifetime_unique_and_preserves_keyless_fixture
                     values
                     | {
                         "kind": "channel",
+                        "scope": "organization",
                         "name": "Not a direct",
                     }
                 ),
@@ -272,6 +273,9 @@ def test_revision_update_and_cross_organization_parent_are_refused(comms_world):
         ("comms_conversations", "kind", "unknown"),
         ("comms_conversations", "scope", "unknown"),
         ("comms_conversations", "scope", "department"),
+        # D44: a live channel is organization or department; hand-picked people use a group.
+        ("comms_conversations", "scope", "groups"),
+        ("comms_conversations", "scope", "members"),
         ("comms_members", "role", "admin"),
     ],
 )

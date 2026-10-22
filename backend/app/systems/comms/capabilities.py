@@ -1,6 +1,6 @@
 """D27: finite pure decisions over current bounded projections, never grant writes."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, TypedDict
 from uuid import UUID
 
@@ -67,10 +67,14 @@ class CapabilityInputs:
     grants: tuple[Grant, ...]
     locks: frozenset[str]
     creation_department: UUID | None
+    # Owner decision 2026-10-22: a createChannel grant creates channels only in a department
+    # where the actor holds a department role; False means the grant does not apply here.
+    grant_department: bool = True
 
 
 def _load_capability_inputs(
     db: Session, actor: User, context: ScopeContext, access: ConversationAccess,
+    *, channel_grants: bool = False,
 ) -> CapabilityInputs:
     membership = fresh_membership(db, actor)
     if membership is None:
@@ -95,11 +99,17 @@ def _load_capability_inputs(
     # Explain additive grants deterministically: ancestor first, then group ID.
     grants.sort(key=lambda item: (context.chain.index(item.scope), str(item.group_id)))
     department = context.department_id
-    managed = effective_levels(db, actor, membership=membership).managed_department_ids()
+    levels = effective_levels(db, actor, membership=membership)
+    managed = levels.managed_department_ids()
     creation_department = department if department and (managed is None or department in managed) \
         else None
+    # Department rows only: module rows are not a department role (owner decision 2026-10-22).
+    grant_department = not channel_grants or (
+        department is not None and levels.department_level(department) is not None
+    )
     return CapabilityInputs(membership.role, access, context.chain, tuple(grants),
-                            frozenset(locked_keys(db, "capability")), creation_department)
+                            frozenset(locked_keys(db, "capability")), creation_department,
+                            grant_department)
 
 
 def _default(capability: str) -> str:
@@ -123,12 +133,13 @@ def _configured_decision(
         "source": {"kind": "default", "basis": _default(capability)},
     }
     if capability == "createChannel" and not workspace_only and inputs.creation_department:
+        # D44 A7: a department manager creates that department's channels, in a category
+        # bound to it or uncategorized; A8 binding is checked by the create path.
         category = next((scope for scope in inputs.chain if scope["kind"] == "category"), None)
-        if category is not None:
-            decision = {"allowed": True, "source": {
-                "kind": "department_manager", "department_id": inputs.creation_department,
-                "category_id": category["id"],
-            }}
+        decision = {"allowed": True, "source": {
+            "kind": "department_manager", "department_id": inputs.creation_department,
+            "category_id": category["id"] if category else None,
+        }}
     switches = [grant for grant in grants if grant.group_id is None]
     if switches:
         switch = switches[-1]
@@ -136,7 +147,7 @@ def _configured_decision(
             "kind": "everyone", "scope": switch.scope, "enabled": switch.granted,
         }}
     added = next((grant for grant in grants if grant.group_id is not None and grant.granted), None)
-    if added is not None:
+    if added is not None and (capability != "createChannel" or inputs.grant_department):
         decision = {"allowed": True, "source": {
             "kind": "group_grant", "group_id": added.group_id,
             "group_name": added.group_name, "scope": added.scope,
@@ -169,7 +180,7 @@ def capability_decision(capability: str, inputs: CapabilityInputs) -> Capability
 def capability_check(db: Session, user: User, conversation_id: UUID) -> dict[str, Any]:
     context = scope_context(db, {"kind": "channel", "id": conversation_id})
     access = explain_conversation_access(db, user, conversation_id)
-    inputs = _load_capability_inputs(db, user, context, access)
+    inputs = _load_capability_inputs(db, user, context, access, channel_grants=True)
     conversation = context.conversation
     assert conversation is not None
     return {
@@ -199,15 +210,24 @@ def inspect_capabilities(
     return capability_check(db, target, conversation_id)
 
 
-def channel_creation_check(db: Session, actor: User, scope: Scope) -> dict[str, Any]:
+def channel_creation_check(
+    db: Session, actor: User, scope: Scope, department_id: UUID | None = None,
+    *, channel: bool = True,
+) -> dict[str, Any]:
+    """``department_id`` is the requested channel's department when it has one (D44 A7).
+
+    ``channel=False`` keeps a category creation on the unrestricted createChannel grant.
+    """
     scope = normalize_scope(scope)
     if scope["kind"] == "channel":
         raise error("comms_scope_invalid", "Creation requires workspace or category scope", 422)
     context = scope_context(db, scope)
+    if department_id is not None and context.department_id is None:
+        context = replace(context, department_id=department_id)
     # Creation is a scope decision before a conversation exists, not borrowed channel access.
     inputs = _load_capability_inputs(db, actor, context, ConversationAccess(
         "read", None, {"kind": "organization"},
-    ))
+    ), channel_grants=channel)
     return {
         "org_id": bound_organization(db), "user_id": actor.id, "scope": scope,
         "membership_role": inputs.role, "decision": capability_decision("createChannel", inputs),

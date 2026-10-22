@@ -25,7 +25,6 @@ from tests.organization_scope_support import organization_bindings
 
 NOW = datetime(2026, 10, 19, 12, tzinfo=UTC)
 COMMS_DELETE_ORDER = (
-    "comms_admissions",
     "comms_templates",
     "lifecycle_rate_limit_failures",
     "lifecycle_rate_limit_buckets",
@@ -55,7 +54,6 @@ COMMS_DELETE_ORDER = (
     "comms_capability_grants",
     "comms_setting_locks",
     "comms_settings",
-    "comms_conversation_groups",
     "comms_conversations",
     "comms_categories",
     "comms_personal_preferences",
@@ -190,9 +188,6 @@ class CommsWorld:
                 expected_size=1, object_key=f"org/{org.id}/{org.file.hex}", state="awaiting_upload",
             ))
             rows = {
-                "comms_conversation_groups": {
-                    "category_id": org.category, "subject": "everyone", "level": "read",
-                },
                 "comms_direct_blocks": {"user_id": org.author, "blocked_user_id": org.peer},
                 "comms_settings": {"scope": "workspace", "values": {}},
                 "comms_setting_locks": {"namespace": "capability", "key": "pin"},

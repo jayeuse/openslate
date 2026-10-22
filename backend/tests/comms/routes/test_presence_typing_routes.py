@@ -135,7 +135,8 @@ def test_heartbeat_filters_before_limiting_and_never_consumes_a_delivery_baselin
         for identity in ids[2:]:
             db.get(CommsConversation, identity).archived_at = NOW
         private = db.get(CommsConversation, ids[1])
-        private.scope = "members"
+        # D44: a group message without members is unreadable to everyone (D43 for admins).
+        private.kind, private.scope, private.category_id = "group", "members", None
         for member in db.scalars(
             select(CommsMember).where(CommsMember.conversation_id == private.id)
         ):

@@ -6,12 +6,12 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Select, and_, case, func, or_, select, true
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.database.organization_scope import bound_organization_column
-from app.systems.access.policy.models import AccessLevel, Group, GroupMember
+from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.readers import active_account_clause
 from app.systems.access.policy.scope import department_level_reader_statement
 from app.systems.access.users.membership import (
@@ -22,7 +22,6 @@ from app.systems.access.users.membership import (
 from app.systems.access.users.models import Membership, User
 from app.systems.comms.conversations.models import (
     CommsConversation,
-    CommsConversationGroup,
     CommsDirectBlock,
     CommsMember,
 )
@@ -96,44 +95,6 @@ def _conversation_access_statement(
         (manages_department, "department_manager"),
         else_=None,
     )
-    groups = (
-        select(GroupMember.group_id)
-        .join(Group, Group.id == GroupMember.group_id)
-        .where(
-            GroupMember.org_id == bound_organization_column(),
-            Group.org_id == bound_organization_column(),
-            GroupMember.user_id == User.id,
-            GroupMember.is_deleted.is_(False),
-            Group.is_deleted.is_(False),
-        )
-        .correlate(User)
-    )
-    grant = CommsConversationGroup
-    best_grant = (
-        select(grant.level, grant.group_id, Group.name.label("group_name"))
-        .outerjoin(
-            Group,
-            Group.id == grant.group_id,
-        )
-        .where(
-            grant.org_id == bound_organization_column(),
-            grant.conversation_id == c.id,
-            grant.category_id.is_(None),
-            grant.is_deleted.is_(False),
-            or_(
-                grant.subject == "everyone",
-                and_(
-                    grant.subject == "group",
-                    grant.group_id.in_(groups),
-                    Group.org_id == bound_organization_column(),
-                    Group.is_deleted.is_(False),
-                ),
-            ),
-        )
-        .order_by((grant.level == "post").desc(), grant.group_id.asc().nulls_last())
-        .limit(1)
-    )
-    granted = best_grant.correlate(c, User).lateral("comms_grant")
     department_level = case(
         (User.id.in_(department_level_reader_statement(departments, AccessLevel.WRITE)), 2),
         (User.id.in_(department_level_reader_statement(departments, AccessLevel.READ)), 1),
@@ -142,14 +103,6 @@ def _conversation_access_statement(
     ordinary = case(
         (c.scope == "organization", 2),
         (c.scope == "department", department_level),
-        (
-            c.scope == "groups",
-            case(
-                (granted.c.level == "post", 2),
-                (granted.c.level == "read", 1),
-                else_=0,
-            ),
-        ),
         (and_(c.scope == "members", membership_role.is_not(None)), 2),
         else_=0,
     )
@@ -177,18 +130,12 @@ def _conversation_access_statement(
             manager.label("manager"),
             c.scope,
             c.department_id,
-            granted.c.group_id,
-            granted.c.group_name,
         )
         .select_from(c)
         .join(User, User.id.in_(user_ids))
         .join(
             Membership,
             bound_membership_join(),
-        )
-        .outerjoin(
-            granted,
-            true(),
         )
         .where(
             c.org_id == bound_organization_column(),
@@ -246,9 +193,7 @@ def explain_conversation_access(
         source = {"kind": "manager", "reason": manager}
     elif row["scope"] == "department":
         source = {"kind": "department", "department_id": row["department_id"]}
-    elif row["scope"] == "groups" and row["group_id"] is not None:
-        source = {"kind": "group", "group_id": row["group_id"], "group_name": row["group_name"]}
-    elif row["scope"] in ("organization", "groups"):
+    elif row["scope"] == "organization":
         source = {"kind": "organization"}
     else:
         source = {"kind": "membership"}

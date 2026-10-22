@@ -74,7 +74,7 @@ def test_failed_report_action_rolls_back_source_generation_and_publication(messa
 
 def test_private_report_action_rechecks_admin_after_source_lock_wait(message_routes):
     case, org = message_routes, message_routes.world.first
-    conversation, message_id = case.private_conversations()["channel"]
+    conversation, message_id = case.private_conversations()["group"]
     peer, admin = case.client(org.peer, org.id), case.client(org.author, org.id)
     path = f"/api/comms/conversations/{conversation}/messages/{message_id}"
     assert peer.post(path + "/reports", json={"reason": "Private"}).status_code == 204

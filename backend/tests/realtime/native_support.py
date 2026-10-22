@@ -132,7 +132,6 @@ def native_room(request):
         with owner.begin() as connection:
             params = {"orgs": orgs, "users": [person.id for person in people]}
             for table in (
-                "comms_admissions",
                 "comms_templates",
                 "comms_export_entries",
                 "comms_export_sources",
@@ -159,7 +158,6 @@ def native_room(request):
                 "comms_settings",
                 "comms_capability_grants",
                 "comms_setting_locks",
-                "comms_conversation_groups",
                 "comms_members",
                 "comms_conversation_counters",
                 "comms_conversations",

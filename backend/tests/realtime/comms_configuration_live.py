@@ -1,4 +1,4 @@
-"""All23 S24 routes through real Auth/CSRF and actual primary/partner sample execution."""
+"""All18 S24 routes through real Auth/CSRF and actual primary/partner sample execution."""
 
 import os
 from contextlib import ExitStack
@@ -24,7 +24,7 @@ from tests.realtime.native_support import native_room as native_room
 pytestmark = pytest.mark.integration
 
 
-def test_primary_partner_templates_history_proofs_and_managed_admissions(native_room):
+def test_primary_partner_templates_history_and_proofs(native_room):
     room, settings = native_room, get_settings()
     dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack("harbor"))
     member = next(
@@ -90,11 +90,6 @@ def test_primary_partner_templates_history_proofs_and_managed_admissions(native_
         ("PUT", "/api/comms/templates/{template_id}"),
         ("POST", "/api/comms/templates/{template_id}/application-preview"),
         ("POST", "/api/comms/templates/{template_id}/applications"),
-        ("GET", "/api/comms/conversations/{conversation_id}/admissions"),
-        ("GET", "/api/comms/conversations/{conversation_id}/admissions/{admission_id}"),
-        ("POST", "/api/comms/conversations/{conversation_id}/invitations"),
-        ("POST", "/api/comms/conversations/{conversation_id}/admissions/{admission_id}/decision"),
-        ("POST", "/api/comms/join-requests"),
         *(
             (method, "/api/comms/settings/" + scope + suffix)
             for scope in ("workspace", "category/{category_id}", "channel/{conversation_id}")
@@ -106,6 +101,6 @@ def test_primary_partner_templates_history_proofs_and_managed_admissions(native_
             )
         ),
     }
-    assert len(expected) == 23 and expected <= SEEDER_ROUTES
+    assert len(expected) == 18 and expected <= SEEDER_ROUTES
     covered = {(row["method"], row["path"]) for row in read_route_evidence(journal)["covered"]}
     assert expected <= covered

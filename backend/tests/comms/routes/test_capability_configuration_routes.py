@@ -3,9 +3,11 @@
 import pytest
 from sqlalchemy import select
 
-from app.systems.access.policy.models import GroupAccess, GroupMember
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember
+from app.systems.comms.conversations.models import CommsConversation
 from app.systems.comms.settings.models import CommsCapabilityGrant
 from app.systems.manage.audit.models import AuditLog
+from app.systems.sandbox.departments.models import Department
 from tests.comms.routes.settings_support import stored
 from tests.comms.routes.structure_support import (
     ROOT,
@@ -32,7 +34,18 @@ def test_exact_scope_grants_locks_inspections_and_truthful_self_removal(structur
         case.client(person, org.id) for person in (org.author, org.peer, foreign.peer)
     )
     with case.world.session(org) as db:
+        # D44: both people read through department roles; only the actor is in org.group.
+        readers = Group(org_id=org.id, name="Configuration readers")
+        db.add(readers)
+        db.flush()
         db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
+        db.add(GroupMember(org_id=org.id, group_id=readers.id, user_id=foreign.peer))
+        for group in (org.group, readers.id):
+            db.add(
+                GroupAccess(
+                    org_id=org.id, group_id=group, department_id=org.department, level="read"
+                )
+            )
         db.commit()
     row, path = _created(
         admin,
@@ -40,8 +53,8 @@ def test_exact_scope_grants_locks_inspections_and_truthful_self_removal(structur
         _channel(
             "Configuration authority",
             org.category,
-            "groups",
-            access=[{"subject": "everyone", "level": "read"}],
+            "department",
+            department_id=str(org.department),
         ),
     )
     workspace = ROOT + "/settings/workspace/capabilities"
@@ -202,23 +215,25 @@ def test_configuration_scope_privacy_foreign_grants_and_creation_checks(structur
         ),
         404,
     )
-    _, private = _created(
-        admin,
-        ROOT + "/conversations",
-        _channel("Private authority", org.category, "members", member_ids=[str(org.peer)]),
-    )
-    assert (
-        admin.delete(
-            private + f"/members/{org.author}", headers={"If-Match": _tag(_read(admin, private))}
-        ).status_code
-        == 204
-    )
-    for suffix in ("/capabilities", f"/capabilities/{org.peer}"):
-        _error(admin.get(private + suffix), 404)
-    identity = private.rsplit("/", 1)[-1]
-    for suffix in ("", "/capabilities"):
-        _error(admin.get(f"{ROOT}/settings/channel/{identity}" + suffix), 404)
-    # Category placement must not give the department manager private conversation management.
+    with case.world.session(org) as db:
+        # D44: another department's channel stored in this category (setup bypasses A8).
+        other = Department(org_id=org.id, department_name="Other authority department")
+        readers = Group(org_id=org.id, name="Other department readers")
+        db.add_all([other, readers])
+        db.flush()
+        db.add(GroupMember(org_id=org.id, group_id=readers.id, user_id=org.peer))
+        db.add(
+            GroupAccess(org_id=org.id, group_id=readers.id, department_id=other.id, level="read")
+        )
+        sibling = CommsConversation(
+            org_id=org.id, kind="channel", scope="department", department_id=other.id,
+            category_id=org.category, name="Other authority", created_by=org.author,
+        )
+        db.add(sibling)
+        db.flush()
+        identity = str(sibling.id)
+        db.commit()
+    # Category placement must not give the department manager another department's channel.
     private_settings = f"{ROOT}/settings/channel/{identity}"
     _error(
         manager.patch(

@@ -20,7 +20,6 @@ from app.systems.boards.models import Board
 from app.systems.comms.conversations.models import (
     CommsCategory,
     CommsConversation,
-    CommsConversationGroup,
     CommsMember,
 )
 from app.systems.comms.settings.models import (
@@ -64,8 +63,12 @@ class PolicyCase:
         return person
 
     def conversation(
-        self, *, scope="members", kind="channel", category=None, department=None, creator=None,
+        self, *, scope=None, kind="channel", category=None, department=None, creator=None,
     ) -> CommsConversation:
+        # D44: a channel defaults to the fixture department; direct and group use members.
+        scope = scope or ("department" if kind == "channel" else "members")
+        if scope == "department":
+            department = department or self.department
         row = CommsConversation(
             org_id=self.org.id, kind=kind, scope=scope, name="Policy candidate",
             category_id=category.id if category else None,
@@ -95,12 +98,8 @@ class PolicyCase:
         self.db.flush()
         return row
 
-    def access(self, conversation, *, group=None, level="read") -> CommsConversationGroup:
-        row = CommsConversationGroup(
-            org_id=self.org.id, conversation_id=conversation.id,
-            subject="group" if group else "everyone",
-            group_id=group.id if group else None, level=level,
-        )
+    def other_department(self, name: str = "Other policy department") -> Department:
+        row = Department(org_id=self.org.id, department_name=f"{name} {uuid7().hex}")
         self.db.add(row)
         self.db.flush()
         return row

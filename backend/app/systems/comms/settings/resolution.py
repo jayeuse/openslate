@@ -146,8 +146,6 @@ class SettingsValues(BaseModel):
     auto_archive_days: Watermark = 0
     default_thread_subscription: bool = True
     thread_branches: Literal["all", "followed", "none"] = "all"
-    join_rule: Literal["open", "request", "invite"] = "open"
-    default_member_ids: list[str] = Field(default_factory=list)
     notification_mode: Literal["all", "mentions", "none"] = "all"
     keywords: list[str] = Field(default_factory=list)
     notify_followed_threads: bool = True
@@ -171,7 +169,6 @@ class SettingsValues(BaseModel):
     pinned_record_id: str | None = None
 
     @field_validator(
-        "default_member_ids",
         "restricted_person_ids",
         "allowed_record_modules",
         "record_card_fields",
@@ -285,7 +282,6 @@ def _metadata() -> list[dict[str, str]]:
         "messaging": "edit_window_minutes delete_window_minutes slow_mode_seconds formatting "
         "link_previews allowed_reactions mention_limit",
         "threads": "auto_archive_days default_thread_subscription thread_branches",
-        "members": "join_rule default_member_ids",
         "notifications": "notification_mode keywords notify_followed_threads quiet_hours_start "
         "quiet_hours_end notification_sound notification_badges "
         "notification_preview desktop_notifications",
@@ -337,7 +333,6 @@ def resolve_settings(db: Session, scope: Scope) -> dict[str, Any]:
 
 def _validate_references(db: Session, values: Mapping[str, Any]) -> None:
     for key in (
-        "default_member_ids",
         "restricted_person_ids",
         "allowed_record_modules",
         "record_card_fields",
@@ -349,7 +344,7 @@ def _validate_references(db: Session, values: Mapping[str, Any]) -> None:
         ids = {UUID(item) for item in (value if isinstance(value, list) else [value])}
         if not ids:
             continue
-        if key in ("default_member_ids", "restricted_person_ids"):
+        if key == "restricted_person_ids":
             statement = (
                 select(User.id)
                 .join(Membership, bound_membership_join())

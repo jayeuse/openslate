@@ -2,7 +2,6 @@
 
 from fastapi import APIRouter
 
-from app.systems.comms.admissions.router import router as admissions
 from app.systems.comms.conversations.router import router as conversations
 from app.systems.comms.direct_candidates import router as direct_candidates
 from app.systems.comms.files.router import router as files
@@ -39,4 +38,3 @@ router.include_router(schedules)
 router.include_router(retention)
 router.include_router(exports)
 router.include_router(templates)
-router.include_router(admissions)

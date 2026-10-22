@@ -58,7 +58,8 @@ def live_case(organizations):
             CommsConversation(
                 id=conversation,
                 org_id=org,
-                kind="channel",
+                # D44: hand-picked people share a group message, never a channel.
+                kind="group",
                 scope="members",
                 name="S20A owned",
                 created_by=organizations.member.user_id,

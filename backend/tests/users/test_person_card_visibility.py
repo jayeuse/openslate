@@ -181,8 +181,9 @@ def test_comms_only_sharing_reveals_card_until_target_leaves(person_world):
         scope_session(db, world.person_org_id)
         set_audit_actor(db, world.actor_id)
         conversation = CommsConversation(
-            org_id=world.person_org_id, kind="channel", scope="members",
-            name="Owned private card channel", created_by=world.actor_id,
+            # D44: a conversation of hand-picked people is a group message.
+            org_id=world.person_org_id, kind="group", scope="members",
+            name="Owned private card group", created_by=world.actor_id,
         )
         db.add(conversation)
         db.flush()

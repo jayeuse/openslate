@@ -103,8 +103,7 @@ def execute_candidate_control(
         201,
         json_body={
             "name": "Owned candidate check",
-            "scope": "members",
-            "member_ids": [person],
+            "scope": "organization",
             "position": 0,
             "topic": "",
             "category_id": None,

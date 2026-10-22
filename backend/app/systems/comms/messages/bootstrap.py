@@ -18,7 +18,6 @@ from app.systems.comms.access import (
 from app.systems.comms.conversations.models import (
     CommsCategory,
     CommsConversation,
-    CommsConversationGroup,
     CommsMember,
 )
 from app.systems.comms.messages.interaction_models import CommsMention
@@ -38,10 +37,12 @@ def project_conversation(
     actor: UUID,
     level: str,
     people: dict[UUID, str],
-    grants: list[dict[str, Any]],
     readers: int,
 ) -> dict[str, Any]:
-    """``people`` are member rows; ``readers`` counts a channel's readers (D44)."""
+    """``people`` are member rows; ``readers`` counts a channel's readers (D44).
+
+    On a channel the actor is a "manager" exactly at manage level (D44 A6).
+    """
     channel = row.kind == "channel"
     common: dict[str, Any] = {
         "id": row.id,
@@ -52,7 +53,9 @@ def project_conversation(
         "level": level,
         # A channel's members are its readers; a role row only marks a manager.
         "member_count": readers if channel else len(people),
-        "member_role": people.get(actor, "member") if channel else people.get(actor),
+        "member_role": ("manager" if level == "manage" else "member")
+        if channel
+        else people.get(actor),
         "kind": row.kind,
     }
     if not channel:
@@ -69,8 +72,6 @@ def project_conversation(
         )
         if row.scope == "department":
             common["department_id"] = row.department_id
-        elif row.scope == "groups":
-            common["access"] = grants
     return common
 
 
@@ -147,28 +148,6 @@ def bootstrap(db: Session, user: User) -> BootstrapResponse:
         )
         .order_by(CommsCategory.position, CommsCategory.id)
     ).all()
-    grants: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
-    for grant in db.scalars(
-        select(CommsConversationGroup)
-        .where(
-            CommsConversationGroup.org_id == org,
-            CommsConversationGroup.is_deleted.is_(False),
-            or_(
-                CommsConversationGroup.category_id.in_([row.id for row in categories]),
-                CommsConversationGroup.conversation_id.in_(ids),
-            ),
-        )
-        .order_by(CommsConversationGroup.id)
-    ):
-        key = grant.category_id or grant.conversation_id
-        if key is not None:
-            grants[key].append(
-                {
-                    "subject": grant.subject,
-                    "level": grant.level,
-                    **({"group_id": grant.group_id} if grant.subject == "group" else {}),
-                }
-            )
     mentioned = exists(
         select(CommsMention.id).where(
             CommsMention.org_id == org,
@@ -234,7 +213,6 @@ def bootstrap(db: Session, user: User) -> BootstrapResponse:
             user.id,
             LEVELS[level],
             members[identity],
-            grants[identity],
             readers.get(identity, 0),
         )
         pref = personal.get(identity)
@@ -273,7 +251,6 @@ def bootstrap(db: Session, user: User) -> BootstrapResponse:
                         "name": row.name,
                         "position": row.position,
                         "department_id": row.department_id,
-                        "default_access": grants[row.id],
                     },
                     "preferences": {
                         "collapsed": category_preferences[row.id].collapsed,

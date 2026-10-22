@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 
 from app.common.listing import SortOrder, StandardListRequest
-from app.systems.comms.messages.schemas import EveryoneAccess, GroupAccess, Watermark, WireModel
+from app.systems.comms.messages.schemas import Watermark, WireModel
 
 
 class ResourceSort(StrEnum):
@@ -68,7 +68,6 @@ class NamedRequest(WireModel):
 class CategoryRequest(NamedRequest):
     position: Watermark = Field(strict=True)
     department_id: UUID | None
-    default_access: list[EveryoneAccess | GroupAccess]
 
 
 class ChannelBase(NamedRequest):
@@ -86,28 +85,9 @@ class DepartmentChannelRequest(ChannelBase):
     department_id: UUID
 
 
-class GrantedChannelRequest(ChannelBase):
-    scope: Literal["groups"]
-    access: list[EveryoneAccess | GroupAccess]
-
-
-class PrivateChannelRequest(ChannelBase):
-    scope: Literal["members"]
-    member_ids: list[UUID]
-
-    @field_validator("member_ids")
-    @classmethod
-    def distinct_people(cls, ids: list[UUID]) -> list[UUID]:
-        if len(ids) != len(set(ids)):
-            raise ValueError("Member IDs must be distinct")
-        return ids
-
-
+# D44: a channel is organization-wide or one department's; hand-picked people use a group.
 ChannelRequest = Annotated[
-    OrganizationChannelRequest
-    | DepartmentChannelRequest
-    | GrantedChannelRequest
-    | PrivateChannelRequest,
+    OrganizationChannelRequest | DepartmentChannelRequest,
     Field(discriminator="scope"),
 ]
 
@@ -128,10 +108,6 @@ class ChannelPatch(WireModel):
         if any(getattr(self, key) is None for key in self.model_fields_set - {"category_id"}):
             raise ValueError("Channel fields cannot be null")
         return self
-
-
-class AccessRequest(WireModel):
-    access: list[EveryoneAccess | GroupAccess]
 
 
 class DirectRequest(WireModel):
@@ -176,5 +152,6 @@ class MemberResponse(WireModel):
     user_id: UUID
     display_name: str
     member_role: Literal["member", "manager"]
+    level: Literal["read", "post", "manage"]
     joined_at: datetime
     departments: list[MemberDepartment]

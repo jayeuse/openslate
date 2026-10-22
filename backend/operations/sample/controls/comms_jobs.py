@@ -81,7 +81,7 @@ def execute_comms_job_control(
         label="organization",
         step=action.key,
     )
-    person = _id(context.user_ids, member, label="member", step=action.key)
+    _id(context.user_ids, member, label="member", step=action.key)
     evidence: list[dict[str, object]] = []
 
     def call(
@@ -107,8 +107,7 @@ def execute_comms_job_control(
         201,
         json_body={
             "name": "Owned jobs check",
-            "scope": "members",
-            "member_ids": [person],
+            "scope": "organization",
             "position": 0,
             "topic": "",
             "category_id": None,

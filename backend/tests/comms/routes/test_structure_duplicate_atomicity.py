@@ -4,11 +4,7 @@ import pytest
 from sqlalchemy import event, select, text
 
 from app.core.database.session import AuditSession
-from app.systems.comms.conversations.models import (
-    CommsConversation,
-    CommsConversationGroup,
-    CommsMember,
-)
+from app.systems.comms.conversations.models import CommsConversation, CommsMember
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
 from app.systems.comms.settings.models import CommsCapabilityGrant, CommsSettings
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY
@@ -47,7 +43,6 @@ def test_duplicate_commit_failure_leaves_no_structure_configuration_or_audit(dup
         )
         for model in (
             CommsConversationCounter,
-            CommsConversationGroup,
             CommsSettings,
             CommsCapabilityGrant,
             CommsMember,

@@ -21,8 +21,6 @@ PRIMARY_STEPS = (
     "create_category",
     "update_category",
     "create_messages",
-    "create_access",
-    "set_access",
     "move_channel",
     "archive",
     "restore",
@@ -97,7 +95,6 @@ def execute_structure_control(
         "name": action.values["category_name"],
         "position": 0,
         "department_id": None,
-        "default_access": [],
     }
     category = run.create(
         ROOT + "/categories", "category", prefix + "category", category_body, "create_category"
@@ -140,37 +137,10 @@ def execute_structure_control(
         ROOT + "/conversations",
         "conversation",
         prefix + "messages",
-        {**common, "scope": "members", "member_ids": people},
+        {**common, "scope": "organization"},
         "create_messages",
     )
     path = ROOT + "/conversations/" + messages["id"]
-    access_channel = run.create(
-        ROOT + "/conversations",
-        "conversation",
-        prefix + "access",
-        {**common, "name": "Shared announcements", "scope": "groups", "access": []},
-        "create_access",
-    )
-    access_path = ROOT + "/conversations/" + access_channel["id"]
-    _, tag = run.get(access_path)
-    access = [{"subject": "everyone", "level": "read"}]
-    run.resource(
-        run.call(
-            "PUT",
-            access_path + "/access",
-            "set_access",
-            headers={"If-Match": tag},
-            json_body={"access": access},
-            primary_entity_type="comms_conversations",
-            primary_entity_id=access_channel["id"],
-            primary_action="update",
-            expected_audit_rows=1,
-            related_entity_types=("comms_conversation_groups",),
-        ),
-        "conversation",
-        "set_access",
-    )
-    check(run.get(access_path)[0]["access"] == access, "access_readback")
     _, tag = run.get(path)
     run.resource(
         run.call(
@@ -257,14 +227,18 @@ def execute_structure_control(
         expected_audit_rows=1,
         related_entity_types=("comms_members",),
     )
+    # D44: removing the manager row leaves an organization channel's reader listed as a member.
     check(
-        all(row["user_id"] != people[1] for row in run.page(path + "/members", "member")),
+        any(
+            row["user_id"] == people[1] and row["member_role"] == "member"
+            for row in run.page(path + "/members", "member")
+        ),
         "remove_readback",
     )
-    _, tag = run.get(access_path)
+    _, tag = run.get(path)
     copied_response = run.call(
         "POST",
-        access_path + "/duplicates",
+        path + "/duplicates",
         "duplicate",
         201,
         headers={"If-Match": tag},
@@ -274,7 +248,6 @@ def execute_structure_control(
         expected_audit_rows=1,
         related_entity_types=(
             "comms_members",
-            "comms_conversation_groups",
             "comms_settings",
             "comms_capability_grants",
         ),
@@ -290,7 +263,10 @@ def execute_structure_control(
     _record_mapping(
         context, run.client, "comms_conversations", prefix + "duplicate", copied["id"], run.mappings
     )
-    check(run.get(ROOT + "/conversations/" + copied["id"])[0]["access"] == access, "copy_readback")
+    check(
+        run.get(ROOT + "/conversations/" + copied["id"])[0]["scope"] == "organization",
+        "copy_readback",
+    )
     direct = run.create(
         ROOT + "/directs",
         "conversation",

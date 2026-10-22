@@ -19,11 +19,7 @@ from app.systems.comms.access import (
     visible_conversation_clause,
 )
 from app.systems.comms.capabilities import capability_check, inspect_capabilities
-from app.systems.comms.conversations.models import (
-    CommsConversation,
-    CommsConversationGroup,
-    CommsDirectBlock,
-)
+from app.systems.comms.conversations.models import CommsConversation, CommsDirectBlock
 from tests.conftest import membership_of
 from tests.rbac.support import add_module, make_group_access
 
@@ -49,61 +45,30 @@ def assert_views(db, actor, conversations, expected):
         assert (actor.id in conversation_reader_ids(db, row)) == (row.id in readable)
 
 
-def test_scope_forms_agree_without_board_fallback_or_category_default_leak(policy_case):
+def test_scope_forms_agree_without_board_or_module_fallback(policy_case):
     c, db = policy_case, policy_case.db
     organization = c.conversation(scope="organization")
     department = c.conversation(scope="department", department=c.department)
-    grouped = c.conversation(scope="groups", category=c.category)
-    private = c.conversation(category=c.category)
     direct = c.conversation(kind="direct")
     group_chat = c.conversation(kind="group")
-    everyone = c.conversation(scope="groups")
-    ungranted_private = c.conversation(category=c.category)
-    ungranted_groups = c.conversation(scope="groups", category=c.category)
-    c.access(everyone, level="read")
-    rows = [
-        organization,
-        department,
-        grouped,
-        private,
-        direct,
-        group_chat,
-        everyone,
-        ungranted_private,
-        ungranted_groups,
-    ]
-    c.member(private, c.actor)
+    # D44: a member row on a department channel is not an access source.
+    member_only = c.conversation(category=c.category)
+    rows = [organization, department, direct, group_chat, member_only]
+    c.member(member_only, c.actor)
     c.member(direct, c.actor)
     c.member(group_chat, c.peer)
-    low = c.group(c.actor, name="Read")
-    high = c.group(c.actor, name="Post")
-    c.access(grouped, group=low, level="read")
-    high_grant = c.access(grouped, group=high, level="post")
-    # Category access rows are creation defaults, not another live inheritance source.
-    db.add(
-        CommsConversationGroup(
-            org_id=c.org.id,
-            category_id=c.category.id,
-            subject="everyone",
-            level="post",
-        )
-    )
     module = add_module(db, c.department)
     module_grant = make_group_access(db, [c.actor], c.department, module, level="manage")
     db.flush()
     expected = {
         organization.id: "post",
         department.id: "none",
-        grouped.id: "post",
-        private.id: "post",
         direct.id: "post",
         group_chat.id: "none",
-        everyone.id: "read",
-        ungranted_private.id: "none",
-        ungranted_groups.id: "none",
+        member_only.id: "none",
     }
     assert_views(db, c.actor, rows, expected)
-    all_visible = {organization.id, grouped.id, private.id, direct.id, everyone.id}
+    all_visible = {organization.id, direct.id}
     assert readable_conversation_ids(db, c.actor) == all_visible
     assert (
         set(
@@ -126,21 +91,19 @@ def test_scope_forms_agree_without_board_fallback_or_category_default_leak(polic
         level="write",
         group=department_group,
     )
-    expected[department.id] = "post"
+    expected.update({department.id: "post", member_only.id: "post"})
     assert_views(db, c.actor, rows, expected)
-    high_grant.is_deleted = True
     department_grant.level = "read"
     db.flush()
-    expected.update({grouped.id: "read", department.id: "read"})
+    expected.update({department.id: "read", member_only.id: "read"})
     assert_views(db, c.actor, rows, expected)
-    # The literal none entries also protect private/group-granted siblings at every stage.
+    # The literal none entries also protect the group message at every stage.
 
 
 def test_guest_and_ineligible_admin_caps_agree_in_all_access_forms(policy_case):
     c, db = policy_case, policy_case.db
     organization = c.conversation(scope="organization")
     private = c.conversation()
-    c.member(private, c.admin)
     guest = c.person("Guest manager", role="guest")
     c.member(private, guest, role="manager")
     assert_views(db, guest, [organization, private], {organization.id: "read", private.id: "read"})
@@ -168,10 +131,8 @@ def test_admin_private_access_tracks_membership_in_every_projection(policy_case)
     public = [
         c.conversation(scope="organization", creator=c.peer),
         c.conversation(scope="department", department=c.department, creator=c.peer),
-        c.conversation(scope="groups", creator=c.peer),
     ]
     private = [
-        c.conversation(category=c.category, creator=c.peer),
         c.conversation(kind="direct", creator=c.peer),
         c.conversation(kind="group", creator=c.peer),
     ]
@@ -196,7 +157,7 @@ def test_admin_private_access_tracks_membership_in_every_projection(policy_case)
     assert_views(db, c.admin, public + private, expected)
 
 
-@pytest.mark.parametrize("scope", ["members", "organization"])
+@pytest.mark.parametrize("scope", ["department", "organization"])
 def test_creator_management_ends_with_membership_without_erasing_other_access(policy_case, scope):
     c, db = policy_case, policy_case.db
     channel = c.conversation(scope=scope, creator=c.actor)
@@ -272,41 +233,30 @@ def test_department_roles_alone_decide_department_channels_and_revocation_is_imm
         assert refused.value.status_code == 404
 
 
-def test_department_manager_cannot_manage_private_category_sibling(policy_case):
+def test_department_manager_cannot_manage_another_department_category_sibling(policy_case):
     c, db = policy_case, policy_case.db
     own_department = c.conversation(
         scope="department",
         department=c.department,
         category=c.category,
     )
-    private = c.conversation(category=c.category)
+    sibling = c.conversation(category=c.category, department=c.other_department())
     make_group_access(db, [c.actor], c.department, level="manage")
-    assert_views(
-        db,
-        c.actor,
-        [own_department, private],
-        {own_department.id: "manage", private.id: "none"},
-    )
+    expected = {own_department.id: "manage", sibling.id: "none"}
+    assert_views(db, c.actor, [own_department, sibling], expected)
+    # D44: an ordinary member row grants nothing; only department roles decide access.
+    c.member(sibling, c.actor)
+    assert_views(db, c.actor, [own_department, sibling], expected)
     with pytest.raises(HTTPException) as refused:
-        require_conversation_access(db, c.actor, private.id, "read")
+        require_conversation_access(db, c.actor, sibling.id, "read")
     assert refused.value.status_code == 404
-    c.member(private, c.actor)
-    assert_views(
-        db,
-        c.actor,
-        [own_department, private],
-        {own_department.id: "manage", private.id: "post"},
-    )
-    check = capability_check(db, c.actor, private.id)
-    assert check["manager_source"] is None
-    assert check["capabilities"]["manageChannel"]["allowed"] is False
 
 
 def test_hidden_and_foreign_objects_are_not_readable_even_to_local_admin(policy_case):
     c, db = policy_case, policy_case.db
-    reader = c.conversation(scope="groups")
-    c.access(reader, level="read")
-    hidden = c.conversation()
+    reader = c.conversation()
+    make_group_access(db, [c.actor], c.department, level="read")
+    hidden = c.conversation(department=c.other_department())
     with c.world.session(c.world.second) as other:
         foreign = other.get(CommsConversation, c.world.second.conversation)
         assert foreign is not None
@@ -338,9 +288,7 @@ def test_direct_start_policy_and_blocks_do_not_erase_existing_history(policy_cas
     policy.values = {"dm_rule": "shared-channel"}
     db.flush()
     assert can_start_direct(db, c.actor, c.peer.id) is False  # A direct is not a channel.
-    shared = c.conversation()
-    c.member(shared, c.actor)
-    c.member(shared, c.peer)
+    shared = c.conversation(scope="organization")
     assert can_start_direct(db, c.actor, c.peer.id) is True
     policy.values = {"dm_rule": "none"}
     db.flush()
@@ -368,7 +316,6 @@ def test_direct_start_policy_and_blocks_do_not_erase_existing_history(policy_cas
     assert can_start_direct(db, c.actor, c.actor.id) is False
     assert can_start_direct(db, c.actor, c.world.second.peer) is False
     # D36 allows guest visibility; D3 separately forbids a guest joining a new direct.
-    c.member(shared, guest)
     assert require_conversation_access(db, guest, shared.id, "read").id == shared.id
     assert visible_person_ids(db, c.actor, {guest.id}) == {guest.id}
     assert can_start_direct(db, c.actor, guest.id) is False

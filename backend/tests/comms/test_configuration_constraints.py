@@ -44,62 +44,6 @@ def test_settings_and_group_capability_keys_match_database_constraints(integrati
             assert allowed is (scope in GROUP_SCOPES.get(capability, ()))
 
 
-@pytest.mark.parametrize("owner", ["category_id", "conversation_id"])
-@pytest.mark.parametrize("subject", ["everyone", "group"])
-def test_access_uniqueness_is_per_owner_and_keeps_soft_deleted_history(comms_world, owner, subject):
-    org = comms_world.first
-    values = {
-        owner: org.category if owner == "category_id" else org.conversation,
-        "subject": subject,
-        "group_id": org.group if subject == "group" else None,
-        "level": "read",
-    }
-    with comms_world.owner.begin() as connection:
-        identity = _insert(connection, "comms_conversation_groups", org, **values)
-        _reject(
-            connection,
-            "23505",
-            lambda: _insert(
-                connection,
-                "comms_conversation_groups",
-                org,
-                **(values | {"level": "post"}),
-            ),
-        )
-        connection.execute(
-            text(
-                "UPDATE comms_conversation_groups SET is_deleted=true, deleted_at=:now WHERE id=:id"
-            ),
-            {"id": identity, "now": NOW},
-        )
-        _insert(connection, "comms_conversation_groups", org, **values)
-
-
-@pytest.mark.parametrize("invalid", ["neither", "both", "group-without-id", "everyone-with-id"])
-def test_access_rows_require_one_owner_and_a_consistent_subject(comms_world, invalid):
-    org = comms_world.first
-    values = {"category_id": org.category, "subject": "everyone", "level": "read"}
-    if invalid == "neither":
-        values["category_id"] = None
-    elif invalid == "both":
-        values["conversation_id"] = org.conversation
-    elif invalid == "group-without-id":
-        values["subject"] = "group"
-    else:
-        values["group_id"] = org.group
-    with comms_world.owner.begin() as connection:
-        _reject(
-            connection,
-            "23514",
-            lambda: _insert(
-                connection,
-                "comms_conversation_groups",
-                org,
-                **values,
-            ),
-        )
-
-
 @pytest.mark.parametrize("category", [True, False])
 def test_preferences_have_exclusive_owner_fields_and_one_row_per_person(comms_world, category):
     org = comms_world.first
@@ -168,30 +112,30 @@ def test_category_preference_owner_and_mute_shape(comms_world, changes):
 def test_optional_parent_fks_still_reject_cross_org_and_restrict_parent_deletion(comms_world):
     org, other = comms_world.first, comms_world.second
     with comms_world.owner.begin() as connection:
-        for values in (
-            {"category_id": other.category, "subject": "everyone"},
-            {"conversation_id": other.conversation, "subject": "everyone"},
-            {"category_id": org.category, "subject": "group", "group_id": other.group},
+        # D44 dropped channel access rows; settings and grants keep the optional parents.
+        grant = {"subject": "group", "capability": "reply", "granted": True}
+        for table, values in (
+            ("comms_settings", {"scope": "category", "category_id": other.category}),
+            ("comms_settings", {"scope": "channel", "conversation_id": other.conversation}),
+            (
+                "comms_capability_grants",
+                {"scope": "category", "category_id": org.category, "group_id": other.group}
+                | grant,
+            ),
         ):
             _reject(
                 connection,
                 "23503",
-                lambda values=values: _insert(
-                    connection,
-                    "comms_conversation_groups",
-                    org,
-                    level="read",
-                    **values,
-                ),
+                lambda table=table, values=values: _insert(connection, table, org, **values),
             )
         _insert(
             connection,
-            "comms_conversation_groups",
+            "comms_capability_grants",
             org,
+            scope="category",
             category_id=org.category,
-            subject="group",
             group_id=org.group,
-            level="read",
+            **grant,
         )
         for table, identity in (("groups", org.group), ("comms_categories", org.category)):
             _reject(

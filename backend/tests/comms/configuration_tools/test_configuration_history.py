@@ -271,7 +271,9 @@ def test_history_requires_current_private_source_and_organization_authority(tool
     entry = _ok(api.get(path + "/history"))["items"][0]
     with case.world.session(org) as db:
         room = db.get(CommsConversation, org.conversation)
-        room.scope, room.created_by = "members", org.peer
+        # D43: a group message the admin is not part of; D44 has no private channel.
+        room.kind, room.scope, room.category_id = "group", "members", None
+        room.created_by = org.peer
         membership = db.scalars(
             select(CommsMember).where(
                 CommsMember.conversation_id == org.conversation,

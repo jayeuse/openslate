@@ -10,10 +10,9 @@ from app.common.listing import StandardListResponse
 from app.core.base_model import utc_now
 from app.core.database.session import AuditSession, get_db
 from app.systems.access.users.models import User
-from app.systems.comms.access import error, require_conversation_access
+from app.systems.comms.access import require_conversation_access
 from app.systems.comms.conversations import directs, mutations, reads, service
 from app.systems.comms.conversations.schemas import (
-    AccessRequest,
     BlockQuery,
     BlockRequest,
     CategoryQuery,
@@ -100,7 +99,6 @@ def create_category(payload: CategoryRequest, db: DB, actor: Actor, response: Re
     with service.transaction(db):
         row = mutations.create_category(db, actor, payload)
         organization_event(db, "structure")
-        organization_event(db, "grants")
         result = reads.categories(db, [row])[0]
         service.headers(db, response, row)
         response.headers["Location"] = f"/api/comms/categories/{row.id}"
@@ -122,7 +120,6 @@ def update_category(
         service.match(db, row, if_match)
         mutations.update_category(db, row, payload)
         organization_event(db, "structure")
-        organization_event(db, "grants")
         db.flush()
         result = reads.categories(db, [row])[0]
         service.headers(db, response, row)
@@ -245,33 +242,6 @@ def list_members(
     return reads.member_page(db, conversation_id, query)
 
 
-@router.put(
-    "/conversations/{conversation_id}/access", response_model=Conversation, responses=VERSIONED
-)
-def set_access(
-    conversation_id: UUID,
-    payload: AccessRequest,
-    db: DB,
-    actor: Actor,
-    response: Response,
-    if_match: Match = None,
-) -> Any:
-    with service.transaction(db):
-        row = service.manage_conversation(db, actor, conversation_id)
-        service.require_channel(row)
-        if row.scope != "groups":
-            raise error("comms_invalid", "Group-scoped channel required", 422)
-        service.match(db, row, if_match)
-        service.replace_access(db, row, payload.access)
-        row.updated_at = utc_now()
-        mutations.retain_read(db, actor, row)
-        revoke_stale(db)
-        organization_event(db, "structure")
-        result = reads.conversation(db, actor, row)
-        service.headers(db, response, row)
-    return result
-
-
 @router.put("/conversations/{conversation_id}/members/{user_id}", response_model=MemberResponse)
 def set_member_role(
     conversation_id: UUID,
@@ -285,10 +255,11 @@ def set_member_role(
     with service.transaction(db):
         row = service.manage_conversation(db, actor, conversation_id)
         service.match(db, row, if_match)
-        member = mutations.set_member_role(db, row, user_id, payload.role)
+        mutations.set_member_role(db, row, user_id, payload.role)
         revoke_stale(db)
         membership_event(db, row, user_id)
-        result = reads.member_rows(db, [member])[0]
+        db.flush()
+        result = reads.member_response(db, row, user_id)
         service.private(response)
     return result
 

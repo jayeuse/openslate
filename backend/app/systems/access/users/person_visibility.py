@@ -3,8 +3,7 @@
 from collections.abc import Collection
 from uuid import UUID
 
-from fastapi import HTTPException
-from sqlalchemy import Select, select, union
+from sqlalchemy import select, union
 from sqlalchemy.orm import Session
 
 from app.core.database.organization_scope import bound_organization_column
@@ -20,8 +19,6 @@ from app.systems.comms.access import (
     fresh_membership,
     visible_conversation_clause,
 )
-from app.systems.comms.admissions.models import CommsAdmission
-from app.systems.comms.capabilities import capability_check
 from app.systems.comms.conversations.models import CommsConversation
 from app.systems.platform.files.access import error
 from app.systems.sandbox.departments.models import Department
@@ -87,51 +84,7 @@ def visible_person_ids(db: Session, actor: User, candidate_ids: Collection[UUID]
         shared,
         conversation_reader_statement(conversations, candidate_ids),
     )
-    visible = set(db.scalars(candidates.where(User.id.in_(readers))))
-    remaining = set(candidate_ids) - visible
-    if remaining and actor_membership.role != "guest":
-        visible |= _pending_admission_people(db, actor, candidates, remaining)
-    return visible
-
-
-def _pending_admission_people(
-    db: Session, actor: User, candidates: Select[tuple[UUID]], remaining: set[UUID],
-) -> set[UUID]:
-    """People with a pending join request on a live channel the actor currently manages.
-
-    Requests only: an invitation is created by a manager for any member, so it must
-    not make that member visible.
-    """
-    pending: dict[UUID, set[UUID]] = {}
-    for conversation_id, user_id in db.execute(
-        select(CommsAdmission.conversation_id, CommsAdmission.user_id)
-        .join(
-            CommsConversation,
-            (CommsConversation.org_id == CommsAdmission.org_id)
-            & (CommsConversation.id == CommsAdmission.conversation_id),
-        )
-        .where(
-            CommsAdmission.org_id == bound_organization_column(),
-            CommsAdmission.user_id.in_(candidates.where(User.id.in_(remaining))),
-            CommsAdmission.kind == "request",
-            CommsAdmission.status == "pending",
-            CommsAdmission.is_deleted.is_(False),
-            CommsConversation.kind == "channel",
-            CommsConversation.is_deleted.is_(False),
-            CommsConversation.deleted_at.is_(None),
-        )
-    ):
-        pending.setdefault(conversation_id, set()).add(user_id)
-    found: set[UUID] = set()
-    for conversation_id, people in pending.items():
-        try:
-            # The admissions router's own management predicate (manage_conversation).
-            check = capability_check(db, actor, conversation_id)
-        except HTTPException:
-            continue
-        if check["capabilities"]["manageChannel"]["allowed"]:
-            found |= people
-    return found
+    return set(db.scalars(candidates.where(User.id.in_(readers))))
 
 
 def visible_person(db: Session, actor: User, target_id: UUID) -> User:

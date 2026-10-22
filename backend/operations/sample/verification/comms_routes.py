@@ -8,11 +8,6 @@ COMMS_ROUTES = frozenset(
         ("PUT", "/api/comms/templates/{template_id}"),
         ("POST", "/api/comms/templates/{template_id}/application-preview"),
         ("POST", "/api/comms/templates/{template_id}/applications"),
-        ("GET", "/api/comms/conversations/{conversation_id}/admissions"),
-        ("GET", "/api/comms/conversations/{conversation_id}/admissions/{admission_id}"),
-        ("POST", "/api/comms/conversations/{conversation_id}/invitations"),
-        ("POST", "/api/comms/conversations/{conversation_id}/admissions/{admission_id}/decision"),
-        ("POST", "/api/comms/join-requests"),
         *(
             (method, "/api/comms/settings/" + scope + suffix)
             for scope in ("workspace", "category/{category_id}", "channel/{conversation_id}")
@@ -79,7 +74,6 @@ COMMS_ROUTES = frozenset(
         ("POST", "/api/comms/directs"),
         ("POST", "/api/comms/groups"),
         ("GET", "/api/comms/conversations/{conversation_id}/members"),
-        ("PUT", "/api/comms/conversations/{conversation_id}/access"),
         ("PUT", "/api/comms/conversations/{conversation_id}/members/{user_id}"),
         ("DELETE", "/api/comms/conversations/{conversation_id}/members/{user_id}"),
         ("POST", "/api/comms/conversations/{conversation_id}/duplicates"),

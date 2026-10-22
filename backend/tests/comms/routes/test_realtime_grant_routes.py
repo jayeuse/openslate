@@ -14,9 +14,9 @@ from app.common.dependencies.auth import get_account_user, get_current_membershi
 from app.core.config import get_settings
 from app.core.database.base import Base
 from app.core.database.session import AuditSession
-from app.systems.access.policy.models import Group, GroupMember
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.models import Membership, User
-from app.systems.comms.conversations.models import CommsConversation, CommsConversationGroup
+from app.systems.comms.conversations.models import CommsConversation
 from app.systems.comms.realtime.models import CommsRealtimeAdmission, CommsRealtimeGrant
 from app.systems.manage.audit.models import AuditLog
 from tests.comms.conftest import NOW
@@ -155,19 +155,20 @@ def test_token_reconciles_exact_leases_and_admits_six_in_a_rolling_minute(realti
         )
 
 
+def department_only(room, org):
+    """D44: a department channel; only department roles (or an admin) read it."""
+    room.scope, room.department_id = "department", org.department
+
+
 def test_archive_members_and_shared_group_writers_remove_grants_immediately(realtime_case):
     case, clock = realtime_case
     world, org = case.world, case.world.first
     with world.session(org) as db:
-        db.get(CommsConversation, org.conversation).scope = "groups"
+        department_only(db.get(CommsConversation, org.conversation), org)
         db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
         db.add(
-            CommsConversationGroup(
-                org_id=org.id,
-                conversation_id=org.conversation,
-                subject="group",
-                group_id=org.group,
-                level="read",
+            GroupAccess(
+                org_id=org.id, group_id=org.group, department_id=org.department, level="read"
             )
         )
         db.commit()
@@ -201,7 +202,7 @@ def test_role_demotion_cannot_leave_an_administrator_projection_joinable(realtim
     case, _clock = realtime_case
     org = case.world.first
     with case.world.session(org) as db:
-        db.get(CommsConversation, org.conversation).scope = "groups"
+        department_only(db.get(CommsConversation, org.conversation), org)
         membership = db.scalar(
             select(Membership).where(Membership.org_id == org.id, Membership.user_id == org.peer)
         )
@@ -227,15 +228,11 @@ def test_grant_refresh_and_shared_group_revocation_serialize(realtime_case, revo
     world, org = case.world, case.world.first
     case.hide_other_conversation()
     with world.session(org) as db:
-        db.get(CommsConversation, org.conversation).scope = "groups"
+        department_only(db.get(CommsConversation, org.conversation), org)
         db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
         db.add(
-            CommsConversationGroup(
-                org_id=org.id,
-                conversation_id=org.conversation,
-                subject="group",
-                group_id=org.group,
-                level="read",
+            GroupAccess(
+                org_id=org.id, group_id=org.group, department_id=org.department, level="read"
             )
         )
         db.commit()
@@ -419,9 +416,7 @@ def test_token_admission_does_not_require_two_simultaneous_pool_slots(realtime_c
         bounded.dispose()
 
 
-def test_explicit_member_removal_deletes_its_grant_even_when_organization_read_survives(
-    realtime_case,
-):
+def test_manager_row_removal_keeps_the_grant_of_a_reader_whose_read_survives(realtime_case):
     case, _clock = realtime_case
     org = case.world.first
     peer, admin = case.client(org.peer, org.id), case.client(org.author, org.id)
@@ -433,15 +428,21 @@ def test_explicit_member_removal_deletes_its_grant_even_when_organization_read_s
         NOW + timedelta(seconds=300),
     )
     path = f"/api/comms/conversations/{org.conversation}"
+    member = path + f"/members/{org.peer}"
     current = admin.get(path)
     assert current.status_code == 200
+    promoted = admin.put(member, headers={"If-Match": current.headers["etag"]}, json={
+        "role": "manager",
+    })
+    assert promoted.status_code == 200
     assert (
-        admin.delete(
-            path + f"/members/{org.peer}", headers={"If-Match": current.headers["etag"]}
-        ).status_code
+        admin.delete(member, headers={"If-Match": admin.get(path).headers["etag"]}).status_code
         == 204
     )
-    assert [row[0] for row in projection(case.world, org, org.peer)] == [org.other_conversation]
+    # D44: a manager row is not read access; the organization reader keeps the topic grant.
+    assert sorted(row[0] for row in projection(case.world, org, org.peer)) == sorted(
+        [org.conversation, org.other_conversation]
+    )
     assert peer.get(path).status_code == 200
     # The grant remains a projection, not a new membership-only rule for public channels.
     issue(

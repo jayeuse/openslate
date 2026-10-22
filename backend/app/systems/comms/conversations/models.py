@@ -1,4 +1,4 @@
-"""Categories, conversations and explicit access rows; no access evaluator."""
+"""Categories, conversations and member rows; no access evaluator."""
 
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -21,7 +21,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.base_model import BaseModel, utc_now
 
 if TYPE_CHECKING:
-    from app.systems.access.policy.models import Group
     from app.systems.sandbox.departments.models import Department
 
 
@@ -75,8 +74,11 @@ class CommsConversation(BaseModel):
             "scope IN ('organization','department','groups','members')",
             name="ck_comms_conversations_scope",
         ),
+        # D44: a live channel is organization-wide or one department's. Retired
+        # pre-D44 channels keep their stored scope only while soft-deleted.
         CheckConstraint(
-            "(kind = 'channel' AND btrim(name) <> '') OR "
+            "(kind = 'channel' AND btrim(name) <> '' AND "
+            "(scope IN ('organization','department') OR is_deleted)) OR "
             "(kind IN ('direct','group') AND scope = 'members' AND category_id IS NULL)",
             name="ck_comms_conversations_kind_shape",
         ),
@@ -120,79 +122,6 @@ class CommsConversation(BaseModel):
     department: Mapped["Department | None"] = relationship(
         primaryjoin="and_(CommsConversation.org_id == Department.org_id, "
         "foreign(CommsConversation.department_id) == Department.id)"
-    )
-
-
-class CommsConversationGroup(BaseModel):
-    """Category creation defaults OR explicit conversation access, never live inheritance."""
-
-    __tablename__ = "comms_conversation_groups"
-    __table_args__ = (
-        UniqueConstraint("org_id", "id", name="uq_comms_conversation_groups_org_id_id"),
-        ForeignKeyConstraint(
-            ["org_id", "category_id"],
-            ["comms_categories.org_id", "comms_categories.id"],
-            name="fk_comms_conversation_groups_category",
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "conversation_id"],
-            ["comms_conversations.org_id", "comms_conversations.id"],
-            name="fk_comms_conversation_groups_conversation",
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "group_id"],
-            ["groups.org_id", "groups.id"],
-            name="fk_comms_conversation_groups_group",
-            ondelete="RESTRICT",
-        ),
-        CheckConstraint(
-            "(category_id IS NOT NULL AND conversation_id IS NULL) OR "
-            "(category_id IS NULL AND conversation_id IS NOT NULL)",
-            name="ck_comms_conversation_groups_owner",
-        ),
-        CheckConstraint(
-            "(subject = 'everyone' AND group_id IS NULL) OR "
-            "(subject = 'group' AND group_id IS NOT NULL)",
-            name="ck_comms_conversation_groups_subject",
-        ),
-        CheckConstraint("level IN ('read','post')", name="ck_comms_conversation_groups_level"),
-        Index(
-            "uq_comms_conversation_groups_active",
-            "org_id",
-            "category_id",
-            "conversation_id",
-            "subject",
-            "group_id",
-            unique=True,
-            postgresql_nulls_not_distinct=True,
-            postgresql_where=text("is_deleted = false"),
-        ),
-        Index("ix_comms_conversation_groups_category", "org_id", "category_id"),
-        Index("ix_comms_conversation_groups_conversation", "org_id", "conversation_id"),
-        Index("ix_comms_conversation_groups_group", "org_id", "group_id"),
-    )
-
-    org_id: Mapped[UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
-    )
-    category_id: Mapped[UUID | None] = mapped_column(nullable=True)
-    conversation_id: Mapped[UUID | None] = mapped_column(nullable=True)
-    subject: Mapped[str] = mapped_column(Text, nullable=False)
-    group_id: Mapped[UUID | None] = mapped_column(nullable=True)
-    level: Mapped[str] = mapped_column(Text, nullable=False)
-    category: Mapped["CommsCategory | None"] = relationship(
-        primaryjoin="and_(CommsConversationGroup.org_id == CommsCategory.org_id, "
-        "foreign(CommsConversationGroup.category_id) == CommsCategory.id)"
-    )
-    conversation: Mapped["CommsConversation | None"] = relationship(
-        primaryjoin="and_(CommsConversationGroup.org_id == CommsConversation.org_id, "
-        "foreign(CommsConversationGroup.conversation_id) == CommsConversation.id)"
-    )
-    group: Mapped["Group | None"] = relationship(
-        primaryjoin="and_(CommsConversationGroup.org_id == Group.org_id, "
-        "foreign(CommsConversationGroup.group_id) == Group.id)"
     )
 
 

@@ -81,11 +81,16 @@ def test_export_job_creates_actual_safe_bytes_and_hides_artifacts_from_metadata(
     )
 
 
+def private(room):
+    """D31/D44: only direct and group messages are private sources."""
+    room.kind, room.scope, room.category_id = "group", "members", None
+
+
 def test_private_export_requires_fresh_proof_and_later_authority_is_rechecked(job_routes):
     case, org = job_routes, job_routes.world.first
     api = case.client(org.author, org.id)
     with case.world.session(org) as db:
-        db.get(CommsConversation, org.conversation).scope = "members"
+        private(db.get(CommsConversation, org.conversation))
         db.commit()
     request = {
         "conversation_ids": [str(org.conversation)],
@@ -127,7 +132,7 @@ def test_export_denies_foreign_sources_and_new_private_scope_without_captured_pr
     run_export_job(case.world.runtime, org.id, UUID(job["id"]))
     path = ROOT + "/" + job["id"] + "/content"
     with case.world.session(org) as db:
-        db.get(CommsConversation, org.conversation).scope = "members"
+        private(db.get(CommsConversation, org.conversation))
         db.commit()
     assert api.get(path).status_code == 403
     assert api.get(path, params={"password": "owned-test-password"}).status_code == 403

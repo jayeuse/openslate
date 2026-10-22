@@ -251,7 +251,9 @@ def test_templates_reject_foreign_and_unreadable_sources_without_partial_targets
     assert api.post(path + "/application-preview", json=request).status_code == 404
     with case.world.session(org) as db:
         hidden = db.get(CommsConversation, org.other_conversation)
-        hidden.scope, hidden.created_by = "members", org.peer
+        # D43: a group message the admin is not part of; D44 has no private channel.
+        hidden.kind, hidden.scope, hidden.category_id = "group", "members", None
+        hidden.created_by = org.peer
         membership = db.scalars(
             select(CommsMember).where(
                 CommsMember.conversation_id == org.other_conversation,

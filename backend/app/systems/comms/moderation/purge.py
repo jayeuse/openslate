@@ -16,10 +16,8 @@ from app.core.config import get_settings
 from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.users.models import User
 from app.systems.comms.access import conversation_reader_ids, error, require_conversation_access
-from app.systems.comms.admissions.models import CommsAdmission
 from app.systems.comms.conversations.models import (
     CommsConversation,
-    CommsConversationGroup,
     CommsMember,
 )
 from app.systems.comms.jobs import export_service
@@ -362,14 +360,12 @@ def delete_graph(db: Session, actor: User, identity: UUID, expected: str, name: 
         db, CommsMessage, (CommsMessage.org_id == org) & (CommsMessage.conversation_id == identity)
     )
     for owned in (
-        CommsAdmission,
         File,
         CommsMember,
         CommsReadState,
         CommsMemberPreferences,
         CommsSettings,
         CommsCapabilityGrant,
-        CommsConversationGroup,
         CommsTyping,
         CommsRealtimeGrant,
         CommsConversationCounter,
