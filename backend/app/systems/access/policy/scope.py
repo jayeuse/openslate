@@ -29,6 +29,9 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.readers import (
+    department_level_clause as department_level_clause,
+)
+from app.systems.access.policy.readers import (
     department_level_reader_statement as department_level_reader_statement,
 )
 from app.systems.access.policy.readers import (

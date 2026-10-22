@@ -13,7 +13,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.policy.readers import active_account_clause
-from app.systems.access.policy.scope import department_level_reader_statement
+from app.systems.access.policy.scope import department_level_clause
 from app.systems.access.users.membership import (
     bound_membership_join,
     current_membership,
@@ -26,7 +26,6 @@ from app.systems.comms.conversations.models import (
     CommsDirectBlock,
     CommsMember,
 )
-from app.systems.sandbox.departments.models import Department
 
 ConversationLevel = Literal["none", "read", "post", "manage"]
 ManagerSource = Literal["creator", "membership_manager", "department_manager"]
@@ -75,30 +74,24 @@ def _conversation_access_statement(
         .correlate(c, User)
         .scalar_subquery()
     )
-    departments = (
-        select(Department.id)
-        .where(
-            Department.org_id == bound_organization_column(),
-            Department.is_deleted.is_(False),
-            Department.id == c.department_id,
+    # The per-person form of department_level_reader_statement: it reads only this
+    # person's group rows instead of rebuilding the department's whole reader set for
+    # every (conversation, person) pair, which planned per pair and dominated cold reads.
+    def department_level(minimum: AccessLevel) -> ColumnElement[bool]:
+        return department_level_clause(
+            User.id.expression, Membership.role.expression, c.department_id.expression, minimum,
         )
-        .correlate(c)
-    )
-    manages_department = User.id.in_(
-        department_level_reader_statement(
-            departments,
-            AccessLevel.MANAGE,
-        )
-    )
+
+    manages_department = department_level(AccessLevel.MANAGE)
     manager = case(
         (and_(c.created_by == User.id, membership_role.is_not(None)), "creator"),
         (membership_role == "manager", "membership_manager"),
         (manages_department, "department_manager"),
         else_=None,
     )
-    department_level = case(
-        (User.id.in_(department_level_reader_statement(departments, AccessLevel.WRITE)), 2),
-        (User.id.in_(department_level_reader_statement(departments, AccessLevel.READ)), 1),
+    department_rank = case(
+        (department_level(AccessLevel.WRITE), 2),
+        (department_level(AccessLevel.READ), 1),
         else_=0,
     )
     # D45: the best added grant of this channel or of its current category, for the person
@@ -139,7 +132,7 @@ def _conversation_access_statement(
     )
     ordinary = case(
         (c.scope == "organization", 2),
-        (c.scope == "department", func.greatest(department_level, granted)),
+        (c.scope == "department", func.greatest(department_rank, granted)),
         (and_(c.scope == "members", membership_role.is_not(None)), 2),
         else_=0,
     )
@@ -165,7 +158,7 @@ def _conversation_access_statement(
             level.label("level"),
             Membership.role.label("role"),
             manager.label("manager"),
-            and_(c.scope == "department", granted > department_level).label("from_grant"),
+            and_(c.scope == "department", granted > department_rank).label("from_grant"),
             c.scope,
             c.department_id,
         )

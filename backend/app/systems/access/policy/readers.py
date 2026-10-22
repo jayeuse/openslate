@@ -14,6 +14,7 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, Gr
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.membership import bound_membership_join, current_membership
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 
 
@@ -126,6 +127,13 @@ def department_reader_clause(db: Session, user: User, department_id: Any) -> Col
     )
 
 
+_DEPARTMENT_LEVELS = {
+    AccessLevel.READ: ("read", "write", "manage"),
+    AccessLevel.WRITE: ("write", "manage"),
+    AccessLevel.MANAGE: ("manage",),
+}
+
+
 def department_level_reader_statement(
     department_ids: Select[tuple[UUID]], minimum: AccessLevel, *, now: datetime | None = None,
 ) -> Select[tuple[UUID]]:
@@ -135,11 +143,7 @@ def department_level_reader_statement(
     groups meets a minimum iff a live department row meets it. Guests only read.
     The caller supplies scoped department IDs, possibly correlated to its resource.
     """
-    levels = {
-        AccessLevel.READ: ("read", "write", "manage"),
-        AccessLevel.WRITE: ("write", "manage"),
-        AccessLevel.MANAGE: ("manage",),
-    }[minimum]
+    levels = _DEPARTMENT_LEVELS[minimum]
     target = and_(
         GroupAccess.org_id == bound_organization_column(),
         Group.org_id == bound_organization_column(),
@@ -151,3 +155,50 @@ def department_level_reader_statement(
     if minimum != AccessLevel.READ:
         statement = statement.where(Membership.role != UserRole.GUEST.value)
     return statement
+
+
+def department_level_clause(
+    user_id: ColumnElement[UUID],
+    role: ColumnElement[str],
+    department_id: ColumnElement[UUID | None],
+    minimum: AccessLevel,
+) -> ColumnElement[bool]:
+    """Per-person form of :func:`department_level_reader_statement` for one department.
+
+    For a person whose ``users``/``memberships`` row the caller already limits with
+    :func:`active_account_clause` in the bound organization, it is true exactly when
+    that person is in ``department_level_reader_statement(<that department>, minimum)``:
+    the department is live in the bound organization, and the person is an
+    administrator or has a live department row there at ``minimum`` or above through a
+    live group; a guest meets only ``read``. It reads only this person's group rows, so
+    a caller that tests many (resource, person) pairs does not rescan every account.
+    """
+    org = bound_organization_column()
+    live_department = exists(
+        select(Department.id).where(
+            Department.org_id == org,
+            Department.is_deleted.is_(False),
+            Department.id == department_id,
+        )
+    ).correlate_except(Department)
+    department_row = exists(
+        select(GroupAccess.id)
+        .join(Group, Group.id == GroupAccess.group_id)
+        .join(GroupMember, GroupMember.group_id == Group.id)
+        .where(
+            GroupMember.user_id == user_id,
+            GroupMember.org_id == org,
+            Group.org_id == org,
+            GroupAccess.org_id == org,
+            GroupMember.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+            GroupAccess.is_deleted.is_(False),
+            GroupAccess.module_id.is_(None),
+            GroupAccess.department_id == department_id,
+            GroupAccess.level.in_(_DEPARTMENT_LEVELS[minimum]),
+        )
+    ).correlate_except(GroupAccess, Group, GroupMember)
+    clause = and_(live_department, or_(role == UserRole.ADMIN.value, department_row))
+    if minimum != AccessLevel.READ:
+        clause = and_(clause, role != UserRole.GUEST.value)
+    return clause
