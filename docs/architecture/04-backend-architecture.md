@@ -78,7 +78,7 @@ services add their object, audience and lifecycle checks. See
 | Sandbox | Operational schema, Records, relationships, lifecycle, design documents, publication, record triggers and test-run evidence | `app/systems/sandbox/` |
 | OpenView | Department Dashboards, shared saved Views, report definitions, frozen runs and schedules | `app/systems/openview/` |
 | Boards | Scoped Boards and project Board groups, posts and their revisions, events with author-set reminders, tiles, attachments, record links and configuration portability | `app/systems/boards/` |
-| Comms | Conversations, messages/threads, scoped people/search/files, settings/capabilities, moderation, admissions, durable jobs and optional link metadata | `app/systems/comms/` |
+| Comms | Conversations, messages/threads, scoped people/search/files, settings/capabilities, moderation, durable jobs and optional link metadata | `app/systems/comms/` |
 | Manage | Workspace profile, transactional audit and security-event inspection | `app/systems/manage/` |
 | Platform | Private Storage files, authenticated invalidations, and in-app scheduled-work references | `app/systems/platform/` |
 
@@ -134,7 +134,7 @@ source-backed description is not a claim that those acceptance gates have run.
 
 [`comms/router.py`](../../backend/app/systems/comms/router.py) assembles the
 `/api/comms` route families. Bootstrap and conversation/message reads, sends,
-replies, edits, reactions, search, files, settings, templates, admissions,
+replies, edits, reactions, search, files, settings, templates,
 moderation and jobs all use the current application session and organization.
 `X-Org` selects the request organization, otherwise the session's active
 organization applies. RLS backs explicit organization predicates; neither a
@@ -145,11 +145,15 @@ and [API architecture](07-api-architecture.md), rather than deriving endpoints
 from a UI label.
 
 [`comms/access.py`](../../backend/app/systems/comms/access.py) derives readable,
-postable and manageable conversations from current membership, explicit members,
-groups and the central department-access policy. Guests are capped at read.
-An administrator has no blanket read of a members-only conversation without
-membership; report-scoped moderation does not grant ordinary conversation
-readability. Capabilities and settings add operation-specific restrictions, not
+postable and manageable conversations from the current organization membership,
+the conversation scope and the central department-access policy. Every member
+posts in an organization channel. In a department channel, the department level
+gives read, post (department `write`) or manage; module rows give no channel
+access. Direct and group messages use their member rows. On a channel, member
+rows are only a manager roster: the creator's row and `manager` rows. Guests are
+capped at read. An administrator manages every channel but has no blanket read of
+a direct or group message without membership; report-scoped moderation does not
+grant ordinary conversation readability. Capabilities and settings add operation-specific restrictions, not
 a replacement authorization system. Private person, attachment, record-link,
 search and notification projections recheck their current source access.
 
@@ -197,10 +201,6 @@ socket revocation. Presence snapshots remain current-authorized HTTP projections
   exact-administrator/source authority, preview/version/password confirmation,
   and the same validated settings writers. See `comms/templates/` and
   `comms/settings/{history,history_replay,service}.py`.
-- Managed requests and invitations use current join rules and channel-management
-  capability. Private join requests have a neutral response. Restoring a removed
-  participant restores ordinary membership, not an old elevated role. See
-  [`admissions/router.py`](../../backend/app/systems/comms/admissions/router.py).
 - [`jobs/worker.py`](../../backend/app/systems/comms/jobs/worker.py) adds scheduled
   sends, exports, retention and preview work to the existing organization-bound
   scheduling worker. Durable claims use leases and source/actor/version fences;

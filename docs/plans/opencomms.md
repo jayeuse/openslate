@@ -195,7 +195,7 @@ Owner answers: 2026-10-11 and 2026-10-19. Foundation decisions (`F-D<n>`) stay b
 | D5 | Unaudited tables | Read states, counters, member preferences, personal preferences, thread follows, Realtime grants and presence. All still carry `org_id` and RLS. Messages stay audited, with the body redacted. | Owner (extension: Default) | S15, S20A, S20 |
 | D6 | Event payloads | Ids only, never content, on private Realtime topics. OpenComms tables publish no SSE invalidations; the in-app notification a send creates still refreshes the recipient's bell over SSE. | Owner (updated for F-D23) | S15, S20, S26 |
 | D7 | Typing and presence | Both, on Realtime. Typing goes to grant holders of the conversation. Presence is online, away or offline, server-originated from heartbeats, and per organization. | Owner | S20, S28 |
-| D8 | Conversation model | Categories; an optional organization-wide channel; department-linked, group-granted and private channels; direct and group messages (3–50 people); one-level threads with follow, state and "Also send to channel"; quote replies. No topics or forums. | Default | S01 onward |
+| D8 | Conversation model | Categories; organization-wide channels and department channels (D44 replaced the group-granted and private channels); direct and group messages (3–50 people); one-level threads with follow, state and "Also send to channel"; quote replies. No topics or forums. | Default | S01 onward |
 | D9 | Department channels | Admins create channels. A category or channel may be linked to a department, whose access then carries over. Nothing is created automatically. | Owner | S15, S16 |
 | D10 | Who creates channels | Org admins, department managers, and groups granted `createChannel`. Any member starts direct and group messages, unless `dmRule` limits it. | Owner (2026-10-19) | S10, S16 |
 | D11 | Notifications | In-app bell, plus desktop alerts and sound while a tab is open. Per-conversation levels, keywords, quiet hours, preview text and badges. No email, Web Push or digest. Everything is per organization: an unread in organization A does not show in organization B. | Owner | S12, S21, S29 |
@@ -212,31 +212,31 @@ Owner answers: 2026-10-11 and 2026-10-19. Foundation decisions (`F-D<n>`) stay b
 | D22 | Supervised student messages | Deferred. | Default | – |
 | D23 | Record references | A card only for readers of the module, re-checked on every read. Others see "Record unavailable". | Default | S07, S18 |
 | D24 | Branch and base | `codex/opencomms` from `main` at `6816f2b8` or later. | Default | S00 |
-| D25 | Mentions | @person among conversation members (D36). @channel and @here with `mentionChannel`; @here reaches online members only. | Default | S08, S21 |
+| D25 | Mentions | @person among the conversation's readers: every reader of a channel (D44), and the members of a direct or group message. @channel and @here with `mentionChannel`; @here reaches online readers only. | Default | S08, S21 |
 | D26 | Unread counts | By query, capped at "99+". Switch to stored counters only on a target miss. | Default | S17 |
-| D27 | Permissions | Groups decide read and post. Capabilities follow the complete matrix in section 7.2, granted by group under Advanced, never per person, with no deny rules. "Check one person" explains each result. | Owner (matrix: 2026-10-19) | S04, S10, S16 |
+| D27 | Permissions | The channel scope and department roles decide read and post (D44); direct and group messages use membership. Capabilities follow the complete matrix in section 7.2, granted by group under Advanced, never per person, with no deny rules. "Check one person" explains each result. | Owner (matrix: 2026-10-19) | S04, S10, S16 |
 | D28 | Merge strategy | No mid-run merge. One branch from S00 to S34; the owner pushes and opens one pull request at the end. If `origin/main` moves, record it and ask the owner before rebasing. | Owner (2026-10-19) | – |
 | D29 | Automation | After OpenComms. | Owner | – |
 | D30 | Link previews | Real, SSRF-guarded, off by default. | Owner (2026-10-19) | S25 |
-| D31 | Export | Admins export. Private channels and direct messages need a fresh admin password plus a reason. Audited per organization. | Owner (detail: Default) | S23 |
+| D31 | Export | Admins export. Direct and group messages are private sources (D44: every channel is organization-wide or a department's) and need a fresh admin password plus a reason. Audited per organization. | Owner (detail: Default) | S23 |
 | D32 | Scheduled messages and report queue | Both real. | Owner | S22, S23 |
-| D33 | Templates, history, join requests | Templates also do bulk apply. History comes from the audit log, with restore. Join requests apply to private channels whose join rule is `request`. | Owner | S24 |
+| D33 | Templates, history, join requests | Templates also do bulk apply. History comes from the audit log, with restore. Join requests applied to private channels whose join rule was `request`; D44 removed them with private channels (2026-10-22). | Owner | S24 |
 | D34 | Revocation lag | After removal, content is refused at once. Id-only events can continue for at most the 5-minute token lifetime. The grant row is deleted at once, so a re-join is refused. | Owner (2026-10-19) | S20A, §6 |
 | D35 | Presence scope | Everyone in the organization, guests included, through one presence topic per organization. Presence shows on person cards too. | Owner (2026-10-19) | S20, S28 |
-| D36 | Visibility | Sharing a readable conversation makes people visible to each other (card, mention, direct message). A branch in `person_visibility.py`, signed off under SEC-R6. Amended 2026-10-21 (D4, SEC-R6): the managers of a channel also see people with a pending join request on it, so they can review the request; invitations do not count, because a manager can invite any member. | Owner (2026-10-19) | S16 |
+| D36 | Visibility | Sharing a readable conversation makes people visible to each other (card, mention, direct message). A branch in `person_visibility.py`, signed off under SEC-R6. D44 superseded the 2026-10-21 amendment for people with a pending join request, because join requests no longer exist. | Owner (2026-10-19) | S16 |
 | D37 | Realtime topic model | Conversation, own-user and organization presence topics, named under F-D24 (`org:<org_id>:<kind>:<id>` and `org:<id>:presence`). Conversation topics are gated by FastAPI-written grant rows (a projection, not a rule), reconciled at token issue. Browsers are read-only on Comms topics. | Default (follows F-D23, SEC-R6) | S01, S20A |
 | D38 | Browser path | A same-origin `/realtime/v1/websocket` route to the provider gateway with the gateway key injected as a header: Caddy in production, the frontend launcher's upgrade proxy in development. | Default (proof-gated, S02) | S20A |
 | D39 | Publish path | The plan's first choice, a SQL wrapper around `realtime.send` inside the writing transaction, failed its S02 proof. The pre-authorized fallback was selected: FastAPI validates private, ids-only envelopes, discards them on rollback, and submits them after commit through a bounded HTTP publisher to a separate private provider listener with the server key. Request-buffered events wait for the response; durable jobs submit after their own commit and session close. Delivery is best effort, not database-atomic; clients repair gaps through current-authorized reads. The publisher listener is unpublished in production; development maps it to loopback only (owner decision). | Default (proof-gated fallback, S02) | S20A, S20 |
 | D40 | Realtime client | `@supabase/realtime-js`, approved, measured against the JS budget. | Owner (2026-10-19) | S26 |
 | D41 | Entitlements | No gate in this phase. On-premises installations have no limits. Phase 3 adds the cloud free-tier rule (no OpenComms on the free tier). No stub table. | Default (follows the 2026-10-15 split) | – |
 | D42 | Sample profiles and reset | S34 runs the sample Small profiles, including the guarded reset of local development application data between them. Authorized for this run only; never provider volumes. | Owner (2026-10-19) | S34 |
-| D43 | Admin reads of private conversations | Org admins do not read direct messages, group messages or private channels they are not members of: these are absent from the admin's sidebar, bootstrap, search and history (404). Admins still manage all organization, department and group-granted channels, act on reported messages through the moderation queue, and export private conversations only through D31. | Owner (2026-10-19) | S16, S17, S19, S22, S23 |
+| D43 | Admin reads of private conversations | Org admins do not read direct or group messages they are not part of: these are absent from the admin's sidebar, bootstrap, search and history (404). Since D44 these are the only private conversations. Admins still manage every organization and department channel, act on reported messages through the moderation queue, and export private conversations only through D31. | Owner (2026-10-19) | S16, S17, S19, S22, S23 |
 | D44 | Channel access | OpenComms is available to every organization member. A channel is organization-wide or belongs to one department, and department roles decide read, post and manage. No channel invitations, join requests, group-shared channels or private channels; hand-picked conversations are direct or group messages. Supersedes D33 (join requests), the 2026-10-21 D36 amendment, and the membership sources of `manageChannel` other than creator and manager role. Spec: `docs/specs/opencomms-department-access.md`. | Owner (2026-10-22) | Follow-up slices |
 
 ### 7.2 D27 capability matrix
 
 Terms:
-- A **conversation manager** is an org admin (for conversations the admin can read under D43), the department manager of a conversation whose own department is that department (never a private channel merely placed in a department-linked category), the conversation creator while still a member, or a member with role `manager`.
+- A **conversation manager** is an org admin (for conversations the admin can read under D43), the department manager of a channel in that department, the conversation creator while the creator's member row exists, or a person with a `manager` member row (`ManagerSource` in `comms/access.py`). On a channel, member rows are only this manager roster (D44).
 - A **poster** has `post` level.
 - A **reader** has `read` level.
 - Guests are readers only (D3).
@@ -253,8 +253,8 @@ Terms:
 | `manageThreads` | Rename, resolve, lock, archive any thread (a thread starter can always resolve and reopen their own thread) | Conversation managers | workspace, category, channel | – | yes |
 | `deleteOthersMessages` | Remove anyone's message (tombstone) and restore it | Conversation managers | workspace, category, channel | – | yes |
 | `moderate` | Report queue, restrict a person, slow mode, lock or unlock the channel | Conversation managers | workspace, category, channel | – | yes |
-| `manageChannel` | Edit settings, membership and group access; approve join requests and send invitations; archive, restore and duplicate | Conversation managers | category, channel | – | yes |
-| `createChannel` | Create channels: a workspace grant means any category; a category grant means that category only | Org admins; department managers in categories linked to their department | workspace, category | – | yes |
+| `manageChannel` | Edit settings and the manager roster of a channel, or the members of a direct or group message; archive, restore and duplicate | Conversation managers | category, channel | – | yes |
+| `createChannel` | Create channels: a workspace grant means any category; a category grant means that category only. Since D44 a grant creates only department channels, in a department where the holder has a department role (owner, 2026-10-22). Source: `CapabilityInputs.grant_department` in `comms/capabilities.py` | Org admins; department managers for channels of their department, uncategorized or in a category bound to it | workspace, category | – | yes |
 | `manageWorkspace` | Workspace settings and locks, retention, export, templates, settings history, capability grants at workspace scope | Org admins only | never | – | – |
 
 Resolution rules:
@@ -268,7 +268,7 @@ Resolution rules:
    - Group grants still add the capability back for their groups unless the workspace locks the capability.
 4. Conversation managers always hold every conversation capability in their conversations. Org admins hold everything in their organization. Neither can be turned off.
 5. Guests never hold a capability that writes, even through a group grant. The grant is ignored for guests, and "Check one person" says why.
-6. Mentions: any poster may @mention a person who is a member of the conversation (D36). @channel and @here need `mentionChannel`, and the mention limit setting applies.
+6. Mentions: any poster may @mention a reader of the conversation: every reader of a channel (D44), and the members of a direct or group message. @channel and @here need `mentionChannel`, and the mention limit setting applies.
 7. "Check one person" lists every capability with its result and the deciding source: the default, a group grant (which group, which scope), the Everyone switch (which scope), the workspace lock, the manager or admin role, or the guest cap.
 
 The old 24 permissions map like this:
@@ -294,6 +294,7 @@ One Alembic revision per slice that changes the schema, in this order after `226
 | `f7bf3e971f8c` | S23 | Scheduled messages, retention policy and sweeps, export jobs |
 | `e17b63a36a2f` | S24 | Templates and admissions |
 | `e03383c56cde` | S25 | Bounded link previews |
+| `168d66144b73` | D44 | Drops `comms_admissions` and `comms_conversation_groups`; allows only `organization` and `department` scopes on live channels; removes the `join_rule` and `default_member_ids` settings and locks; keeps only creator and `manager` member rows on channels. Downgrade restores the schema only, not the data. |
 
 ## 9. After OpenComms
 

@@ -264,7 +264,7 @@ contracts.
 ## OpenComms status and entrypoints
 
 Comms conversations/messages, scoped files/settings, administrator tools,
-moderation, admissions and durable jobs have implemented FastAPI contracts. The
+moderation and durable jobs have implemented FastAPI contracts. The
 `/comms` page reads and changes them only through those APIs and receives private
 Realtime notifications; no part of it runs on browser-local example data. Private
 Realtime events do not grant content access. Complete integrated browser,

@@ -26,8 +26,8 @@ OpenSlate is a self-hosted web application installed separately for each client.
 
 The browser does not write application rows or read private objects directly. FastAPI verifies provider JWTs against the configured issuer and JWKS, confirms provider subject/session liveness, resolves an explicitly bound OpenSlate user, and checks the application's session and current authorization state. The backend never derives application roles from provider metadata. Normal application mutations use `AuditSession`; Alembic and provider-managed Auth/Storage operations remain outside that application ORM audit boundary.
 
-OpenComms has implemented conversation/message, settings, file, moderation,
-admission and job APIs, composed in
+OpenComms has implemented conversation/message, settings, file, moderation
+and job APIs, composed in
 [`comms/router.py`](../../backend/app/systems/comms/router.py). The `/comms` page,
 its settings and its administrator tools use these APIs; no OpenComms surface runs on
 browser-local example data.

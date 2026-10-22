@@ -1,6 +1,6 @@
 # OpenComms department access
 
-Status: proposed. Owner decisions on 2026-10-22 (D44 in `docs/plans/opencomms.md`).
+Status: implemented in `19d140af`, `014a1fd4` and `d8d6be3c` (slices 1 to 3), with the documentation in slice 4. Slice 5, measurement and hands-on acceptance, is pending. Owner decisions on 2026-10-22 (D44 in `docs/plans/opencomms.md`).
 
 ## Outcome
 
@@ -14,7 +14,7 @@ OpenComms is available to every member of an organization. A channel is either o
 
 "Invitation" here means a Comms channel invitation. The organization invitation in Access → People is unchanged: it is how a person joins the organization.
 
-## Current state (source: code at `d4ed295f`)
+## Starting state (source: code at `d4ed295f`, before D44)
 
 - One access relation decides every channel level: `_conversation_access_statement` in `backend/app/systems/comms/access.py:56-200`. Levels are none, read, post, and manage.
 - Channel scopes are `organization`, `department`, `groups`, and `members` (`access.py:137-166`; `frontend/src/components/systems/comms/contract/schemas.ts` `channelSchema`).
@@ -47,7 +47,7 @@ OpenComms is available to every member of an organization. A channel is either o
 - No change to direct-message rules (`dm_rule`, blocks).
 - No new access source. Module rows do not grant channel access.
 
-## Acceptance criteria (proposed)
+## Acceptance criteria
 
 | ID | Start state | Action | Expected result |
 |---|---|---|---|
@@ -62,19 +62,21 @@ OpenComms is available to every member of an organization. A channel is either o
 | A9 | Any member | Search the API and the UI for invitations, join requests, join rules, default members, or group access on channels | None exist. The routes return 404, and the settings keys are refused. |
 | A10 | A member loses department access to D | Reload, or wait for the next Realtime event | Channels in D are refused at once (404). Ids stop within the token lifetime (D34). |
 
-## Design (proposed)
+## Design (implemented)
 
-1. Channel scopes: `organization` and `department` only. A new CHECK constraint requires that `kind = 'channel'` implies scope `organization` or `department`. Direct and group messages keep scope `members`.
-2. Readability follows from the scope. It is the current CASE in `access.py:137-154` without the `groups` and `members` channel branches.
-3. A category bound to a department holds only channels in that department. This is validated on create, on a move to another category, and on duplicate.
-4. On channels, `comms_members` becomes a manager roster: it keeps only the creator and the members with the `manager` role. The five consumers listed above use readers through `conversation_reader_statement` and `conversation_reader_ids` (`access.py:285-309`).
+1. Channel scopes: `organization` and `department` only. A new CHECK constraint requires that `kind = 'channel'` implies scope `organization` or `department`. Direct and group messages keep scope `members`. Implemented in `014a1fd4` (`ck_comms_conversations_kind_shape` in `conversations/models.py`).
+2. Readability follows from the scope. It is the CASE in `_conversation_access_statement` (`access.py`) without the `groups` and `members` channel branches. Implemented in `014a1fd4`.
+3. A category bound to a department holds only channels in that department. This is validated on create, on a move to another category, and on duplicate. Implemented in `014a1fd4` (`conversations/service.py`, `conversations/mutations.py`).
+4. On channels, `comms_members` becomes a manager roster: it keeps only the creator and the members with the `manager` role. The five consumers listed above use readers through `conversation_reader_statement` and `conversation_reader_ids` (`access.py`). The backend consumers are implemented in `19d140af`, the frontend `people` map in `d8d6be3c`, and the roster rules for member PUT and DELETE in `014a1fd4`.
 5. These parts are removed:
    - backend: admissions (routes, `comms_admissions`, `audience.py`), `groups` scope (`comms_conversation_groups`, `PUT …/access`, `category.default_access`), `members`-scope channels, the `join_rule` and `default_member_ids` settings, and `_pending_admission_people` (`person_visibility.py`);
    - frontend: `admissions-api.ts`, `tools-admissions.tsx`, the Request to join state, the group-access field and summary, and `domain/groups.ts`.
-6. The channel dialog replaces the group-access editor with a scope choice (organization or department) and a department picker. This is a redesigned form surface, so it goes through `impeccable`.
-7. Export (D31) treats every non-channel conversation as private (`jobs/export_service.py:29-30`).
 
-## Migration (proposed)
+   Implemented in `014a1fd4`. The Request to join state left the unavailable-conversation view in `d8d6be3c`.
+6. The channel dialog replaces the group-access editor with a scope choice (organization or department) and a department picker. This is a redesigned form surface, so it goes through `impeccable`. Implemented in `d8d6be3c` (`channel-dialog.tsx`, `channel-scope.tsx`).
+7. Export (D31) treats every non-channel conversation as private (`private_source` in `jobs/export_service.py`). Implemented in `014a1fd4`.
+
+## Migration (implemented in revision `168d66144b73`)
 
 - Add one new Alembic revision after the current head. Applied revisions stay immutable. `SECURITY.md:164` records `installations-in-use: none`.
 - Drop the `comms_admissions` and `comms_conversation_groups` tables.
@@ -82,13 +84,26 @@ OpenComms is available to every member of an organization. A channel is either o
 - Remove `join_rule` and `default_member_ids` from the setting-lock key check.
 - Soft-delete the channel member rows that are not managers.
 - Existing development data: a `groups` channel with an `everyone` grant becomes `organization`. Other `groups` and `members` channels are archived.
-- Sample packs create only `organization` and `department` channels (`backend/operations/sample/comms_structure.py:143`). The S34 guarded reset recreates them.
+- Sample packs create only `organization` and `department` channels. The sample controls in `backend/operations/sample/controls/comms_*.py` create organization channels. The S34 guarded reset recreates them.
+
+## Deviations from the proposal
+
+These differences between the proposal above and the implemented code are intended.
+
+1. **Downgrade restores the schema only.** Downgrade of `168d66144b73` recreates the dropped tables and the old CHECK constraints. It does not restore dropped access and admission rows, removed settings and lock values, converted or soft-deleted channels, or soft-deleted member rows.
+2. **Only a channel where everyone posts becomes organization-wide.** The migration converts a `groups` channel only when its `everyone` grant has level `post`. A channel shared read-only with everyone, and every other `groups` or `members` channel, is soft-deleted. The migration never widens a restricted channel.
+3. **The creator's member row stays.** The migration and the member routes keep the creator's row on a channel. When the creator's row has the `manager` role, DELETE sets that role to `member` and keeps the row. The creator still manages the channel through that row.
+4. **Retired channels keep their old scope.** The CHECK constraint accepts the old `groups` or `members` scope on a channel only while it is soft-deleted.
+5. **A `createChannel` grant creates only department channels** (owner, 2026-10-22). The grant applies only in a department where the holder has a department role of read or higher. Module rows do not count. A grant never creates an organization channel. Category creation keeps the unrestricted grant. See `CapabilityInputs.grant_department` in `comms/capabilities.py`.
+6. **A category rebind is refused while it holds other channels.** Changing a category's `department_id` returns 422 `comms_invalid` while a live channel in it has a different department. An organization channel counts as no department. Move those channels out first.
+7. **The per-channel manager role stays** (owner, 2026-10-22). A manager must be a current reader of the channel, and a guest cannot be a manager. A removed manager stays a reader by scope and department roles.
+8. **Member entries carry a level.** `MemberResponse.level` gives each person's current level (`read`, `post` or `manage`). On a channel, `member_role` is `manager` exactly at level `manage`.
 
 ## Security note (SEC-R6)
 
 `access.py` is a listed control ("Comms ordinary content uses current organization/conversation authority"). The change narrows the access sources to scope and department roles. A1 to A3 and A10 are its matrix test. Removing `_pending_admission_people` narrows person visibility; it does not widen it. Notification and mention fan-out widens to all readers, bounded by organization size like `organization_event`.
 
-## Slices (proposed order)
+## Slices
 
 1. Backend access and consumers (A1 to A6, A10): readers for notifications, mentions, @channel, and member lists; the matrix test.
 2. Backend removal and migration (A8, A9): admissions, `groups` and `members` channel scopes, the settings keys, and category binding.

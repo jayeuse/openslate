@@ -36,8 +36,8 @@ The normal error shape remains route-local `HTTPException` detail. Authenticatio
 organization (`X-Org`, else the session's active organization), then the current
 conversation/capability/source policy. A client DTO, role label, stream event or
 cached grants row is not permission to read content. Private responses use the
-route's `private, no-store` policy. The `/comms` page, including its templates,
-settings history and admission tools, calls these routes; server responses, not
+route's `private, no-store` policy. The `/comms` page, including its templates
+and settings history tools, calls these routes; server responses, not
 browser state, decide what an actor may read or change.
 
 | Family | Contract and source |
@@ -85,8 +85,7 @@ Comms refusals use route-local detail codes/messages, not a new global envelope:
 404 hides absent/unreadable sources, 403 denies a visible operation, 409 denotes
 an idempotency/state/capacity conflict, 422 invalid input, 429 rate/slow-mode
 admission with `Retry-After`, and 503 an unavailable dependency or operation.
-Authentication retains the shared 401 behavior. Neutral private join requests
-return 204 without revealing whether an unreadable target exists. Re-read current
+Authentication retains the shared 401 behavior. Re-read current
 authorized state after a conflict; do not bypass a refusal with a wider list,
 automatic administrator fallback or a new send identity.
 

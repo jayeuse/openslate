@@ -41,18 +41,15 @@ invalid input 422, and rate/slow-mode refusals 429 with `Retry-After`; unavailab
 dependencies use 503. Preserve the distinctions among those responses, network
 failure, cancellation and a response that fails the client contract.
 
-Private join requests have a neutral 204 response; it does not confirm that the
-target exists or that membership was granted. The browser offers "Request to join"
-for any conversation id it cannot read, decides that only from the viewer's own
-conversation lists, and shows the same confirmation in every case; private
-channels the viewer cannot read are never listed for browsing. See the
+The browser shows one neutral state for every conversation id it cannot read. The
+state does not tell whether the conversation exists, and it offers no request for
+access. See the
 [unavailable-conversation view](../../frontend/src/components/systems/comms/components/conversation-view.tsx).
 Submitting a report on a currently
 readable message also returns 204, without exposing a report ID or granting access
 to the moderation queue. Report-bound removal/restoration are separate bodyless,
 versioned actions returning report metadata only, not a private message projection.
-These boundaries live in [`admissions/router.py`](../../backend/app/systems/comms/admissions/router.py)
-and [`moderation/router.py`](../../backend/app/systems/comms/moderation/router.py).
+These boundaries live in [`moderation/router.py`](../../backend/app/systems/comms/moderation/router.py).
 
 ### Send receipts and read-refusal barriers
 
