@@ -103,8 +103,10 @@ class TestSelectionTests(unittest.TestCase):
                     "all",
                 )
                 self.assertTrue({
-                    f"tests/isolated/comms/{name}.spec.ts"
-                    for name in ("notifications", "configuration", "tools", "message-policy")
+                    "tests/isolated/comms/runtime.spec.ts",
+                    "tests/isolated/comms/workspace-view.spec.ts",
+                    "tests/isolated/comms-memory/memory-policy.spec.ts",
+                    "tests/isolated/comms-memory/memory-settings.spec.ts",
                 }.issubset(selected))
 
     def test_shared_and_unknown_application_changes_select_every_section(self):
