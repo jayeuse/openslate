@@ -118,3 +118,38 @@ These commits were correct for the earlier model. The removal in slice 2 deletes
 - `98b4e991`: the member Request to join button.
 - `f54a1962`: creating `members`-scope private channels.
 - `d4ed295f`: requester visibility for channel managers.
+
+## Addendum: access grants for other departments (D45)
+
+Status: proposed. Owner decision on 2026-10-22, after D44 removed group-shared channels.
+
+### Outcome
+
+A channel still belongs to its organization or to one department. A channel manager can also give access to that channel to Access groups and to individual people outside the department. A grant gives read, or read and post. Grants add to department roles; they never remove access.
+
+Owner words: "if inventory member has granted access to read and send messages in a finance channel, they can do that." Owner choices: grants go to Access groups and to individual people. No channel has more than one owning department.
+
+### Acceptance criteria (proposed)
+
+| ID | Start state | Action | Expected result |
+|---|---|---|---|
+| G1 | A Finance channel. An Inventory member has no Finance role. | A manager of the channel grants that person "read and post". | The person sees the channel, reads, and posts. Nothing else changes for them. |
+| G2 | Same channel. An Access group holds Inventory staff. | A manager grants the group "read". | Every active member of the group reads the channel and cannot post. A person added to the group later gets the same access. |
+| G3 | A person has a department role and a grant | Open the channel | The higher level applies. A grant never gives manage. A guest stays capped at read. |
+| G4 | A grant exists | A manager removes the grant | The channel returns 404 for that person at once. Realtime ids stop within the token lifetime (D34). |
+| G5 | A person with a grant | Someone mentions them, posts @channel, or opens the member list | They are a reader: mentionable, notified by the existing kinds, and listed with their level. |
+| G6 | A member who cannot manage the channel | Try to add or remove a grant | The API refuses (403); the UI shows no editor. |
+| G7 | A channel manager | Search for a person to grant | The search finds active members of the organization by name and shows name and departments only. People outside the organization are never found. |
+
+### Design (proposed)
+
+1. One table of channel grants: organization, channel, subject (group or person), level (read or post). One row per subject per channel. Direct and group messages cannot have grants.
+2. `access.py`: a channel's level is the higher of its scope level and its best grant level for the person (through their groups or their own row), capped at post; the guest cap and the admin rule stay. D43 is unchanged.
+3. Routes: list, add or change, and remove grants on a channel; all need `manageChannel`. A person search for grants needs `manageChannel` on that channel and returns name and departments only.
+4. Everything keyed on readers (notifications, mentions, member list, Realtime grants, search, files) follows automatically, because grants feed the same reader relation.
+5. Channel settings → Access: the read-only department summary stays, and a list "Also has access" shows each grant with its level and a remove action; "Give access" opens a search over groups and people with a level choice. Layout from ui-ux-pro-max; visual choices from impeccable (owner instruction).
+6. Migration: create the table. Channels soft-deleted by `168d66144b73` stay deleted (development data only; no installations in use).
+
+### Security note (SEC-R6)
+
+This widens channel access by explicit grants that only channel managers can create; the reason is the owner decision above. The person search tells a channel manager the names and departments of organization members; it needs `manageChannel` and returns no contact data.
