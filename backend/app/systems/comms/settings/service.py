@@ -18,7 +18,7 @@ from app.systems.comms.capabilities import (
     validate_capability_configuration,
 )
 from app.systems.comms.conversations.models import CommsCategory, CommsConversation
-from app.systems.comms.conversations.service import private
+from app.systems.comms.conversations.service import private, require_visible_category
 from app.systems.comms.settings.models import CommsCapabilityGrant, CommsSettingLock, CommsSettings
 from app.systems.comms.settings.resolution import (
     Scope,
@@ -46,6 +46,8 @@ def read_scope(db: Session, actor: User, scope: Scope) -> ScopeContext:
     context = scope_context(db, scope)
     if scope["kind"] == "channel":
         require_conversation_access(db, actor, scope["id"], "read")
+    elif scope["kind"] == "category":
+        require_visible_category(db, actor, scope["id"])
     return context
 
 

@@ -110,19 +110,6 @@ def categories(db: Session, rows: Sequence[CommsCategory]) -> list[Category]:
     ]
 
 
-def visible_category(db: Session, user: User, row: CommsCategory) -> Category:
-    """One category read, hidden (404) like ``category_page`` hides it."""
-    shown = db.scalar(
-        select(CommsCategory.id).where(
-            CommsCategory.id == row.id,
-            visible_category_clause(db, user, readable_category_ids(db, user)),
-        )
-    )
-    if shown is None:
-        raise error("comms_not_found", "Category not found")
-    return categories(db, [row])[0]
-
-
 def category_page(
     db: Session, user: User, query: CategoryQuery
 ) -> StandardListResponse[Category]:

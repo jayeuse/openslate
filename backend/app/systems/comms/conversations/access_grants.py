@@ -96,7 +96,7 @@ def _write_channel(db: Session, actor: User, identity: UUID) -> CommsConversatio
 def _category(db: Session, actor: User, identity: UUID, *, write: bool) -> CommsCategory:
     if write:
         lock_projection(db)  # revoke_stale needs the guard before the category lock.
-    row = service.category(db, identity, lock=write)
+    row = service.require_visible_category(db, actor, identity, lock=write)
     service.require_management(db, actor, {"kind": "category", "id": identity})
     if write:
         _require_category_grant_author(db, actor, row)

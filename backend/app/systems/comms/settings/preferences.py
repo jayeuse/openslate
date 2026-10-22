@@ -14,7 +14,11 @@ from app.core.database.session import AuditSession, get_db
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User
 from app.systems.comms.access import error, fresh_membership, require_conversation_access
-from app.systems.comms.conversations.service import category, private, transaction
+from app.systems.comms.conversations.service import (
+    private,
+    require_visible_category,
+    transaction,
+)
 from app.systems.comms.messages.schemas import CategoryPreferences, MemberPreferences
 from app.systems.comms.realtime.events import user_event
 from app.systems.comms.settings.models import CommsMemberPreferences, CommsPersonalPreferences
@@ -197,7 +201,7 @@ def patch_member(
 def get_category(
     category_id: UUID, db: DB, actor: Actor, response: Response
 ) -> MemberPreferences | CategoryPreferences:
-    category(db, category_id)
+    require_visible_category(db, actor, category_id)
     value = _project(_member(db, actor, category_id, is_category=True), is_category=True)
     _version(response, value)
     return value
@@ -211,7 +215,7 @@ def put_category(
 ) -> MemberPreferences | CategoryPreferences:
     with transaction(db):
         _lock_actor(db, actor)
-        category(db, category_id)
+        require_visible_category(db, actor, category_id)
         row = _member(db, actor, category_id, is_category=True, lock=True)
         if row is None:
             row = CommsMemberPreferences(

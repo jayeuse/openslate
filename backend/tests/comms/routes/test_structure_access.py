@@ -1,11 +1,13 @@
 """ID27 response validity, exact department authority and filtered lifecycle pages."""
 
-from uuid import UUID
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
 
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
+from app.systems.access.users.models import Membership
 from app.systems.comms.conversations.models import (
     CommsCategory,
     CommsChannelAccess,
@@ -362,6 +364,18 @@ def test_department_bound_categories_reach_only_people_who_can_see_into_them(str
         assert names == {row["id"] for row in listed}
         found = api.get(ROOT + "/categories/" + ids["bound"])
         assert found.status_code == (200 if ids["bound"] in names else 404), found.text
+        # Every other category read answers like GET /categories/{id}.
+        for path, params in (
+            (f"/categories/{ids['bound']}/preferences", None),
+            (f"/settings/category/{ids['bound']}", None),
+            (f"/settings/category/{ids['bound']}/capabilities", None),
+            (
+                "/capabilities/channel-creation",
+                {"scope_kind": "category", "category_id": ids["bound"]},
+            ),
+        ):
+            read = api.get(ROOT + path, params=params)
+            assert read.status_code == found.status_code, (path, read.text)
         return ids["bound"] in names, {ids["unbound"], ids["home"]} <= names
 
     # (actor, sees Finance): the unbound and readable categories stay for everyone.
@@ -374,6 +388,28 @@ def test_department_bound_categories_reach_only_people_who_can_see_into_them(str
     assert {actor: seen(actor) for actor in expected} == {
         actor: (finance, True) for actor, finance in expected.items()
     }
+
+    # A hidden category answers like a missing one on every category route; a person who
+    # sees it but does not manage it keeps the management refusal.
+    def calls(api, identity):
+        return [
+            api.put(
+                f"{ROOT}/categories/{identity}/preferences",
+                json={"collapsed": True, "mute": {"kind": "indefinite"}},
+            ),
+            api.put(
+                f"{ROOT}/categories/{identity}",
+                json={"name": "Renamed", "position": 1, "department_id": ids["finance"]},
+            ),
+            api.patch(f"{ROOT}/settings/category/{identity}", json={"slow_mode_seconds": 5}),
+            api.get(f"{ROOT}/categories/{identity}/access-grants"),
+        ]
+
+    outsider, viewer = case.client(org.peer, org.id), case.client(home.peer, org.id)
+    missing = [(row.status_code, row.json()) for row in calls(outsider, uuid4())]
+    assert {status for status, _ in missing} == {404}
+    assert [(row.status_code, row.json()) for row in calls(outsider, ids["bound"])] == missing
+    assert [row.status_code for row in calls(viewer, ids["bound"])] == [200, 403, 403, 403]
 
     def change(*rows, remove=()):
         with case.world.session(org) as db:
@@ -388,9 +424,21 @@ def test_department_bound_categories_reach_only_people_who_can_see_into_them(str
         org_id=org.id, scope="category", category_id=category, subject="group",
         group_id=group, capability="manageChannel", granted=True,
     )
+    # home.author becomes a guest in the readers group: a guest never manages.
+    with case.world.session(org) as db:
+        guest = db.scalars(
+            select(Membership).where(
+                Membership.org_id == org.id, Membership.user_id == home.author
+            )
+        ).one()
+        guest.role, guest.sponsor_user_id = "guest", org.author
+        guest.expires_at = datetime(2100, 1, 1, tzinfo=UTC)
+        db.add(GroupMember(org_id=org.id, group_id=group, user_id=home.author))
+        db.commit()
     # Managing the category through a manageChannel group grant shows it ...
     change(manage)
     assert seen(org.peer) == (True, True)
+    assert seen(home.author) == (False, True)
     # ... unless the workspace locks that capability.
     change(CommsSettingLock(org_id=org.id, namespace="capability", key="manageChannel"))
     assert seen(org.peer) == (False, True)
@@ -403,3 +451,4 @@ def test_department_bound_categories_reach_only_people_who_can_see_into_them(str
     # A department read role shows the category even without a channel.
     change(GroupAccess(org_id=org.id, group_id=group, department_id=department, level="read"))
     assert seen(org.peer) == (True, True)
+    assert seen(home.author) == (True, True)  # A guest meets department read.

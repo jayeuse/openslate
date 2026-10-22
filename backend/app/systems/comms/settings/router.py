@@ -9,7 +9,11 @@ from app.common.dependencies.auth import get_account_user, get_current_membershi
 from app.core.database.session import AuditSession, get_db
 from app.systems.access.users.models import User
 from app.systems.comms.capabilities import channel_creation_check, inspect_capabilities
-from app.systems.comms.conversations.service import private, transaction
+from app.systems.comms.conversations.service import (
+    private,
+    require_visible_category,
+    transaction,
+)
 from app.systems.comms.realtime.events import organization_event
 from app.systems.comms.settings import service
 from app.systems.comms.settings.resolution import Scope, locked_keys
@@ -355,6 +359,8 @@ def creation(
     db: DB, actor: Actor, response: Response, query: Annotated[CreationQuery, Query()]
 ) -> Any:
     private(response)
+    if query.category_id:
+        require_visible_category(db, actor, query.category_id)
     scope: Scope = (
         {"kind": "category", "id": query.category_id}
         if query.category_id

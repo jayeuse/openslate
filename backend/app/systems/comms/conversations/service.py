@@ -16,7 +16,12 @@ from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.policy.readers import active_account_clause
 from app.systems.access.users.membership import bound_membership_join
 from app.systems.access.users.models import Membership, User
-from app.systems.comms.access import error, require_conversation_access
+from app.systems.comms.access import (
+    error,
+    readable_category_ids,
+    require_conversation_access,
+    visible_category_clause,
+)
 from app.systems.comms.capabilities import (
     capability_check,
     channel_creation_check,
@@ -94,6 +99,22 @@ def category(db: Session, identity: UUID, *, lock: bool = False) -> CommsCategor
     )
     row = db.scalar(query.with_for_update() if lock else query)
     if row is None:
+        raise error("comms_not_found", "Category not found")
+    return row
+
+
+def require_visible_category(
+    db: Session, user: User, identity: UUID, *, lock: bool = False
+) -> CommsCategory:
+    """The category, or the missing-category 404 when ``visible_category_clause`` hides it."""
+    row = category(db, identity, lock=lock)
+    shown = db.scalar(
+        select(CommsCategory.id).where(
+            CommsCategory.id == row.id,
+            visible_category_clause(db, user, readable_category_ids(db, user)),
+        )
+    )
+    if shown is None:
         raise error("comms_not_found", "Category not found")
     return row
 

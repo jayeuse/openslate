@@ -88,8 +88,8 @@ def list_categories(
 
 @router.get("/categories/{category_id}", response_model=Category, responses=VERSIONED)
 def get_category(category_id: UUID, db: DB, actor: Actor, response: Response) -> Category:
-    row = service.category(db, category_id)
-    result = reads.visible_category(db, actor, row)
+    row = service.require_visible_category(db, actor, category_id)
+    result = reads.categories(db, [row])[0]
     service.headers(db, response, row)
     return result
 
@@ -115,7 +115,7 @@ def update_category(
     if_match: Match = None,
 ) -> Category:
     with service.transaction(db):
-        row = service.category(db, category_id, lock=True)
+        row = service.require_visible_category(db, actor, category_id, lock=True)
         service.require_management(db, actor, {"kind": "category", "id": category_id})
         service.match(db, row, if_match)
         mutations.update_category(db, row, payload)
