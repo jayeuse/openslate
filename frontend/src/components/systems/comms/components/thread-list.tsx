@@ -20,6 +20,8 @@ export interface CommsThreadListProps {
   onFilterChange: (filter: CommsThreadFilter) => void;
   onSelect: (item: CommsThreadListItem) => void;
   emptyDescription: string;
+  /** The lists are still being read: no thread is known yet. */
+  loading?: boolean;
   filterClassName?: string;
 }
 
@@ -37,6 +39,7 @@ export function CommsThreadList({
   onFilterChange,
   onSelect,
   emptyDescription,
+  loading,
   filterClassName,
 }: CommsThreadListProps) {
   const visibleItems = filterCommsThreadItems(items, filter);
@@ -70,7 +73,11 @@ export function CommsThreadList({
             </span>
           </Action>
         ))}
-        {visibleItems.length === 0 ? (
+        {visibleItems.length === 0 && loading ? (
+          <p role="status" className="text-muted-foreground text-sm">
+            Loading threads…
+          </p>
+        ) : visibleItems.length === 0 ? (
           <Empty>
             <EmptyDescription>{emptyDescription}</EmptyDescription>
           </Empty>

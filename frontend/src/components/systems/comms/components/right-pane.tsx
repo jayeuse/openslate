@@ -27,6 +27,7 @@ export function RightPane({
   conversation,
   dialogs,
   currentThread,
+  threadLoading,
   operations,
   jumpToMessage,
   wide,
@@ -35,6 +36,7 @@ export function RightPane({
   conversation: CommsConversation;
   dialogs: CommsDialogsState;
   currentThread?: Thread;
+  threadLoading: boolean;
   operations: ReturnType<typeof createCommsConversationOperations>;
   jumpToMessage: (id: string) => void;
   wide: boolean;
@@ -100,6 +102,12 @@ export function RightPane({
           isPending(`thread:update:${currentThread.id}`)
         }
       />
+    );
+  if (threadLoading)
+    return (
+      <p role="status" className="text-muted-foreground p-4 text-sm">
+        Loading thread…
+      </p>
     );
   if (navigation.recordId && (!record || !canView))
     return (

@@ -51,7 +51,8 @@ function CommsScreen({
 }) {
   // Start shared display metadata with the frame, not after history arrives.
   useWorkspaceDisplayRegion();
-  const { channels, messages, threads } = useCommsWorkspaceView();
+  const { channels, messages, threads, threadsLoading } =
+    useCommsWorkspaceView();
   const allMessages = [...messages, ...threads.flatMap(threadMessages)];
   const navigation = useCommsNavigationState(
     channels[0]?.id,
@@ -92,10 +93,17 @@ function CommsScreen({
           item.conversation === navigation.selected,
       )
     : undefined;
-  const openRecord = !currentThread && !!navigation.recordId;
+  // A thread link opens its panel while the thread lists are still read.
+  const threadLoading =
+    canView &&
+    !!navigation.threadId &&
+    !!navigation.selected &&
+    !currentThread &&
+    threadsLoading;
+  const openRecord = !currentThread && !threadLoading && !!navigation.recordId;
   const layout = useCommsPanelLayout({
     preferences,
-    hasThread: !mainTool && (!!currentThread || !!openRecord),
+    hasThread: !mainTool && (!!currentThread || threadLoading || !!openRecord),
     membersVisible: !mainTool && !navigation.view && navigation.membersVisible,
   });
   const [clockNow, setClockNow] = useState(() => Date.now());
@@ -178,7 +186,13 @@ function CommsScreen({
           />
         ) : undefined
       }
-      rightKind={currentThread ? "thread" : openRecord ? "record" : "members"}
+      rightKind={
+        currentThread || threadLoading
+          ? "thread"
+          : openRecord
+            ? "record"
+            : "members"
+      }
       dialogOpen={
         !!navigation.query.get("tool") || !!dialogs.settings || !!dialogs.editor
       }
@@ -241,6 +255,7 @@ function CommsScreen({
           conversation={conversation}
           dialogs={dialogs}
           currentThread={currentThread}
+          threadLoading={threadLoading}
           operations={operations}
           jumpToMessage={actions.jumpToMessage}
           wide={layout.wide}

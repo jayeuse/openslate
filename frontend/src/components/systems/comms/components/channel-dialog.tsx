@@ -29,20 +29,8 @@ import type {
   Conversation,
   ConversationSummary,
 } from "../contract/types";
-import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-
-/** Resolves once the query under `queryKey` is not fetching. */
-function settled(cache: QueryClient, queryKey: readonly unknown[]) {
-  const query = cache.getQueryCache().find({ queryKey, exact: true });
-  if (!query || query.state.fetchStatus === "idle") return Promise.resolve();
-  return new Promise<void>((resolve) => {
-    const stop = cache.getQueryCache().subscribe((event) => {
-      if (event.query !== query || query.state.fetchStatus !== "idle") return;
-      stop();
-      resolve();
-    });
-  });
-}
+import { useQueryClient } from "@tanstack/react-query";
+import { querySettled } from "../adapters/comms-queries";
 
 /** A just-created conversation's summary: nothing read, nothing unread. */
 function newConversationSummary(
@@ -268,7 +256,7 @@ export function ChannelDialog(props: EditorProps) {
         if (queryScope) {
           // A bootstrap read in flight settles first (its other waiters keep
           // their result), so it cannot overwrite the seed afterwards.
-          await settled(cache, queryScope.keys.bootstrap);
+          await querySettled(cache, queryScope.keys.bootstrap);
           cache.setQueryData<Bootstrap>(queryScope.keys.bootstrap, (current) =>
             current &&
             !current.conversations.some(

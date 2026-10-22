@@ -1539,3 +1539,85 @@ test("an older read of a held message that lands last does not replace a newer o
     api.server.close();
   }
 });
+
+/** The seed world with its one thread, and a hold on the thread lists. */
+async function heldThreadLists(page: Page) {
+  const owner = {
+    user_id: defaultSignedInIdentity.id,
+    org_id: defaultOrganization.org_id,
+  };
+  const initial = createMemorySeed(owner, {
+    role: "admin",
+    display_name: "HTTP fixture owner",
+  });
+  const thread = Object.values(initial.threads)[0];
+  const api = await prepare(
+    page,
+    "admin",
+    undefined,
+    createMemoryCommsRuntime({ owner, initial }),
+  );
+  const lists = heldResponse();
+  await page.route("**/api/comms/threads?**", async (route) => {
+    lists.enter();
+    await lists.released;
+    return route.fallback().catch(() => {});
+  });
+  return { api, lists, thread };
+}
+
+test("the Threads destination says threads are loading while the lists are read", async ({
+  page,
+}) => {
+  const { api, lists } = await heldThreadLists(page);
+  try {
+    await page.goto("/comms?view=threads");
+    await lists.entered;
+    const threads = page.getByRole("region", { name: "Threads", exact: true });
+    const loading = threads.getByText("Loading threads…", { exact: true });
+    await expect(loading).toBeVisible();
+    await expect(loading).toHaveRole("status");
+    await expect(
+      threads.getByText("No active threads in your conversations.", {
+        exact: true,
+      }),
+    ).toBeHidden();
+    lists.release();
+    await expect(
+      threads.getByRole("button", { name: /Morning handover/ }),
+    ).toBeVisible();
+    await expect(loading).toBeHidden();
+  } finally {
+    lists.release();
+    await page.close();
+    api.server.close();
+  }
+});
+
+test("a thread link shows the thread panel loading until the thread is known", async ({
+  page,
+}) => {
+  const { api, lists, thread } = await heldThreadLists(page);
+  try {
+    await page.goto(
+      `/comms?conversation=${thread.conversation_id}&thread=${thread.id}`,
+    );
+    await lists.entered;
+    const panel = page.getByRole("complementary", {
+      name: "Thread panel",
+      exact: true,
+    });
+    const loading = panel.getByText("Loading thread…", { exact: true });
+    await expect(loading).toBeVisible();
+    await expect(loading).toHaveRole("status");
+    lists.release();
+    await expect(
+      panel.getByRole("heading", { name: "Morning handover", exact: true }),
+    ).toBeVisible();
+    await expect(loading).toBeHidden();
+  } finally {
+    lists.release();
+    await page.close();
+    api.server.close();
+  }
+});

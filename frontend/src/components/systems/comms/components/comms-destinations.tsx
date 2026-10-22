@@ -143,7 +143,7 @@ export function CommsDestinations({
   openThread: (thread: Thread, id: string) => void;
 }) {
   const { rows } = useCommsSidebar();
-  const { threads, messages } = useCommsWorkspaceView();
+  const { threads, messages, threadsLoading } = useCommsWorkspaceView();
   const [filter, setFilter] = useState<"active" | "inactive">("active");
   const title =
     navigation.view === "inbox"
@@ -191,6 +191,7 @@ export function CommsDestinations({
               if (thread?.conversation) openThread(thread, thread.conversation);
             }}
             emptyDescription={`No ${filter} threads in your conversations.`}
+            loading={threadsLoading}
             filterClassName="mb-4"
           />
         ) : (
