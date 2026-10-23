@@ -1,6 +1,6 @@
 # Sandbox relayout: the Access grammar
 
-> **Status: approved (2026-10-23).** The owner approved the spec with both recommendations (S4: hide the Sandbox from non-administrators; S9: fold automatic saves by their system labels) and delegated later in-scope design decisions to the implementer, who records each one in the Decisions table. Phase 0 is done. The comps for Triggers and History are in `.impeccable/mocks/sandbox/` (renders in `.playwright-mcp/sandbox-relayout/comp/`).
+> **Status: done (2026-10-24); approved 2026-10-23.** The owner approved the spec with both recommendations (S4: hide the Sandbox from non-administrators; S9: fold automatic saves by their system labels) and delegated later in-scope design decisions to the implementer, who records each one in the Decisions table. Phase 0 is done. The comps for Triggers and History are in `.impeccable/mocks/sandbox/` (renders in `.playwright-mcp/sandbox-relayout/comp/`).
 
 ## Outcome
 
@@ -239,7 +239,7 @@ Display words only: stored values, API fields, and URLs stay the same.
 | EXIT-7  | Pass. Every hands-on defect is fixed; `ho-manager` sees no Sandbox nav and the notice with no refused request.                                                                                       |
 | EXIT-8  | Pass. No page scroll at 1280×720, 1440×900, 1920×1080; no horizontal overflow at 390.                                                                                                                |
 | EXIT-9  | Pass. Field edges at least 3.38:1 in every look; targets at least 44px at 390 (canvas content excluded).                                                                                             |
-| EXIT-10 | Pending the owner's approval of the 390 sheets.                                                                                                                                                      |
+| EXIT-10 | Pass. The owner approved the 390 sheets (2026-10-24).                                                                                                                                                |
 
 ## Exit criteria
 
