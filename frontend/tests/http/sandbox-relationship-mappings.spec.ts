@@ -2057,6 +2057,7 @@ test("running and clearing tests protect browser exits until each request settle
   });
   await page.getByRole("link", { name: "Test", exact: true }).click();
 
+  await page.getByLabel("Request number", { exact: true }).fill("REQ-001");
   await page.getByRole("button", { name: "Run test" }).click();
   await expect.poll(() => runStarted).toBe(true);
   await expect.poll(() => exitGuarded(page)).toBe(true);
@@ -2073,16 +2074,14 @@ test("running and clearing tests protect browser exits until each request settle
   await page.keyboard.press("Escape");
   releaseRun();
   await expect(
-    page.getByRole("heading", { name: "Test result", exact: true }),
+    page.getByRole("heading", { name: "No field changes in this test" }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Clear results" }).click();
   await expect.poll(() => clearStarted).toBe(true);
   await expect.poll(() => exitGuarded(page)).toBe(true);
   releaseClear();
-  await expect(
-    page.getByText("Run a test to see the expected outcome here."),
-  ).toBeVisible();
+  await expect(page.getByText("Run a test to see the result.")).toBeVisible();
 });
 
 test("a trigger issue opens the trigger it identifies", async ({ page }) => {
@@ -3454,6 +3453,7 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   ).toBeVisible();
 
   const simulatedUserId = "00000000-0000-4000-8000-000000000042";
+  await setup.getByLabel("Request number", { exact: true }).fill("REQ-001");
   await setup
     .getByLabel("Assigned user", { exact: true })
     .fill(simulatedUserId);
@@ -3725,12 +3725,16 @@ test("Sandbox Test comparisons use saved inputs, preserve typed values, and dist
       .getByRole("row", { name: /Priority/ })
       .getByRole("cell", { name: "0", exact: true }),
   ).toHaveCount(2);
+  // A result shows only for the setup it was run with.
   await setup
     .getByLabel("Module", { exact: true })
     .selectOption("sample-equipment");
+  await expect(comparison).toHaveCount(0);
   await expect(
-    comparison.getByRole("row", { name: /Needs review/ }),
-  ).toContainText("Yes");
+    page
+      .getByRole("region", { name: "Test outcome" })
+      .getByText("Run a test to see the result.", { exact: true }),
+  ).toBeVisible();
 });
 
 // Which count shows the warning is owned by isolated/sandbox/version-capacity
@@ -4488,8 +4492,9 @@ test("a Test result from an older draft says so and can show its module on the c
   await expect(
     outcome.getByRole("button", { name: "Run again" }),
   ).toBeVisible();
-  await expect(outcome.getByRole("listitem")).toHaveCount(1);
-  await expect(outcome.getByRole("listitem")).toContainText("(3 times)");
+  const issues = outcome.getByRole("list", { name: "Issues" });
+  await expect(issues.getByRole("listitem")).toHaveCount(1);
+  await expect(issues.getByRole("listitem")).toContainText("(3 times)");
 
   await outcome.getByRole("button", { name: "Show test on canvas" }).click();
   await expect(page).toHaveURL(/section=build/);
@@ -4533,6 +4538,12 @@ test("a Test run plays out on the canvas in three still steps", async ({
     ],
   });
   await page.goto("/sandbox?section=test");
+  // The stored run shows once the setup asks the same question.
+  const setup = page.getByRole("region", { name: "Test setup", exact: true });
+  await setup.getByLabel("When", { exact: true }).selectOption("field-changed");
+  await setup
+    .getByLabel("Changed field", { exact: true })
+    .selectOption({ label: "Status" });
   await page
     .getByRole("region", { name: "Test outcome" })
     .getByRole("button", { name: "Show test on canvas" })

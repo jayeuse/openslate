@@ -1678,9 +1678,7 @@ test.describe("Sandbox", () => {
     await testSetup
       .getByLabel("Module", { exact: true })
       .selectOption({ label: "Suppliers" });
-    await testSetup
-      .getByRole("button", { name: "All input fields", exact: true })
-      .click();
+    await testSetup.getByRole("button", { name: /^All \(/ }).click();
     await testSetup.getByLabel("Supplier ID", { exact: true }).fill("SUP-001");
     await testSetup
       .getByLabel("Status", { exact: true })
@@ -1710,8 +1708,11 @@ test.describe("Sandbox", () => {
       testSetup.getByRole("button", { name: "Run test" }).click(),
     ]);
     expect(testResponse.status()).toBe(201);
+    // The Result pane heading shows before any run; the run's badge does not.
     await expect(
-      page.getByRole("heading", { name: "Test result" }),
+      page
+        .getByRole("region", { name: "Test outcome" })
+        .getByText("Test only · live data unchanged"),
     ).toBeVisible();
     const afterRecords = await page.request.get(recordsUrl);
     expect(afterRecords.status()).toBe(200);

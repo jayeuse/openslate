@@ -1677,6 +1677,7 @@ export default function SandboxPage() {
                   run,
                   ...current.filter((item) => item.id !== run.id),
                 ]);
+                return run;
               }}
               onClear={async () => {
                 await clearSandboxTests();
