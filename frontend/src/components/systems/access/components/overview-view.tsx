@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import {
@@ -28,7 +28,7 @@ import {
 import {
   accessAdminSessionsOptions,
   accessSecurityEventsOptions,
-  OVERVIEW_SIGN_IN_ROWS,
+  OVERVIEW_FEED_MAX_ROWS,
   overviewGroupsOptions,
   overviewSessionsRequest,
   overviewSignInRequests,
@@ -42,11 +42,14 @@ import {
   attentionItems,
   departmentAccess,
   lastSignInSegments,
-  recentSignIns,
   signedInNow,
+  signInPage,
+  type SignInCursor,
+  type SignInRow,
 } from "../helpers/overview-dashboard";
 import { personName } from "../helpers/people";
 import { catalogDepartments } from "../hooks/use-access-catalog";
+import { useScrollCue } from "../hooks/use-scroll-cue";
 import { AccessHeaderActions } from "./access-header-actions";
 import { CreateGroupDialog } from "./create-group-dialog";
 import { InvitePersonDialog } from "./invite-person-dialog";
@@ -58,6 +61,37 @@ import {
   type BlockState,
   type FeedRow,
 } from "./overview-blocks";
+
+/** From 1280px the page is still and the feed shows the rows that fit. */
+const stillQuery = "(min-width: 80rem)";
+function subscribeStill(notify: () => void) {
+  const query = window.matchMedia(stillQuery);
+  query.addEventListener("change", notify);
+  return () => query.removeEventListener("change", notify);
+}
+/** A feed row from 1280px; the body height divided by it is the page. */
+const FEED_ROW_PX = 40;
+/** Below 1280px the page scrolls, so the feed shows a fixed page. */
+const FEED_PHONE_ROWS = 10;
+
+/** The people one names lookup covers: the feed page and the first chips. */
+function lookupIds(
+  rows: readonly SignInRow[],
+  roster: readonly { id: string }[] | null,
+) {
+  return [
+    ...new Set([
+      ...rows.flatMap((row) => (row.personId ? [row.personId] : [])),
+      ...(roster ?? []).slice(0, 3).map((person) => person.id),
+    ]),
+  ].sort();
+}
+const namesOptions = (ids: string[]) =>
+  userListOptions("include", {
+    ids,
+    limit: Math.max(1, ids.length),
+    offset: 0,
+  });
 
 /** The department catalog page People rows use for their marks. */
 const overviewDepartmentsOptions = () =>
@@ -177,11 +211,28 @@ export function OverviewView() {
   const sessions = useQuery(
     accessAdminSessionsOptions(client, overviewSessionsRequest),
   );
-  const signIns = useQuery(
-    accessSecurityEventsOptions(client, overviewSignInRequests[0]),
+  // The sign-in feed pages by time from a cursor; each page's reads are
+  // cached under their cursor.
+  const still = useSyncExternalStore(
+    subscribeStill,
+    () => window.matchMedia(stillQuery).matches,
+    () => false,
   );
+  const [feedBody, feedCue] = useScrollCue();
+  const pageSize = !still
+    ? FEED_PHONE_ROWS
+    : feedCue.height === null
+      ? null
+      : Math.min(
+          OVERVIEW_FEED_MAX_ROWS,
+          Math.max(1, Math.floor(feedCue.height / FEED_ROW_PX)),
+        );
+  const [cursor, setCursor] = useState<SignInCursor>(null);
+  const [turning, setTurning] = useState(false);
+  const [signInRequest, lockoutRequest] = overviewSignInRequests(cursor);
+  const signIns = useQuery(accessSecurityEventsOptions(client, signInRequest));
   const lockouts = useQuery(
-    accessSecurityEventsOptions(client, overviewSignInRequests[1]),
+    accessSecurityEventsOptions(client, lockoutRequest),
   );
   const groups = useQuery(overviewGroupsOptions());
   const departments = useQuery(overviewDepartmentsOptions());
@@ -199,29 +250,54 @@ export function OverviewView() {
         ...signedIn.filter((person) => person.id === viewerId),
       ]
     : null;
-  const feed =
-    signIns.data && lockouts.data
-      ? recentSignIns(
-          [signIns.data.items, lockouts.data.items],
-          OVERVIEW_SIGN_IN_ROWS,
-        )
+  const page =
+    signIns.data && lockouts.data && pageSize !== null
+      ? signInPage([signIns.data.items, lockouts.data.items], cursor, pageSize)
       : null;
+  const feed = page?.rows ?? null;
   // One lookup names the people the feed and the roster show; it waits for
-  // both reads to settle, so it runs once.
-  const ids = [
-    ...new Set([
-      ...(feed ?? []).flatMap((row) => (row.personId ? [row.personId] : [])),
-      ...(roster ?? []).slice(0, 3).map((person) => person.id),
-    ]),
-  ].sort();
+  // both reads to settle, so it runs once per page.
+  const ids = lookupIds(feed ?? [], roster);
   const names = useQuery({
-    ...userListOptions("include", {
-      ids,
-      limit: Math.max(1, ids.length),
-      offset: 0,
-    }),
+    ...namesOptions(ids),
     enabled: feed !== null && !sessions.isPending && ids.length > 0,
   });
+
+  /**
+   * Turn the feed a page. The next page's reads and names load first while
+   * the current page stays, so no row shows without its name. Newer that
+   * reaches the newest events lands on the first page.
+   */
+  async function turn(direction: "older" | "newer") {
+    if (!page || turning || pageSize === null) return;
+    const edge = direction === "older" ? page.rows.at(-1) : page.rows[0];
+    if (!edge) return;
+    const read = async (next: SignInCursor) => {
+      const [events, locks] = await Promise.all(
+        overviewSignInRequests(next).map((request) =>
+          client.fetchQuery(accessSecurityEventsOptions(client, request)),
+        ),
+      );
+      return signInPage([events.items, locks.items], next, pageSize);
+    };
+    let next: SignInCursor = { direction, at: edge.occurredAt, id: edge.id };
+    setTurning(true);
+    try {
+      let target = await read(next);
+      if (direction === "newer" && !target.hasNewer) {
+        next = null;
+        target = await read(next);
+      }
+      const named = lookupIds(target.rows, roster);
+      if (named.length && !sessions.isPending)
+        await client.fetchQuery(namesOptions(named));
+    } catch {
+      // The block shows the failed read with Retry.
+    } finally {
+      setCursor(next);
+      setTurning(false);
+    }
+  }
   const people = new Map(
     (names.data?.items ?? []).map((user) => [user.id, user]),
   );
@@ -416,7 +492,22 @@ export function OverviewView() {
           ) : null
         }
       />
-      <RecentSignIns state={feedState} />
+      <RecentSignIns
+        state={feedState}
+        bodyRef={feedBody}
+        rows={pageSize ?? FEED_PHONE_ROWS}
+        pager={
+          page
+            ? {
+                hasNewer: page.hasNewer,
+                hasOlder: page.hasOlder,
+                turning,
+                onNewer: () => void turn("newer"),
+                onOlder: () => void turn("older"),
+              }
+            : null
+        }
+      />
       <NeedsAttention state={attention} />
       <AccessByDepartment state={byDepartment} />
       <InvitePersonDialog

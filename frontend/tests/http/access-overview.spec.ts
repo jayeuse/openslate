@@ -10,12 +10,16 @@ import {
 import {
   adminSession,
   at,
+  created,
   DAY,
   fixtureId,
   group,
   ids,
+  listPage,
+  MINUTE,
   mockAccessApi,
   person,
+  signInEvent,
   type Api,
 } from "./helpers/access-api";
 
@@ -196,6 +200,239 @@ test("Recent sign-ins show sign-in results newest first and link to all security
   await expect(
     feed.getByRole("link", { name: "All security events", exact: true }),
   ).toHaveAttribute("href", "/manage?view=audit&audit=security-events");
+});
+
+test("Recent sign-ins show the rows that fit and page by time through every sign-in once", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const api = await mockAccessApi(page);
+  // 40 sign-ins a minute apart, each from its own address; every fifth is a
+  // lockout, so lockouts sit between sign-ins; one is Ben's.
+  api.securityEvents = Array.from({ length: 40 }, (_, index) =>
+    signInEvent(100 + index, -(index + 1) * MINUTE, {
+      metadata: { ip_address: `198.51.100.${index + 1}` },
+      ...(index % 5 === 4
+        ? { event_type: "identity.lockout", outcome: "denied" as const }
+        : {}),
+      ...(index === 20 ? { actor_id: ids.ben, subject_id: ids.ben } : {}),
+    }),
+  );
+  const addresses = api.securityEvents.map(
+    (event) => event.metadata.ip_address,
+  );
+  const eventReads = () =>
+    api.calls.filter(
+      (call) => call.method === "GET" && call.path === "/api/security-events",
+    ).length;
+  await page.goto("/access?view=overview");
+  const feed = block(page, "Recent sign-ins");
+  const rows = feed
+    .getByRole("list", { name: "Sign-ins", exact: true })
+    .getByRole("listitem");
+  const shown = async () => rows.allTextContents();
+  const addressOf = (text: string) => text.match(/198\.51\.100\.\d+/)?.[0];
+  const older = feed.getByRole("button", {
+    name: "Older sign-ins",
+    exact: true,
+  });
+  const newer = feed.getByRole("button", {
+    name: "Newer sign-ins",
+    exact: true,
+  });
+  await expect(rows.first()).toContainText(/198\.51\.100\.1(?!\d)/);
+
+  // Exactly the rows that fit: the body does not scroll, and no other row
+  // would fit below the last one.
+  const fit = await feed.locator("[data-overview-body]").evaluate((body) => {
+    const list = body.querySelector("ul");
+    return {
+      scrolls: body.scrollHeight > body.clientHeight + 1,
+      roomLeft: body.clientHeight - (list?.offsetHeight ?? 0),
+    };
+  });
+  expect(fit.scrolls).toBe(false);
+  expect(fit.roomLeft).toBeGreaterThanOrEqual(0);
+  expect(fit.roomLeft).toBeLessThan(40);
+
+  // The range names the times of the oldest and the newest row shown.
+  const times = await rows.locator("time").allTextContents();
+  await expect(feed.getByText(`${times.at(-1)} – ${times[0]}`)).toBeVisible();
+  await expect(newer).toHaveAttribute("aria-disabled", "true");
+  await expect(newer).toHaveAccessibleDescription(
+    "These are the newest sign-ins.",
+  );
+
+  // Older until the end: each turn reads the two event lists once.
+  const pages = [await shown()];
+  for (let turn = 0; turn < addresses.length; turn += 1) {
+    if ((await older.getAttribute("aria-disabled")) === "true") break;
+    const reads = eventReads();
+    const previous = pages.at(-1);
+    await older.click();
+    await expect.poll(shown).not.toEqual(previous);
+    // Focus stays on the button, also when it reaches the end.
+    await expect(older).toBeFocused();
+    pages.push(await shown());
+    expect(eventReads() - reads).toBe(2);
+  }
+  expect(pages.length).toBeGreaterThanOrEqual(3);
+  expect(pages.flat().map(addressOf)).toEqual(addresses);
+  for (const rowsOfPage of pages.slice(0, -1))
+    expect(rowsOfPage).toHaveLength(pages[0].length);
+  // Ben's name arrives with his page, never "Former member".
+  expect(pages.flat().filter((text) => text.includes("Ben Cruz"))).toEqual([
+    expect.stringContaining("198.51.100.21"),
+  ]);
+  await expect(older).toHaveAccessibleDescription("No older sign-ins.");
+
+  // Newer returns the same pages in reverse, with no new event reads beyond
+  // the two lists per turn.
+  const back = [pages.at(-1)];
+  while ((await newer.getAttribute("aria-disabled")) !== "true") {
+    const reads = eventReads();
+    const previous = back.at(-1);
+    await newer.click();
+    await expect.poll(shown).not.toEqual(previous);
+    await expect(newer).toBeFocused();
+    back.push(await shown());
+    expect(eventReads() - reads).toBe(2);
+    if (back.length > pages.length) break;
+  }
+  expect(back.reverse()).toEqual(pages);
+
+  // A taller window fits more rows, with no new read.
+  const reads = eventReads();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect.poll(() => rows.count()).toBeGreaterThan(pages[0].length);
+  expect(eventReads()).toBe(reads);
+});
+
+test("Needs attention fades its lower edge while more items wait below and keeps two department rows", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const api = await mockAccessApi(page);
+  api.groups.set(empty, group(empty, "New hires", [], []));
+  api.monitoring.set(ids.rosa, {
+    active_session_count: 1,
+    mfa_verified_totp: false,
+    mfa_observed_at: "2026-10-01T00:00:00Z",
+  });
+  api.monitoring.set(ids.dee, {
+    active_session_count: 0,
+    mfa_verified_totp: null,
+    mfa_observed_at: null,
+  });
+  await page.goto("/access?view=overview");
+  const panel = attention(page);
+  await expect(panel.getByRole("listitem")).toHaveCount(7);
+  await expect(
+    panel.getByRole("heading", { name: "Needs attention" }),
+  ).toBeVisible();
+  await expect(panel).toContainText(/Needs attention\s*7/);
+  const body = panel.locator("[data-overview-body]");
+  const fade = () =>
+    body.evaluate((node) => getComputedStyle(node).maskImage !== "none");
+  await expect.poll(fade).toBe(true);
+
+  const departments = block(page, "Access by department");
+  await expect(
+    departments.getByRole("heading", { name: "Access by department" }),
+  ).toBeInViewport({ ratio: 1 });
+  for (const row of [0, 1])
+    await expect(departments.getByRole("link").nth(row)).toBeInViewport({
+      ratio: 1,
+    });
+  await expectNoPageScroll(page);
+
+  // At the end of the scroll the fade goes, so it never hides the last row.
+  await body.evaluate((node) => node.scrollTo({ top: node.scrollHeight }));
+  await expect.poll(fade).toBe(false);
+  await expect(panel.getByText(/^All clear/)).toBeInViewport({ ratio: 1 });
+});
+
+test("Access by department counts the rows shown, fades while more are below, and keeps the catalog order", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const api = await mockAccessApi(page);
+  const names = [
+    "Inventory",
+    "Finance",
+    "Sales",
+    "Purchasing",
+    "Warehouse",
+    "Logistics",
+    "Quality",
+    "Maintenance",
+    "Human resources",
+    "Payroll",
+    "Legal",
+    "Marketing",
+    "Support",
+    "Research",
+  ];
+  const catalog = names.map((name, index) => ({
+    id:
+      index === 0
+        ? ids.inventory
+        : index === 1
+          ? ids.finance
+          : fixtureId(3000 + index),
+    department_name: name,
+    created_at: created,
+    updated_at: created,
+    deleted_at: null,
+    is_deleted: false,
+    performed_by: ids.rosa,
+  }));
+  api.on("GET", "/api/departments", (route) =>
+    route.fulfill({ json: listPage(catalog, new URL(route.request().url())) }),
+  );
+  await page.goto("/access?view=overview");
+  const departments = block(page, "Access by department");
+  const rows = departments.getByRole("link");
+  await expect(rows).toHaveCount(14);
+  await expect(rows).toHaveText(names.map((name) => new RegExp(`^${name}`)));
+
+  // The count names the rows that fit in full.
+  const body = departments.locator("[data-overview-body]");
+  const fitting = await body.evaluate((node) => {
+    const box = node.getBoundingClientRect();
+    return [...node.querySelectorAll("li")].filter(
+      (row) => row.getBoundingClientRect().bottom <= box.bottom + 0.5,
+    ).length;
+  });
+  expect(fitting).toBeGreaterThanOrEqual(2);
+  expect(fitting).toBeLessThan(14);
+  await expect(departments).toContainText(`${fitting} of 14 departments shown`);
+  const fade = () =>
+    body.evaluate((node) => getComputedStyle(node).maskImage !== "none");
+  await expect.poll(fade).toBe(true);
+
+  // A keyboard-focused row is never under the fade.
+  await rows.nth(fitting - 1).focus();
+  await page.keyboard.press("Tab");
+  await expect(rows.nth(fitting)).toBeFocused();
+  await expect.poll(fade).toBe(false);
+  // The focused row scrolled into the body in full. The grid gives the
+  // body a fractional height while scroll offsets are whole pixels, so up
+  // to 1px may stay out of reach; that is the tolerance.
+  const inBody = (row: number) =>
+    body.evaluate((node, index) => {
+      const box = node.getBoundingClientRect();
+      const link = node.querySelectorAll("a")[index].getBoundingClientRect();
+      return link.top >= box.top - 1 && link.bottom <= box.bottom + 1;
+    }, row);
+  expect(await inBody(fitting)).toBe(true);
+  await rows.nth(fitting).blur();
+
+  // At the end the fade goes and the last row shows in full.
+  await body.evaluate((node) => node.scrollTo({ top: node.scrollHeight }));
+  await expect.poll(fade).toBe(false);
+  expect(await inBody(13)).toBe(true);
+  await expectNoPageScroll(page);
 });
 
 test("an empty or failed sign-in feed says so inside its own panel", async ({
@@ -550,6 +787,7 @@ test("Access by department counts people per department and opens People filtere
     }),
   ).toBeVisible();
   await expect(departments).toContainText(/Read\s*Write\s*Manage/);
+  await expect(departments).toContainText("All 2 departments");
   await departments.getByRole("link", { name: /^Finance/ }).click();
   await expect(page).toHaveURL(
     new RegExp(`view=people&department=${ids.finance}`),

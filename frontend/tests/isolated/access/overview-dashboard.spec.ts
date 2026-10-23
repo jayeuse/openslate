@@ -6,8 +6,15 @@ import {
   lastSignInSegments,
   recentSignIns,
   signedInNow,
+  signInPage,
+  type SignInCursor,
+  type SignInPage,
 } from "../../../src/components/systems/access/helpers/overview-dashboard";
-import type { AccessSecurityEvent } from "../../../src/components/systems/access/adapters/security-events-api";
+import { overviewSignInRequests } from "../../../src/components/systems/access/adapters/access-queries";
+import type {
+  AccessSecurityEvent,
+  AccessSecurityEventsRequest,
+} from "../../../src/components/systems/access/adapters/security-events-api";
 import type { AccessGroup } from "../../../src/components/systems/access/state/api-contracts";
 
 const id = (index: number) =>
@@ -136,6 +143,143 @@ test("recent sign-ins merge the reads newest first and keep only sign-in results
     },
   ]);
   expect(recentSignIns([signIns, lockouts], 1)).toHaveLength(1);
+});
+
+/**
+ * The security-events list as the server answers it
+ * (app/systems/manage/audit/service.py): `search` matches the event type by
+ * substring, `event_type` exactly, `occurred_after` is inclusive,
+ * `occurred_before` exclusive, and rows sort by time, then id, before the
+ * limit. Times keep their microseconds, as PostgreSQL does.
+ */
+function serverRead(
+  events: readonly AccessSecurityEvent[],
+  request: AccessSecurityEventsRequest,
+): AccessSecurityEvent[] {
+  // Microseconds since the epoch stay below 2^53, so a number holds them.
+  const micros = (value: string) => {
+    const [whole, fraction = ""] = value.replace("Z", "").split(".");
+    return (
+      Date.parse(`${whole}Z`) * 1000 +
+      Number(fraction.padEnd(6, "0").slice(0, 6))
+    );
+  };
+  const direction = request.sort_order === "asc" ? 1 : -1;
+  return events
+    .filter(
+      (item) =>
+        (!request.search || item.event_type.includes(request.search)) &&
+        (!request.event_type || item.event_type === request.event_type) &&
+        (!request.occurred_after ||
+          micros(item.occurred_at) >= micros(request.occurred_after)) &&
+        (!request.occurred_before ||
+          micros(item.occurred_at) < micros(request.occurred_before)),
+    )
+    .sort((left, right) => {
+      const time = micros(left.occurred_at) - micros(right.occurred_at);
+      if (time !== 0) return time > 0 ? direction : -direction;
+      return (left.id > right.id ? 1 : -1) * direction;
+    })
+    .slice(0, request.limit);
+}
+
+test("sign-in pages turn by time with no gap or repeat, back and forth", () => {
+  const events = [
+    event(1, { occurred_at: "2026-10-06T15:00:00Z" }),
+    event(2, { occurred_at: "2026-10-06T14:00:00Z" }),
+    // A failed sign-in and its lockout are written at one instant, and that
+    // instant falls on the first page's last row.
+    event(3, {
+      occurred_at: "2026-10-06T13:00:00.000500Z",
+      event_type: "identity.sign_in_failure",
+      outcome: "failure",
+    }),
+    event(4, {
+      occurred_at: "2026-10-06T13:00:00.000500Z",
+      event_type: "identity.lockout",
+      outcome: "denied",
+    }),
+    event(5, { occurred_at: "2026-10-06T12:00:00Z" }),
+    // Not a sign-in: no read returns it.
+    event(6, {
+      occurred_at: "2026-10-06T11:30:00Z",
+      event_type: "identity.mfa.enrolled",
+    }),
+    event(7, { occurred_at: "2026-10-06T11:00:00Z" }),
+    // A lockout between two sign-ins.
+    event(8, {
+      occurred_at: "2026-10-06T10:00:00Z",
+      event_type: "identity.lockout",
+      outcome: "denied",
+    }),
+    event(9, { occurred_at: "2026-10-06T09:00:00Z" }),
+  ];
+  const turn = (cursor: SignInCursor) =>
+    signInPage(
+      overviewSignInRequests(cursor).map((request) =>
+        serverRead(events, request),
+      ),
+      cursor,
+      3,
+    );
+  const edge = (
+    page: SignInPage,
+    direction: "older" | "newer",
+  ): SignInCursor => {
+    const row = direction === "older" ? page.rows.at(-1) : page.rows[0];
+    return row ? { direction, at: row.occurredAt, id: row.id } : null;
+  };
+  const shown = (page: SignInPage) => ({
+    ids: page.rows.map((row) => row.id),
+    hasNewer: page.hasNewer,
+    hasOlder: page.hasOlder,
+  });
+
+  const first = turn(null);
+  const second = turn(edge(first, "older"));
+  const third = turn(edge(second, "older"));
+  expect([first, second, third].map(shown)).toEqual([
+    { ids: [id(701), id(702), id(704)], hasNewer: false, hasOlder: true },
+    { ids: [id(703), id(705), id(707)], hasNewer: true, hasOlder: true },
+    { ids: [id(708), id(709)], hasNewer: true, hasOlder: false },
+  ]);
+
+  const backToSecond = turn(edge(third, "newer"));
+  const backToFirst = turn(edge(backToSecond, "newer"));
+  expect([backToSecond, backToFirst].map(shown)).toEqual([
+    { ids: [id(703), id(705), id(707)], hasNewer: true, hasOlder: true },
+    { ids: [id(701), id(702), id(704)], hasNewer: false, hasOlder: true },
+  ]);
+});
+
+test("Newer returns the rows nearest the cursor when more events are newer than one read holds", () => {
+  // 60 sign-ins one minute apart, 10:00 newest; the cursor is the oldest.
+  const events = Array.from({ length: 60 }, (_, index) =>
+    event(index, {
+      id: id(1000 + index),
+      occurred_at: new Date(
+        Date.parse("2026-10-06T10:00:00Z") - index * 60_000,
+      ).toISOString(),
+    }),
+  );
+  const cursor: SignInCursor = {
+    direction: "newer",
+    at: "2026-10-06T09:01:00.000Z",
+    id: id(1059),
+  };
+  const page = signInPage(
+    overviewSignInRequests(cursor).map((request) =>
+      serverRead(events, request),
+    ),
+    cursor,
+    3,
+  );
+  expect(page.rows.map((row) => row.id)).toEqual([
+    id(1056),
+    id(1057),
+    id(1058),
+  ]);
+  expect(page.hasNewer).toBe(true);
 });
 
 const zero = {

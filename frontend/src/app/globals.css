@@ -1049,10 +1049,11 @@ html[data-density="spacious"]
     min-height: 0;
     grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
     row-gap: 0.875rem;
-    /* Departments keep their head, two rows, the key and the panel's 2px
-       border (9.75rem); below that,
+    /* Departments keep their head (2.75rem), two rows (4.5rem), the foot
+       on two lines (the key and count, then the administrators: 3.3125rem)
+       and the panel's 2px border, 10.6875rem in all, so 11rem; below that,
        Needs attention's body scrolls (whole from 768px tall). */
-    grid-template-rows: auto minmax(0, auto) minmax(9.75rem, 1fr);
+    grid-template-rows: auto minmax(0, auto) minmax(11rem, 1fr);
     grid-template-areas:
       "who who"
       "signins attention"
@@ -1072,7 +1073,31 @@ html[data-density="spacious"]
   }
   .access-ui .access-overview [data-overview-body] {
     overflow-y: auto;
+    /* Keyboard focus scrolls a row clear of the fade. */
+    scroll-padding-block-end: 1.5rem;
   }
+  /* The feed pages instead of scrolling: it shows the rows that fit. */
+  .access-ui
+    .access-overview
+    > [data-overview-area="signins"]
+    [data-overview-body] {
+    overflow-y: hidden;
+  }
+}
+/* A panel that scrolls shows it does (Phase 4b): while content waits
+   below, its lower 24px fade to 20% (useScrollCue sets data-scroll-more),
+   so a cut row stays faintly in view. The fade goes at the end of the
+   scroll, so it never hides the last row, and a keyboard-focused row is
+   never under it. Nothing animates. */
+.access-ui .access-scroll-cue[data-scroll-more] {
+  mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - 1.5rem),
+    rgb(0 0 0 / 20%)
+  );
+}
+.access-ui .access-scroll-cue[data-scroll-more]:has(:focus-visible) {
+  mask-image: none;
 }
 
 /* Chips in Slate: --secondary is the sunken fill, which vanishes on the

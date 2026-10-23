@@ -117,6 +117,18 @@ function resultOf(event: AccessSecurityEvent): SignInResult | null {
   return null;
 }
 
+/** Newest first: by time, then by id, so events at one instant keep one
+ * order on every page. */
+function newestFirst(
+  left: Pick<SignInRow, "id" | "occurredAt">,
+  right: Pick<SignInRow, "id" | "occurredAt">,
+) {
+  return (
+    Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||
+    (left.id < right.id ? 1 : left.id > right.id ? -1 : 0)
+  );
+}
+
 /** Several event reads merged newest first, each event once. */
 export function recentSignIns(
   reads: readonly (readonly AccessSecurityEvent[])[],
@@ -135,12 +147,61 @@ export function recentSignIns(
       result,
     });
   }
-  const at = (row: SignInRow) => Date.parse(row.occurredAt);
-  return [...rows.values()]
-    .sort(
-      (left, right) => at(right) - at(left) || (left.id < right.id ? 1 : -1),
-    )
-    .slice(0, limit);
+  return [...rows.values()].sort(newestFirst).slice(0, limit);
+}
+
+/**
+ * Where a page of the sign-in feed starts: the newest events (null), or the
+ * events older or newer than one shown event, the cursor.
+ */
+export type SignInCursor = {
+  direction: "older" | "newer";
+  /** The cursor event's time and id. */
+  at: string;
+  id: string;
+} | null;
+
+export type SignInPage = {
+  /** Newest first. */
+  rows: SignInRow[];
+  hasOlder: boolean;
+  hasNewer: boolean;
+};
+
+/**
+ * One page of the feed from the reads of its cursor. The reads may hold
+ * events on the cursor's side of it (its own instant is read on both sides,
+ * so equal times are never skipped); only events past the cursor count.
+ * Older takes the `size` events after the cursor; Newer takes the `size`
+ * events nearest before it, so turning back returns the same rows.
+ */
+export function signInPage(
+  reads: readonly (readonly AccessSecurityEvent[])[],
+  cursor: SignInCursor,
+  size: number,
+): SignInPage {
+  const all = recentSignIns(reads, Number.POSITIVE_INFINITY);
+  if (!cursor)
+    return {
+      rows: all.slice(0, size),
+      hasOlder: all.length > size,
+      hasNewer: false,
+    };
+  const mark = { id: cursor.id, occurredAt: cursor.at };
+  if (cursor.direction === "older") {
+    const older = all.filter((row) => newestFirst(row, mark) > 0);
+    return {
+      rows: older.slice(0, size),
+      hasOlder: older.length > size,
+      hasNewer: true,
+    };
+  }
+  const newer = all.filter((row) => newestFirst(row, mark) < 0);
+  return {
+    rows: newer.slice(Math.max(0, newer.length - size)),
+    hasOlder: true,
+    hasNewer: newer.length > size,
+  };
 }
 
 // Needs attention

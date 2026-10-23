@@ -499,12 +499,21 @@ export async function mockAccessApi(
       const query = url.searchParams;
       const search = (query.get("search") ?? "").toLowerCase();
       const type = query.get("event_type");
+      // As the server: `occurred_after` inclusive, `occurred_before`
+      // exclusive, then time and id in the requested order.
+      const after = query.get("occurred_after");
+      const before = query.get("occurred_before");
+      const direction = query.get("sort_order") === "asc" ? 1 : -1;
       return route.fulfill({
         json: listPage(
           api.securityEvents
             .filter(
               (event) =>
                 (!type || event.event_type === type) &&
+                (!after ||
+                  Date.parse(event.occurred_at) >= Date.parse(after)) &&
+                (!before ||
+                  Date.parse(event.occurred_at) < Date.parse(before)) &&
                 (!search ||
                   [
                     event.event_type,
@@ -513,8 +522,11 @@ export async function mockAccessApi(
                     event.request_path ?? "",
                   ].some((value) => value.toLowerCase().includes(search))),
             )
-            .sort((left, right) =>
-              right.occurred_at.localeCompare(left.occurred_at),
+            .sort(
+              (left, right) =>
+                direction *
+                (Date.parse(left.occurred_at) - Date.parse(right.occurred_at) ||
+                  left.id.localeCompare(right.id)),
             ),
           url,
         ),

@@ -37,6 +37,7 @@ import {
   listAccessSecurityEvents,
   type AccessSecurityEventsRequest,
 } from "./security-events-api";
+import type { SignInCursor } from "../helpers/overview-dashboard";
 
 // Section-level Access reads share the per-account client cache. Every key
 // starts with "access", so one prefix marks the area stale. Access lists are
@@ -369,24 +370,51 @@ export const remoteSessionsCountRequest: AccessSessionsRequest = {
   limit: 100,
   status: "remote",
 };
-export const OVERVIEW_SIGN_IN_ROWS = 15;
+/**
+ * Events each feed read asks for. A page shows at most
+ * `OVERVIEW_FEED_MAX_ROWS`; the rest leaves room for events that share the
+ * cursor's instant and for the one event that says another page exists. The
+ * limit does not follow the page size, so a resize reads nothing again.
+ */
+export const OVERVIEW_SIGN_IN_ROWS = 50;
+export const OVERVIEW_FEED_MAX_ROWS = 44;
 /**
  * `event_type` filters one exact type, so two reads cover the feed: the
  * search matches `identity.sign_in` and `identity.sign_in_failure` (the
  * server searches event types by substring), and lockouts have their own.
+ * A cursor reads the events before it, or the events after it oldest
+ * first, so the nearest come back within the limit. The server compares
+ * `occurred_before` strictly and stores microseconds; a lockout and its
+ * failed sign-in share one instant. So both windows take in the cursor's
+ * whole millisecond, and `signInPage` drops what sits on the cursor's side.
  */
-export const overviewSignInRequests: readonly AccessSecurityEventsRequest[] = [
-  {
-    ...defaultSecurityEventsRequest,
-    limit: OVERVIEW_SIGN_IN_ROWS,
-    search: "identity.sign_in",
-  },
-  {
-    ...defaultSecurityEventsRequest,
-    limit: OVERVIEW_SIGN_IN_ROWS,
-    event_type: "identity.lockout",
-  },
-];
+export function overviewSignInRequests(
+  cursor: SignInCursor,
+): readonly AccessSecurityEventsRequest[] {
+  const millisecond = cursor ? Date.parse(cursor.at) : 0;
+  const window: Partial<AccessSecurityEventsRequest> = !cursor
+    ? {}
+    : cursor.direction === "older"
+      ? { occurred_before: new Date(millisecond + 1).toISOString() }
+      : {
+          occurred_after: new Date(millisecond).toISOString(),
+          sort_order: "asc",
+        };
+  return [
+    {
+      ...defaultSecurityEventsRequest,
+      limit: OVERVIEW_SIGN_IN_ROWS,
+      search: "identity.sign_in",
+      ...window,
+    },
+    {
+      ...defaultSecurityEventsRequest,
+      limit: OVERVIEW_SIGN_IN_ROWS,
+      event_type: "identity.lockout",
+      ...window,
+    },
+  ];
+}
 /** The groups whose access entries and members give access by department. */
 export const OVERVIEW_GROUP_LIMIT = 100;
 export const overviewGroupsOptions = () =>

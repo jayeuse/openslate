@@ -1,10 +1,18 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  type CSSProperties,
+  type ReactNode,
+  type Ref,
+} from "react";
 import type { Route } from "next";
 import {
   ArrowRight,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   KeyRound,
   Mail,
@@ -19,11 +27,13 @@ import {
 import { PersonAvatar } from "@/components/person-avatar";
 import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { cn } from "@/lib/utils";
 
+import { useScrollCue } from "../hooks/use-scroll-cue";
 import { ReadError } from "./read-error";
 
 import type {
@@ -54,20 +64,30 @@ function BlockError({
   return <ReadError className="m-3" message={message} retry={retry} />;
 }
 
-/** A bordered panel: a fixed head, a body that scrolls on desktop, a foot. */
+/**
+ * A bordered panel: a fixed head, a body that scrolls on desktop, a foot.
+ * A body that scrolls says so: `more` (from `useScrollCue`) fades its lower
+ * edge while content waits below.
+ */
 function Panel({
   id,
   title,
   end,
   foot,
+  footClassName,
   area,
+  bodyRef,
+  more = false,
   children,
 }: {
   id: string;
   title: string;
   end?: ReactNode;
   foot?: ReactNode;
+  footClassName?: string;
   area: "signins" | "attention" | "departments";
+  bodyRef: Ref<HTMLDivElement>;
+  more?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -87,13 +107,20 @@ function Panel({
         ) : null}
       </div>
       <div
+        ref={bodyRef}
         data-overview-body
-        className="relative min-h-0 flex-1 overscroll-contain"
+        data-scroll-more={more ? "" : undefined}
+        className="access-scroll-cue relative min-h-0 flex-1 overscroll-contain"
       >
         {children}
       </div>
       {foot ? (
-        <div className="text-muted-foreground flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t px-4 py-2 text-xs">
+        <div
+          className={cn(
+            "text-muted-foreground flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t px-4 py-2 text-xs",
+            footClassName,
+          )}
+        >
           {foot}
         </div>
       ) : null}
@@ -373,12 +400,111 @@ const resultTone: Record<SignInResult, { dot: string; text: string }> = {
   locked: { dot: "bg-[var(--warn)]", text: "text-[var(--warn-text)]" },
 };
 
-export function RecentSignIns({ state }: { state: BlockState<FeedRow[]> }) {
+/** The feed's pager: where it is, and what Newer and Older can do. */
+export type SignInPager = {
+  hasNewer: boolean;
+  hasOlder: boolean;
+  /** A page turn is reading its rows. */
+  turning: boolean;
+  onNewer: () => void;
+  onOlder: () => void;
+};
+
+export function RecentSignIns({
+  state,
+  pager,
+  bodyRef,
+  rows,
+}: {
+  state: BlockState<FeedRow[]>;
+  /** Null until the first page is read. */
+  pager: SignInPager | null;
+  /** The feed body, measured for the rows that fit. */
+  bodyRef: Ref<HTMLDivElement>;
+  /** The rows a page shows, for the skeleton. */
+  rows: number;
+}) {
+  const shown = state.status === "ready" ? state.data : [];
+  const newest = shown[0];
+  const oldest = shown.at(-1);
+  const range =
+    newest && oldest
+      ? newest.when === oldest.when
+        ? newest.when
+        : `${oldest.when} – ${newest.when}`
+      : "";
+  // A turn in progress keeps both buttons as they are (the turn ignores a
+  // second press), so the pressed button is never replaced mid-turn.
+  const waiting =
+    state.status === "error"
+      ? "Sign-ins could not be loaded."
+      : !pager
+        ? "Loading sign-ins…"
+        : null;
+  const newerReason =
+    waiting ?? (pager?.hasNewer ? null : "These are the newest sign-ins.");
+  const olderReason =
+    waiting ?? (pager?.hasOlder ? null : "No older sign-ins.");
+  const newerButton = useRef<HTMLButtonElement>(null);
+  const olderButton = useRef<HTMLButtonElement>(null);
+  const pressed = useRef<"newer" | "older" | null>(null);
+  // A button that gains its end reason is drawn anew; after the turn,
+  // focus goes back to it unless the person moved focus elsewhere.
+  useEffect(() => {
+    if (!pressed.current || pager?.turning) return;
+    const button = (pressed.current === "newer" ? newerButton : olderButton)
+      .current;
+    if (!button?.isConnected) return;
+    pressed.current = null;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    button.focus();
+  });
+  const pageButton = "min-h-11 gap-1 px-2.5 text-xs xl:h-8 xl:min-h-8 xl:px-2";
   return (
     <Panel
       id="overview-signins"
       area="signins"
       title="Recent sign-ins"
+      bodyRef={bodyRef}
+      footClassName="flex-nowrap justify-between py-1 pr-2 pl-2"
+      foot={
+        <>
+          <DisabledReason reason={newerReason}>
+            <Button
+              variant="ghost"
+              className={pageButton}
+              ref={newerButton}
+              aria-label="Newer sign-ins"
+              onClick={() => {
+                pressed.current = "newer";
+                pager?.onNewer();
+              }}
+            >
+              <ChevronLeft aria-hidden="true" />
+              Newer
+            </Button>
+          </DisabledReason>
+          <span className="min-w-0 truncate text-center tabular-nums">
+            {range}
+          </span>
+          <DisabledReason reason={olderReason}>
+            <Button
+              variant="ghost"
+              className={pageButton}
+              ref={olderButton}
+              aria-label="Older sign-ins"
+              onClick={() => {
+                pressed.current = "older";
+                pager?.onOlder();
+              }}
+            >
+              Older
+              <ChevronRight aria-hidden="true" />
+            </Button>
+          </DisabledReason>
+        </>
+      }
       end={
         <GuardedWorkspaceLink
           href="/manage?view=audit&audit=security-events"
@@ -398,11 +524,15 @@ export function RecentSignIns({ state }: { state: BlockState<FeedRow[]> }) {
         <LoadingRegion
           loading={state.status === "loading"}
           label="Loading recent sign-ins…"
-          skeleton={<RowsSkeleton rows={8} height="h-13 xl:h-10" />}
+          skeleton={<RowsSkeleton rows={rows} height="h-13 xl:h-10" />}
         >
           {state.status === "ready" ? (
             state.data.length ? (
-              <ul aria-label="Sign-ins" className="divide-y">
+              <ul
+                aria-label="Sign-ins"
+                aria-busy={pager?.turning || undefined}
+                className="divide-y"
+              >
                 {state.data.map((row) => (
                   <SignInLine key={row.id} row={row} />
                 ))}
@@ -483,11 +613,14 @@ export function NeedsAttention({
 }: {
   state: BlockState<{ items: AttentionItem[]; clear: string[] }>;
 }) {
+  const [bodyRef, cue] = useScrollCue();
   return (
     <Panel
       id="overview-attention"
       area="attention"
       title="Needs attention"
+      bodyRef={bodyRef}
+      more={cue.more}
       end={
         state.status === "ready" && state.data.items.length ? (
           <span className="tabular-nums">{state.data.items.length}</span>
@@ -604,12 +737,24 @@ export function AccessByDepartment({
   state: BlockState<DepartmentAccess>;
 }) {
   const ready = state.status === "ready" ? state.data : null;
+  const [bodyRef, cue] = useScrollCue("li");
+  const total = ready?.rows.length ?? 0;
+  // The rows that fit at once, or all of them when none is hidden.
+  const shown = !total
+    ? null
+    : cue.fit !== null && cue.fit < total
+      ? `${cue.fit} of ${total} departments shown`
+      : total === 1
+        ? "1 department"
+        : `All ${total} departments`;
   return (
     <Panel
       id="overview-departments"
       area="departments"
       title="Access by department"
       end="People with access"
+      bodyRef={bodyRef}
+      more={cue.more}
       foot={
         <>
           <span className="flex items-center gap-3">
@@ -628,6 +773,7 @@ export function AccessByDepartment({
               </span>
             ))}
           </span>
+          {shown ? <span className="tabular-nums">{shown}</span> : null}
           {ready?.administrators ? (
             <span>
               {ready.administrators}{" "}
