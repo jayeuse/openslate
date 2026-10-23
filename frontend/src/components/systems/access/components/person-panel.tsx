@@ -101,7 +101,7 @@ export function PersonPanel({
         }}
       >
         <SheetContent
-          className="access-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,42rem)]"
+          className="access-ui slim-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,42rem)]"
           finalFocus={() => {
             if (!deleted.current) return true;
             deleted.current = false;

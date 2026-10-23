@@ -85,7 +85,7 @@ export function OrganizationTemplateDialog({
           button stays in view, as in the review. */}
       <DialogContent
         aria-busy={applying || undefined}
-        className="flex max-w-6xl flex-col overflow-hidden p-0 max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11"
+        className="slim-ui flex max-w-6xl flex-col overflow-hidden p-0 max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11"
       >
         <DialogCloseButton disabled={pending} />
         <div className="min-h-0 flex-1 overflow-y-auto p-5">

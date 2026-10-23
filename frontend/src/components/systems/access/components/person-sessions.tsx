@@ -206,7 +206,7 @@ export function PersonSessions({
         open={revoke !== null}
         onOpenChange={(open) => !open && !pending && setRevoke(null)}
       >
-        <AlertDialogContent className="access-ui">
+        <AlertDialogContent className="access-ui slim-ui">
           <AlertDialogHeader>
             <AlertDialogTitle>
               {revoke?.kind === "one"

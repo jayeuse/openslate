@@ -2494,7 +2494,7 @@ test("a successful Publish plays the look's title signature once", async ({
   });
   const title = page.getByRole("heading", {
     level: 1,
-    name: "Sandbox",
+    name: "Build",
     exact: true,
   });
   // Opening the Sandbox is not an earned moment.
@@ -4419,7 +4419,7 @@ test("History deletion failure retains its target and successful deletion select
     inspector.getByRole("button", { name: "Delete version", exact: true }),
   ).toBeDisabled();
   await expect(
-    page.getByRole("heading", { name: "History", exact: true }),
+    page.getByRole("heading", { level: 2, name: "History", exact: true }),
   ).toBeFocused();
 });
 
@@ -4635,7 +4635,11 @@ test("personal text scaling leaves the canvas key, editor, and geometry unchange
   const zoom = await page
     .getByRole("status", { name: "Canvas zoom" })
     .innerText();
-  const title = page.getByRole("heading", { name: "Sandbox", exact: true });
+  const title = page.getByRole("heading", {
+    level: 1,
+    name: "Build",
+    exact: true,
+  });
   const titleBefore = await title.evaluate((el) =>
     parseFloat(getComputedStyle(el).fontSize),
   );
@@ -4968,7 +4972,8 @@ test("Trigger Studio switch preserves geometry and its 44 pixel hit target with 
       const box = await toggle.boundingBox();
       return box ? Math.round(box.height * 10) / 10 : null;
     })
-    .toBe(18.4);
+    // The slim switch track (DESIGN "Slim controls"); its hit area stays 44px.
+    .toBe(16);
   await toggle.scrollIntoViewIfNeeded();
   await expect(toggle).toBeInViewport();
   const checked = await toggle.getAttribute("aria-checked");
@@ -6232,7 +6237,7 @@ for (const transition of ["unmount", "account"] as const) {
       await expect(page).toHaveURL(/\/platform/);
       await page.getByRole("link", { name: "Build", exact: true }).click();
       await expect(
-        page.getByRole("heading", { name: "Sandbox", exact: true }),
+        page.getByRole("heading", { level: 1, name: "Build", exact: true }),
       ).toBeVisible();
     }
     const dialog = await openImportExport(page);

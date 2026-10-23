@@ -2315,7 +2315,10 @@ export function Designer({
                       >
                         <Info aria-hidden="true" className="size-3.5" />
                       </PopoverTrigger>
-                      <PopoverContent side="top" className="w-auto max-w-64">
+                      <PopoverContent
+                        side="top"
+                        className="slim-ui w-auto max-w-64"
+                      >
                         Names this module&apos;s records in Boards links.
                       </PopoverContent>
                     </Popover>
@@ -2986,7 +2989,9 @@ export function Designer({
               groupResizeBehavior={
                 wide ? "preserve-pixel-size" : "preserve-relative-size"
               }
-              className="h-full w-full min-w-0"
+              // Slim controls for Structure and Properties only: the canvas
+              // panel and its toolbar keep their own look.
+              className="slim-ui h-full w-full min-w-0"
             >
               {!wide ? (
                 pane === "Structure" ? (
@@ -3065,7 +3070,7 @@ export function Designer({
           if (!open && !pending) setEditor("");
         }}
       >
-        <DialogContent className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11">
+        <DialogContent className="slim-ui max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11">
           <DialogTitle>
             {editingRelationship ? "Relationship settings" : "Connect modules"}
           </DialogTitle>
@@ -3081,7 +3086,7 @@ export function Designer({
         }}
       >
         <AlertDialogContent
-          className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11"
+          className="slim-ui max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11"
           finalFocus={deleteFinalFocus}
         >
           <AlertDialogTitle>{currentDeleteImpact?.title}</AlertDialogTitle>

@@ -48,7 +48,7 @@ export interface SearchSelectProps {
   hasMore?: boolean;
   onLoadMore?: () => void;
   loadingMore?: boolean;
-  /** Classes for the option popup's positioner (a scope class such as `access-ui`). */
+  /** Classes for the option popup's positioner (a scope class such as `slim-ui`). */
   popupClassName?: string;
 }
 

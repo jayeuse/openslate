@@ -675,6 +675,7 @@ export function SandboxInspectorOutline({
             </ContextMenuTrigger>
             <ContextMenuContent
               data-sandbox-portal
+              className="slim-ui"
               anchor={contextMenuAnchor ?? undefined}
               aria-label={`Actions for ${kind} ${item.name}`}
               finalFocus={() =>

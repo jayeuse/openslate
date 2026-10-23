@@ -22,6 +22,7 @@ import {
 // Routes without sections in the sidebar name only themselves.
 const routeLabels: Record<string, string> = {
   "/access": "Access",
+  "/sandbox": "Sandbox",
   "/comms": "OpenComms",
   "/settings/appearance": "Appearance",
   "/profile": "Profile",

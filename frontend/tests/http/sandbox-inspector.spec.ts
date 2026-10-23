@@ -146,7 +146,7 @@ for (const viewport of [
     for (const section of ["Triggers", "Test", "History"]) {
       await page.goto(`/sandbox?section=${section.toLowerCase()}`);
       await expect(
-        page.getByRole("heading", { name: "Sandbox", level: 1 }),
+        page.getByRole("heading", { name: section, level: 1, exact: true }),
       ).toBeVisible();
       await expectNoPageScroll(page);
     }

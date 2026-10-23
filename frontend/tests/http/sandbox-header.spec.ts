@@ -1,10 +1,32 @@
-import { expect, test } from "./helpers/test";
+import { expect, test, type Locator } from "./helpers/test";
+import { mockAccessApi } from "./helpers/access-api";
 import {
   openAuthenticatedSandbox,
   openCheckpointDialog,
 } from "./helpers/sandbox-api";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
 import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
+
+async function height(locator: Locator): Promise<number> {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("The element has no box");
+  return Math.round(box.height);
+}
+
+/** A field's edges, fill and corners: the parts of the Slate field skin. */
+function skin(field: Locator) {
+  return field.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return [
+      style.borderTopColor,
+      style.borderBottomColor,
+      style.borderBottomWidth,
+      style.backgroundColor,
+      style.borderTopLeftRadius,
+      style.borderBottomLeftRadius,
+    ];
+  });
+}
 
 // Phase 7 of the Sandbox UI/UX pass (docs/specs/sandbox-ui-ux-pass.md):
 // HDR-1 to HDR-3, the menu order, and the close buttons (D3).
@@ -43,6 +65,63 @@ test("Review and Publish says why it is disabled", async ({ page }) => {
   const publish = page.getByRole("button", { name: "Review & Publish" });
   await expect(publish).toHaveAttribute("aria-disabled", "true");
   await expect(publish).toHaveAccessibleDescription("Nothing to publish yet.");
+});
+
+test("Undo and Redo are named icon buttons that say why they cannot act", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, initialDesign);
+  const undo = page.getByRole("button", { name: "Undo", exact: true });
+  const redo = page.getByRole("button", { name: "Redo", exact: true });
+  // Quiet icon buttons: the name is the label, not visible text.
+  await expect(undo).toHaveText("");
+  await expect(redo).toHaveText("");
+  await expect(undo).toHaveAttribute("aria-disabled", "true");
+  await expect(undo).toHaveAccessibleDescription("Nothing to undo.");
+  await expect(redo).toHaveAttribute("aria-disabled", "true");
+  await expect(redo).toHaveAccessibleDescription("Nothing to redo.");
+
+  await page.getByRole("button", { name: "Add department" }).click();
+  await page.getByLabel("Department name").fill("Finance");
+  await page.getByRole("button", { name: "Create department" }).click();
+  await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
+    /· Saved$/,
+  );
+  await expect(undo).toBeEnabled();
+  await expect(undo).toHaveAccessibleDescription("");
+  await undo.hover();
+  await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText(
+    "Undo",
+  );
+  await undo.click();
+  await expect(redo).toBeEnabled();
+  await expect(undo).toHaveAccessibleDescription("Nothing to undo.");
+});
+
+test("from 1280 px Sandbox fields and buttons use the slim controls of Access", async ({
+  page,
+}) => {
+  await mockAccessApi(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign);
+  await page.goto("/sandbox?section=triggers");
+  const name = page.getByLabel("Trigger name", { exact: true });
+  await expect(name).toBeVisible();
+  await name.blur();
+  await page.mouse.move(0, 0);
+  expect(await height(name)).toBe(32);
+  expect(
+    await height(page.getByRole("button", { name: "Review & Publish" })),
+  ).toBe(32);
+  const sandboxField = await skin(name);
+
+  await page.goto("/access?view=people");
+  const sort = page.getByRole("combobox", { name: "Sort", exact: true });
+  await expect(sort).toBeVisible();
+  expect(await height(sort)).toBe(32);
+  // The same Slate field: a sunken well, a clear top, and the 3:1 rule.
+  expect(sandboxField).toEqual(await skin(sort));
 });
 
 test("a saved checkpoint is announced by a notice, not the page alert", async ({

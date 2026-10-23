@@ -145,7 +145,7 @@ export function SandboxLifecycleDialog({
         if (!open) cancel();
       }}
     >
-      <DialogContent className="flex flex-col overflow-hidden p-0 sm:max-w-xl">
+      <DialogContent className="slim-ui flex flex-col overflow-hidden p-0 sm:max-w-xl">
         <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>

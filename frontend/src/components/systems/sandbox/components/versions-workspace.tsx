@@ -1172,7 +1172,7 @@ export function VersionsWorkspace({
                 ? returnTarget
                 : versionsHeading.current;
             }}
-            className="max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11"
+            className="slim-ui max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11"
           >
             <AlertDialogHeader>
               <AlertDialogTitle>

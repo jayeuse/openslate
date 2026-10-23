@@ -94,7 +94,7 @@ export function VersionCapacityBanner({
           if (!submitting.current) setOpen(next);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="slim-ui">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete old checkpoints?</AlertDialogTitle>
             <AlertDialogDescription>

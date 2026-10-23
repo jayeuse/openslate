@@ -1153,7 +1153,7 @@ export function TriggerStudio({
                         >
                           <MoreHorizontal aria-hidden="true" />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
+                        <DropdownMenuContent align="end" className="slim-ui">
                           <DropdownMenuItem
                             variant="destructive"
                             disabled={pending}

@@ -1545,7 +1545,7 @@ test.describe("Sandbox", () => {
     await page.goto("/sandbox?section=designer");
 
     await expect(
-      page.getByRole("heading", { name: "Sandbox", exact: true }),
+      page.getByRole("heading", { level: 1, name: "Build", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Review & Publish" }),
@@ -1718,7 +1718,9 @@ test.describe("Sandbox", () => {
     expect(await afterRecords.json()).toEqual(beforeRecordState);
 
     await page.getByRole("link", { name: "History", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 2, name: "History" }),
+    ).toBeVisible();
     // Other specs in the same run also publish; History then adds the version number
     // to every "Published structure" label, so select this test's own version.
     await page

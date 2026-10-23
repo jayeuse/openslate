@@ -142,6 +142,21 @@ test("Access is absent from the navigation without administrator or manage acces
   ).toBeNull();
 });
 
+test("only administrators see the Sandbox in the navigation", () => {
+  const groups = (access: "all" | "groups" | "none") =>
+    getWorkspaceNavigation("/boards", new URLSearchParams(), access).map(
+      (group) => group.id,
+    );
+
+  expect(groups("all")).toContain("sandbox");
+  expect(groups("groups")).not.toContain("sandbox");
+  expect(groups("none")).not.toContain("sandbox");
+  // Everyone else starts at their first workspace instead.
+  expect(
+    getWorkspaceNavigation("/sandbox", new URLSearchParams(), "none")[0]?.href,
+  ).toBe("/boards?section=overview");
+});
+
 test("retired Access views open the Access overview", () => {
   for (const retired of [
     "identities",

@@ -2,8 +2,15 @@
 
 import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { Route } from "next";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Redo2, Undo2 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,7 +26,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import {
+  accessNavigationFor,
+  getWorkspaceNavigation,
+} from "@/components/workspace-navigation";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import type { SandboxCanvasLayout } from "@/lib/sandbox/model";
 import {
   counts,
@@ -217,7 +234,8 @@ const sandboxRegionClass =
   "flex flex-col *:flex *:flex-col *:gap-5 xl:min-h-0 xl:flex-1 xl:*:min-h-0 xl:*:flex-1";
 // On desktop, one scroll panel for a section whose own layout does not fill
 // the height. `relative` keeps screen-reader text inside it.
-const sandboxPanelClass = "relative xl:min-h-0 xl:flex-1 xl:overflow-y-auto";
+const sandboxPanelClass =
+  "slim-ui relative xl:min-h-0 xl:flex-1 xl:overflow-y-auto";
 
 /**
  * The Build canvas and its properties panel (phones and tablets: the pane
@@ -277,6 +295,80 @@ function SandboxSkeleton({ build }: { build: boolean }) {
   );
 }
 
+/**
+ * Undo or Redo: a quiet icon button whose tooltip names it. With nothing to
+ * step through, it stays focusable and its tooltip says why instead.
+ */
+function HistoryButton({
+  label,
+  busy,
+  emptyReason,
+  onClick,
+  children,
+}: {
+  label: string;
+  busy: boolean;
+  emptyReason: string | null;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const button = (
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label={label}
+      className="max-xl:size-11"
+      disabled={busy || emptyReason !== null}
+      onClick={onClick}
+    >
+      {children}
+    </Button>
+  );
+  if (!busy && emptyReason !== null)
+    return <DisabledReason reason={emptyReason}>{button}</DisabledReason>;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * What an account that is not an administrator sees on a Sandbox link: one
+ * calm line and a way to its first workspace. Retry would only send the same
+ * refused requests again.
+ */
+function SandboxUnavailable() {
+  const identity = useQuery(authMeOptions());
+  const home = getWorkspaceNavigation(
+    "/sandbox",
+    new URLSearchParams(),
+    accessNavigationFor(identity.data),
+  ).find((group) => group.id !== "sandbox");
+  return (
+    <section data-sandbox-page className="flex flex-col gap-5">
+      <h1
+        data-slot="page-title"
+        className="text-xl font-semibold tracking-tight sm:text-2xl"
+      >
+        Sandbox
+      </h1>
+      <Alert className="flex flex-wrap items-center justify-between gap-3">
+        <p>Sandbox is not available to your account.</p>
+        {home ? (
+          <Link
+            href={home.href as Route}
+            className="text-action-text inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+          >
+            Go to {home.label}
+          </Link>
+        ) : null}
+      </Alert>
+    </section>
+  );
+}
+
 export default function SandboxPage() {
   const search = useSearchParams();
   const router = useRouter();
@@ -317,6 +409,8 @@ export default function SandboxPage() {
   });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  // Every Sandbox API refuses anyone but an administrator (403).
+  const [loadDenied, setLoadDenied] = useState(false);
   const [pending, setPending] = useState(false);
   const [versionRecovery, setVersionRecovery] = useState(false);
   const historyAccess = useSandboxHistoryAccess();
@@ -561,6 +655,7 @@ export default function SandboxPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError("");
+    setLoadDenied(false);
     void queryClient.invalidateQueries({ queryKey: sandboxKeys.bindings });
     try {
       const [document, testPage] = await Promise.all([
@@ -572,6 +667,7 @@ export default function SandboxPage() {
       setTestRuns(testPage.items);
     } catch (error) {
       setLoadError(commandFailure(error).error);
+      setLoadDenied(error instanceof ApiError && error.status === 403);
     } finally {
       setLoading(false);
     }
@@ -579,6 +675,16 @@ export default function SandboxPage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  // An account refused here that becomes an administrator reads the Sandbox
+  // again; only the change itself does, so a refusal never loops.
+  const viewer = useQuery(authMeOptions());
+  const administrator = accessNavigationFor(viewer.data) === "all";
+  const wasAdministrator = useRef(administrator);
+  useEffect(() => {
+    const promoted = administrator && !wasAdministrator.current;
+    wasAdministrator.current = administrator;
+    if (promoted && loadDenied) void refresh();
+  }, [administrator, loadDenied, refresh]);
   useEffect(() => {
     if (section === "Triggers") void refreshTriggerActivity();
   }, [refreshTriggerActivity, section]);
@@ -1174,9 +1280,10 @@ export default function SandboxPage() {
     }
   }, [conflict, persist]);
 
+  if (loadDenied && !session) return <SandboxUnavailable />;
   if (loadError && !session)
     return (
-      <section data-sandbox-page>
+      <section data-sandbox-page className="slim-ui">
         <Alert role="alert" variant="destructive">
           <p>{loadError}</p>
           <Button className="mt-3" onClick={() => void refresh()}>
@@ -1185,6 +1292,9 @@ export default function SandboxPage() {
         </Alert>
       </section>
     );
+  // Undo and Redo wait without a reason while something else is running.
+  const historyBusy =
+    loading || commandBusy || Boolean(conflict) || designerDraftDirty;
   const versionCapacity: VersionCapacityActions = {
     state:
       versionRecovery || historyAccess.denied || capacityRead.error
@@ -1222,7 +1332,7 @@ export default function SandboxPage() {
         <Alert
           role="alert"
           variant="destructive"
-          className="flex flex-wrap gap-2"
+          className="slim-ui flex flex-wrap gap-2"
         >
           <div className="space-y-1">
             <p>
@@ -1256,7 +1366,7 @@ export default function SandboxPage() {
           variant={
             bindingsQuery.error || lifecycleRecovery ? "destructive" : "warning"
           }
-          className="flex flex-wrap items-center gap-2"
+          className="slim-ui flex flex-wrap items-center gap-2"
         >
           <span>
             {lifecycleRecovery
@@ -1286,16 +1396,18 @@ export default function SandboxPage() {
           </Button>
         </Alert>
       ) : null}
-      <header className="xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4">
+      <header className="slim-ui xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4">
         <div className="flex flex-col gap-3 xl:contents">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          {/* The title names the section (the breadcrumb names the
+              Sandbox); from 1280px the chip sits under it. */}
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 xl:flex-col xl:items-start">
             <h1
               key={publishCount}
               data-slot="page-title"
               data-signature={publishCount > 0 ? "play" : undefined}
               className="text-xl font-semibold tracking-tight sm:text-2xl"
             >
-              Sandbox
+              {section}
             </h1>
             {loading ? null : (
               // One save-state chip: the publish state, then what is
@@ -1328,38 +1440,26 @@ export default function SandboxPage() {
           <div className="flex shrink-0 gap-2">
             {section === "Build" ? (
               <>
-                <Button
-                  variant="outline"
-                  aria-label="Undo"
-                  className="max-xl:size-11 max-xl:p-0"
-                  disabled={
-                    loading ||
-                    !session?.history.past.length ||
-                    commandBusy ||
-                    Boolean(conflict) ||
-                    designerDraftDirty
+                <HistoryButton
+                  label="Undo"
+                  busy={historyBusy}
+                  emptyReason={
+                    session?.history.past.length ? null : "Nothing to undo."
                   }
                   onClick={() => void undo()}
                 >
-                  <Undo2 data-icon="inline-start" />
-                  <span className="max-xl:sr-only">Undo</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  aria-label="Redo"
-                  className="max-xl:size-11 max-xl:p-0"
-                  disabled={
-                    loading ||
-                    !session?.history.future.length ||
-                    commandBusy ||
-                    Boolean(conflict) ||
-                    designerDraftDirty
+                  <Undo2 />
+                </HistoryButton>
+                <HistoryButton
+                  label="Redo"
+                  busy={historyBusy}
+                  emptyReason={
+                    session?.history.future.length ? null : "Nothing to redo."
                   }
                   onClick={() => void redo()}
                 >
-                  <Redo2 data-icon="inline-start" />
-                  <span className="max-xl:sr-only">Redo</span>
-                </Button>
+                  <Redo2 />
+                </HistoryButton>
               </>
             ) : null}
             <DisabledReason
@@ -1438,7 +1538,7 @@ export default function SandboxPage() {
         {triggerDraft.kept ? (
           // Edits kept from before a reload wait here until the person
           // chooses; nothing is applied on its own.
-          <Alert variant="warning" role="status">
+          <Alert variant="warning" role="status" className="slim-ui">
             <p className="font-medium">Restore unsaved trigger changes?</p>
             {triggerDraft.kept.baseChanged ? (
               <p className="mt-1">
@@ -1484,7 +1584,7 @@ export default function SandboxPage() {
           </Alert>
         ) : null}
         {issues.length ? (
-          <Alert variant="warning" role="status">
+          <Alert variant="warning" role="status" className="slim-ui">
             <p>
               {issues.length === 1
                 ? "1 item needs attention."

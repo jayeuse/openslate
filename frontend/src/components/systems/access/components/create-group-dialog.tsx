@@ -211,7 +211,7 @@ export function CreateGroupDialog({
         open={open}
         onOpenChange={(next) => (next ? onOpenChange(true) : requestClose())}
       >
-        <DialogContent className="access-ui max-w-2xl">
+        <DialogContent className="access-ui slim-ui max-w-2xl">
           {/* The × stays named for the dialog, like Close account policy;
               a phone reaches Cancel in the sticky footer too. */}
           <Button

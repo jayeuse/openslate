@@ -402,7 +402,7 @@ export function PersonAccount({
         onOpenChange={(next) => !next && !pending && setAction(null)}
       >
         <AlertDialogContent
-          className="access-ui"
+          className="access-ui slim-ui"
           finalFocus={() => focusTarget.current === null}
         >
           <AlertDialogHeader>

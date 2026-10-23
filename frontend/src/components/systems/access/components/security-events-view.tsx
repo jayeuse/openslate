@@ -570,7 +570,7 @@ export function SecurityEventsView({
                 {personMode === "directory" ? (
                   <SearchSelect
                     label="Person"
-                    popupClassName="access-ui"
+                    popupClassName="slim-ui"
                     value={filters.person}
                     options={personOptions}
                     onValueChange={(person) => changeFilters({ person })}

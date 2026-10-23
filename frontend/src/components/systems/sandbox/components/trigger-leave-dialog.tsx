@@ -41,7 +41,7 @@ export function TriggerLeaveDialog({
         onStay();
       }}
     >
-      <DialogContent className="grid gap-4">
+      <DialogContent className="slim-ui grid gap-4">
         <DialogTitle>Unsaved trigger changes</DialogTitle>
         <DialogDescription>
           Discard removes {plural(draft.changes, "unsaved change")}.

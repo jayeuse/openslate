@@ -93,7 +93,10 @@ export function InvitationSettingsDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent aria-labelledby={titleId} className="access-ui max-w-lg">
+      <DialogContent
+        aria-labelledby={titleId}
+        className="access-ui slim-ui max-w-lg"
+      >
         <DialogCloseButton disabled={saving} />
         <DialogHeader>
           <DialogTitle id={titleId}>Invitation settings</DialogTitle>

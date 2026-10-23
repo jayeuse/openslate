@@ -259,16 +259,16 @@ export function SandboxHeaderActions({
         <DropdownMenuTrigger
           render={
             <Button
-              variant="outline"
+              variant="ghost"
               size="icon"
-              className="min-h-11 min-w-11"
+              className="max-xl:size-11"
               aria-label="More Sandbox actions"
             >
               <MoreHorizontal />
             </Button>
           }
         />
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" className="slim-ui">
           <DropdownMenuItem
             className="min-h-11 flex-col items-start justify-center gap-0 data-disabled:opacity-100"
             disabled={!canCheckpoint}
@@ -342,7 +342,7 @@ export function SandboxHeaderActions({
         open={checkpointOpen}
         onOpenChange={(open) => !busy && setCheckpointOpen(open)}
       >
-        <DialogContent className="grid gap-4">
+        <DialogContent className="slim-ui grid gap-4">
           <DialogHeader>
             <DialogTitle>Save checkpoint</DialogTitle>
           </DialogHeader>
@@ -403,7 +403,7 @@ export function SandboxHeaderActions({
           setImportOpen(open);
         }}
       >
-        <DialogContent>
+        <DialogContent className="slim-ui">
           <DialogHeader>
             <DialogTitle>Import or export</DialogTitle>
             <DialogDescription>
@@ -523,7 +523,7 @@ export function SandboxHeaderActions({
         open={discardOpen}
         onOpenChange={(open) => !busy && setDiscardOpen(open)}
       >
-        <DialogContent className="grid gap-4">
+        <DialogContent className="slim-ui grid gap-4">
           <DialogHeader>
             <DialogTitle>Discard draft changes?</DialogTitle>
             <DialogDescription>

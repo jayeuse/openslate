@@ -404,9 +404,10 @@ function useUnsavedDraftGuard(
 }
 
 /**
- * The Access page. `access-ui` scopes the slim controls (globals.css). A
- * still view (every view) never scrolls from 1280px: the header stays, its
- * body shrinks to the viewport, and only its panels or table scroll.
+ * The Access page. `slim-ui` scopes the slim controls and `access-ui` the
+ * Access layout rules (globals.css). A still view (every view) never
+ * scrolls from 1280px: the header stays, its body shrinks to the viewport,
+ * and only its panels or table scroll.
  * Narrower screens scroll the whole frame, so the header scrolls away with
  * the content. The title is the shared PageHeader; its margin is the gap.
  */
@@ -426,7 +427,7 @@ function AccessFrame({
 }) {
   const [actions, setActions] = useState<HTMLDivElement | null>(null);
   return (
-    <div className="access-ui flex h-full min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 sm:px-5 sm:py-4 xl:overflow-hidden">
+    <div className="access-ui slim-ui flex h-full min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 sm:px-5 sm:py-4 xl:overflow-hidden">
       <div className="shrink-0">
         <PageHeader
           title={title}

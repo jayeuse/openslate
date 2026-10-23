@@ -207,7 +207,7 @@ export function ReviewPublishDialog({
     >
       {/* The body scrolls; the footer stays outside it, so focused controls
           are never hidden behind it. */}
-      <DialogContent className="flex flex-col overflow-hidden p-0 sm:max-w-2xl">
+      <DialogContent className="slim-ui flex flex-col overflow-hidden p-0 sm:max-w-2xl">
         <DialogCloseButton disabled={busy === "publish"} />
         <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
           <DialogHeader className="pr-12">

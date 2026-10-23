@@ -394,7 +394,7 @@ export async function openAuthenticatedSandbox(
   });
   await page.goto("/sandbox");
   await expect(
-    page.getByRole("heading", { name: "Sandbox", exact: true }),
+    page.getByRole("heading", { level: 1, name: "Build", exact: true }),
   ).toBeVisible();
   return {
     workspace,

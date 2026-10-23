@@ -63,10 +63,14 @@ test("every Sandbox section fits a 390 px screen", async ({ page }) => {
     await page.getByRole("tab", { name: tab, exact: true }).click();
     await expectFits(page);
   }
-  for (const section of ["triggers", "test", "history"]) {
+  for (const [section, title] of [
+    ["triggers", "Triggers"],
+    ["test", "Test"],
+    ["history", "History"],
+  ]) {
     await page.goto(`/sandbox?section=${section}`);
     await expect(
-      page.getByRole("heading", { name: "Sandbox", level: 1 }),
+      page.getByRole("heading", { name: title, level: 1, exact: true }),
     ).toBeVisible();
     await expectFits(page);
   }

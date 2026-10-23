@@ -672,7 +672,10 @@ export function TestWorkspace({
                       >
                         <Info aria-hidden="true" className="size-3.5" />
                       </PopoverTrigger>
-                      <PopoverContent side="top" className="w-auto max-w-64">
+                      <PopoverContent
+                        side="top"
+                        className="slim-ui w-auto max-w-64"
+                      >
                         Relevant: required fields and fields your triggers use.
                         Hidden fields keep their values.
                       </PopoverContent>

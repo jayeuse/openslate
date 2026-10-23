@@ -113,7 +113,7 @@ export function StatusStrip({
           {rare ? rare.label : "More"}
           <ChevronDown aria-hidden="true" className="size-3.5" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="access-ui">
+        <DropdownMenuContent align="end" className="slim-ui">
           {rareStatusFilters.map((filter) => (
             <DropdownMenuItem
               key={filter.status}
@@ -300,7 +300,7 @@ export function PeopleFilterRows({
       <FilterRow>
         <SearchSelect
           id="people-group-filter"
-          popupClassName="access-ui"
+          popupClassName="slim-ui"
           label="Group"
           value={filters.groupId}
           options={withFixed([anyGroup, noGroup], groups.search, groupOptions)}
@@ -325,7 +325,7 @@ export function PeopleFilterRows({
       <FilterRow>
         <SearchSelect
           id="people-department-filter"
-          popupClassName="access-ui"
+          popupClassName="slim-ui"
           label="Department"
           value={filters.departmentId}
           options={withFixed(

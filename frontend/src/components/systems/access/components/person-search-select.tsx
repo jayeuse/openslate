@@ -50,7 +50,7 @@ export function SponsorSearchSelect({
     <div className={cn("space-y-1", layout === "row" && searchRowClassName)}>
       <SearchSelect
         id={id}
-        popupClassName="access-ui"
+        popupClassName="slim-ui"
         label="Sponsor"
         value={value}
         options={sponsorOptions(users, now)}

@@ -149,6 +149,10 @@ Each decision names what it removes and, where it changes an October decision, w
 | S11 | Test shows a result only for the current setup. The setup shows no error before a run. Run test checks the required values first.                                                                                                                                                                      | The stale result on load, unearned error edges, and empty failed runs                       | —                                                     |
 | S12 | Build "nothing selected" becomes a summary with "needs attention" rows. Properties uses label-left rows. Advanced names its contents. The duplicated relationships list goes away.                                                                                                                     | The empty column; the second relationships list                                             | —                                                     |
 | S13 | Phone header: one title row and the chip.                                                                                                                                                                                                                                                              | About half of the 230px the phone header takes today                                        | —                                                     |
+| S14 | Phase 1: a button with `h-auto` (a list row or disclosure header) keeps its own height under the slim sizes.                                                                                                                                                                                           | Squashed trigger, History, and Test rows                                                    | —                                                     |
+| S15 | Phase 1: slim switches keep a 44px hit area (an `::after` layer), at every width.                                                                                                                                                                                                                      | Switch targets below 44px                                                                   | —                                                     |
+| S16 | Phase 1: the slim class sits on the Sandbox panels, not the page root, so the canvas keeps its look. The canvas toolbar joins the slim set in Phase 5.                                                                                                                                                 | —                                                                                           | —                                                     |
+| S17 | Phase 1: the notice for a non-administrator links to the first workspace the account can open ("Go to Boards").                                                                                                                                                                                        | —                                                                                           | —                                                     |
 
 ## Open questions for the owner
 
@@ -159,7 +163,7 @@ Each decision names what it removes and, where it changes an October decision, w
 
 Each change stays small and only adds behavior:
 
-- `frontend/src/app/globals.css`: the slim class rename with an alias (S1).
+- `frontend/src/app/globals.css`: the control skin moves to `.slim-ui` (S1).
 - `frontend/src/components/workspace-navigation.ts`: hide the Sandbox for non-administrators (S4).
 - Possibly `frontend/src/components/ui/*`, for a primitive the Sandbox needs that Access already added. Each such change is listed in its phase.
 
@@ -184,6 +188,8 @@ Each phase ends with:
 | 7     | Plain-words glossary for owner approval (for example "Automatic save", "Older" and "Newer", "One-to-many"); one short help line per section (F16) | Glossary table in this spec                                                    |
 | 8     | 390 sweep in the four looks, light and dark; still page; critique; `ui-reviewer`; hands-on as `ho-admin` and `ho-manager`                         | Exit criteria                                                                  |
 
+**Phase 1 results (2026-10-23).** S1 to S4 are done with tests that failed first; 413 Sandbox and Access HTTP tests, 98 related HTTP tests (including the cold JavaScript budget), and 489 isolated tests pass. The Sandbox API requires a current-membership administrator for every route, so the navigation rule is "administrator of the bound organization". Access is unchanged: 0 pixels differ on People and the Account policy dialog. Decisions S14 to S17 were made during the work. Screenshots: `.playwright-mcp/sandbox-relayout/phase-1/`.
+
 ## Exit criteria
 
 | ID      | Criterion                                                                                                                                                                               |
@@ -201,10 +207,10 @@ Each phase ends with:
 
 ## Risks
 
-| Risk                                                                    | Solution                                                                                                                   |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| The class rename shifts Access.                                         | Keep the old class as an alias while it moves. The Access suites and a screenshot diff of the Access states are the guard. |
-| 7 Sandbox HTTP specs and 29 isolated specs pin selectors and words.     | Keep the accessible names unless the name is the fix. Every changed assertion gets a ledger row.                           |
-| The rail editor and the D1 Save bar can disagree about what is unsaved. | One owner for the trigger draft (`use-trigger-draft.ts`). The rail only renders it.                                        |
-| The comps use short names, but real trigger names are long.             | Rows truncate with the full name in the detail. Phase 8 checks long names in the hands-on pass.                            |
-| Inferring automatic saves from their labels is fragile (S9).            | The label rule lives in one function with a test, and the follow-up proposes a server field.                               |
+| Risk                                                                    | Solution                                                                                                                                                             |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The class split shifts Access.                                          | Access roots carry both classes. The Access suites and a pixel comparison of Access states are the guard (Phase 1: 0 pixels differ on People and the policy dialog). |
+| 7 Sandbox HTTP specs and 29 isolated specs pin selectors and words.     | Keep the accessible names unless the name is the fix. Every changed assertion gets a ledger row.                                                                     |
+| The rail editor and the D1 Save bar can disagree about what is unsaved. | One owner for the trigger draft (`use-trigger-draft.ts`). The rail only renders it.                                                                                  |
+| The comps use short names, but real trigger names are long.             | Rows truncate with the full name in the detail. Phase 8 checks long names in the hands-on pass.                                                                      |
+| Inferring automatic saves from their labels is fragile (S9).            | The label rule lives in one function with a test, and the follow-up proposes a server field.                                                                         |

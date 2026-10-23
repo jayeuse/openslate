@@ -654,7 +654,7 @@ export function PersonDetails({
         }}
       >
         <AlertDialogContent
-          className="access-ui"
+          className="access-ui slim-ui"
           finalFocus={() => !closeKeepsFocus.current}
         >
           <AlertDialogHeader>

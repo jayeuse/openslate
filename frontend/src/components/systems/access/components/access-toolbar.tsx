@@ -415,7 +415,7 @@ export function AccessToolbar<T extends string>({
               initialFocus={(type) => type === "keyboard"}
               align="end"
               collisionPadding={16}
-              className="access-ui w-[380px] max-w-[calc(100vw-2rem)] gap-0 p-0"
+              className="slim-ui w-[380px] max-w-[calc(100vw-2rem)] gap-0 p-0"
             >
               {body}
             </PopoverContent>
@@ -425,7 +425,7 @@ export function AccessToolbar<T extends string>({
             <DialogTrigger render={trigger}>{triggerContent}</DialogTrigger>
             <DialogContent
               aria-label="Filters"
-              className="access-ui -mx-4 -mb-4 w-[calc(100%+2rem)] max-w-none self-end rounded-b-none p-0"
+              className="access-ui slim-ui -mx-4 -mb-4 w-[calc(100%+2rem)] max-w-none self-end rounded-b-none p-0"
             >
               <DialogTitle className="px-3.5 pt-4 pb-1 text-base">
                 Filters
