@@ -422,7 +422,7 @@ Screenshots at 390 px of every section, sheet, and dialog in the four looks, lig
 | EXIT-7 | Pass. All hands-on defects fixed; each was checked live except the moment a row changes from Unknown to Off, which the test person no longer shows (its fact was already recorded) and an HTTP journey covers. |
 | EXIT-8 | Pass. No document scroll at 1280×720, 1440×900, 1920×1080; no horizontal overflow at 390. |
 | EXIT-9 | Pass. Field edges at least 3:1 in all looks after the Sort select fix; Access targets at least 44 px at 390. |
-| EXIT-10 | Pending the owner's approval of the 390 px sheets in the pull request. |
+| EXIT-10 | Pass. The owner approved the 390 px sheets (2026-10-23). |
 
 ## Measurement
 
