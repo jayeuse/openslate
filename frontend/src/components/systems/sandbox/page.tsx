@@ -101,10 +101,8 @@ import {
   type SandboxDocumentSession,
 } from "./state/document-session";
 import { VersionsWorkspace } from "./components/versions-workspace";
-import {
-  TriggerStudio,
-  triggerPublicationBlockers,
-} from "./components/trigger-studio";
+import { TriggerStudio } from "./components/trigger-studio";
+import { triggerPublicationBlockers } from "./domain/trigger-rules";
 import { useTriggerDraft } from "./components/use-trigger-draft";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { currentOrganizationId } from "@/lib/organization-context";

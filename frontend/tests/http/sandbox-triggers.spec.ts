@@ -1,33 +1,58 @@
 import { expect, test, type Page } from "./helpers/test";
 import { openAuthenticatedSandbox } from "./helpers/sandbox-api";
+import type { Design } from "../../src/components/systems/sandbox/domain/model";
+import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
 
 // Phase 4 of the Sandbox UI/UX pass (docs/specs/sandbox-ui-ux-pass.md):
-// TRG-1 to TRG-5.
+// TRG-1 to TRG-5. The two-pane list and When/If/Then rail come from the
+// Sandbox relayout (docs/specs/sandbox-relayout.md S5 to S7).
 
-async function openTriggers(page: Page) {
-  const sandbox = await openAuthenticatedSandbox(page);
+async function openTriggers(page: Page, design?: Design) {
+  const sandbox = await openAuthenticatedSandbox(page, design);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
   await expect(
-    page.getByRole("region", { name: "Trigger settings" }),
+    page.getByRole("region", { name: "Trigger details" }),
   ).toBeVisible();
   return sandbox;
 }
+
+/** Three triggers, one Off, with different events and a long name. */
+const listDesign: Design = {
+  ...configuredSandboxDesign,
+  rules: [
+    ...configuredSandboxDesign.rules,
+    {
+      id: "sample-weekly",
+      name: "Weekly maintenance review",
+      trigger: "Schedule",
+      condition: "Always",
+      action: "Update a field",
+      enabled: false,
+    },
+    {
+      id: "sample-status",
+      name: "Flag status changes for the operations follow-up review",
+      trigger: "Field change",
+      condition: "Status is open",
+      action: "Update a field",
+      enabled: true,
+    },
+  ],
+};
 
 test("a select condition offers option labels and stores the option ID", async ({
   page,
 }) => {
   const sandbox = await openTriggers(page);
-  const settings = page.getByRole("region", { name: "Trigger settings" });
+  const settings = page.getByRole("region", { name: "Trigger details" });
   await page.getByLabel("Condition 1 field").selectOption({ label: "Status" });
   await settings
     .getByLabel("Value", { exact: true })
     .first()
     .selectOption({ label: "In progress" });
   await expect(
-    page
-      .getByRole("region", { name: "Flow preview" })
-      .getByRole("button", { name: /^Condition 1\b/ }),
-  ).toContainText("Status is In progress");
+    page.getByRole("region", { name: "If", exact: true }),
+  ).toHaveAccessibleDescription("Status is In progress");
 
   await page.getByRole("button", { name: "Save triggers" }).click();
   await expect.poll(sandbox.documentWrites).toBe(1);
@@ -126,7 +151,9 @@ test("a reload offers to restore unsaved trigger edits", async ({ page }) => {
     .filter({ hasText: "Restore unsaved trigger changes?" });
   // Nothing can be typed over the kept edits while the prompt waits.
   await expect(name).toBeDisabled();
-  await expect(page.getByRole("switch", { name: "Trigger On" })).toBeDisabled();
+  await expect(
+    page.getByRole("switch", { name: "Trigger status" }),
+  ).toBeDisabled();
   await prompt.getByRole("button", { name: "Restore", exact: true }).click();
   await expect(prompt).toHaveCount(0);
   await expect(name).toBeEnabled();
@@ -194,22 +221,20 @@ test("unsaved triggers are marked, a step Save will refuse warns first, and Ctrl
 }) => {
   const sandbox = await openTriggers(page);
   const list = page.getByRole("navigation", { name: "Trigger list" });
-  const flow = page.getByRole("region", { name: "Flow preview" });
+  const condition = page.getByRole("group", { name: "Condition 1" });
   await expect(list.getByText("Unsaved", { exact: true })).toHaveCount(0);
 
-  // A required field with no value: the flow says so before Save.
+  // A required field with no value: the condition says so before Save.
   await page
     .getByLabel("Condition 1 field")
     .selectOption({ label: "Request number" });
   await expect(list.getByText("Unsaved", { exact: true })).toHaveCount(1);
-  await expect(
-    flow.getByRole("button", { name: /^Condition 1\b/ }),
-  ).toContainText("Request number is required.");
+  await expect(condition).toHaveAccessibleDescription(
+    "Request number is required.",
+  );
 
   await page.getByLabel("Condition 1 field").selectOption({ label: "Title" });
-  await expect(
-    flow.getByRole("button", { name: /^Condition 1\b/ }),
-  ).not.toContainText("is required");
+  await expect(condition).not.toContainText("is required");
   await page.keyboard.press("ControlOrMeta+s");
   await expect.poll(sandbox.documentWrites).toBe(1);
   await expect(list.getByText("Unsaved", { exact: true })).toHaveCount(0);
@@ -266,25 +291,175 @@ test("on a phone, choosing a trigger shows its detail first, with Back", async (
   const sandbox = await openAuthenticatedSandbox(page);
   await page.goto("/sandbox?section=triggers");
   const list = page.getByRole("navigation", { name: "Trigger list" });
+  const detail = page.getByRole("region", { name: "Trigger details" });
   const name = sandbox.document().triggers[0]!.name;
   await expect(list).toBeVisible();
-  await expect(
-    page.getByRole("region", { name: "Trigger settings" }),
-  ).toBeHidden();
+  await expect(detail).toBeHidden();
 
   await list.getByRole("button", { name }).click();
   await expect(list).toBeHidden();
   await expect(page.getByRole("heading", { name, level: 2 })).toBeFocused();
+  // The detail is the rail: each step carries its own one-line summary.
   await expect(
-    page.getByRole("region", { name: "Trigger summary" }),
-  ).toBeVisible();
-  await expect(page.getByRole("region", { name: "Flow preview" })).toBeHidden();
-  await expect(
-    page.getByRole("region", { name: "Trigger settings" }),
-  ).toBeVisible();
+    detail.getByRole("region", { name: "When", exact: true }),
+  ).toHaveAccessibleDescription("An item is added in Service requests");
+  await expect(detail.getByLabel("Trigger name")).toBeVisible();
 
   await page
     .getByRole("button", { name: "Back to Triggers", exact: true })
     .click();
   await expect(list.getByRole("button", { name })).toBeFocused();
+});
+
+test("the trigger list shows 40px rows with a state word, and All, On and Off filter it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openTriggers(page, listDesign);
+  const list = page.getByRole("navigation", { name: "Trigger list" });
+  const rows = list.getByRole("button");
+  await expect(rows).toHaveCount(3);
+  for (const row of await rows.all()) {
+    await expect(row).toContainText(/^(On|Off)/);
+    expect((await row.boundingBox())!.height).toBeCloseTo(40, 0);
+  }
+  const weekly = list.getByRole("button", { name: /Weekly maintenance/ });
+  await expect(weekly).toContainText("Off");
+  await expect(weekly).toContainText("Schedule");
+  // A long name stays on one line, and its full text is still there.
+  await expect(
+    list.getByText("Flag status changes for the operations follow-up review", {
+      exact: true,
+    }),
+  ).toHaveAttribute(
+    "title",
+    "Flag status changes for the operations follow-up review",
+  );
+
+  const status = page.getByRole("group", { name: "Status", exact: true });
+  await expect(status.getByRole("button", { pressed: true })).toHaveText(
+    "All 3",
+  );
+  await status.getByRole("button", { name: /^Off/ }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(weekly).toBeVisible();
+  await status.getByRole("button", { name: /^On/ }).click();
+  await expect(rows).toHaveCount(2);
+  await expect(weekly).toHaveCount(0);
+
+  // The search narrows the rows; the counts stay the whole list.
+  await status.getByRole("button", { name: /^All/ }).click();
+  await page.getByRole("searchbox", { name: "Search triggers" }).fill("flag");
+  await expect(rows).toHaveCount(1);
+  await expect(status.getByRole("button", { name: /^On/ })).toHaveText("On 2");
+});
+
+test("Status says On or Off beside its switch, and the list row follows", async ({
+  page,
+}) => {
+  const sandbox = await openTriggers(page, listDesign);
+  const list = page.getByRole("navigation", { name: "Trigger list" });
+  await list.getByRole("button", { name: /Weekly maintenance/ }).click();
+  const toggle = page.getByRole("switch", { name: "Trigger status" });
+  await expect(toggle).not.toBeChecked();
+  await expect(toggle).toHaveAccessibleDescription(
+    "Off · won't run after publish",
+  );
+
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await expect(toggle).toHaveAccessibleDescription("On");
+  await expect(
+    list.getByRole("button", { name: /Weekly maintenance/ }),
+  ).toContainText(/^On/);
+  expect(sandbox.documentWrites()).toBe(0);
+});
+
+test("the rail edits each step in place and its summary follows", async ({
+  page,
+}) => {
+  const sandbox = await openTriggers(page);
+  const when = page.getByRole("region", { name: "When", exact: true });
+  const ifStep = page.getByRole("region", { name: "If", exact: true });
+  const then = page.getByRole("region", { name: "Then", exact: true });
+  await expect(when).toHaveAccessibleDescription(
+    "An item is added in Service requests",
+  );
+  await expect(then.getByRole("group", { name: "Action 1" })).toBeVisible();
+  await then.getByRole("button", { name: "Add action" }).click();
+  await expect(then.getByLabel("Set field target")).toBeVisible();
+
+  // The fields live in their step: the event changes the When rows.
+  await when.getByLabel("Event", { exact: true }).selectOption("schedule");
+  await expect(when).toHaveAccessibleDescription(
+    "Daily at 09:00 in Service requests",
+  );
+  await expect(when.getByLabel("Frequency")).toHaveValue("daily");
+  await expect(when.getByLabel("Weekday")).toHaveCount(0);
+  await when.getByLabel("Frequency").selectOption("weekly");
+  await expect(when.getByLabel("Weekday")).toHaveValue("1");
+  await expect(when).toHaveAccessibleDescription(
+    "Every Monday at 09:00 in Service requests",
+  );
+
+  // All or Any shows only from two conditions.
+  await expect(ifStep.getByLabel("Condition group operator")).toHaveCount(0);
+  await ifStep.getByRole("button", { name: "Add condition" }).click();
+  await expect(
+    ifStep.getByRole("group", { name: "Condition 2" }),
+  ).toBeVisible();
+  await ifStep.getByLabel("Condition group operator").selectOption("any");
+  await expect(ifStep).toHaveAccessibleDescription(/ or /);
+  await ifStep.getByRole("button", { name: "Remove condition 2" }).click();
+  await expect(ifStep.getByRole("group", { name: "Condition 2" })).toHaveCount(
+    0,
+  );
+  await expect(ifStep.getByLabel("Condition group operator")).toHaveCount(0);
+  expect(sandbox.documentWrites()).toBe(0);
+});
+
+test("opening another trigger starts its detail at the top", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await openTriggers(page, listDesign);
+  const add = page.getByRole("button", { name: "Add condition" });
+  for (let count = 0; count < 5; count += 1) await add.click();
+  await add.scrollIntoViewIfNeeded();
+  await expect(page.getByLabel("Trigger name")).not.toBeInViewport();
+
+  await page
+    .getByRole("navigation", { name: "Trigger list" })
+    .getByRole("button", { name: /Weekly maintenance/ })
+    .click();
+  await expect(page.getByLabel("Trigger name")).toHaveValue(
+    "Weekly maintenance review",
+  );
+  await expect(page.getByLabel("Trigger name")).toBeInViewport();
+});
+
+test("opening another trigger keeps unsaved edits, marked and counted, without a write", async ({
+  page,
+}) => {
+  const sandbox = await openTriggers(page, listDesign);
+  const list = page.getByRole("navigation", { name: "Trigger list" });
+  const name = page.getByLabel("Trigger name");
+  await name.fill("Urgent request alert, edited");
+  await list.getByRole("button", { name: /Weekly maintenance/ }).click();
+  await expect(name).toHaveValue("Weekly maintenance review");
+
+  const edited = list.getByRole("button", { name: /edited/ });
+  await expect(edited).toContainText("Unsaved");
+  await expect(
+    page.getByText("1 unsaved change", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Save triggers" }),
+  ).toBeVisible();
+  await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
+    /· 1 unsaved trigger change$/,
+  );
+  await edited.click();
+  await expect(name).toHaveValue("Urgent request alert, edited");
+  expect(sandbox.documentWrites()).toBe(0);
 });

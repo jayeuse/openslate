@@ -1,15 +1,15 @@
 import { expect, test } from "@playwright/test";
+import { triggerRunStatus } from "../../../src/components/systems/sandbox/components/trigger-studio";
 import {
   addTriggerAction,
   addTriggerCondition,
-  triggerRunStatus,
   triggerPublicationBlockers,
   fieldReferenceOptionValue,
   scheduleFrequencyChange,
   defaultTrigger,
   sandboxFieldsAreDirectionallyCompatible,
   validateFieldLiteral,
-} from "../../../src/components/systems/sandbox/components/trigger-studio";
+} from "../../../src/components/systems/sandbox/domain/trigger-rules";
 import type {
   SandboxTriggerEvent,
   SandboxFieldReference,

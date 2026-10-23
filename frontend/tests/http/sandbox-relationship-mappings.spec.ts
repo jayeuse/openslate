@@ -1591,7 +1591,7 @@ test("an empty trigger list explains how to start and offers no save", async ({
   await openAuthenticatedSandbox(page, initialDesign);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
 
-  const settings = page.getByRole("region", { name: "Trigger settings" });
+  const settings = page.getByRole("region", { name: "Trigger details" });
   await expect(settings).toContainText(
     "Select or create a trigger to edit its settings.",
   );
@@ -2947,26 +2947,25 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
   await expect(clear).toBeEnabled();
 });
 
-test("the trigger flow preview follows the unsaved rule draft", async ({
+test("the trigger rail summaries follow the unsaved rule draft", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
 
-  const flow = page.getByRole("region", { name: "Flow preview" });
-  // On desktop the flow carries every fact; the summary is for phones.
+  const settings = page.getByRole("region", { name: "Trigger details" });
+  const when = settings.getByRole("region", { name: "When", exact: true });
+  const ifStep = settings.getByRole("region", { name: "If", exact: true });
+  const then = settings.getByRole("region", { name: "Then", exact: true });
+  // Each step carries its own summary; no separate summary or preview.
   await expect(
     page.getByRole("region", { name: "Trigger summary" }),
   ).toHaveCount(0);
-  const settings = page.getByRole("region", { name: "Trigger settings" });
-  await expect(settings).toBeVisible();
-  await expect(flow.getByRole("button", { name: /^When ·/ })).toBeVisible();
+  await expect(when).toBeVisible();
   await expect(
-    flow.getByRole("button", { name: /^Condition 1\b/ }),
+    ifStep.getByRole("group", { name: "Condition 1" }),
   ).toBeVisible();
-  await expect(
-    flow.getByRole("button", { name: /^Then · Action 1\b/ }),
-  ).toBeVisible();
+  await expect(then.getByRole("group", { name: "Action 1" })).toBeVisible();
 
   const savedTriggers = sandbox.document().triggers;
   await page
@@ -2974,53 +2973,18 @@ test("the trigger flow preview follows the unsaved rule draft", async ({
     .selectOption({ label: "Priority" });
   const conditionValue = settings.getByLabel("Value", { exact: true }).first();
   await conditionValue.fill("Needs immediate review");
-  await expect(
-    flow.getByRole("button", { name: /^Condition 1\b/ }),
-  ).toContainText("Needs immediate review");
+  await expect(ifStep).toHaveAccessibleDescription(
+    "Priority is Needs immediate review",
+  );
   expect(sandbox.document().triggers).toEqual(savedTriggers);
 
-  // All or Any appears only once there are two conditions.
-  await expect(page.getByLabel("Condition group operator")).toHaveCount(0);
-  await page.getByRole("button", { name: "Add condition" }).click();
-  await expect(
-    flow.getByRole("button", { name: /^Condition 2\b/ }),
-  ).toBeVisible();
-  await page.getByLabel("Condition group operator").selectOption("any");
-  await expect(flow).toContainText(/any condition/i);
-  await page.getByRole("button", { name: "Remove condition" }).last().click();
-  await expect(
-    flow.getByRole("button", { name: /^Condition 2\b/ }),
-  ).toHaveCount(0);
-
   await page.getByRole("button", { name: "Add action" }).click();
-  await expect(
-    flow.getByRole("button", { name: /^Then · Action 2\b/ }),
-  ).toBeVisible();
+  await expect(then.getByRole("group", { name: "Action 2" })).toBeVisible();
   await page.getByRole("button", { name: "Remove action" }).last().click();
-  await expect(
-    flow.getByRole("button", { name: /^Then · Action 2\b/ }),
-  ).toHaveCount(0);
+  await expect(then.getByRole("group", { name: "Action 2" })).toHaveCount(0);
 
   await page.getByLabel("Event", { exact: true }).selectOption("schedule");
-  await expect(flow.getByRole("button", { name: /^When ·/ })).toContainText(
-    /schedule/i,
-  );
-});
-
-test("keyboard activation on a trigger flow node focuses its editor", async ({
-  page,
-}) => {
-  await openAuthenticatedSandbox(page);
-  await page.getByRole("link", { name: "Triggers", exact: true }).click();
-
-  const flow = page.getByRole("region", { name: "Flow preview" });
-  const condition = page.getByLabel("Condition 1 field");
-  const conditionNode = flow.getByRole("button", {
-    name: /^Condition 1\b/,
-  });
-  await conditionNode.focus();
-  await page.keyboard.press("Enter");
-  await expect(condition).toBeFocused();
+  await expect(when).toHaveAccessibleDescription(/^Daily at 09:00 in /);
 });
 
 test("unsaved Service request follow-up trigger draft fits the original viewport and theme matrix", async ({
@@ -3029,13 +2993,13 @@ test("unsaved Service request follow-up trigger draft fits the original viewport
   await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
   await expect(
-    page.getByRole("region", { name: "Flow preview" }),
+    page.getByRole("region", { name: "Trigger details" }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "New trigger" }).click();
   await page.getByLabel("Trigger name").fill("Service request follow-up");
   await page.getByLabel("Event", { exact: true }).selectOption("field-changed");
-  const settings = page.getByRole("region", { name: "Trigger settings" });
+  const settings = page.getByRole("region", { name: "Trigger details" });
   await settings
     .getByLabel("Event module")
     .selectOption({ label: "Service requests" });
@@ -3083,12 +3047,11 @@ test("trigger panels resize with their requested minimum widths and remain usabl
   await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
   const list = page.getByRole("complementary", { name: "Trigger list" });
-  const settings = page.getByRole("region", { name: "Trigger settings" });
+  // Two panes since the relayout (S5): one handle sits between the list and
+  // the trigger detail, which holds the settings.
+  const settings = page.getByRole("region", { name: "Trigger details" });
   const listHandle = page.getByRole("separator", {
     name: "Resize trigger list",
-  });
-  const settingsHandle = page.getByRole("separator", {
-    name: "Resize trigger settings",
   });
   await expect(listHandle).toBeVisible();
   const width = async (locator: typeof list) =>
@@ -3109,9 +3072,9 @@ test("trigger panels resize with their requested minimum widths and remain usabl
   await drag(listHandle, 120);
   await expect.poll(() => width(list)).toBeGreaterThan(initialListWidth + 80);
   await drag(listHandle, -1500);
-  await expect.poll(() => width(list)).toBeCloseTo(18.2 * rem, 0);
-  await drag(settingsHandle, 1500);
-  await expect.poll(() => width(settings)).toBeCloseTo(13 * rem, 0);
+  await expect.poll(() => width(list)).toBeCloseTo(20 * rem, 0);
+  await drag(listHandle, 1500);
+  await expect.poll(() => width(settings)).toBeCloseTo(28 * rem, 0);
   await settings
     .getByLabel("Trigger name")
     .fill("Narrow settings stay editable");
@@ -3128,7 +3091,7 @@ test("trigger panels resize with their requested minimum widths and remain usabl
     )
     .toBeLessThanOrEqual(0);
   const narrowWidth = await width(settings);
-  await settingsHandle.focus();
+  await listHandle.focus();
   await page.keyboard.press("ArrowLeft");
   await expect.poll(() => width(settings)).toBeGreaterThan(narrowWidth);
   for (const height of [768, 1000]) {
@@ -3150,7 +3113,7 @@ test("trigger panels resize with their requested minimum widths and remain usabl
     ).toBeVisible();
   }
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(settingsHandle).toBeHidden();
+  await expect(listHandle).toBeHidden();
   await expect(settings.getByLabel("Trigger name")).toHaveValue(
     "Narrow settings stay editable",
   );
@@ -4946,7 +4909,7 @@ test("Trigger Studio switch preserves geometry and its 44 pixel hit target with 
   });
   const sandbox = await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
-  const toggle = page.getByRole("switch", { name: "Trigger On" });
+  const toggle = page.getByRole("switch", { name: "Trigger status" });
   await expect(toggle).toBeVisible();
   const track = await toggle.boundingBox();
   const thumb = await toggle

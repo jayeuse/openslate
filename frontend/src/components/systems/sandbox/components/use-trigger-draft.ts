@@ -8,7 +8,10 @@ import type {
   SandboxDocumentV4,
   SandboxTrigger,
 } from "../domain/document-types";
-import { triggerLiteralError, unsavedTriggerChanges } from "./trigger-studio";
+import {
+  triggerLiteralError,
+  unsavedTriggerChanges,
+} from "../domain/trigger-rules";
 
 /**
  * Unsaved trigger edits. The page owns them, so leaving the Triggers view

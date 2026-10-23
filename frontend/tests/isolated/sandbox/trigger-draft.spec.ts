@@ -5,7 +5,7 @@ import {
   triggerDraftStorageKey,
   writeKeptTriggerDraft,
 } from "../../../src/components/systems/sandbox/components/use-trigger-draft";
-import { triggerStepErrors } from "../../../src/components/systems/sandbox/components/trigger-studio";
+import { triggerStepErrors } from "../../../src/components/systems/sandbox/domain/trigger-rules";
 import { triggerEditsHoldMove } from "../../../src/components/systems/sandbox/helpers/work-in-progress";
 import {
   configuredSandboxDesign,
