@@ -409,7 +409,7 @@ function RunResult({
       </ol>
       <TestComparison key={run.id} design={design} run={run} />
       <div className="border-border grid border-t pt-1">
-        <Disclosure label="Inputs used for this result">
+        <Disclosure label="Values used">
           <dl className="grid max-h-72 gap-x-4 gap-y-2 overflow-y-auto text-sm [overflow-wrap:anywhere] @min-[30rem]/result:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
             {Object.entries(run.input.values).map(([id, value]) => (
               <div key={id} className="contents">
@@ -424,7 +424,7 @@ function RunResult({
           </dl>
         </Disclosure>
         {run.result.routes.length > 0 && (
-          <Disclosure label="Relationship routing">
+          <Disclosure label="Linked records used">
             <ul className="text-muted-foreground space-y-2 text-sm">
               {run.result.routes.map((route, index) => (
                 <li key={index}>

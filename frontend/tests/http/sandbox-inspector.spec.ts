@@ -287,7 +287,7 @@ test("with nothing selected, Properties summarizes the design and opens what nee
   await attention
     .getByRole("button", { name: "Review: Unpublished changes" })
     .click();
-  const review = page.getByRole("dialog", { name: "Review and publish" });
+  const review = page.getByRole("dialog", { name: "Review & Publish" });
   await expect(review).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(review).toBeHidden();
@@ -345,6 +345,10 @@ test("a design with nothing to attend to says All clear", async ({ page }) => {
     .getByRole("region", { name: "Needs attention" });
   await expect(attention.getByRole("listitem")).toHaveCount(0);
   await expect(attention).toContainText("All clear");
+  // The header has no attention control when nothing needs it (S18).
+  await expect(
+    page.getByRole("button", { name: /needs? attention$/ }),
+  ).toHaveCount(0);
 });
 
 /** The design's frames, as screen boxes, and the canvas frame around them. */
@@ -448,6 +452,41 @@ test("Structure follows a selection on the canvas", async ({ page }) => {
   ).toBeVisible();
 });
 
+// A pick in Structure brings the item into view on the canvas; an item
+// already in view stays where it is.
+test("a Structure pick brings its module into view on the canvas", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const design = structuredClone(configuredSandboxDesign);
+  design.modules.push({
+    id: "sample-invoices",
+    department: "sample-commercial",
+    name: "Invoices",
+    closed: false,
+    fields: [],
+    x: 3000,
+    y: 0,
+  });
+  await openAuthenticatedSandbox(page, design);
+  const viewport = page.locator(".react-flow__viewport");
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  const tree = page.getByRole("tree", { name: "Structure" });
+  await expect.poll(() => nodeInView(page, "sample-requests")).toBe(true);
+  const before = await viewport.getAttribute("style");
+  await tree
+    .getByRole("treeitem", { name: "Service requests", exact: true })
+    .click();
+  await expect(viewport).toHaveAttribute("style", before!);
+
+  await expect.poll(() => nodeInView(page, "sample-invoices")).toBe(false);
+  await tree.getByRole("treeitem", { name: "Invoices", exact: true }).click();
+  await expect.poll(() => nodeInView(page, "sample-invoices")).toBe(true);
+});
+
 // One relationships list: each row carries its actions in a quiet menu, and
 // Advanced no longer repeats the list (F7).
 test("relationship rows carry their actions and the list shows once", async ({
@@ -465,6 +504,27 @@ test("relationship rows carry their actions and the list shows once", async ({
   await expect(
     inspector.getByText("Uses equipment", { exact: true }),
   ).toHaveCount(1);
+  // Plain words (Phase 7, G1): the kind reads "Many matches".
+  await expect(inspector.getByText(/Equipment · Many matches$/)).toBeVisible();
+  await inspector
+    .getByRole("button", { name: "Connect modules", exact: true })
+    .click();
+  const connect = page.getByRole("dialog", { name: "Connect modules" });
+  const kind = connect.getByLabel("Relationship type");
+  await expect(kind.locator("option")).toHaveText([
+    "One match each",
+    "Many matches",
+    "Many on both sides",
+  ]);
+  await expect(kind).toHaveAccessibleDescription(
+    "One item can have many matches",
+  );
+  await kind.selectOption({ label: "Many on both sides" });
+  await expect(kind).toHaveValue("Many-to-many");
+  await expect(kind).toHaveAccessibleDescription("Items can have many matches");
+  await connect
+    .getByRole("button", { name: "Close connect modules", exact: true })
+    .click();
 
   await inspector
     .getByRole("button", {
@@ -597,7 +657,9 @@ test("opening a blocker for a trigger that is on shows its row under the Off fil
   await page.goto("/sandbox?section=triggers&status=off");
   const list = page.getByRole("navigation", { name: "Trigger list" });
   await expect(list.getByRole("button")).toHaveCount(1);
+  await page.getByRole("button", { name: "2 need attention" }).click();
   await page
+    .getByRole("dialog", { name: "Needs attention" })
     .getByRole("listitem")
     .filter({ hasText: "Urgent request alert:" })
     .getByRole("button", { name: "Open trigger", exact: true })

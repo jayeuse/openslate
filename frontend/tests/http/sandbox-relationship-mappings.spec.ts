@@ -20,6 +20,7 @@ import {
   historyRegions,
   historyVersionFixture,
   installLifecycleRoutes,
+  expectPinnedDialog,
   lifecycleImpactFixture,
   lifecycleReview,
   liveBinding,
@@ -386,6 +387,14 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
     exact: true,
   });
   await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByLabel("Type the module name", { exact: true }),
+  ).toBeVisible();
+  await expectPinnedDialog(
+    dialog,
+    "Close review",
+    dialog.getByRole("button", { name: "Close module", exact: true }),
+  );
   await dialog
     .getByLabel("Type the module name", { exact: true })
     .fill(targetModule.name);
@@ -452,6 +461,10 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
   async function confirmModuleChange(action: "Close module" | "Reopen module") {
     await page.getByRole("button", { name: action, exact: true }).click();
     const review = page.getByRole("dialog", { name: action, exact: true });
+    if (action === "Reopen module")
+      await expect(review).toHaveAccessibleDescription(
+        "Reopens this and everything its close included.",
+      );
     if (action === "Close module") {
       await review
         .getByLabel("Type the module name", { exact: true })
@@ -2151,7 +2164,9 @@ test("a trigger issue opens the trigger it identifies", async ({ page }) => {
     ],
   });
 
+  await page.getByRole("button", { name: "3 need attention" }).click();
   await page
+    .getByRole("dialog", { name: "Needs attention" })
     .getByRole("listitem")
     .filter({ hasText: "Review the follow-up trigger" })
     .getByRole("button", { name: "Open trigger", exact: true })
@@ -2252,11 +2267,16 @@ test("the publish review groups changes and keeps Publish in reach", async ({
   );
 
   await page.getByRole("button", { name: "Review & Publish" }).click();
-  const dialog = page.getByRole("dialog", { name: "Review and publish" });
+  // The title matches the button, and the summary counts each kind (F11).
+  const dialog = page.getByRole("dialog", { name: "Review & Publish" });
+  await expect(
+    dialog.getByRole("heading", { name: "Review & Publish", exact: true }),
+  ).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Changes" })).toBeVisible();
   await expect(
     dialog.getByText(
-      "14 changes: 6 departments, 1 module, 6 fields, 1 relationship",
+      "6 department changes · 1 module change · 6 field changes · 1 relationship change",
+      { exact: true },
     ),
   ).toBeVisible();
 
@@ -2297,6 +2317,21 @@ test("the publish review groups changes and keeps Publish in reach", async ({
   await expect(
     dialog.getByRole("button", { name: "Publish changes" }),
   ).toBeInViewport();
+  // The password is its own label-left row above Cancel and Publish.
+  const [label, password, publish] = await Promise.all(
+    [
+      dialog.getByText("Your password", { exact: true }),
+      dialog.getByLabel("Your password"),
+      dialog.getByRole("button", { name: "Publish changes" }),
+    ].map((part) => part.boundingBox()),
+  );
+  expect(label!.x + label!.width).toBeLessThanOrEqual(password!.x);
+  expect(
+    Math.abs(
+      label!.y + label!.height / 2 - (password!.y + password!.height / 2),
+    ),
+  ).toBeLessThan(8);
+  expect(password!.y + password!.height).toBeLessThanOrEqual(publish!.y);
 });
 
 test("a line to another department is drawn as a handoff", async ({ page }) => {
@@ -2444,7 +2479,7 @@ test("a relationship can target a module in another department and publish", asy
   await expect(page.getByText(/needs? attention/)).toHaveCount(0);
 
   await page.getByRole("button", { name: "Review & Publish" }).click();
-  const review = page.getByRole("dialog", { name: "Review and publish" });
+  const review = page.getByRole("dialog", { name: "Review & Publish" });
   await review.getByLabel("Your password").fill("local password");
   await review.getByRole("button", { name: "Publish changes" }).click();
   await expect(
@@ -2496,11 +2531,12 @@ test("a rejected password is reported beside Publish, not above the list", async
     }),
   );
   await page.getByRole("button", { name: "Review & Publish" }).click();
-  const dialog = page.getByRole("dialog", { name: "Review and publish" });
+  const dialog = page.getByRole("dialog", { name: "Review & Publish" });
   const password = dialog.getByLabel("Your password");
-  await expect(
-    dialog.getByText("Enter your password to publish."),
-  ).toBeVisible();
+  // The team line is the password's hint, pinned with it.
+  await expect(password).toHaveAccessibleDescription(
+    "Your team sees these changes as soon as you publish.",
+  );
 
   await password.fill("not the password");
   await dialog.getByRole("button", { name: "Publish changes" }).click();
@@ -2552,7 +2588,7 @@ test("a successful Publish plays the look's title signature once", async ({
   await expect(title).not.toHaveAttribute("data-signature");
 
   await page.getByRole("button", { name: "Review & Publish" }).click();
-  const dialog = page.getByRole("dialog", { name: "Review and publish" });
+  const dialog = page.getByRole("dialog", { name: "Review & Publish" });
   await dialog.getByLabel("Your password").fill("local password");
   await dialog.getByRole("button", { name: "Publish changes" }).click();
 

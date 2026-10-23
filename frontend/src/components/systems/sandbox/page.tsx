@@ -2,17 +2,10 @@
 
 import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Redo2, Undo2 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   subscribeWorkspaceLifecycleSettings,
@@ -22,15 +15,9 @@ import { ApiContractError, ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { reportDone, reportError, reportUndoable } from "@/lib/feedback";
 import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import {
   accessNavigationFor,
@@ -112,6 +99,10 @@ import { DisabledReason } from "@/components/ui/disabled-reason";
 import { TestWorkspace } from "./components/test-workspace";
 import { ReviewPublishDialog } from "./components/review-publish-dialog";
 import { SandboxHeaderActions } from "./components/sandbox-header-actions";
+import {
+  SandboxHistoryButtons,
+  SandboxPageHeader,
+} from "./components/sandbox-page-header";
 import { SandboxLifecycleDialog } from "./components/lifecycle-dialog";
 import {
   sandboxBindingsOptions,
@@ -298,45 +289,6 @@ function SandboxSkeleton({ build }: { build: boolean }) {
         <Skeleton className="h-4 w-12" />
       </div>
     </>
-  );
-}
-
-/**
- * Undo or Redo: a quiet icon button whose tooltip names it. With nothing to
- * step through, it stays focusable and its tooltip says why instead.
- */
-function HistoryButton({
-  label,
-  busy,
-  emptyReason,
-  onClick,
-  children,
-}: {
-  label: string;
-  busy: boolean;
-  emptyReason: string | null;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  const button = (
-    <Button
-      variant="ghost"
-      size="icon"
-      aria-label={label}
-      className="max-xl:size-11"
-      disabled={busy || emptyReason !== null}
-      onClick={onClick}
-    >
-      {children}
-    </Button>
-  );
-  if (!busy && emptyReason !== null)
-    return <DisabledReason reason={emptyReason}>{button}</DisabledReason>;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={button} />
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -1371,6 +1323,23 @@ export default function SandboxPage() {
     triggerDraft.pending ||
     triggerDraft.kept !== null ||
     designerDraftDirty;
+  // What needs attention, as the header list and the Build Summary word it.
+  const attentionIssues = issues.map((issue) => ({
+    key: `${issue.code}:${issue.targetId ?? ""}:${issue.message}`,
+    message: issue.message,
+    verb: issueActionLabel(issue),
+    issue,
+  }));
+  const historyButtons =
+    section === "Build" ? (
+      <SandboxHistoryButtons
+        busy={historyBusy}
+        canUndo={Boolean(session?.history.past.length)}
+        canRedo={Boolean(session?.history.future.length)}
+        onUndo={() => void undo()}
+        onRedo={() => void redo()}
+      />
+    ) : null;
   return (
     <section
       data-sandbox-page
@@ -1445,34 +1414,19 @@ export default function SandboxPage() {
           </Button>
         </Alert>
       ) : null}
-      <header className="slim-ui xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4">
-        <div className="flex flex-col gap-3 xl:contents">
-          {/* The title names the section (the breadcrumb names the
-              Sandbox); from 1280px the chip sits under it. */}
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 xl:flex-col xl:items-start">
-            <h1
-              key={publishCount}
-              data-slot="page-title"
-              data-signature={publishCount > 0 ? "play" : undefined}
-              className="text-xl font-semibold tracking-tight sm:text-2xl"
-            >
-              {section}
-            </h1>
-            {loading ? null : (
-              // One save-state chip: the publish state, then what is
-              // happening to the draft right now (the Four Moments Rule).
-              <Badge
-                data-sandbox-save-state
-                role="status"
-                variant={
-                  conflict
-                    ? "destructive"
-                    : triggerDraft.changes > 0
-                      ? "warning"
-                      : "outline"
-                }
-              >
-                {conflict
+      <SandboxPageHeader
+        section={section}
+        publishCount={publishCount}
+        chip={
+          loading
+            ? null
+            : {
+                variant: conflict
+                  ? "destructive"
+                  : triggerDraft.changes > 0
+                    ? "warning"
+                    : "outline",
+                text: conflict
                   ? "Not saved"
                   : `${status.label} · ${
                       saving
@@ -1482,74 +1436,47 @@ export default function SandboxPage() {
                               triggerDraft.changes === 1 ? "change" : "changes"
                             }`
                           : "Saved"
-                    }`}
-              </Badge>
-            )}
-          </div>
-          <div className="flex shrink-0 gap-2">
-            {section === "Build" ? (
-              <>
-                <HistoryButton
-                  label="Undo"
-                  busy={historyBusy}
-                  emptyReason={
-                    session?.history.past.length ? null : "Nothing to undo."
-                  }
-                  onClick={() => void undo()}
-                >
-                  <Undo2 />
-                </HistoryButton>
-                <HistoryButton
-                  label="Redo"
-                  busy={historyBusy}
-                  emptyReason={
-                    session?.history.future.length ? null : "Nothing to redo."
-                  }
-                  onClick={() => void redo()}
-                >
-                  <Redo2 />
-                </HistoryButton>
-              </>
-            ) : null}
-            <DisabledReason reason={reviewReason}>
-              <Button
-                disabled={reviewDisabled}
-                onClick={() => setReviewOpen(true)}
-              >
-                Review &amp; Publish
-              </Button>
-            </DisabledReason>
-            <SandboxHeaderActions
-              versionsRefreshKey={versionsRefreshKey}
-              versionCapacity={versionCapacity}
-              pending={
-                loading ||
-                commandBusy ||
-                publicationPending ||
-                Boolean(conflict) ||
-                designerDraftDirty ||
-                testPending ||
-                triggerDraft.dirty ||
-                triggerDraft.pending ||
-                triggerDraft.kept !== null
+                    }`,
               }
-              templatesOpen={templatesOpen}
-              onTemplatesOpenChange={setTemplatesOpen}
-              checkpointOpen={checkpointOpen}
-              onCheckpointOpenChange={setCheckpointOpen}
-              canCheckpoint={
-                design.departments.length > 0 || design.modules.length > 0
-              }
-              canDiscard={status.publishable}
-              hasPublish={session?.publishedHash !== undefined}
-              onCreateCheckpoint={checkpoint}
-              onImport={importFile}
-              onApplyTemplate={applyTemplate}
-              onDiscard={discardDraftChanges}
-            />
-          </div>
-        </div>
-      </header>
+        }
+        attention={{ issues: attentionIssues, onOpen: selectIssue }}
+        history={historyButtons}
+        review={{
+          reason: reviewReason,
+          disabled: reviewDisabled,
+          open: () => setReviewOpen(true),
+        }}
+        menu={
+          <SandboxHeaderActions
+            versionsRefreshKey={versionsRefreshKey}
+            versionCapacity={versionCapacity}
+            pending={
+              loading ||
+              commandBusy ||
+              publicationPending ||
+              Boolean(conflict) ||
+              designerDraftDirty ||
+              testPending ||
+              triggerDraft.dirty ||
+              triggerDraft.pending ||
+              triggerDraft.kept !== null
+            }
+            templatesOpen={templatesOpen}
+            onTemplatesOpenChange={setTemplatesOpen}
+            checkpointOpen={checkpointOpen}
+            onCheckpointOpenChange={setCheckpointOpen}
+            canCheckpoint={
+              design.departments.length > 0 || design.modules.length > 0
+            }
+            canDiscard={status.publishable}
+            hasPublish={session?.publishedHash !== undefined}
+            onCreateCheckpoint={checkpoint}
+            onImport={importFile}
+            onApplyTemplate={applyTemplate}
+            onDiscard={discardDraftChanges}
+          />
+        }
+      />
       <LoadingRegion
         // Only the first load shows the skeleton; a refresh (after Publish,
         // Retry, or a restore) keeps the builder on screen.
@@ -1609,40 +1536,6 @@ export default function SandboxPage() {
             </div>
           </Alert>
         ) : null}
-        {issues.length ? (
-          <Alert variant="warning" role="status" className="slim-ui">
-            <p>
-              {issues.length === 1
-                ? "1 item needs attention."
-                : `${issues.length} items need attention.`}
-            </p>
-            {/* The fact as text, then a short button that opens it, as in
-                the review's blocker list. */}
-            <ul className="mt-2 grid gap-2">
-              {issues.slice(0, 3).map((issue, index) => (
-                <li
-                  key={`${issue.code}-${issue.targetId ?? ""}-${issue.message}`}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1"
-                >
-                  <span id={`sandbox-issue-${index}`}>{issue.message}</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-describedby={`sandbox-issue-${index}`}
-                    onClick={() => selectIssue(issue)}
-                  >
-                    {issueActionLabel(issue)}
-                  </Button>
-                </li>
-              ))}
-              {issues.length > 3 ? (
-                <li className="text-muted-foreground">
-                  {issues.length - 3} more after these.
-                </li>
-              ) : null}
-            </ul>
-          </Alert>
-        ) : null}
         {section === "Build" ? (
           <Designer
             key={`${requestedSelection}-${sandboxGeneration}`}
@@ -1674,6 +1567,7 @@ export default function SandboxPage() {
             bindings={bindingsReady ? bindingsQuery.data!.items : null}
             purgeEnabled={purgeEnabled}
             onLifecycle={requestLifecycle}
+            phoneHistory={historyButtons}
             onDraftStateChange={setDesignerDraftDirty}
             attention={{
               unpublished: status.publishable,
@@ -1682,12 +1576,7 @@ export default function SandboxPage() {
                 disabled: reviewDisabled,
                 open: () => setReviewOpen(true),
               },
-              issues: issues.map((issue) => ({
-                key: `${issue.code}:${issue.targetId ?? ""}:${issue.message}`,
-                message: issue.message,
-                verb: issueActionLabel(issue),
-                issue,
-              })),
+              issues: attentionIssues,
               onOpenIssue: selectIssue,
               onShowOffTriggers: () =>
                 navigate("Triggers", false, false, (params) => {

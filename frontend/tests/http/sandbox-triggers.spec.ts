@@ -106,6 +106,13 @@ test("leaving with unsaved triggers asks Save, Discard, or Stay", async ({
   await page.getByLabel("Trigger name").fill("Stay with me");
   await build.click();
   await expect(dialog).toContainText("Discard removes 1 unsaved change.");
+  // The named close button stays, like Stay.
+  await dialog
+    .getByRole("button", { name: "Close and stay", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByLabel("Trigger name")).toHaveValue("Stay with me");
+  await build.click();
   await dialog.getByRole("button", { name: "Stay", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(page).toHaveURL(/section=triggers/);
@@ -416,6 +423,85 @@ test("the rail edits each step in place and its summary follows", async ({
   );
   await expect(ifStep.getByLabel("Condition group operator")).toHaveCount(0);
   expect(sandbox.documentWrites()).toBe(0);
+});
+
+// With no page-wide attention banner (S18), a 1280×720 trigger detail shows
+// its Name, Status and When rows above the Save bar.
+test("at 1280×720 the trigger detail shows Name, Status and When above the Save bar", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await openTriggers(page);
+  await page.getByLabel("Trigger name").fill("Urgent request alert, edited");
+  const save = page.getByRole("button", { name: "Save triggers" });
+  await expect(save).toBeVisible();
+  const bar = await save.evaluate(
+    (button) =>
+      button.parentElement!.parentElement!.getBoundingClientRect().top,
+  );
+  for (const row of [
+    page.getByLabel("Trigger name"),
+    page.getByRole("switch", { name: "Trigger status" }),
+    // Every When row: Event and Module.
+    page.getByRole("region", { name: "When", exact: true }),
+  ]) {
+    await expect(row).toBeInViewport({ ratio: 1 });
+    const box = await row.boundingBox();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(bar);
+  }
+});
+
+// The header's attention control announces a new count politely, never on
+// the first load; when nothing is left while its list is open, the list
+// closes and focus moves to the section title.
+test("the attention count is announced when it changes and focus moves to the title at zero", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  design.rules.push({
+    ...structuredClone(design.rules[0]!),
+    id: "sample-second",
+    name: "Second request alert",
+  });
+  await openTriggers(page, design);
+  const live = page.locator("[data-sandbox-attention-live]");
+  const attention = page.getByRole("button", { name: /needs? attention$/ });
+  await expect(attention).toHaveText("2 need attention");
+  await expect(live).toHaveText("");
+
+  // Replacing the first trigger's notification with Set field and saving
+  // drops the count to one.
+  const then = page.getByRole("region", { name: "Then", exact: true });
+  await then.getByRole("button", { name: "Add action" }).click();
+  await then.getByLabel("Set field target").selectOption({ label: "Title" });
+  await then.getByRole("button", { name: "Remove action 1" }).click();
+  await then.getByRole("textbox").fill("Follow up");
+  await page.getByRole("button", { name: "Save triggers" }).click();
+  await expect(attention).toHaveText("1 needs attention");
+  await expect(live).toHaveText("1 needs attention");
+
+  // Fix the second, open the list from the keyboard, and save with Ctrl+S.
+  await page
+    .getByRole("navigation", { name: "Trigger list" })
+    .getByRole("button", { name: /Second request alert/ })
+    .click();
+  await then.getByRole("button", { name: "Add action" }).click();
+  await then.getByLabel("Set field target").selectOption({ label: "Title" });
+  await then.getByRole("button", { name: "Remove action 1" }).click();
+  await then.getByRole("textbox").fill("Follow up");
+  await attention.focus();
+  await page.keyboard.press("Enter");
+  const list = page.getByRole("dialog", { name: "Needs attention" });
+  await expect(
+    list.getByRole("button", { name: "Open trigger" }),
+  ).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+s");
+  await expect(attention).toHaveCount(0);
+  await expect(list).toBeHidden();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Triggers" }),
+  ).toBeFocused();
+  await expect(live).toHaveText("Nothing needs attention");
 });
 
 test("opening another trigger starts its detail at the top", async ({

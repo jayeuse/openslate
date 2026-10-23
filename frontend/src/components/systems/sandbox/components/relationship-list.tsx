@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { relationshipKind } from "../domain/model";
 
 export interface RelationshipRow {
   id: string;
@@ -82,7 +83,7 @@ export function RelationshipList({
                 <span className="sr-only">
                   {row.direction === "outgoing" ? "To " : "From "}
                 </span>
-                {row.otherModule} · {row.cardinality}
+                {row.otherModule} · {relationshipKind(row.cardinality).label}
               </p>
             </div>
             <DropdownMenu>

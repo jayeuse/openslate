@@ -12,7 +12,14 @@ const guides: { href: string; title: string; tasks: RegExp[] }[] = [
   {
     href: "/sandbox",
     title: "Sandbox",
-    tasks: [/department/i, /build|design/i],
+    tasks: [
+      /department/i,
+      /build|design/i,
+      /Summary/,
+      /Save triggers/,
+      /current setup/,
+      /checkpoint first/,
+    ],
   },
   { href: "/boards", title: "Boards", tasks: [/post/i, /calendar|event/i] },
   {

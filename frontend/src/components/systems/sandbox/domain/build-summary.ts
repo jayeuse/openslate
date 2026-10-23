@@ -182,3 +182,12 @@ export function fieldAdvancedSummary(
     ...lifecycleWords(lifecycle),
   ].join(", ");
 }
+
+/**
+ * The header's attention control (S18): how many items need attention, in
+ * a few words, or null when none do and the control is absent.
+ */
+export function attentionCountLabel(count: number): string | null {
+  if (count === 0) return null;
+  return `${count} ${count === 1 ? "needs" : "need"} attention`;
+}

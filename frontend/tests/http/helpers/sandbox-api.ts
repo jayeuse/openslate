@@ -678,3 +678,33 @@ export function fieldRowTrigger(row: Locator, fieldName: string) {
     expanded: false,
   });
 }
+
+/**
+ * A Sandbox dialog's frame (docs/specs/sandbox-relayout.md, Dialogs): the
+ * dialog is its only scroller, and its named close button and footer action
+ * stay in view at both ends of that scroll.
+ */
+export async function expectPinnedDialog(
+  dialog: Locator,
+  closeName: string,
+  action: Locator,
+) {
+  const close = dialog.getByRole("button", { name: closeName, exact: true });
+  await expect(close).toBeVisible();
+  const innerScrollers = await dialog.evaluate(
+    (root) =>
+      [...root.querySelectorAll<HTMLElement>("*")].filter(
+        (element) =>
+          /(auto|scroll)/.test(getComputedStyle(element).overflowY) &&
+          element.scrollHeight > element.clientHeight + 1,
+      ).length,
+  );
+  expect(innerScrollers).toBe(0);
+  for (const end of ["bottom", "top"] as const) {
+    await dialog.evaluate((root, to) => {
+      root.scrollTop = to === "top" ? 0 : root.scrollHeight;
+    }, end);
+    await expect(close).toBeInViewport({ ratio: 1 });
+    await expect(action).toBeInViewport({ ratio: 1 });
+  }
+}

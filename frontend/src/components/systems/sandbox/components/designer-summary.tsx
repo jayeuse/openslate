@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import {
   Check,
   CloudUpload,
@@ -120,17 +120,25 @@ export function DesignerSummary({
   );
 }
 
-function AttentionRow({
+/**
+ * One "Needs attention" row: a toned icon, the words, and one verb. The
+ * Summary names the verb with its words; the header list (`describe`) keeps
+ * the verb as the name and the words as its description, as the banner did.
+ */
+export function AttentionRow({
   item,
   pending,
   review,
+  describe = false,
   onAction,
 }: {
   item: BuildAttentionItem;
   pending: boolean;
   review: { reason: string | null; disabled: boolean };
+  describe?: boolean;
   onAction: (item: BuildAttentionItem) => void;
 }) {
+  const textId = useId();
   const words = item.count === null ? item.text : `${item.count} ${item.text}`;
   // Review opens Review & Publish only when the header button could; it
   // gives the same reason. The other rows wait while a change saves.
@@ -152,7 +160,7 @@ function AttentionRow({
       >
         {attentionIcons[item.kind]}
       </span>
-      <span className="min-w-0 [overflow-wrap:anywhere]">
+      <span id={textId} className="min-w-0 [overflow-wrap:anywhere]">
         {item.count === null ? (
           item.text
         ) : (
@@ -166,7 +174,8 @@ function AttentionRow({
         <Button
           variant="ghost"
           className="min-h-11 px-3 xl:h-8 xl:min-h-8 xl:px-2.5"
-          aria-label={`${item.verb}: ${words}`}
+          aria-label={describe ? undefined : `${item.verb}: ${words}`}
+          aria-describedby={describe ? textId : undefined}
           disabled={disabled}
           onClick={() => onAction(item)}
         >

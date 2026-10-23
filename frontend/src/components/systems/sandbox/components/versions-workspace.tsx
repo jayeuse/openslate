@@ -21,13 +21,17 @@ import {
 } from "./version-list";
 import { VersionDetail, type CheckpointLabelEdit } from "./version-detail";
 import type { VersionCapacityActions } from "./version-capacity-banner";
+import {
+  SandboxDialogFooter,
+  SandboxDialogHeader,
+  sandboxDialogContentClass,
+} from "./sandbox-dialog-frame";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
-  AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -678,44 +682,57 @@ export function VersionsWorkspace({
                 ? returnTarget
                 : versionsHeading.current;
             }}
-            className="slim-ui max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11"
+            className={`${sandboxDialogContentClass} max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11`}
           >
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                {confirm.kind === "delete"
-                  ? `Delete ${confirmVersion.label}?`
-                  : `Restore ${confirmVersion.label}?`}
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                {confirm.kind === "delete"
-                  ? "This can't be undone. Your draft and live data stay as they are."
-                  : "Your current draft is saved as a checkpoint first. Live data stays as it is."}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
+            <SandboxDialogHeader
+              title={
+                <AlertDialogTitle className="[overflow-wrap:anywhere]">
+                  {confirm.kind === "delete"
+                    ? `Delete ${confirmVersion.label}?`
+                    : `Restore ${confirmVersion.label}?`}
+                </AlertDialogTitle>
+              }
+              closeLabel={
+                confirm.kind === "delete"
+                  ? "Close without deleting"
+                  : "Close without restoring"
+              }
+              closeDisabled={pending}
+              onClose={closeVersionConfirm}
+            />
+            <AlertDialogDescription>
+              {confirm.kind === "delete"
+                ? "This can't be undone. Your draft and live data stay as they are."
+                : "Your current draft is saved as a checkpoint first. Live data stays as it is."}
+            </AlertDialogDescription>
             {actionError ? (
               <Alert variant="destructive">{actionError}</Alert>
             ) : null}
-            <AlertDialogFooter>
-              <Button
-                variant="outline"
-                disabled={pending}
-                onClick={closeVersionConfirm}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant={confirm.kind === "delete" ? "destructive" : "default"}
-                pending={pending}
-                pendingLabel={
-                  confirm.kind === "delete" ? "Deleting…" : "Restoring…"
-                }
-                onClick={() => void apply()}
-              >
-                {confirm.kind === "delete"
-                  ? "Delete version"
-                  : "Restore version"}
-              </Button>
-            </AlertDialogFooter>
+            <SandboxDialogFooter>
+              <AlertDialogFooter className="mt-0">
+                <Button
+                  variant="outline"
+                  disabled={pending}
+                  onClick={closeVersionConfirm}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant={
+                    confirm.kind === "delete" ? "destructive" : "default"
+                  }
+                  pending={pending}
+                  pendingLabel={
+                    confirm.kind === "delete" ? "Deleting…" : "Restoring…"
+                  }
+                  onClick={() => void apply()}
+                >
+                  {confirm.kind === "delete"
+                    ? "Delete version"
+                    : "Restore version"}
+                </Button>
+              </AlertDialogFooter>
+            </SandboxDialogFooter>
           </AlertDialogContent>
         ) : null}
       </AlertDialog>

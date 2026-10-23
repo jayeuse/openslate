@@ -12,6 +12,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { plural } from "../helpers/designer-impacts";
+import {
+  SandboxDialogFooter,
+  SandboxDialogHeader,
+  sandboxDialogContentClass,
+} from "./sandbox-dialog-frame";
 import type { TriggerDraft } from "./use-trigger-draft";
 
 /**
@@ -41,8 +46,17 @@ export function TriggerLeaveDialog({
         onStay();
       }}
     >
-      <DialogContent className="slim-ui grid gap-4">
-        <DialogTitle>Unsaved trigger changes</DialogTitle>
+      <DialogContent className={sandboxDialogContentClass}>
+        {/* The named close stays, like Stay. */}
+        <SandboxDialogHeader
+          title={<DialogTitle>Unsaved trigger changes</DialogTitle>}
+          closeLabel="Close and stay"
+          closeDisabled={saving}
+          onClose={() => {
+            setError("");
+            onStay();
+          }}
+        />
         <DialogDescription>
           Discard removes {plural(draft.changes, "unsaved change")}.
         </DialogDescription>
@@ -51,44 +65,46 @@ export function TriggerLeaveDialog({
             {error}
           </Alert>
         ) : null}
-        <DialogFooter className="mt-1">
-          <Button
-            variant="outline"
-            disabled={saving}
-            onClick={() => {
-              setError("");
-              onStay();
-            }}
-          >
-            Stay
-          </Button>
-          <Button
-            variant="outline"
-            className="text-danger-text"
-            disabled={saving}
-            onClick={() => {
-              setError("");
-              draft.discard();
-              onLeave();
-            }}
-          >
-            Discard
-          </Button>
-          <Button
-            pending={saving}
-            pendingLabel="Saving…"
-            onClick={async () => {
-              setSaving(true);
-              setError("");
-              const result = await draft.save();
-              setSaving(false);
-              if (result.ok) onLeave();
-              else setError(result.error);
-            }}
-          >
-            Save
-          </Button>
-        </DialogFooter>
+        <SandboxDialogFooter>
+          <DialogFooter className="mt-0">
+            <Button
+              variant="outline"
+              disabled={saving}
+              onClick={() => {
+                setError("");
+                onStay();
+              }}
+            >
+              Stay
+            </Button>
+            <Button
+              variant="outline"
+              className="text-danger-text"
+              disabled={saving}
+              onClick={() => {
+                setError("");
+                draft.discard();
+                onLeave();
+              }}
+            >
+              Discard
+            </Button>
+            <Button
+              pending={saving}
+              pendingLabel="Saving…"
+              onClick={async () => {
+                setSaving(true);
+                setError("");
+                const result = await draft.save();
+                setSaving(false);
+                if (result.ok) onLeave();
+                else setError(result.error);
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </SandboxDialogFooter>
       </DialogContent>
     </Dialog>
   );

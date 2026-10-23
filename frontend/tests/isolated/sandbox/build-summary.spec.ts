@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  attentionCountLabel,
   buildAttentionItems,
   fieldAdvancedSummary,
   propertiesAdvancedSummary,
@@ -145,6 +146,15 @@ test("a design with nothing to attend to has no rows", () => {
       issues: [],
     }),
   ).toEqual([]);
+});
+
+// The header's one attention control (S18) counts what needs attention in
+// a few words; with nothing to attend to it is absent.
+test("the header attention count agrees with its number", () => {
+  expect(attentionCountLabel(0)).toBeNull();
+  expect(attentionCountLabel(1)).toBe("1 needs attention");
+  expect(attentionCountLabel(2)).toBe("2 need attention");
+  expect(attentionCountLabel(12)).toBe("12 need attention");
 });
 
 test("Advanced names what it holds, with the lifecycle verb that applies", () => {

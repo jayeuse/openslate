@@ -19,7 +19,6 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
@@ -43,6 +42,11 @@ import { useSandboxHistoryAccess } from "../state/sandbox-history-access";
 import { useWorkspaceInteractionSuspended } from "../../shared/runtime/workspace-identity";
 import type { SandboxCommandResult } from "../state/commands";
 import { OrganizationTemplateDialog } from "./organization-template-dialog";
+import {
+  SandboxDialogFooter,
+  SandboxDialogHeader,
+  sandboxDialogContentClass,
+} from "./sandbox-dialog-frame";
 import {
   VersionCapacityBanner,
   type VersionCapacityActions,
@@ -342,10 +346,13 @@ export function SandboxHeaderActions({
         open={checkpointOpen}
         onOpenChange={(open) => !busy && setCheckpointOpen(open)}
       >
-        <DialogContent className="slim-ui grid gap-4">
-          <DialogHeader>
-            <DialogTitle>Save checkpoint</DialogTitle>
-          </DialogHeader>
+        <DialogContent className={sandboxDialogContentClass}>
+          <SandboxDialogHeader
+            title={<DialogTitle>Save checkpoint</DialogTitle>}
+            closeLabel="Close checkpoint"
+            closeDisabled={busy}
+            onClose={() => setCheckpointOpen(false)}
+          />
           <VersionCapacityBanner
             {...versionCapacity}
             pending={versionCapacity.pending || busy}
@@ -373,26 +380,28 @@ export function SandboxHeaderActions({
               onChange={(event) => setNote(event.target.value)}
             />
           </Field>
-          <DialogFooter className="mt-1">
-            <Button
-              variant="outline"
-              className="min-h-11"
-              disabled={busy}
-              onClick={() => setCheckpointOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              className="min-h-11"
-              disabled={pending}
-              pending={busy}
-              pendingLabel="Saving…"
-              onClick={() => void checkpoint()}
-            >
-              <Save />
-              Save checkpoint
-            </Button>
-          </DialogFooter>
+          <SandboxDialogFooter>
+            <DialogFooter className="mt-0">
+              <Button
+                variant="outline"
+                className="min-h-11"
+                disabled={busy}
+                onClick={() => setCheckpointOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="min-h-11"
+                disabled={pending}
+                pending={busy}
+                pendingLabel="Saving…"
+                onClick={() => void checkpoint()}
+              >
+                <Save />
+                Save checkpoint
+              </Button>
+            </DialogFooter>
+          </SandboxDialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog
@@ -403,14 +412,22 @@ export function SandboxHeaderActions({
           setImportOpen(open);
         }}
       >
-        <DialogContent className="slim-ui">
-          <DialogHeader>
-            <DialogTitle>Import or export</DialogTitle>
-            <DialogDescription>
-              Download a backup file of this draft, or replace the draft with a
-              backup you downloaded before.
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className={sandboxDialogContentClass}>
+          <SandboxDialogHeader
+            title={<DialogTitle>Import or export</DialogTitle>}
+            description={
+              <DialogDescription>
+                Download a backup file of this draft, or replace the draft with
+                a backup you downloaded before.
+              </DialogDescription>
+            }
+            closeLabel="Close import or export"
+            closeDisabled={busy}
+            onClose={() => {
+              cancelExport();
+              setImportOpen(false);
+            }}
+          />
           <div className="space-y-3">
             <Field>
               <FieldLabel
@@ -492,68 +509,75 @@ export function SandboxHeaderActions({
               draft
             </p>
           ) : null}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              disabled={busy}
-              onClick={() => {
-                cancelExport();
-                setImportOpen(false);
-              }}
-            >
-              Cancel
-            </Button>
-            {staged ? (
+          <SandboxDialogFooter>
+            <DialogFooter className="mt-0">
               <Button
+                variant="outline"
                 className="min-h-11"
-                disabled={pending || exportBusy}
-                pending={busy}
-                pendingLabel="Importing…"
-                onClick={() => void importDocument()}
+                disabled={busy}
+                onClick={() => {
+                  cancelExport();
+                  setImportOpen(false);
+                }}
               >
-                <FileDown />
-                Import draft
+                Cancel
               </Button>
-            ) : null}
-          </DialogFooter>
+              {staged ? (
+                <Button
+                  className="min-h-11"
+                  disabled={pending || exportBusy}
+                  pending={busy}
+                  pendingLabel="Importing…"
+                  onClick={() => void importDocument()}
+                >
+                  <FileDown />
+                  Import draft
+                </Button>
+              ) : null}
+            </DialogFooter>
+          </SandboxDialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog
         open={discardOpen}
         onOpenChange={(open) => !busy && setDiscardOpen(open)}
       >
-        <DialogContent className="slim-ui grid gap-4">
-          <DialogHeader>
-            <DialogTitle>Discard draft changes?</DialogTitle>
-            <DialogDescription>
-              {hasPublish
-                ? "Saves a checkpoint, then resets the draft to the last publish. Live data stays."
-                : "Saves a checkpoint, then clears the draft. Live data stays."}
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className={sandboxDialogContentClass}>
+          <SandboxDialogHeader
+            title={<DialogTitle>Discard draft changes?</DialogTitle>}
+            closeLabel="Close without discarding"
+            closeDisabled={busy}
+            onClose={() => setDiscardOpen(false)}
+          />
+          <DialogDescription>
+            {hasPublish
+              ? "Saves a checkpoint, then resets the draft to the last publish. Live data stays."
+              : "Saves a checkpoint, then clears the draft. Live data stays."}
+          </DialogDescription>
           {error ? <Alert variant="destructive">{error}</Alert> : null}
-          <DialogFooter className="mt-1">
-            <Button
-              variant="outline"
-              className="min-h-11"
-              disabled={busy}
-              onClick={() => setDiscardOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              className="min-h-11"
-              disabled={pending}
-              pending={busy}
-              pendingLabel="Discarding…"
-              onClick={() => void discard()}
-            >
-              <RotateCcw />
-              Discard draft
-            </Button>
-          </DialogFooter>
+          <SandboxDialogFooter>
+            <DialogFooter className="mt-0">
+              <Button
+                variant="outline"
+                className="min-h-11"
+                disabled={busy}
+                onClick={() => setDiscardOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                className="min-h-11"
+                disabled={pending}
+                pending={busy}
+                pendingLabel="Discarding…"
+                onClick={() => void discard()}
+              >
+                <RotateCcw />
+                Discard draft
+              </Button>
+            </DialogFooter>
+          </SandboxDialogFooter>
         </DialogContent>
       </Dialog>
     </>

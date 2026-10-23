@@ -6,16 +6,19 @@ import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
-  DialogCloseButton,
   DialogContent,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  SandboxDialogFooter,
+  SandboxDialogHeader,
+  sandboxDialogContentClass,
+} from "./sandbox-dialog-frame";
 import {
   PublishChangeGroups,
   type PublishReviewDesign,
@@ -103,6 +106,7 @@ export function ReviewPublishDialog({
   const [passwordRejected, setPasswordRejected] = useState(false);
   const passwordId = useId();
   const passwordHintId = useId();
+  const teamHintId = useId();
   const noteId = useId();
   const blockerId = useId();
   // Each open (and each new draft revision) gets one automatic review. The
@@ -181,13 +185,13 @@ export function ReviewPublishDialog({
     ),
   ];
   const blocked = blockers.length > 0;
+  // The password's hint is the team line; a refusal or a blocked review
+  // adds its reason beside it.
   const footerHint = publishError
     ? publishError
     : blocked
       ? "Fix the blocked items, then reopen this review."
-      : !password
-        ? "Enter your password to publish."
-        : "";
+      : "";
   // Cancel stays available while the review loads; only a publish in flight
   // holds the dialog open.
   const cancel = (
@@ -205,87 +209,92 @@ export function ReviewPublishDialog({
       open={open}
       onOpenChange={(next) => busy !== "publish" && onOpenChange(next)}
     >
-      {/* The body scrolls; the footer stays outside it, so focused controls
-          are never hidden behind it. */}
-      <DialogContent className="slim-ui flex flex-col overflow-hidden p-0 sm:max-w-2xl">
-        <DialogCloseButton disabled={busy === "publish"} />
-        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
-          <DialogHeader className="pr-12">
-            <DialogTitle>Review and publish</DialogTitle>
-          </DialogHeader>
-          {error ? (
-            <Alert role="alert" variant="destructive">
-              {error}
-            </Alert>
-          ) : null}
-          {blocked ? (
-            <Alert role="alert" variant="destructive">
-              <p className="font-medium">Publishing is blocked</p>
-              <ul className="mt-2 grid gap-2">
-                {blockers.map((blocker, index) => (
-                  <li
-                    key={`${blocker.code}:${blocker.targetId ?? ""}:${blocker.message}`}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1"
-                  >
-                    <span id={`${blockerId}-${index}`}>{blocker.message}</span>
-                    {blocker.targetId ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        aria-describedby={`${blockerId}-${index}`}
-                        onClick={() => onOpenBlocker(blocker)}
-                      >
-                        {blocker.code.startsWith("trigger")
-                          ? "Open trigger"
-                          : "Show in Build"}
-                      </Button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </Alert>
-          ) : null}
-          {busy === "review" ? (
-            <div role="status" className="grid gap-3">
-              <p className="text-muted-foreground text-sm">
-                Preparing your review…
-              </p>
-              <Skeleton className="h-5 w-40" />
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          ) : !preview ? null : (
-            <>
-              {preview.warnings.length ? (
-                <Alert>
-                  <p className="font-medium">Please note</p>
-                  <ul className="mt-2 list-inside list-disc">
-                    {preview.warnings.map((warning) => (
-                      <li key={warning}>{warning}</li>
-                    ))}
-                  </ul>
-                </Alert>
-              ) : null}
-              <section className="mt-2">
-                <h3 data-slot="section-title" className="font-medium">
-                  Changes
-                </h3>
-                {preview.changes.length ? (
-                  <div className="mt-2">
-                    <PublishChangeGroups
-                      changes={preview.changes}
-                      design={design}
-                    />
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground mt-2 text-sm">
-                    No structural changes are waiting to be applied.
-                  </p>
-                )}
-              </section>
-              {blocked ? null : (
-                <Field>
-                  <FieldLabel htmlFor={noteId}>Note (optional)</FieldLabel>
+      {/* One scroller: the header and footer stay in view (Dialogs in
+          Access), so focused controls are never hidden behind them. */}
+      <DialogContent className={`${sandboxDialogContentClass} sm:max-w-2xl`}>
+        <SandboxDialogHeader
+          title={<DialogTitle>Review &amp; Publish</DialogTitle>}
+          closeLabel="Close review"
+          closeDisabled={busy === "publish"}
+          onClose={() => onOpenChange(false)}
+        />
+        {error ? (
+          <Alert role="alert" variant="destructive">
+            {error}
+          </Alert>
+        ) : null}
+        {blocked ? (
+          <Alert role="alert" variant="destructive">
+            <p className="font-medium">Publishing is blocked</p>
+            <ul className="mt-2 grid gap-2">
+              {blockers.map((blocker, index) => (
+                <li
+                  key={`${blocker.code}:${blocker.targetId ?? ""}:${blocker.message}`}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1"
+                >
+                  <span id={`${blockerId}-${index}`}>{blocker.message}</span>
+                  {blocker.targetId ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-describedby={`${blockerId}-${index}`}
+                      onClick={() => onOpenBlocker(blocker)}
+                    >
+                      {blocker.code.startsWith("trigger")
+                        ? "Open trigger"
+                        : "Show in Build"}
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </Alert>
+        ) : null}
+        {busy === "review" ? (
+          <div role="status" className="grid gap-3">
+            <p className="text-muted-foreground text-sm">
+              Preparing your review…
+            </p>
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+          </div>
+        ) : !preview ? null : (
+          <>
+            {preview.warnings.length ? (
+              <Alert>
+                <p className="font-medium">Please note</p>
+                <ul className="mt-2 list-inside list-disc">
+                  {preview.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </Alert>
+            ) : null}
+            <section>
+              <h3 data-slot="section-title" className="font-medium">
+                Changes
+              </h3>
+              {preview.changes.length ? (
+                <div className="mt-2">
+                  <PublishChangeGroups
+                    changes={preview.changes}
+                    design={design}
+                  />
+                </div>
+              ) : (
+                <p className="text-muted-foreground mt-2 text-sm">
+                  No structural changes are waiting to be applied.
+                </p>
+              )}
+            </section>
+            {blocked ? null : (
+              <>
+                {/* Label-left, like the password row below. */}
+                <Field className="grid gap-1.5 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start sm:gap-3">
+                  <FieldLabel htmlFor={noteId} className="sm:pt-2">
+                    Note (optional)
+                  </FieldLabel>
                   <Textarea
                     id={noteId}
                     value={note}
@@ -294,60 +303,65 @@ export function ReviewPublishDialog({
                     disabled={pending || blocked}
                   />
                 </Field>
-              )}
-            </>
-          )}
-        </div>
-        <div className="border-border grid gap-2 border-t px-5 py-4">
+              </>
+            )}
+          </>
+        )}
+        <SandboxDialogFooter>
           {preview ? (
             <>
-              <p className="text-muted-foreground text-sm">
-                Your team sees these changes as soon as you publish.
-              </p>
-              <div className="flex flex-wrap items-end gap-3">
-                <Field className="min-w-48 flex-1">
-                  <FieldLabel htmlFor={passwordId}>Your password</FieldLabel>
-                  <Input
-                    id={passwordId}
-                    type="password"
-                    autoComplete="current-password"
-                    value={password}
-                    aria-invalid={passwordRejected || undefined}
-                    aria-describedby={footerHint ? passwordHintId : undefined}
-                    onChange={(event) => {
-                      setPassword(event.target.value);
-                      setPasswordRejected(false);
-                    }}
-                    disabled={pending || blocked}
-                  />
-                </Field>
-                <DialogFooter className="mt-0 max-sm:w-full">
-                  {cancel}
-                  <Button
-                    className="min-h-11"
-                    disabled={disabled || pending || blocked || !password}
-                    onClick={() => void publish()}
-                  >
-                    {busy === "publish" ? "Publishing…" : "Publish changes"}
-                  </Button>
-                </DialogFooter>
-              </div>
-              {footerHint ? (
-                <p
-                  id={passwordHintId}
-                  role={publishError ? "alert" : undefined}
-                  className={
-                    publishError
-                      ? "text-danger-text text-sm"
-                      : "text-muted-foreground text-sm"
+              {/* The password is its own label-left row (stacked on a
+                  phone), pinned above Cancel and Publish. */}
+              <Field className="grid gap-1.5 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center sm:gap-3">
+                <FieldLabel htmlFor={passwordId}>Your password</FieldLabel>
+                <Input
+                  id={passwordId}
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  aria-invalid={passwordRejected || undefined}
+                  aria-describedby={
+                    footerHint ? `${teamHintId} ${passwordHintId}` : teamHintId
                   }
-                >
-                  {footerHint}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    setPasswordRejected(false);
+                  }}
+                  disabled={pending || blocked}
+                />
+              </Field>
+              {/* Hints sit under the field, in its column from 640px. */}
+              <div className="-mt-1.5 grid gap-1 text-sm sm:pl-[8.75rem]">
+                <p id={teamHintId} className="text-muted-foreground">
+                  Your team sees these changes as soon as you publish.
                 </p>
-              ) : null}
+                {footerHint ? (
+                  <p
+                    id={passwordHintId}
+                    role={publishError ? "alert" : undefined}
+                    className={
+                      publishError
+                        ? "text-danger-text"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    {footerHint}
+                  </p>
+                ) : null}
+              </div>
+              <DialogFooter className="mt-0 flex-row justify-end">
+                {cancel}
+                <Button
+                  className="min-h-11"
+                  disabled={disabled || pending || blocked || !password}
+                  onClick={() => void publish()}
+                >
+                  {busy === "publish" ? "Publishing…" : "Publish changes"}
+                </Button>
+              </DialogFooter>
             </>
           ) : (
-            <DialogFooter className="mt-0">
+            <DialogFooter className="mt-0 flex-row justify-end">
               {cancel}
               {busy === "review" ? null : (
                 <DisabledReason
@@ -364,7 +378,7 @@ export function ReviewPublishDialog({
               )}
             </DialogFooter>
           )}
-        </div>
+        </SandboxDialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -10,6 +10,7 @@ import {
   useMemo,
   useRef,
   useSyncExternalStore,
+  type ReactNode,
   type RefObject,
 } from "react";
 import type {
@@ -104,6 +105,10 @@ import {
 import { buildField, FieldRow, FieldSettings } from "./designer-field-settings";
 import { RelationshipList, type RelationshipRow } from "./relationship-list";
 import { DesignerSummary } from "./designer-summary";
+import {
+  SandboxDialogHeader,
+  sandboxDialogContentClass,
+} from "./sandbox-dialog-frame";
 import { LifecycleActions, ModuleSettings } from "./designer-properties";
 import {
   buildAttentionItems,
@@ -133,6 +138,8 @@ import {
   canonicalFieldType,
   counts,
   compactDefaultLayout,
+  RELATIONSHIP_KINDS,
+  relationshipKind,
   reorder,
   uid,
   type Design,
@@ -347,6 +354,7 @@ export function Designer({
   onLifecycle,
   onDraftStateChange,
   attention,
+  phoneHistory,
 }: {
   initialSelected: string;
   /** A link asked for one item, so narrow screens open on its Properties. */
@@ -390,6 +398,8 @@ export function Designer({
     /** Opens Triggers filtered to the triggers that are off. */
     onShowOffTriggers: () => void;
   };
+  /** Undo and Redo, which sit in the canvas toolbar below 768px (S13). */
+  phoneHistory?: ReactNode;
 }) {
   const { keyboardShortcuts, disabled: preferencesDisabled } =
     useUserPreferences();
@@ -558,6 +568,19 @@ export function Designer({
   }, [pane, wide, startCanvas]);
   function selectItem(id: string) {
     setSelected(id);
+  }
+  /**
+   * A pick in Structure brings its item into view on the canvas beside it: a
+   * field shows its module, a relationship its source module. One already
+   * in view stays where it is.
+   */
+  function revealOnCanvas(id: string) {
+    if (!wide) return;
+    const nodeId =
+      projectedField(design, id)?.moduleId ??
+      design.relationships.find((item) => item.id === id)?.source ??
+      id;
+    requestAnimationFrame(() => graphRef.current?.reveal(nodeId));
   }
   const [selected, setSelected] = useState(initialSelected);
   useEffect(() => {
@@ -1490,10 +1513,7 @@ export function Designer({
     targetDepartment !== undefined &&
     sourceDepartment.id !== targetDepartment.id;
   const editorForm = (
-    <form
-      onSubmit={submit}
-      className={cn("flex flex-col gap-4", editor === "relationship" && "mt-4")}
-    >
+    <form onSubmit={submit} className="flex flex-col gap-4">
       {editor === "relationship" ? null : (
         <h3 className="font-semibold">
           {editor === "rename" ? "Rename item" : `Create ${editor}`}
@@ -1625,19 +1645,28 @@ export function Designer({
                 id="sandbox-editor-cardinality"
                 className="w-full [&_select]:min-h-10"
                 disabled={pending}
+                aria-describedby={
+                  relationshipKind(cardinality).hint
+                    ? "sandbox-editor-cardinality-hint"
+                    : undefined
+                }
                 value={cardinality}
                 onChange={(e) => setCardinality(e.target.value)}
               >
-                {[
-                  ["One-to-one", "Each item has one match"],
-                  ["One-to-many", "One item can have many matches"],
-                  ["Many-to-many", "Items can have many matches"],
-                ].map(([value, label]) => (
+                {RELATIONSHIP_KINDS.map((value) => (
                   <NativeSelectOption key={value} value={value}>
-                    {label}
+                    {relationshipKind(value).label}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
+              {relationshipKind(cardinality).hint ? (
+                <p
+                  id="sandbox-editor-cardinality-hint"
+                  className="text-muted-foreground text-xs"
+                >
+                  {relationshipKind(cardinality).hint}
+                </p>
+              ) : null}
             </FormField>
             {fieldMappings.length ? (
               <fieldset className="border-border flex flex-col gap-3 rounded-md border p-3">
@@ -1709,7 +1738,14 @@ export function Designer({
           </Alert>
         ) : null}
       </FieldGroup>
-      <div className="flex flex-wrap justify-end gap-2">
+      {/* In the Connect modules dialog the buttons are its pinned footer. */}
+      <div
+        className={cn(
+          "flex flex-wrap justify-end gap-2",
+          editor === "relationship" &&
+            "bg-card sticky -bottom-5 z-10 -mx-5 -mb-5 border-t px-5 pt-3 pb-4",
+        )}
+      >
         <Button
           type="button"
           variant="outline"
@@ -1779,7 +1815,10 @@ export function Designer({
     ],
   );
   const outlineHandlers = useStableHandlers({
-    onSelect: selectItem,
+    onSelect: (id: string) => {
+      selectItem(id);
+      revealOnCanvas(id);
+    },
     onEdit: (id: string) => {
       selectItem(id);
       const relationship = design.relationships.find((item) => item.id === id);
@@ -2376,8 +2415,11 @@ export function Designer({
       value={pane}
       onValueChange={(value) => setPane(value as DesignerPane)}
     >
-      <nav aria-label="Designer panes" className="xl:hidden">
-        <TabsList className="grid w-full grid-cols-3">
+      <nav
+        aria-label="Designer panes"
+        className="flex items-center gap-2 xl:hidden"
+      >
+        <TabsList className="grid min-w-0 flex-1 grid-cols-3">
           {(["Canvas", "Structure", "Inspector"] satisfies DesignerPane[]).map(
             (tab) => (
               <TabsTrigger key={tab} className="min-h-11" value={tab}>
@@ -2386,6 +2428,11 @@ export function Designer({
             ),
           )}
         </TabsList>
+        {phoneHistory ? (
+          // Below 768px the header has no room for Undo and Redo, so they
+          // sit beside the pane tabs, on every pane.
+          <div className="flex shrink-0 gap-1 md:hidden">{phoneHistory}</div>
+        ) : null}
       </nav>
       <ResponsiveDesignerTabPanel wide={wide} pane={pane}>
         <ResizablePanelGroup
@@ -2448,7 +2495,7 @@ export function Designer({
                   <div
                     role="toolbar"
                     aria-label="Canvas view controls"
-                    className="slim-ui flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-x-auto py-1 [&>button]:shrink-0"
+                    className="slim-ui flex min-w-0 flex-1 flex-wrap items-center gap-1 py-1 md:flex-nowrap md:overflow-x-auto [&>button]:shrink-0"
                   >
                     <CanvasZoomControls
                       zoomStore={zoomStore}
@@ -2948,10 +2995,28 @@ export function Designer({
           if (!open && !pending) setEditor("");
         }}
       >
-        <DialogContent className="slim-ui max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11">
-          <DialogTitle>
-            {editingRelationship ? "Relationship settings" : "Connect modules"}
-          </DialogTitle>
+        <DialogContent
+          className={`${sandboxDialogContentClass} max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11`}
+        >
+          <SandboxDialogHeader
+            title={
+              <DialogTitle>
+                {editingRelationship
+                  ? "Relationship settings"
+                  : "Connect modules"}
+              </DialogTitle>
+            }
+            closeLabel={
+              editingRelationship
+                ? "Close relationship settings"
+                : "Close connect modules"
+            }
+            closeDisabled={pending}
+            onClose={() => {
+              setEditor("");
+              setEditorError("");
+            }}
+          />
           {editorForm}
         </DialogContent>
       </Dialog>

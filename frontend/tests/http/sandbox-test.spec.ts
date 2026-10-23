@@ -288,6 +288,11 @@ test("a matching run shows its steps and its field comparison inside the result"
   await expect(
     page.getByRole("separator", { name: "Resize field comparison" }),
   ).toHaveCount(0);
+  // Plain words (Phase 7, G3): the inputs disclosure is "Values used".
+  await expect(
+    result.getByRole("button", { name: "Values used", exact: true }),
+  ).toBeVisible();
+  await expect(result.getByText("Inputs used for this result")).toHaveCount(0);
 });
 
 test("on a phone the Run test bar never covers a control that takes focus", async ({

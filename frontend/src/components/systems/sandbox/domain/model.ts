@@ -682,3 +682,41 @@ export function changesFrom(
     ? changes
     : ["No structural changes since the last publication."];
 }
+
+/** The stored relationship kinds, in the order the Connect modules select lists them. */
+export const RELATIONSHIP_KINDS = [
+  "One-to-one",
+  "One-to-many",
+  "Many-to-many",
+] as const;
+
+const RELATIONSHIP_KIND_WORDS: Readonly<
+  Record<string, { label: string; hint: string }>
+> = {
+  "One-to-one": { label: "One match each", hint: "Each item has one match" },
+  "One-to-many": {
+    label: "Many matches",
+    hint: "One item can have many matches",
+  },
+  "Many-to-many": {
+    label: "Many on both sides",
+    hint: "Items can have many matches",
+  },
+};
+
+/**
+ * The plain words a relationship kind shows (docs/specs/sandbox-relayout.md,
+ * Phase 7 G1), and the hint under the Connect modules select. The stored
+ * value never changes; an unknown value shows as stored, with no hint.
+ */
+export function relationshipKind(cardinality: string): {
+  label: string;
+  hint: string | null;
+} {
+  return (
+    RELATIONSHIP_KIND_WORDS[cardinality] ?? {
+      label: cardinality,
+      hint: null,
+    }
+  );
+}
