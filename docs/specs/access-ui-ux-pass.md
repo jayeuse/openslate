@@ -1,0 +1,361 @@
+# Access UI and UX pass
+
+> **Status: direction approved (2026-10-23).** The owner approved the layout redesign (a dashboard Overview, compact rows, clear buttons) and asked that every Access page stay still on desktop, like the Sandbox. A2, A4, and A7 use the recommendations unless the owner changes them. Phase 0 is done (results below).
+
+## Outcome
+
+Access never loses an unsaved form. The Overview is a dashboard of who is here and what needs attention. An administrator sees what needs attention first, scans people and groups quickly, and finds risky actions in one closed **Advanced** block in danger ink. Every action tells the user what would happen, that it is happening, and what happened. Access shows the departments the owner drew in the Sandbox, with their marks.
+
+Access is the second page of the page pass. The Sandbox is the worked example (`docs/specs/sandbox-ui-ux-pass.md`, `docs/specs/sandbox-followup-pass.md`, and "The page pass (pattern kit)" in `DESIGN.md`).
+
+**In scope:** the Access page (`/access`): Overview, People, Groups, Security, the person and group sheets, the Invite, Create group, Account policy, and confirmation dialogs, and their 390 px layouts. The fix for R1 is in `systems/access/page.tsx`.
+
+**Out of scope:** other pages; backend contracts, schema, and wire formats; new capabilities such as bulk actions; a new access model (for example a people × departments grid, or groups as a second idea); moving security events from Manage › Audit into Access.
+
+**Preserved behavior:** every capability stays reachable. Drafts keep their current journal, conflict, and "may have completed" behavior. Accessible names stay the same unless the name itself is the fix. Role gating stays the same: administrators see all four sections, department managers see Groups only, and other people see the "Access is managed by administrators" empty state.
+
+## How the issues were found
+
+1. **State trace (new step).** A read-only trace mapped every draft, pending operation, guard, and data-changing action, with `file:line` evidence. It found 19 risks (R1 to R19).
+2. **Live check of the worst risk.** On the production export, a typed Invite form closed and lost its data after a window blur and focus (`.playwright-mcp/access-review/r1-after-focus.png`).
+3. **Access levels (new step).** The trace mapped what each level sees. Screenshots and numbers cover the administrator only; Phase 0 adds the others.
+4. **Baseline screenshots.** Production export, Harbor Operations Group, Slate dark, 1440×900 and 390×844: `.playwright-mcp/access-review/`.
+5. **Usability audit (`ui-ux-pro-max`).** Each finding names a rule ID.
+6. **Design critique (`impeccable critique`).** Two isolated assessments: a design review (24/40) and the detector. The CLI scan is clean. The app's CSP blocked the live overlay, so the overlay ran again in a browser context that ignores the CSP. Archive: `.impeccable/critique/2026-10-23T00-37-50Z__frontend-src-components-systems-access-page-tsx.md`.
+7. **Inventory, feedback, and copy tables** (below).
+8. **Baseline numbers.** `.agent-runtime/access-ui-ux/measure.js` on fixed data; results in `.agent-runtime/access-ui-ux/metrics.md`.
+
+## Findings
+
+Paths are under `frontend/src/components/` unless a path says otherwise.
+
+### Data safety (state trace and live check)
+
+| ID  | Pri | Finding                                                                                                                                                                                                                                                                                    | Evidence                                                                                            | Status                   |
+| --- | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------ |
+| R1  | P1  | Each return to the window unmounts People, Groups, and Overview. Access puts its views in a `LoadingRegion` that shows a skeleton while the session check runs. The Invite and Create group forms, invitation settings, filters, the open tab, and open dialogs are lost with no question. | `systems/access/page.tsx:204-216`, `app-page.tsx:319-325`, `ui/loading-region.tsx:86-99`            | Confirmed live           |
+| R2  | P1  | Browser Back and Forward have no guard. Leaving Access drops the forms that live only in memory (Invite, Create group, invitation settings).                                                                                                                                               | No `popstate` listener in `src/`                                                                    | Confirmed by code        |
+| R3  | P1  | Discard in a person or group sheet runs `discardUnsavedDrafts()` over every draft. It also wipes a hidden Account policy draft, and its notice is not visible.                                                                                                                             | `access/state/draft-navigation.tsx:105-112`, `access/components/security-view.tsx:316`              | Confirmed by code        |
+| R4  | P2  | A save in progress does not block Discard. The request then finishes and writes the old draft back to the journal, or shows a success for a change the person discarded.                                                                                                                   | `person-details.tsx:133-137,208-210`, `group-editor.tsx:266,372,389`, `group-panel.tsx:50-53`       | Likely, needs a test     |
+| R6  | P2  | The journal has one slot per owner kind. A kept draft for person A is replaced by edits to person B with no warning. The same applies to groups.                                                                                                                                           | `person-details.tsx:108-114,154`, `access/state/draft-journal-storage.ts:110-139`                   | Confirmed by code        |
+| R7  | P2  | A save that may have completed is not counted as unsaved. Moving away, switching the organization, or signing out wipes it and its warning.                                                                                                                                                | `person-details.tsx:135`, `group-editor.tsx:266`, `app-page.tsx:592`                                | Confirmed by code        |
+| R9  | P2  | An administrator can change their own role to Member with no question. Access then turns into the empty state while the sheet is open. The server may refuse; this is not verified.                                                                                                        | `person-panel.tsx:168-173`, `person-details.tsx:400-419`                                            | Likely, needs a test     |
+| R11 | P2  | Results appear far from the control. Person Security closes its dialog and shows the result at the bottom of the tab. The policy success notice renders behind the dialog.                                                                                                                 | `person-security.tsx:166,367-387`, `security-view.tsx:743-746`                                      | Likely                   |
+| R12 | P2  | Discard acts at once with no Undo in four editors. Deleting a group also clears its other unsaved sections.                                                                                                                                                                                | `person-details.tsx:445-455`, `group-editor.tsx:545-546,685-694`, `invitation-settings.tsx:205-215` | Confirmed by code        |
+| R8  | P3  | The notice "Finish the current change before leaving this page." never clears, and it can sit below a long table.                                                                                                                                                                          | `systems/access/page.tsx:230,257`                                                                   | Confirmed by code        |
+| R10 | P3  | Focus after an action can land on a control that no longer exists (Disable becomes Enable; a deleted group's row is gone).                                                                                                                                                                 | `person-account.tsx:324-345`                                                                        | Likely                   |
+| R13 | P3  | A request with no answer on Invite, Create group, or an account action says "Try again". A retry can make a second invitation or group if the server is not idempotent.                                                                                                                    | `invite-person-dialog.tsx:200-208`, `create-group-dialog.tsx:94-97`                                 | Likely, check the server |
+| R16 | P3  | The Sessions and Access tabs are not keyed by person, and the tab does not reset when the person changes without a close.                                                                                                                                                                  | `person-panel.tsx:183-191`                                                                          | Likely, low              |
+| R17 | P3  | Filters come back from the original URL after a remount, so a filter the person cleared returns.                                                                                                                                                                                           | `people-view.tsx:308-312`                                                                           | Confirmed by code        |
+| R18 | P3  | When `discardUnsavedDrafts()` fails, the sheet Discard dialog stays open with no message.                                                                                                                                                                                                  | `person-panel.tsx:208-213`, `group-panel.tsx:117-121`                                               | Confirmed by code        |
+| R19 | P3  | A window return cancels a person security action on the client. The server may complete it, and the person sees no result until the next read.                                                                                                                                             | `person-security.tsx:109-122`                                                                       | Confirmed client side    |
+
+R5 (account actions keep running after the sheet closes), R14 (sign-out and session expiry wipe drafts on purpose, for privacy), and R15 (double-submit guards read state; low risk) stay as they are. R14 is a privacy decision; R5 and R15 are covered by the R4 and R10 fixes.
+
+### Usability findings (`ui-ux-pro-max`)
+
+| Pri | Finding                                                                                                                                                                                                | Where                                                                                                    | Rule                                                   |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| P1  | Forms are lost on a window return, on Back, and on a hidden-draft Discard (R1 to R3)                                                                                                                   | Data safety table                                                                                        | `form-autosave`, `state-preservation`, `back-behavior` |
+| P1  | Disable, Delete, Delete group, and End all remote sessions look like safe actions and sit in plain view. Disable and Delete are outline buttons below Save changes.                                    | `person-account.tsx:327-343`, `group-editor.tsx:795-830`, `security-panel.tsx:250-258`                   | `destructive-emphasis`, `progressive-disclosure`       |
+| P1  | People rows are about 145 px tall with two avatars, so about 4 of 52 people show at 1440×900. Each row has two outcomes: a hover card on the name and a stretched Manage link.                         | `people-view.tsx:257-288`, `person-card.tsx:218`                                                         | `content-priority`, `primary-action`                   |
+| P2  | Five search inputs have no visible label and no placeholder; they read as broken fields                                                                                                                | `people-view.tsx:616-622,665-673`, `group-access-editor.tsx:197-205`, `invite-person-dialog.tsx:331-339` | `input-labels`                                         |
+| P2  | Disabled controls give no reason: Save at rest, Reset two-step verification (natively disabled, so the reason is not heard), Invite person and Create group while loading, End session while not ready | `person-security.tsx:323-363`, `people-view.tsx:549`, `groups-view.tsx:303`, `security-panel.tsx:421`    | `disabled-states`, `state-clarity`                     |
+| P2  | Successes use plain toasts with no Undo, although Restore exists for a deleted person. Access does not use `reportDone` or `reportUndoable`.                                                           | `person-account.tsx:204`                                                                                 | `undo-support`, `success-feedback`                     |
+| P2  | To give one person access, the owner leaves the person sheet, opens Groups, opens a group, and finds the person in a list of all 52 people                                                             | `person-account.tsx:236-262`                                                                             | `content-priority` (working memory)                    |
+| P2  | The Overview holds two settings forms: the inactivity period and the invitation settings                                                                                                               | `overview-view.tsx:443-467,525-540`                                                                      | `progressive-disclosure`                               |
+| P3  | The Security description promises security events, but they live in Manage › Audit. Sessions show the username, not the display name.                                                                  | `systems/access/page.tsx:55`, `security-view.tsx:816-826`                                                | Consistency                                            |
+| P3  | The sessions table opens at 4 rows per page; other tables open at 10                                                                                                                                   | `security-panel.tsx:64`                                                                                  | Consistency                                            |
+
+What works today: conflicts get a choice per field; drafts survive a reload; a refused IP list explains the fix; the last-administrator warning shows; confirmation dialogs state the consequence; each Overview card links to a filtered list (`confirmation-dialogs`, `error-recovery`).
+
+### Design findings (`impeccable critique`)
+
+The critique scored 24/40: heuristic 4 (Consistency) at 2 and heuristic 8 (Aesthetic and minimalist) at 2. Cognitive load fails 6 of 8 checks.
+
+| Pri | Finding                                                                                                                                                                                         | Where                                                                                                | Command             |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------- |
+| P1  | The Overview is a status board, not a triage list: nine equal cards, five at "0 · Nothing to review". Administrator two-step has no attention chip, but "People without a group" has "Review".  | `overview-view.tsx:66-135,305-360,490`                                                               | `distill`           |
+| P2  | No department carries its `DepartmentMark` in Access, against the department identity rule in `DESIGN.md`                                                                                       | `people-view.tsx:251-254`, `group-access-editor.tsx:243-247`, `person-access.tsx:49`                 | `colorize`          |
+| P2  | Level chips use `secondary`, not `LevelBadge`; two-step state has three names ("Not verified", "not set up", "without two-step verification")                                                   | `person-access.tsx:64-65`, `people-view.tsx:138`, `person-security.tsx:297`, `overview-view.tsx:333` | `clarify`           |
+| P2  | The Account policy dialog shows about 20 controls in 7 groups. It puts the viewer's own enrollment beside the organization grace field, and shows installation rules as disabled fields.        | `security-panel.tsx:584-1000`                                                                        | `distill`           |
+| P2  | The page title bypasses `PageHeader` (weight 600 and a 12 px gap, against 700 and 28 px)                                                                                                        | `systems/access/page.tsx:325-330`                                                                    | `typeset`           |
+| P3  | Nested cards (People controls, person sheet tab rail, Groups); a Description column of nine "—"; Security lines of about 132 characters; "Manage" links use `text-primary`, not `--action-text` | Overlay results                                                                                      | `quieter`, `polish` |
+
+Minor: the Overview "Security ↗" button repeats the sidebar item and uses an external-link icon; "0 unknown" shows at zero; "Confirm end session" labels; one end-sessions fact shows twice; Save buttons look dim at rest; person tabs mix 36 px and 44 px heights (`person-panel.tsx:141-159`).
+
+**Detector.** The CLI scan is clean. The overlay found Overview 5, People 24, person sheet 23, Groups 8, and Security 9 items. False positives: the Geist font (the Slate face), the sidebar organization name (it truncates on purpose), and shell transitions and clipping.
+
+## Layout direction
+
+The owner wants a layout that says what each part does, what it gives, and what it shows. This is a layout redesign inside the design system: the tokens, the four looks, and the `DESIGN.md` rules stay. `ui-ux-pro-max` sets the layout; `impeccable` records it in `DESIGN.md`.
+
+**Comp:** `.impeccable/mocks/access/` (`overview.html`, `people.html`, `people.html?sheet=1`; add `?theme=light` for Slate light). Serve it with the `access-mocks` entry in `.claude/launch.json` while the export runs on port 8001; the comp reads the app's built stylesheet, so it shows real Slate tokens. Screenshots: `.playwright-mcp/access-review/comp/`. The numbers in the comp are illustrative.
+
+**1. Overview is a dashboard of who is here.** Four blocks replace the nine cards:
+
+- **Who's here:** one line ("3 signed in now · 11 today · 31 this week, of 52 people"), the people signed in now, and one bar of all people by last sign-in (now, today, this week, this month, older, never, invited). Each legend item opens People with that filter.
+- **Recent sign-ins:** the latest sign-in events, with time, person, device, and result (signed in, wrong password, locked). A link opens all security events in Manage › Audit.
+- **Needs attention:** only items with a count above zero, each with a verb ("Review", "Resend", "Add to groups"), then one "All clear" line that names the rest.
+- **Access by department:** each department with its `DepartmentMark`, the number of people with access, and a Read, Write, and Manage bar. This is the identity of Access: the owner's own departments from the Sandbox.
+
+**2. One row grammar for People, Groups, and Sessions.** Rows are 40 px from 1280 px up. One open target per row (`RowOpenButton`): a 24 px avatar with the presence dot, the name, and the email in muted ink on one line. Status is a dot and a word. Groups are chips with "+n". Departments are marks with a count. Two-step is "On" (with a shield) or "Off". Last active is relative ("3 hours ago"). Hover and selection use the ink tints (6% and 14%). Phones show two-line rows of at least 56 px.
+
+**3. One button grammar.** One primary button per view (36 px). Other page actions are quiet buttons with an icon and a label that names the object ("Invitation settings", "Add to group"). Row and list actions are 32 px ghost buttons that name a verb ("Review", "Remove"). Destructive actions sit in Advanced in danger ink. A label carries a count where one exists ("End 3 sessions"). Below 1280 px and on phones, targets stay at least 44 px. Today Access sets `min-h-11` with no `xl:` size, so the shell floor keeps every control at 44 px on desktop; the redesign adds the `xl:` sizes, as the Sandbox follow-up did.
+
+**4. Every page stays still on desktop** (owner, 2026-10-23; the Still Page Rule in `DESIGN.md`). From 1280 px up, Overview, People, Groups, and Security fill the viewport and never scroll. The shell header, the page header, toolbars, and table footers stay in place; only panel bodies scroll: on Overview the sign-ins feed and the department list (Needs attention stays whole), on People, Groups, and Security the table body, and in a sheet or the Account policy dialog its body. Any panel, card, list, or component inside the page may scroll on its own (owner, 2026-10-23). Every scroll area uses the app-wide thin scrollbar of the Sandbox: a 4 px thumb in an 8 px lane, no track (the Quiet Scrollbar Rule, already global in `globals.css`). Access adds no scrollbar styles of its own. Scroll panels are `relative`. Below 1280 px the page scrolls; from 768 to 1279 px the People table keeps Person, Role, Status, and Last active, and the sheet shows the rest. The comp passes at 1280×720, 1366×768, 1440×900, and 1920×1080 (page scroll 0) and has no sideways scroll at 1024 and 390. At 1280×720 the department list shows two rows and scrolls; Phase 4 checks whether that is enough.
+
+**Data.** The dashboard uses existing endpoints: `/users/summary` for the windows (active people minus `inactive_people` for 1, 7, and 30 days, minus `no_recorded_sign_in`), `/auth/admin-sessions` for "now", `/security-events` for recent sign-ins, and directory totals for the bar. A daily trend chart needs a new aggregate endpoint (A7). The hands-on pass measures the cold-load request count.
+
+**Counterpoints raised with the owner:**
+
+| Point                       | Pain                                                                                                      | Solution                                                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| A dashboard of active users | The API has no history, so a trend line needs a new endpoint; several count requests slow the first load. | Show windows and a feed from existing data first; a trend chart is decision A7; measure the request count.          |
+| An identity of its own      | OpenSlate has no fixed identity by owner decision; a branded Access breaks the four looks.                | Take identity from structure: department marks, level chips, and presence, as the Sandbox and OpenComms already do. |
+| Slimmer rows                | Smaller rows shrink targets.                                                                              | Compact sizes from 1280 px up only; the 44 px floor stays on touch screens and phones; the whole row is the target. |
+| Fewer, smaller buttons      | Actions can hide.                                                                                         | Verb and object labels, counts, Advanced for rare actions, and keyboard access to every row action.                 |
+
+## Decisions
+
+| ID  | Decision                                                                                                                                                                                                                                                                                                                                                           | Status               |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- |
+| A1  | **Window return (R1).** Access keeps its views mounted while the session check runs; the shell keeps the cover and the pause. A shared `LoadingRegion` change is out of scope. Counterpoint: Manage and other pages can have the same problem. Solution: Phase 0 checks Manage and records the result; a fix there gets its own task.                              | Recommended          |
+| A2  | **Add to group from the person sheet.** The sheet's group list gets **Add to group** (the access-grants pattern: a grouped search, a save per row, a ghost Remove). The Members tab stays. Counterpoint: membership can then change in two places. Solution: both paths use the same member-merge conflict path (`mergeMembers`) and one HTTP journey covers each. | Recommended, applied |
+| A3  | **Overview as a dashboard** (owner, 2026-10-23). It replaces the triage-list proposal: see "Layout direction".                                                                                                                                                                                                                                                     | Decided              |
+| A4  | **Where settings go.** The inactivity period becomes a People history filter. Invitation settings move next to **Invite person** on People, behind a settings button. Alternative: put invitation settings in the Account policy dialog. Recommended: People, because the settings apply to the invitations sent from there.                                       | Recommended, applied |
+| A5  | **Delete gets Undo.** Deleting a person shows "Ana Castillo deleted · Undo"; Undo runs Restore. The confirmation stays, because a delete signs the person out everywhere.                                                                                                                                                                                          | Proposed             |
+| A6  | **Level words.** Access keeps Read, Write, and Manage in `LevelBadge`; Manage is the tinted level. OpenComms keeps Read and Read and post. The chip is shared; the words are not.                                                                                                                                                                                  | Proposed             |
+| A7  | **Daily trend chart.** A chart of people signed in per day needs a new aggregate endpoint (a public API change). Recommended: ship the dashboard without it; add the endpoint later if the owner wants the trend.                                                                                                                                                  | Recommended, applied |
+
+**Not this pass:** bulk actions, keyboard shortcuts, a people × departments grid, groups as a second idea, and security events inside Access. Each is a new capability or a new model.
+
+## Shared parts
+
+Reuse; build nothing new unless a phase says so: `AdvancedSection`, `DisabledReason`, `DepartmentMark`, `LevelBadge`, `PageHeader`, the Button pending label, Cancel-first dialog footers, `reportDone` and `reportUndoable`, `RowOpenButton`, ink-tint row states (6% hover, 14% selected), and `SearchSelect`.
+
+## Classification
+
+E = essential (shown), C = conditional (shown only in its case), M = menu, A = Advanced (closed block, last in its panel). Administrator view.
+
+### Overview
+
+| Block                                      | Place                            | Reason                                      |
+| ------------------------------------------ | -------------------------------- | ------------------------------------------- |
+| Who's here (line, roster, bar with legend) | E                                | The main question of the page               |
+| Recent sign-ins                            | E (panel scrolls)                | Common                                      |
+| Needs attention                            | E, items with a count above zero | Common; the rest go in one "All clear" line |
+| Access by department                       | E                                | Identity; links to filtered People          |
+| Invite person                              | E (the one primary)              | Common                                      |
+| Create group                               | E (outline)                      | Common                                      |
+| Inactive for (days)                        | People history filter            | A4                                          |
+| Invitation settings                        | People (A4)                      | Occasional                                  |
+| Security ↗ button                          | Remove                           | The sidebar has Security                    |
+
+### People and the person sheet
+
+| Control                                                         | Place                                           | Reason             |
+| --------------------------------------------------------------- | ----------------------------------------------- | ------------------ |
+| Invite person, Search, Sort, More filters (with "n active")     | E                                               | Common             |
+| Row: one open target with avatar, name, and email               | E                                               | Common             |
+| Departments column                                              | C (wide screens)                                | Occasional         |
+| Sheet: Name, Job title, Role, group list (and Add to group, A2) | E                                               | Common             |
+| Username                                                        | E in the sheet; filled from the email in Invite | Required           |
+| Save changes, Discard                                           | C (when the tab has edits)                      | Common             |
+| Resend or finish sending the invitation                         | C (pending person)                              | Common for pending |
+| Disable, Enable, Delete, Restore, Revoke invitation             | A, danger ink                                   | Lifecycle          |
+| Security tab: two-step status, Send recovery email              | E                                               | Occasional         |
+| Send recovery and sign out, Reset two-step verification         | A, with a disabled reason                       | Rare and risky     |
+| Sessions tab: Sign out everywhere                               | C (one or more sessions)                        | Occasional         |
+
+### Groups and the group sheet
+
+| Control                                                 | Place                      | Reason     |
+| ------------------------------------------------------- | -------------------------- | ---------- |
+| Create group, Search, Sort, More filters                | E                          | Common     |
+| Description column                                      | C (any group has one)      | Occasional |
+| Details: Name, Description                              | E                          | Common     |
+| Members: list, Add people                               | E                          | Common     |
+| Access: level per department, with its `DepartmentMark` | E                          | Common     |
+| Module levels                                           | C (Modules opened)         | Occasional |
+| Save, Discard (per tab)                                 | C (when the tab has edits) | Common     |
+| Delete group                                            | A, danger ink              | Lifecycle  |
+
+### Security and Account policy
+
+| Control                                                                            | Place                                                         | Reason            |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------- |
+| Policy summary, Edit policy                                                        | E                                                             | Common            |
+| Sessions: Search, Sort, list (10 per page)                                         | E                                                             | Common            |
+| End all remote sessions                                                            | E, danger ink, count in the confirmation                      | Incident response |
+| Policy: two-step per role, grace days, session timeout                             | E                                                             | Common            |
+| Policy: IP allow list, password rules, session limits, retention, sign-in attempts | A ("Advanced · n set")                                        | Rare              |
+| Installation rules the viewer cannot change                                        | Text on the sunken fill                                       | Read-only is text |
+| Manage two-step verification (the viewer's own)                                    | Out of the policy dialog, to the viewer's own security status | Different scope   |
+
+## Feedback table
+
+"none" is a gap. Exit criterion EXIT-2 requires no "none" for a data-changing action.
+
+| Action                                        | Before                                     | During                                | After                                   | Error                        |
+| --------------------------------------------- | ------------------------------------------ | ------------------------------------- | --------------------------------------- | ---------------------------- |
+| Invite                                        | Form                                       | "Sending…"                            | Toast; dialog closes                    | In the dialog                |
+| Disable, Enable, Delete, Restore, invitations | Confirmation with consequence              | "Working…" (**generic**)              | Toast; **no Undo**                      | In the dialog                |
+| Change details or role                        | Role helper line; **none** for own role    | "Saving…"                             | Toast                                   | Above the buttons            |
+| Sign out a person's sessions                  | Confirmation                               | "Signing out…"                        | Toast                                   | In the dialog                |
+| Recovery email, recovery and sign out, reset  | Confirmation with consequence              | **none** (the dialog closes)          | Line at the bottom of the tab (**far**) | At the bottom of the tab     |
+| Create group                                  | **none**                                   | "Creating…"                           | Toast; opens the Access tab             | In the dialog                |
+| Save group details, members, access           | **none** (staged changes)                  | "Saving…"                             | Toast; unsaved dot clears               | In the footer                |
+| Delete group                                  | Confirmation; blocked while it has members | "Deleting…"                           | Toast; sheet closes                     | In the dialog                |
+| Invitation settings                           | **none**                                   | "Saving…"                             | Toast                                   | Stale-revision alert         |
+| Account policy                                | **none** (retention note only)             | Fields locked, `aria-busy`            | Notice **behind the dialog**            | In the dialog                |
+| End one or all remote sessions                | Confirmation; **no count**                 | "Saving changes…" (**separate line**) | Page notice                             | In the dialog                |
+| Discard (person, group, settings, policy)     | **none**                                   | n/a                                   | **No Undo**                             | **none** when it fails (R18) |
+
+## Copy table
+
+| #   | Current text                                                                                                                                                                                  | Location                          | Proposed                                                               |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------- |
+| 1   | "Review account policy, sign-in sessions and recorded security events across your organization."                                                                                              | `systems/access/page.tsx:55`      | "Account policy and sign-in sessions."                                 |
+| 2   | "Invite people, set their role, and review their sessions." / "Give groups read, write, or manage access to departments."                                                                     | `systems/access/page.tsx:63,67`   | Remove (the title and the controls say it)                             |
+| 3   | "Active people with no recorded sign-in. Sign-ins before this feature was added are not counted."                                                                                             | `overview-view.tsx:220`           | "Active people who never signed in."                                   |
+| 4   | "Active people with recorded activity older than 30 days. People with no recorded activity are excluded."                                                                                     | Overview card                     | "No activity for 30 days."                                             |
+| 5   | "Existing accounts accept when signed in. New accounts get an email to set up their account."                                                                                                 | Invite dialog                     | Remove; keep the consequence on Send                                   |
+| 6   | "Groups give access to departments and modules." / "Gets the access of the groups you choose."                                                                                                | Invite dialog                     | One line: "Access comes from groups."                                  |
+| 7   | "3 to 100 letters, numbers, hyphens, or underscores."                                                                                                                                         | Invite dialog, person Details     | Show only on an error                                                  |
+| 8   | "Open a group to change who is in it."                                                                                                                                                        | `person-account.tsx:254`          | Remove (A2 adds Add to group)                                          |
+| 9   | "What this person can open, and the groups that give it."                                                                                                                                     | Person Access tab                 | Remove                                                                 |
+| 10  | "Review this person's two-step verification and recovery options."                                                                                                                            | Person Security tab               | Remove                                                                 |
+| 11  | "Reset only after you confirm the person needs recovery. This removes their authenticator app and signs them out everywhere."                                                                 | Person Security tab               | Move into the confirmation                                             |
+| 12  | "Choose a level for each department. Open a department to give one of its modules its own level."                                                                                             | Group Access tab                  | Remove                                                                 |
+| 13  | "Set the account policy enforced by your organization. Closing keeps your unsaved changes."                                                                                                   | Account policy dialog             | Remove                                                                 |
+| 14  | "An empty list allows all addresses. Include your current address to keep access. You can add up to 100 addresses or ranges."                                                                 | Account policy dialog             | "Empty allows every address." The limit shows only when it is reached. |
+| 15  | "IP address or CIDR"                                                                                                                                                                          | `security-panel.tsx:708`          | "Address or range"                                                     |
+| 16  | "Installation-wide rules", "Enrollment grace (days)"                                                                                                                                          | Account policy dialog             | Plain-language gate in Phase 6                                         |
+| 17  | "Ending remote sessions signs those devices out. Your current session stays active."                                                                                                          | `security-panel.tsx:503`          | Remove (the confirmation says it)                                      |
+| 18  | "Confirm end session", "Confirm end all remote sessions"                                                                                                                                      | `security-view.tsx:716,730`       | "End session", "End all remote sessions"                               |
+| 19  | "Not verified" / "Two-step verification not set up" / "without two-step verification"                                                                                                         | People, person Security, Overview | One term set, decided at the Phase 6 gate                              |
+| 20  | "Set up two-step verification for your own account before you require it for every role. Your changes are still here. Choose Manage two-step verification, then save again." (172 characters) | Account policy dialog             | Phase 6                                                                |
+
+## Phases (in priority order)
+
+Each phase starts with failing tests, ends with the Access batch (lint, build, the Access isolated tests, the Access HTTP specs), behavior-map rows, a `DESIGN.md` entry for any new pattern, screenshots at 1440 and 390, and one commit. Phases run one after another in this checkout, because they share files and the HTTP runner refuses an old build. A feature pass (hands-on, as `ho-admin` and `ho-manager`) follows each phase that changes behavior.
+
+| Phase                      | Size | Why this place in the order                                                             |
+| -------------------------- | ---- | --------------------------------------------------------------------------------------- |
+| 0. Baseline gaps           | S    | The plan must cover every access level before changes start.                            |
+| 1. Data safety             | L    | Data safety comes first.                                                                |
+| 2. People directory        | M    | The page's main list has a visible defect; its selector changes affect most HTTP specs. |
+| 3. Person and group sheets | L    | Risky actions, disabled reasons, and Undo.                                              |
+| 4. Overview triage         | M    | Depends on A3 and A4, and on the People filter from Phase 2.                            |
+| 5. Security and policy     | M    | High stakes, but used rarely.                                                           |
+| 6. Plain-language pass     | M    | It touches strings everywhere, so it goes last, after an approval gate.                 |
+| 7. Phone sweep and exit    | S    | Checks the finished page in all four looks.                                             |
+
+### Phase 0: baseline gaps
+
+| ID  | Change                                                                                                                                                                            | Proof                                 |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Z1  | Capture and measure the department-manager view (Groups only; members editable; Details and Access read-only). This needs a manager account from the owner, or the HTTP fixtures. | Screenshots and metrics rows          |
+| Z2  | Capture the non-owner administrator view of the Account policy dialog (read-only), and the no-access empty state.                                                                 | Screenshots                           |
+| Z3  | Check the server for R9 (an administrator demotes themselves, including the last administrator) and R13 (a repeated invite or group create).                                      | Test or API read; result in this spec |
+| Z4  | Check whether Manage unmounts its views on a window return (A1 counterpoint).                                                                                                     | Note in this spec                     |
+
+**Phase 0 results (2026-10-23).**
+
+- **Z1, manager view.** `ho-manager` sees only Groups, with one group (Sales Desk). Members can be changed; Details and Access are read-only, each with one sentence ("Only administrators can …"). Numbers are in the metrics file. The row grammar and the sheet changes apply to this view as well.
+- **Z2, non-owner administrator and no access.** For `ho-admin` the policy button reads "View policy", and the dialog shows 23 disabled controls under "Only the organization owner can change these settings." This breaks the Read-Only Is Text rule, so Y2 stays. `ho-reader` sees no Access item in the sidebar, and a direct URL shows the empty state "Access is managed by administrators".
+- **Z3, server checks.** The server refuses to demote the last active administrator ("Cannot remove the last active admin", 409) and protects the organization owner. Any other administrator can demote themselves with no question, so S7 adds the confirmation and shows the server's refusal beside Role. A repeated Invite after a lost answer returns 409 "Email or username is already in use", so no second invitation is made, but the message is wrong for the case. Group names are not unique, so a repeated Create group can make a second group: S9 is added.
+- **Z4, Manage.** Manage keeps its views mounted during the window-return check and only makes its forms read-only, so R1 is in Access only.
+
+### Phase 1: data safety
+
+| ID  | Change                                                                                                                                                                                                                | Proof                                                                |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| S1  | A window return keeps every open form, dialog, tab, and filter (A1). The test uses synthetic blur and focus events, because Playwright cannot switch windows.                                                         | HTTP: type in Invite, blur and focus, the form and its values remain |
+| S2  | Back and Forward never lose an unsaved form. First try: keep Invite, Create group, and invitation settings drafts in the session journal, as the person and group drafts already are, and offer them again on return. | HTTP: type, press Back, return, the draft is offered                 |
+| S3  | Discard in a sheet discards only that sheet's draft (R3).                                                                                                                                                             | Isolated and HTTP: a policy draft survives a person Discard          |
+| S4  | Discard and close wait while a save is in progress (R4). Pending saves register with the page guard.                                                                                                                  | HTTP with a delayed save                                             |
+| S5  | The journal keeps one draft per person and per group, or warns before it replaces another person's draft (R6).                                                                                                        | Isolated journal test                                                |
+| S6  | A save that may have completed counts as unsaved for every guard (R7).                                                                                                                                                | HTTP: move away; the guard asks                                      |
+| S7  | Changing one's own role asks first and names the result ("You will lose access to Access."). The last administrator cannot be demoted, if Z3 shows the server does not already refuse it.                             | HTTP                                                                 |
+| S8  | A failed Discard shows its error in the dialog (R18). The "Finish the current change" notice clears when the change finishes (R8).                                                                                    | HTTP                                                                 |
+| S9  | After a lost answer, Create group and Invite check the server before they offer Retry: an existing group or invitation opens instead of a second one or a conflict message (R13).                                     | HTTP with a dropped response                                         |
+
+### Phase 2: row and button grammar
+
+| ID  | Change                                                                                                                                                                                         | Proof                                                         |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| P1  | People rows follow the row grammar: 40 px from 1280 px up, one avatar, one open target, name and email on one line, relative last active. No hover card on the name in Access.                 | HTTP; at least 14 rows at 1440×900; page scroll 0 at 1280×720 |
+| P2  | Groups and Sessions rows use the same grammar; the empty Description column hides.                                                                                                             | HTTP                                                          |
+| P3  | Status quick filters with counts (All, Active, Invited, Ending soon, Disabled) sit beside the search; the other filters stay under Filters. The inactivity period becomes a filter in the URL. | HTTP: reload keeps the filter                                 |
+| P4  | Controls take their `xl:` sizes (36 px buttons, 32 px row actions); every search shows an icon and a placeholder; links use `--action-text`.                                                   | Computed sizes at 1440 and 390                                |
+
+### Phase 3: person and group sheets
+
+| ID  | Change                                                                                                            | Proof                                      |
+| --- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| H1  | Lifecycle actions move into one closed Advanced block, last, in danger ink (person and group).                    | HTTP: Advanced opens by keyboard           |
+| H2  | Save and Discard show only when the tab has edits. Pending labels name the action ("Disabling…", "Deleting…").    | HTTP                                       |
+| H3  | Every disabled control states why (`DisabledReason`, `aria-disabled`), including Reset two-step verification.     | Accessible-description checks              |
+| H4  | Delete shows an Undo notice that runs Restore (A5). Discard in an editor gives Undo.                              | HTTP                                       |
+| H5  | Person Security keeps the result next to the action, and focus returns to a control that still exists (R10, R11). | HTTP focus checks                          |
+| H6  | Departments show their `DepartmentMark`; levels use `LevelBadge` (A6).                                            | Screenshots                                |
+| H7  | Add to group in the person sheet (A2).                                                                            | HTTP journey, including a members conflict |
+| H8  | The Description column shows only when a group has a description.                                                 | HTTP                                       |
+
+### Phase 4: Overview dashboard
+
+| ID  | Change                                                                                                                                       | Proof                                 |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| O1  | Who's here: the line, the people signed in now, and the last-sign-in bar; each legend item opens People with its filter.                     | HTTP with fixtures                    |
+| O2  | Recent sign-ins from security events, with a link to Manage › Audit.                                                                         | HTTP                                  |
+| O3  | Needs attention shows only counts above zero, each with a verb; one "All clear" line names the rest.                                         | HTTP                                  |
+| O4  | Access by department with marks and level bars; each row opens People filtered by that department.                                           | HTTP                                  |
+| O5  | The page title uses `PageHeader`; Invite person is the one primary action; the Security ↗ button goes. The page stays still from 1280 px up. | Screenshot; page scroll 0 at 1280×720 |
+
+### Phase 5: Security and the account policy
+
+| ID  | Change                                                                                                                                         | Proof               |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| Y1  | The policy dialog shows two-step per role, grace days, and the session timeout. The rest goes into "Advanced · n set".                         | HTTP                |
+| Y2  | Installation rules the viewer cannot change show as text. The viewer's own two-step setup moves out of the dialog.                             | HTTP as a non-owner |
+| Y3  | End all remote sessions uses danger ink, and its confirmation states the count. The pending label is on the button.                            | HTTP                |
+| Y4  | Sessions open at 10 rows and show display names. The policy success shows inside the dialog. The page description matches what the page shows. | HTTP                |
+
+### Phase 6: plain-language pass
+
+The owner approves a glossary before the strings change, as in the Sandbox follow-up. Candidates: the two-step state words, "IP address or CIDR", "Installation-wide rules", "Enrollment grace", "Sign-in IP", and every sentence in the copy table.
+
+### Phase 7: phone sweep and exit
+
+Screenshots at 390 px of every section, sheet, and dialog in the four looks, light and dark, and the still-page check (EXIT-8) at 1280×720, 1440×900, and 1920×1080. Then the exit review below.
+
+## Measurement
+
+Numbers stay in `.agent-runtime/access-ui-ux/metrics.md`. The same script runs on the same data before and after. Baseline peaks: Account policy dialog 130 helper words and 22 controls; Overview 164 words when its cards are counted; Person · Security 59 words.
+
+## Exit criteria
+
+| ID     | Criterion                                                                                                                                                                     |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EXIT-1 | A re-run `impeccable critique` of Access has no P1, and heuristics 4 and 8 score 3 or more.                                                                                   |
+| EXIT-2 | No "none" cell remains in the feedback table for a data-changing action.                                                                                                      |
+| EXIT-3 | In every state, helper words and default-visible controls are both lower than the baseline, and every capability is reachable.                                                |
+| EXIT-4 | Every Phase 1 risk has a test that failed first and now passes.                                                                                                               |
+| EXIT-5 | All Access isolated and HTTP tests pass, and the frontend static checks are clean.                                                                                            |
+| EXIT-6 | `ui-reviewer` returns "ship" on the final screenshots (1440 and 390, light and dark, four looks).                                                                             |
+| EXIT-7 | A hands-on feature pass as `ho-admin` and `ho-manager` finds no open defect.                                                                                                  |
+| EXIT-8 | From 1280 px up, no Access section, sheet, or dialog scrolls the page at 1280×720, 1440×900, and 1920×1080; only panel bodies scroll. Below 1280 px nothing scrolls sideways. |
+| EXIT-9 | The owner approves the 390 px sweep.                                                                                                                                          |
+
+## Risks
+
+| Risk                                                                                                                                                                                | Solution                                                                                                                     |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| The People row change breaks selectors ("Manage <name>", "Person card: <name>") in three Access HTTP specs (`access-people`, `access-person-security`, `access-security`; 14 uses). | Keep accessible names where possible; update the selectors in the same commit; record changed assertions in the test ledger. |
+| `stash@{0}` (the background session check) changes the same window-return path in `app-page.tsx`, but it still sets the workspace to suspended, so it does not fix R1.              | The S1 fix is in Access and works with or without the stash. Check the stash before Phase 1.                                 |
+| More drafts in session storage can leak between accounts.                                                                                                                           | Use the existing journal: keyed by user, cleared on sign-out and on an organization switch.                                  |
+| Add to group (A2) makes a second place where membership changes.                                                                                                                    | One conflict path (`mergeMembers`) and one HTTP journey per path.                                                            |
+| Owner and non-owner administrators see a different policy dialog; the baseline exercised the owner view only.                                                                       | Z2 captures the non-owner view before Phase 5.                                                                               |
+| Moving settings off the Overview breaks the Overview deep-link tests.                                                                                                               | Keep the deep links; move only the forms.                                                                                    |
