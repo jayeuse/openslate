@@ -5,6 +5,22 @@ import type { SandboxVersion } from "../state/api";
 // the system writes. The rule lives only here; a server field is a listed
 // follow-up.
 
+/**
+ * A saved time as History shows it ("Oct 18, 2026, 9:12 AM"); Test results
+ * use the same words (S26).
+ */
+export function formatSavedTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 /** The checkpoint the server saves before it restores a version. */
 const RESTORE_CHECKPOINT_LABEL = "Before restore";
 

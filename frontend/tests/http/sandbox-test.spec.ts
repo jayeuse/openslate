@@ -73,11 +73,20 @@ test("editing an input marks the shown result stale at once", async ({
   await expect(
     outcome.getByText("Test only · live data unchanged"),
   ).toBeVisible();
+  // The run time reads as History's times do (S26).
+  await expect(outcome.locator("time").first()).toHaveText(
+    "Oct 18, 2026, 10:00 AM",
+  );
 
   await setup.getByLabel("Request number", { exact: true }).fill("CHANGED-001");
   await expect(
     outcome.getByText("Inputs changed", { exact: true }),
   ).toBeVisible();
+  // The look's warning notice holds the line and Run again (S26).
+  const notice = outcome
+    .locator('[data-slot="alert"][data-variant="warning"]')
+    .filter({ hasText: "Inputs changed" });
+  await expect(notice.getByRole("button", { name: "Run again" })).toBeVisible();
   await outcome.getByRole("button", { name: "Run again" }).click();
   await expect(outcome.getByText("Inputs changed")).toHaveCount(0);
 });

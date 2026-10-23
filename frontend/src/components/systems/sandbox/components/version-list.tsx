@@ -416,6 +416,11 @@ function VersionRow({
   const kind = versionKindWord(version, automatic);
   const time = formatVersionTime(version.createdAt);
   const meta = `${kind} · ${time} · v${version.sequence}`;
+  // A label that already begins with its kind word shows it once; the icon
+  // marks the kind, and the description still says it (S26).
+  const repeatsKind = version.label
+    .toLocaleLowerCase()
+    .startsWith(kind.toLocaleLowerCase());
   return (
     <Button
       type="button"
@@ -433,9 +438,9 @@ function VersionRow({
       className={cn(
         // One line per row, 40px from 1280px (DESIGN "Access rows"); two
         // lines on a phone. Hover and open tints come from the look's ink;
-        // the open row also takes an action edge.
+        // the open row is the tint only (the One Selection Rule, S26).
         "border-border grid h-auto w-full min-w-0 items-center justify-normal gap-x-2.5 rounded-none border-b px-3 text-left font-normal whitespace-nowrap",
-        "hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)] aria-[current=true]:shadow-[inset_2px_0_0_var(--action)]",
+        "hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
         phone
           ? "min-h-13 grid-cols-[1rem_minmax(0,1fr)] py-2"
           : "min-h-11 grid-cols-[1rem_minmax(0,1fr)_auto_2.75rem] py-0 xl:h-10 xl:min-h-10",
@@ -460,7 +465,7 @@ function VersionRow({
         >
           {version.label}
         </span>
-        {phone ? null : (
+        {phone || repeatsKind ? null : (
           <span className="text-muted-foreground shrink-0 text-xs">{kind}</span>
         )}
       </span>
@@ -469,7 +474,14 @@ function VersionRow({
           id={metaId}
           className="text-muted-foreground col-start-2 truncate text-xs"
         >
-          {meta}
+          {repeatsKind ? (
+            <>
+              <span className="sr-only">{kind} · </span>
+              {`${time} · v${version.sequence}`}
+            </>
+          ) : (
+            meta
+          )}
         </span>
       ) : (
         <>

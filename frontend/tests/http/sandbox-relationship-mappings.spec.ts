@@ -1847,12 +1847,13 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
   const publish = page.getByRole("button", { name: "Review & Publish" });
   const canvas = page.getByLabel("Module design canvas");
 
-  // No placeholder entities: zero counts and no sample module.
+  // No placeholder entities: zero counts (once, in the page footer, S26)
+  // and no sample module.
   await expect(
     page.getByText(
       "0 departments · 0 modules · 0 fields · 0 relationships · 0 triggers",
     ),
-  ).toHaveCount(2);
+  ).toHaveCount(1);
   await expect(page.getByText("Service requests", { exact: true })).toHaveCount(
     0,
   );
@@ -2317,6 +2318,10 @@ test("the publish review groups changes and keeps Publish in reach", async ({
   await expect(
     dialog.getByRole("button", { name: "Publish changes" }),
   ).toBeInViewport();
+  // With no password yet, Publish says why it waits (S26).
+  await expect(
+    dialog.getByRole("button", { name: "Publish changes" }),
+  ).toHaveAccessibleDescription("Enter your password to publish.");
   // The password is its own label-left row above Cancel and Publish.
   const [label, password, publish] = await Promise.all(
     [
@@ -2459,7 +2464,7 @@ test("a relationship can target a module in another department and publish", asy
   await dialog.getByLabel("Source module").selectOption("sample-requests");
   await target.selectOption("sample-customers");
   await expect(dialog.getByRole("note")).toHaveText(
-    "This relationship connects modules in Operations and Commercial. A person sees each link only when they can read both modules.",
+    "Spans Operations and Commercial; only people who read both see links.",
   );
   await dialog.getByLabel("Relationship name").fill("Bills customer");
   await dialog.getByRole("button", { name: "Create relationship" }).click();
@@ -2498,7 +2503,7 @@ test("leaving Connect modules after choosing another department saves nothing", 
   await dialog.getByLabel("Target module").selectOption("sample-customers");
   await dialog.getByLabel("Relationship name").fill("Unsaved customer link");
   await expect(dialog.getByRole("note")).toContainText(
-    "connects modules in Operations and Commercial.",
+    "Spans Operations and Commercial;",
   );
   await page.keyboard.press("Escape");
 

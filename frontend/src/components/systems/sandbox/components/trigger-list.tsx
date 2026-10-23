@@ -201,10 +201,10 @@ export function TriggerList({
               className={cn(
                 // One line per row, 40px from 1280px (DESIGN "Access rows").
                 // Hover and open tints come from the look's ink, so both read
-                // in every look, light and dark; the open row also takes an
-                // action edge.
+                // in every look, light and dark; the open row is the tint
+                // only (the One Selection Rule, S26).
                 "border-border grid h-auto min-h-11 w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)_auto] items-center justify-normal gap-2.5 rounded-none border-b px-3 py-0 text-left font-normal whitespace-nowrap max-sm:min-h-13 xl:h-10 xl:min-h-10",
-                "hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)] aria-[current=true]:shadow-[inset_2px_0_0_var(--action)]",
+                "hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
               )}
               onClick={() => onOpen(recordTrigger.id)}
             >

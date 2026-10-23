@@ -18,8 +18,8 @@ import type {
   BuildAttentionKind,
 } from "../domain/build-summary";
 
-// Build with nothing selected (docs/specs/sandbox-relayout.md S12): one fact
-// line of counts, then what needs attention in the Access overview grammar (a
+// Build with nothing selected (docs/specs/sandbox-relayout.md S12): what
+// needs attention (the page footer holds the counts, S26) in the Access overview grammar (a
 // toned icon, a bold count, the words, one verb), or "All clear", then the
 // quiet ways to add to the design.
 
@@ -32,7 +32,6 @@ const attentionIcons: Record<BuildAttentionKind, ReactNode> = {
 };
 
 export function DesignerSummary({
-  facts,
   items,
   review,
   pending,
@@ -41,8 +40,6 @@ export function DesignerSummary({
   onAddDepartment,
   onStartFromTemplate,
 }: {
-  /** The design's counts, as one line. */
-  facts: string;
   items: readonly BuildAttentionItem[];
   /** Why the Review row cannot open Review & Publish now, when it cannot. */
   review: { reason: string | null; disabled: boolean };
@@ -54,12 +51,9 @@ export function DesignerSummary({
 }) {
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-1">
-        <h2 data-slot="section-title" className="text-lg font-semibold">
-          Summary
-        </h2>
-        <p className="text-muted-foreground text-sm">{facts}</p>
-      </div>
+      <h2 data-slot="section-title" className="text-lg font-semibold">
+        Summary
+      </h2>
       <section
         aria-labelledby="sandbox-attention-heading"
         className="flex flex-col gap-1.5"

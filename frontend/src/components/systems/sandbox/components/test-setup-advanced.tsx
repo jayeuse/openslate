@@ -11,6 +11,7 @@ import {
 import type { SandboxDocumentDesign, SandboxTrigger } from "../domain/document";
 import type { SandboxTestRun } from "../state/api";
 import { SetupRow } from "./test-setup-rows";
+import { formatSavedTime } from "../domain/version-history";
 
 /**
  * The rare Test controls, last in the Setup pane and closed by default
@@ -130,7 +131,7 @@ export function TestSetupAdvanced({
                       {testedModule?.name ?? "Unavailable module"}
                     </span>
                     <span className="text-muted-foreground block text-xs">
-                      {new Date(item.createdAt).toLocaleString()} ·{" "}
+                      {formatSavedTime(item.createdAt)} ·{" "}
                       {item.result.issues.length
                         ? "Needs attention"
                         : "Test complete"}

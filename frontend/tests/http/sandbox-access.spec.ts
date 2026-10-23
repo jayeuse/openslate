@@ -11,9 +11,17 @@ test("a member who follows a Sandbox link sees that it is not available, with a 
     id: "00000000-0000-4000-8000-000000000201",
     role: "member",
   });
-  await page.route("**/api/sandbox/**", (route) =>
-    route.fulfill({ status: 403, json: { detail: "Forbidden" } }),
-  );
+  // The identity already says this account is not an administrator, so
+  // the page sends no Sandbox request to be refused (S25).
+  const sandboxRequests: string[] = [];
+  await page.route("**/api/sandbox/**", (route) => {
+    sandboxRequests.push(route.request().url());
+    return route.fulfill({ status: 403, json: { detail: "Forbidden" } });
+  });
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
   await page.goto("/sandbox?section=triggers");
 
   await expect(
@@ -33,6 +41,8 @@ test("a member who follows a Sandbox link sees that it is not available, with a 
       .getByRole("navigation", { name: "Main navigation" })
       .locator('a[href^="/sandbox"]'),
   ).toHaveCount(0);
+  expect(sandboxRequests).toEqual([]);
+  expect(consoleErrors).toEqual([]);
 });
 
 test("an administrator whose Sandbox read fails on the server keeps Retry and sees no access notice", async ({

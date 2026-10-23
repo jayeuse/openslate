@@ -423,8 +423,12 @@ export function VersionsWorkspace({
     }
     if (!phone) return;
     setPhoneView("detail");
+    // From the page top: a short detail cannot scroll far enough to sit
+    // under the app bar, which left the title cut in half (S25).
     requestAnimationFrame(() => {
-      rootRef.current?.scrollIntoView({ block: "start" });
+      rootRef.current
+        ?.closest("[data-sandbox-page]")
+        ?.scrollIntoView({ block: "start" });
       detailHeading.current?.focus({ preventScroll: true });
     });
   }
@@ -462,8 +466,9 @@ export function VersionsWorkspace({
       invalidateSandboxHistoryVersion(action.id);
       setOffset(0);
       if (selectedVersionId === action.id) setSelectedVersionId("");
-      if (compareA === action.id) setCompareA("");
-      if (compareB === action.id) setCompareB("");
+      // The version that opens next gets its own default pair (S26).
+      setCompareA("");
+      setCompareB("");
       setComparison(null);
       setPhoneView("list");
       notifyDone(`${version.label} deleted from shared history.`);

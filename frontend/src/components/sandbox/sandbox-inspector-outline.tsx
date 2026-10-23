@@ -894,7 +894,10 @@ export function SandboxInspectorOutline({
   return visible ? (
     <div ref={outlineRef}>
       <Card data-testid="inspector-outline" className="border-0 p-0">
-        <div className="flex flex-col gap-3">
+        {/* From 1280px the workbench panel scrolls the tree; the title and
+            search stay pinned above it, so following a selection never
+            leaves the search half out of view (S25). */}
+        <div className="xl:bg-card flex flex-col gap-3 xl:sticky xl:top-0 xl:z-10 xl:-mx-3 xl:-mt-3 xl:px-3 xl:pt-3 xl:pb-2">
           <SectionTitle>Structure</SectionTitle>
           <div className="flex min-w-0 items-center gap-1">
             <div className="relative min-w-0 flex-1">

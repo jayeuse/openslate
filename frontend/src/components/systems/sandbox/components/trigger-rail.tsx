@@ -394,7 +394,11 @@ export function TriggerRail({
 }: {
   design: SandboxDocumentDesign;
   trigger: SandboxTrigger;
-  /** Fixed values Save will refuse, by step (see `triggerStepErrors`). */
+  /**
+   * Fixed values Save will refuse, by step (see `triggerStepErrors`), less
+   * the new steps nobody has touched yet. Each step group carries its key
+   * in `data-step-key`.
+   */
   stepErrors: ReadonlyMap<string, string>;
   pending: boolean;
   /** Read-only while kept edits wait; the fieldset does not reach Switch. */
@@ -440,15 +444,20 @@ export function TriggerRail({
                 onChange({ ...recordTrigger, enabled: checked })
               }
             />
-            <span
+            {/* The word is the switch's label too, so the tap target runs
+                past the small track on a phone (EXIT-9, S25). */}
+            <label
               id={statusWordId}
+              htmlFor={statusId}
+              data-sandbox-touch-label
               className={cn(
-                "text-sm font-medium",
+                "flex cursor-pointer items-center text-sm font-medium xl:min-h-8",
                 !recordTrigger.enabled && "text-muted-foreground",
+                (pending || locked) && "cursor-not-allowed",
               )}
             >
               {triggerStatusWord(recordTrigger.enabled)}
-            </span>
+            </label>
             {recordTrigger.enabled ? null : (
               <span id={statusNoteId} className="text-muted-foreground text-sm">
                 · won&apos;t run after publish
@@ -585,6 +594,7 @@ function WhenSettings({
     <div
       role="group"
       aria-label="When settings"
+      data-step-key="trigger"
       aria-describedby={note ? noteId : undefined}
       className="grid min-w-0 gap-3 @min-[30rem]/detail:gap-2"
     >
@@ -846,6 +856,7 @@ function Conditions({
             key={condition.id}
             role="group"
             aria-label={`Condition ${index + 1}`}
+            data-step-key={`condition:${condition.id}`}
             aria-describedby={note ? noteId : undefined}
             className="grid min-w-0 gap-1"
           >
@@ -1001,6 +1012,7 @@ function Actions({
             key={action.id}
             role="group"
             aria-label={`Action ${index + 1}`}
+            data-step-key={`action:${action.id}`}
             aria-describedby={note ? noteId : undefined}
             className="grid min-w-0 gap-1"
           >

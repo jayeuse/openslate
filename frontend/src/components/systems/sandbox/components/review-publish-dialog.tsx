@@ -351,13 +351,22 @@ export function ReviewPublishDialog({
               </div>
               <DialogFooter className="mt-0 flex-row justify-end">
                 {cancel}
-                <Button
-                  className="min-h-11"
-                  disabled={disabled || pending || blocked || !password}
-                  onClick={() => void publish()}
+                {/* Waiting only for the password, Publish says so (S26). */}
+                <DisabledReason
+                  reason={
+                    !password && !(disabled || pending || blocked)
+                      ? "Enter your password to publish."
+                      : null
+                  }
                 >
-                  {busy === "publish" ? "Publishing…" : "Publish changes"}
-                </Button>
+                  <Button
+                    className="min-h-11"
+                    disabled={disabled || pending || blocked || !password}
+                    onClick={() => void publish()}
+                  >
+                    {busy === "publish" ? "Publishing…" : "Publish changes"}
+                  </Button>
+                </DisabledReason>
               </DialogFooter>
             </>
           ) : (

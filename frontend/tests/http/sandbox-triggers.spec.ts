@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "./helpers/test";
-import { openAuthenticatedSandbox } from "./helpers/sandbox-api";
+import {
+  clickBesideBox,
+  expectBelowAppBar,
+  openAuthenticatedSandbox,
+} from "./helpers/sandbox-api";
 import type { Design } from "../../src/components/systems/sandbox/domain/model";
 import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
 
@@ -291,6 +295,83 @@ test("deleting a trigger can be undone from its notice", async ({ page }) => {
   expect(sandbox.documentWrites()).toBe(0);
 });
 
+// Phase 8 (S25): an Undo ends when the triggers save, and a discard's Undo
+// also ends at the next edit, so an old notice never brings back a saved
+// deletion or replaces newer work.
+test("an old Undo never brings back a saved deletion or replaces a newer edit", async ({
+  page,
+}) => {
+  const sandbox = await openTriggers(page);
+  const list = page.getByRole("navigation", { name: "Trigger list" });
+  const notices = page.getByRole("region", {
+    name: "Status messages",
+    exact: true,
+  });
+  const name = sandbox.document().triggers[0]!.name;
+
+  await page.getByRole("button", { name: "Trigger options" }).click();
+  await page.getByRole("menuitem", { name: "Delete trigger" }).click();
+  await expect(notices.getByText("Trigger deleted")).toBeVisible();
+  await page.getByRole("button", { name: "Save triggers" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+  await expect(notices.getByText("Triggers saved")).toBeVisible();
+  // The save closes the notice: no Undo is offered (S26).
+  await expect(
+    notices.getByRole("button", { name: "Undo", exact: true }),
+  ).toHaveCount(0);
+  await expect(list.getByRole("button", { name })).toHaveCount(0);
+  await expect(page.getByText(/unsaved trigger/)).toHaveCount(0);
+  expect(sandbox.document().triggers).toHaveLength(0);
+});
+
+test("a discard's Undo ends at the next edit", async ({ page }) => {
+  await openTriggers(page);
+  const notices = page.getByRole("region", {
+    name: "Status messages",
+    exact: true,
+  });
+  const triggerName = page.getByLabel("Trigger name");
+  await triggerName.fill("Discarded edit");
+  await page.getByRole("button", { name: "Discard changes" }).click();
+  await expect(notices.getByText("Changes discarded")).toBeVisible();
+  await triggerName.fill("Newer edit");
+  // The edit closes the notice: no Undo is offered (S26).
+  await expect(
+    notices.getByRole("button", { name: "Undo", exact: true }),
+  ).toHaveCount(0);
+  await expect(triggerName).toHaveValue("Newer edit");
+  await expect(page.getByText(/· 1 unsaved trigger change$/)).toBeVisible();
+});
+
+// Phase 8 (S25): a new trigger's empty required value warns once the step
+// is left or Save is tried, not as it opens; Save still refuses it.
+test("a new trigger warns about a required value only after it is left or Save is tried", async ({
+  page,
+}) => {
+  const sandbox = await openTriggers(page);
+  const create = page.getByRole("button", { name: "New trigger", exact: true });
+  await create.click();
+  const detail = page.getByRole("region", { name: "Trigger details" });
+  const action = detail.getByRole("group", { name: "Action 1" });
+  await expect(action).toBeVisible();
+  await expect(detail).not.toContainText("is required");
+
+  await page.getByRole("button", { name: "Save triggers" }).click();
+  await expect(action).toHaveAccessibleDescription(
+    "Request number is required.",
+  );
+  expect(sandbox.documentWrites()).toBe(0);
+
+  // Another new trigger: leaving its empty value shows the same note.
+  await create.click();
+  await expect(action).not.toContainText("is required");
+  await action.getByRole("textbox").first().focus();
+  await page.keyboard.press("Tab");
+  await expect(action).toHaveAccessibleDescription(
+    "Request number is required.",
+  );
+});
+
 test("on a phone, choosing a trigger shows its detail first, with Back", async ({
   page,
 }) => {
@@ -305,12 +386,25 @@ test("on a phone, choosing a trigger shows its detail first, with Back", async (
 
   await list.getByRole("button", { name }).click();
   await expect(list).toBeHidden();
-  await expect(page.getByRole("heading", { name, level: 2 })).toBeFocused();
+  const heading = page.getByRole("heading", { name, level: 2 });
+  await expect(heading).toBeFocused();
+  // The page title and the heading show whole, below the sticky app bar.
+  await expectBelowAppBar(page, page.getByRole("heading", { level: 1 }));
+  await expectBelowAppBar(page, heading);
   // The detail is the rail: each step carries its own one-line summary.
   await expect(
     detail.getByRole("region", { name: "When", exact: true }),
   ).toHaveAccessibleDescription("An item is added in Service requests");
   await expect(detail.getByLabel("Trigger name")).toBeVisible();
+  // The Status switch has a tap target past its box: a click 20 px to its
+  // right toggles it.
+  const status = detail.getByRole("switch", { name: "Trigger status" });
+  const checked = await status.getAttribute("aria-checked");
+  await clickBesideBox(page, status);
+  await expect(status).toHaveAttribute(
+    "aria-checked",
+    checked === "true" ? "false" : "true",
+  );
 
   await page
     .getByRole("button", { name: "Back to Triggers", exact: true })

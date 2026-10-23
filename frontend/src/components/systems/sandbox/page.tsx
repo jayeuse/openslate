@@ -327,7 +327,20 @@ function SandboxUnavailable() {
   );
 }
 
+/**
+ * An account the identity already shows is not an administrator sees the
+ * notice and sends no Sandbox request to be refused (S25). An administrator,
+ * or an identity still loading or failed, opens the workspace (its reads
+ * wait for a loading identity), where a real 403 still shows the notice.
+ */
 export default function SandboxPage() {
+  const viewer = useQuery(authMeOptions());
+  if (viewer.isSuccess && accessNavigationFor(viewer.data) !== "all")
+    return <SandboxUnavailable />;
+  return <SandboxWorkspace />;
+}
+
+function SandboxWorkspace() {
   const search = useSearchParams();
   const router = useRouter();
   const [session, setSession] = useState<SandboxDocumentSession | null>(null);
@@ -630,12 +643,15 @@ export default function SandboxPage() {
       setLoading(false);
     }
   }, [queryClient]);
+  // The first reads wait for the identity, so an account it shows is not
+  // an administrator sends none (S25); a failed identity read still loads.
+  const viewer = useQuery(authMeOptions());
+  const identitySettled = !viewer.isPending;
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (identitySettled) void refresh();
+  }, [identitySettled, refresh]);
   // An account refused here that becomes an administrator reads the Sandbox
   // again; only the change itself does, so a refusal never loops.
-  const viewer = useQuery(authMeOptions());
   const administrator = accessNavigationFor(viewer.data) === "all";
   const wasAdministrator = useRef(administrator);
   useEffect(() => {
@@ -644,18 +660,21 @@ export default function SandboxPage() {
     if (promoted && loadDenied) void refresh();
   }, [administrator, loadDenied, refresh]);
   useEffect(() => {
-    if (section === "Triggers") void refreshTriggerActivity();
-  }, [refreshTriggerActivity, section]);
+    if (identitySettled && section === "Triggers")
+      void refreshTriggerActivity();
+  }, [identitySettled, refreshTriggerActivity, section]);
   // Triggers reads a requested quick filter ("status=off") once, as it
   // opens; the address then drops it, so the sidebar links that copy the
-  // page's parameters never bring it back.
+  // page's parameters never bring it back. It waits for the draft, so the
+  // list has opened with it first.
   const requestedStatus = search.get("status");
+  const opened = session !== null;
   useEffect(() => {
-    if (section !== "Triggers" || requestedStatus === null) return;
+    if (section !== "Triggers" || requestedStatus === null || !opened) return;
     const params = new URLSearchParams(search.toString());
     params.delete("status");
     router.replace(`/sandbox?${params.toString()}` as Route, { scroll: false });
-  }, [requestedStatus, router, search, section]);
+  }, [opened, requestedStatus, router, search, section]);
 
   const navigate = useCallback(
     (

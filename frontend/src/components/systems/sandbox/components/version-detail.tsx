@@ -11,7 +11,7 @@ import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { isAutomaticSave } from "../domain/version-history";
+import { formatSavedTime, isAutomaticSave } from "../domain/version-history";
 import type { SandboxCommandResult } from "../state/commands";
 import type { SandboxVersion } from "../state/api";
 import { versionKindWord } from "./version-list";
@@ -26,18 +26,6 @@ export type CheckpointLabelEdit = {
   value: string;
   error: string;
 };
-
-function formatVersionDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-}
 
 export function VersionDetail({
   version,
@@ -145,7 +133,7 @@ export function VersionDetail({
               <dt className="text-muted-foreground">Saved</dt>
               <dd title={version.createdAt}>
                 <time dateTime={version.createdAt}>
-                  {formatVersionDate(version.createdAt)}
+                  {formatSavedTime(version.createdAt)}
                 </time>
                 {/* The page knows no other account's name. */}
                 {version.performedBy === viewerId ? " · You" : ""}

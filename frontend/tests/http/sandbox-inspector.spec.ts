@@ -1,5 +1,6 @@
 import { expect, expectNoPageScroll, test, type Page } from "./helpers/test";
 import {
+  clickBesideBox,
   fieldRowTrigger,
   openAuthenticatedSandbox,
 } from "./helpers/sandbox-api";
@@ -85,6 +86,61 @@ test("Delete is reachable from Properties for a module and a field", async ({
   await expect(deletion).toContainText("Priority");
   await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(deletion).toBeHidden();
+});
+
+// EXIT-9: at 390 px the field's Required checkbox has a tap target past
+// its 16 px box: its label 20 px to the right, and a 44 px hit layer (S25).
+test("on a phone the Required checkbox toggles from beside its box", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page);
+  await page.goto("/sandbox?module=sample-requests");
+  await page.getByRole("tab", { name: "Properties", exact: true }).click();
+  const field = page.getByRole("group", {
+    name: "Priority field settings",
+    exact: true,
+  });
+  await fieldRowTrigger(field, "Priority").click();
+  const required = field.getByRole("checkbox", { name: "Required" });
+  await expect(required).not.toBeChecked();
+  await clickBesideBox(page, required);
+  await expect(required).toBeChecked();
+  // The hit layer is 44 px tall too: 20 px below the centre still counts.
+  const box = (await required.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2 + 20);
+  await expect(required).not.toBeChecked();
+});
+
+// Critique D4 (S26): a field nothing else uses deletes at once with Undo,
+// as a trigger does; a field a trigger uses still asks first (above).
+test("a field nothing uses deletes at once, and Undo brings it back", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+  await page.goto("/sandbox?module=sample-customers");
+  const inspector = page.getByRole("complementary", {
+    name: "Design inspector",
+  });
+  const field = inspector.getByRole("group", {
+    name: "Email field settings",
+    exact: true,
+  });
+  await fieldRowTrigger(field, "Email").click();
+  await field.getByRole("button", { name: /^Advanced/ }).click();
+  await field
+    .getByRole("button", { name: "Delete field", exact: true })
+    .click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(field).toHaveCount(0);
+  await expect.poll(sandbox.documentWrites).toBe(1);
+  const notices = page.getByRole("region", {
+    name: "Status messages",
+    exact: true,
+  });
+  await expect(notices.getByText("Field deleted")).toBeVisible();
+  await notices.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(field).toBeVisible();
 });
 
 test("collapsing a field row keeps its unsaved edit and says so", async ({
@@ -236,8 +292,8 @@ test("Structure is one Tab stop and works from the keyboard", async ({
   await page.keyboard.press("Escape");
 });
 
-// Build with nothing selected is a summary of the whole design: a fact line of
-// counts, then what needs attention, each row with one action that opens the
+// Build with nothing selected is a summary of the whole design: what needs
+// attention (the page footer holds the counts), each row with one action that opens the
 // right place (docs/specs/sandbox-relayout.md S12).
 test("with nothing selected, Properties summarizes the design and opens what needs attention", async ({
   page,
@@ -268,8 +324,15 @@ test("with nothing selected, Properties summarizes the design and opens what nee
   await expect(
     inspector.getByRole("heading", { name: "Summary", level: 2 }),
   ).toBeVisible();
+  // The counts live once, in the page footer (S26), not in the Summary.
   await expect(
     inspector.getByText(
+      "2 departments · 4 modules · 12 fields · 1 relationship · 2 triggers",
+      { exact: true },
+    ),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText(
       "2 departments · 4 modules · 12 fields · 1 relationship · 2 triggers",
       { exact: true },
     ),
@@ -450,6 +513,23 @@ test("Structure follows a selection on the canvas", async ({ page }) => {
       .locator('[data-sandbox-node="sample-operations"] [data-selected="true"]')
       .first(),
   ).toBeVisible();
+
+  // With the whole tree open, following a selection far down keeps the
+  // search row whole above the tree (S25).
+  await page.getByRole("button", { name: "Expand all" }).click();
+  await page
+    .getByRole("region", { name: "Organization canvas" })
+    .locator(
+      '[data-sandbox-node="sample-customers"] [data-sandbox-part="header"]',
+    )
+    .first()
+    .click();
+  await tabs.getByRole("tab", { name: "Structure" }).click();
+  await expect(customers).toHaveAttribute("aria-selected", "true");
+  await expect(customers).toBeInViewport({ ratio: 1 });
+  await expect(page.getByLabel("Search structure")).toBeInViewport({
+    ratio: 1,
+  });
 });
 
 // A pick in Structure brings the item into view on the canvas; an item
@@ -506,6 +586,10 @@ test("relationship rows carry their actions and the list shows once", async ({
   ).toHaveCount(1);
   // Plain words (Phase 7, G1): the kind reads "Many matches".
   await expect(inspector.getByText(/Equipment · Many matches$/)).toBeVisible();
+  // A row that truncates keeps its whole text in a title (S25).
+  await expect(
+    inspector.getByText(/Equipment · Many matches$/),
+  ).toHaveAttribute("title", "To Equipment · Many matches");
   await inspector
     .getByRole("button", { name: "Connect modules", exact: true })
     .click();
@@ -728,6 +812,10 @@ test("Show on a module with no fields brings it into view", async ({
     y: 0,
   });
   await openAuthenticatedSandbox(page, design);
+  // The draft loads after the identity; the canvas shows it first.
+  await expect(
+    page.locator('[data-sandbox-node="sample-requests"]'),
+  ).toBeVisible();
   await expect.poll(() => nodeInView(page, "sample-invoices")).toBe(false);
   await page
     .getByRole("region", { name: "Needs attention" })

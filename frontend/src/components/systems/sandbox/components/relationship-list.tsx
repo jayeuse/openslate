@@ -76,7 +76,11 @@ export function RelationshipList({
                 </span>
                 {row.closed ? <Badge variant="outline">Closed</Badge> : null}
               </p>
-              <p className="text-muted-foreground truncate text-xs">
+              {/* The title holds the whole line a narrow panel cuts (S25). */}
+              <p
+                className="text-muted-foreground truncate text-xs"
+                title={`${row.direction === "outgoing" ? "To" : "From"} ${row.otherModule} · ${relationshipKind(row.cardinality).label}`}
+              >
                 <span aria-hidden="true">
                   {row.direction === "outgoing" ? "→ " : "← "}
                 </span>

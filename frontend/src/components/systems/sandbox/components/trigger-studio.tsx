@@ -30,7 +30,6 @@ import {
   replaceAt,
   triggerStepErrors,
 } from "../domain/trigger-rules";
-import { reportUndoable } from "@/lib/feedback";
 import {
   filterTriggers,
   TriggerList,
@@ -55,6 +54,17 @@ export type TriggerStudioProps = {
   initialStatus?: TriggerStatusFilter;
   onRefreshActivity: () => Promise<void>;
 };
+
+/** The flow steps of a trigger, keyed as `triggerStepErrors` keys them. */
+function stepKeys(recordTrigger: SandboxTrigger): string[] {
+  return [
+    "trigger",
+    ...recordTrigger.conditionGroup.conditions.map(
+      (condition) => `condition:${condition.id}`,
+    ),
+    ...recordTrigger.actions.map((action) => `action:${action.id}`),
+  ];
+}
 
 export function triggerRunStatus(run: SandboxTriggerRun): string {
   if (run.details.budgetExhausted === true)
@@ -155,15 +165,42 @@ export function TriggerStudio({
   }, [selectedId]);
   const selected = draft.find((item) => item.id === selectedId);
   const updateDraft = triggerDraft.update;
+  // New steps keep a required-value note quiet until they are changed or
+  // left, or Save is tried (S25), keyed "<trigger id>/<step key>".
+  const [quietSteps, setQuietSteps] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const quiet = (keys: readonly string[]) =>
+    setQuietSteps((current) => new Set([...current, ...keys]));
+  function touchStep(target: EventTarget) {
+    const step = (target as HTMLElement).closest<HTMLElement>("[data-step-key]")
+      ?.dataset.stepKey;
+    const key = selected && step ? `${selected.id}/${step}` : "";
+    if (!quietSteps.has(key)) return;
+    setQuietSteps((current) => {
+      const next = new Set(current);
+      next.delete(key);
+      return next;
+    });
+  }
+  const shownStepErrors = selected
+    ? new Map(
+        [...triggerStepErrors(selected, design)].filter(
+          ([step]) => !quietSteps.has(`${selected.id}/${step}`),
+        ),
+      )
+    : new Map<string, string>();
   function discard() {
     const snapshot = { edits: triggerDraft.discard(), selectedId };
+    // Ends at the next edit or save: newer work is never replaced (S25).
     if (snapshot.edits)
-      reportUndoable("Changes discarded", () => {
+      triggerDraft.offerUndo("Changes discarded", () => {
         if (snapshot.edits) triggerDraft.restore(snapshot.edits);
         setSelectedId(snapshot.selectedId);
       });
   }
   async function save() {
+    setQuietSteps(new Set());
     await triggerDraft.save();
   }
   // A failed save brings its reason into view and to the screen reader.
@@ -193,12 +230,17 @@ export function TriggerStudio({
   }, []);
   const listRef = useRef<HTMLElement>(null);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
-  /** On phones, opening a trigger shows its detail from the top. */
+  /**
+   * On phones, opening a trigger shows the page from its top: the title and
+   * the detail heading both whole, never cut by the app bar (S25).
+   */
   function openDetail() {
     setPhoneView("detail");
     if (!phone) return;
     requestAnimationFrame(() => {
-      studioRef.current?.scrollIntoView({ block: "start" });
+      studioRef.current
+        ?.closest("[data-sandbox-page]")
+        ?.scrollIntoView({ block: "start" });
       detailHeadingRef.current?.focus({ preventScroll: true });
     });
   }
@@ -224,7 +266,8 @@ export function TriggerStudio({
     setSelectedId((remaining[index] ?? remaining[index - 1])?.id ?? "");
     setPhoneView("list");
     focusCurrentRow();
-    reportUndoable("Trigger deleted", () => {
+    // Ends at the next edit or save: a saved deletion stays deleted (S26).
+    triggerDraft.offerUndo("Trigger deleted", () => {
       updateDraft((current) =>
         current.some((item) => item.id === recordTrigger.id)
           ? current
@@ -240,7 +283,14 @@ export function TriggerStudio({
   }
   function update(next: SandboxTrigger) {
     const index = draft.findIndex((item) => item.id === next.id);
-    if (index >= 0) updateDraft(replaceAt(draft, index, next));
+    if (index < 0) return;
+    const before = new Set(stepKeys(draft[index]!));
+    quiet(
+      stepKeys(next)
+        .filter((step) => !before.has(step))
+        .map((step) => `${next.id}/${step}`),
+    );
+    updateDraft(replaceAt(draft, index, next));
   }
   // Recent activity is occasional: closed, last in the detail (the
   // Advanced Last Rule).
@@ -366,6 +416,7 @@ export function TriggerStudio({
                 }}
                 onCreate={() => {
                   const next = defaultTrigger(design);
+                  quiet(stepKeys(next).map((step) => `${next.id}/${step}`));
                   setSelectedId(next.id);
                   updateDraft([...draft, next]);
                   openDetail();
@@ -462,17 +513,24 @@ export function TriggerStudio({
                     </Alert>
                   )}
                   {selected ? (
-                    <TriggerRail
-                      // Another trigger is a new detail: its switch and
-                      // fields appear in their state, never animate to it.
-                      key={selected.id}
-                      design={design}
-                      trigger={selected}
-                      stepErrors={triggerStepErrors(selected, design)}
-                      pending={pending}
-                      locked={locked}
-                      onChange={update}
-                    />
+                    // A change or a focus leaving a step shows its note.
+                    <div
+                      className="contents"
+                      onChange={(event) => touchStep(event.target)}
+                      onBlur={(event) => touchStep(event.target)}
+                    >
+                      <TriggerRail
+                        // Another trigger is a new detail: its switch and
+                        // fields appear in their state, never animate to it.
+                        key={selected.id}
+                        design={design}
+                        trigger={selected}
+                        stepErrors={shownStepErrors}
+                        pending={pending}
+                        locked={locked}
+                        onChange={update}
+                      />
+                    </div>
                   ) : (
                     <p className="text-muted-foreground text-sm">
                       Select or create a trigger to edit its settings.

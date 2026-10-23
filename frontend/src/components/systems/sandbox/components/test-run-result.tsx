@@ -29,6 +29,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import type { SandboxDocumentDesign } from "../domain/document";
 import type { SandboxTestRun } from "../state/api";
+import { formatSavedTime } from "../domain/version-history";
 import {
   comparisonRows,
   describeTrigger,
@@ -67,12 +68,13 @@ function NotTriggeredReason({
 }) {
   if (!recordTrigger) return null;
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+    // The button sits at the row end; ghost, so Run again leads (S26).
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
       <span className="text-muted-foreground">
         {describeTrigger(recordTrigger.trigger, design, testedModuleId)}
       </span>
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
         className="min-h-11 xl:min-h-8"
         disabled={pending}
@@ -253,16 +255,19 @@ function RunResult({
   return (
     <>
       <p className="text-muted-foreground -mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-        <time dateTime={run.createdAt}>
-          {new Date(run.createdAt).toLocaleString()}
-        </time>
+        <time dateTime={run.createdAt}>{formatSavedTime(run.createdAt)}</time>
         <Badge variant="outline">Test only · live data unchanged</Badge>
       </p>
       {/* One stale bar (copy cut 15). The live region is always present, so
           screen readers announce the bar when it appears. */}
       <div role="status" className="empty:hidden">
         {inputsChanged || stale === "older-draft" ? (
-          <div className="bg-warn-tint text-warn-text flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium">
+          // The look's warning notice (S26); the wrapper is the live region.
+          <Alert
+            variant="warning"
+            role={undefined}
+            className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 font-medium"
+          >
             <span>{inputsChanged ? "Inputs changed" : "Draft changed"}</span>
             <Button
               size="sm"
@@ -274,7 +279,7 @@ function RunResult({
             >
               Run again
             </Button>
-          </div>
+          </Alert>
         ) : null}
       </div>
       <h4

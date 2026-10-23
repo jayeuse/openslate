@@ -475,8 +475,11 @@ export function FieldSettings({
         </PropertyRow>
         <PropertyRow id={controlId("required")} label="Required" inline>
           <span className="flex min-h-11 items-center xl:min-h-8">
+            {/* A 44px hit layer around the 16px box; the label beside it
+                is clickable too (EXIT-9, S25). */}
             <Checkbox
               id={controlId("required")}
+              className="after:-inset-3.5"
               checked={draft.required}
               onCheckedChange={(checked) => update("required", checked)}
             />

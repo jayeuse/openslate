@@ -1,9 +1,11 @@
 import { expect, test, defaultSignedInIdentity } from "./helpers/test";
 import {
+  expectBelowAppBar,
   historyRegions,
   historyVersionFixture,
   openAuthenticatedSandbox,
 } from "./helpers/sandbox-api";
+import type { Design } from "../../src/components/systems/sandbox/domain/model";
 import {
   configuredSandboxDesign,
   sandboxDocumentFromDesign,
@@ -49,13 +51,38 @@ const versions = [
   at(39, "Before discard", "2026-10-17T13:00:00Z"),
   at(38, "Starter import", "2026-10-17T09:00:00Z", "imported"),
 ];
+/** One module with 235 fields, so the History totals have three digits. */
+const wideTotalsDesign: Design = {
+  ...configuredSandboxDesign,
+  modules: [
+    ...configuredSandboxDesign.modules,
+    {
+      id: "sample-inventory",
+      department: "sample-operations",
+      name: "Inventory",
+      closed: false,
+      x: 0,
+      y: 600,
+      fields: Array.from({ length: 223 }, (_, index) => ({
+        id: `sample-inventory-${index}`,
+        name: `Count ${index}`,
+        type: "Text",
+        required: false,
+        value: "",
+        options: "",
+        closed: false,
+      })),
+    },
+  ],
+};
 const byLabel = (label: string) =>
   versions.find((version) => version.label === label)!;
 
 async function openHistory(
   page: Parameters<typeof openAuthenticatedSandbox>[0],
+  design = configuredSandboxDesign,
 ) {
-  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await openAuthenticatedSandbox(page, design, { versions });
   await page.goto("/sandbox?section=history");
   const regions = historyRegions(page);
   await expect(
@@ -281,6 +308,13 @@ test("Compare sits in the version detail, older to newer, with the version befor
     .click();
   await expect(olderChoice).toHaveValue(older.id);
   await expect(newerChoice).toHaveValue(newer.id);
+  // A long label ends in an ellipsis, and the title holds all of it (S25).
+  await expect(olderChoice).toHaveAttribute("title", "v49 · Harbor template");
+  await expect(newerChoice).toHaveAttribute(
+    "title",
+    "v50 · Initial organization design",
+  );
+  await expect(olderChoice).toHaveCSS("text-overflow", "ellipsis");
   expect((await olderChoice.boundingBox())!.x).toBeLessThan(
     (await newerChoice.boundingBox())!.x,
   );
@@ -352,7 +386,8 @@ test("on a phone, the list opens one version's detail with a back link", async (
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  const { timeline, inspector } = await openHistory(page);
+  // Three-digit totals, as in a full organization, widen the count column.
+  const { timeline, inspector } = await openHistory(page, wideTotalsDesign);
   await expect(inspector).toBeHidden();
   const row = timeline.getByRole("button", {
     name: "View Initial organization design",
@@ -367,6 +402,8 @@ test("on a phone, the list opens one version's detail with a back link", async (
     name: "Initial organization design",
   });
   await expect(heading).toBeFocused();
+  await expectBelowAppBar(page, page.getByRole("heading", { level: 1 }));
+  await expectBelowAppBar(page, heading);
 
   // A compare brings its result into view under the facts.
   const comparison = inspector.getByRole("region", {
@@ -377,6 +414,24 @@ test("on a phone, the list opens one version's detail with a back link", async (
   await expect(
     comparison.getByRole("heading", { name: "Compare", exact: true }),
   ).toBeFocused();
+  // In every look, the last column's words and chips stay clear of the
+  // table's rounded edge (S25).
+  for (const look of ["slate", "whiteboard", "triplicate", "stockroom"]) {
+    const clearance = await comparison
+      .getByRole("table")
+      .evaluate(async (table, id) => {
+        document.documentElement.dataset.theme = id;
+        await new Promise(requestAnimationFrame);
+        await document.fonts.ready;
+        const edge = table.parentElement!.getBoundingClientRect().right;
+        return Math.min(
+          ...[...table.querySelectorAll("tr > td:last-child > span")].map(
+            (end) => edge - end.getBoundingClientRect().right,
+          ),
+        );
+      }, look);
+    expect(clearance, look).toBeGreaterThanOrEqual(8);
+  }
 
   await inspector.getByRole("button", { name: "Back to Versions" }).click();
   await expect(inspector).toBeHidden();
@@ -418,4 +473,96 @@ test("Delete version sits in Advanced in danger ink", async ({ page }) => {
   await expect(remove).toHaveAccessibleDescription(
     "Published versions are kept.",
   );
+});
+
+// Critique D1 (S26): after a delete, the version that opens gets its own
+// default pair, not a choice left from the deleted version.
+test("after a delete, Compare preselects the opened version's own pair", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  let shown = [
+    historyVersionFixture(4, "Fourth checkpoint"),
+    historyVersionFixture(3, "Third checkpoint"),
+    historyVersionFixture(2, "Second checkpoint"),
+    historyVersionFixture(1, "First checkpoint"),
+  ];
+  const [fourth, third, second, first] = shown;
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    versions: shown,
+  });
+  await page.route("**/api/sandbox/versions?*", async (route) => {
+    const url = new URL(route.request().url());
+    const limit = Number(url.searchParams.get("limit"));
+    const offset = Number(url.searchParams.get("offset"));
+    const items = shown.slice(offset, offset + limit);
+    await route.fulfill({
+      json: {
+        items,
+        limit,
+        offset,
+        count: items.length,
+        total: shown.length,
+        hasMore: offset + items.length < shown.length,
+        mutableCount: shown.length,
+        versionCap: 50,
+      },
+    });
+  });
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    shown = shown.filter((version) => version.id !== fourth!.id);
+    return route.fulfill({ status: 204 });
+  });
+  await page.addInitScript(() =>
+    window.localStorage.setItem("openslate:advanced:sandbox.version", "open"),
+  );
+  await page.goto("/sandbox?section=history");
+  const { timeline, inspector } = historyRegions(page);
+  const comparison = inspector.getByRole("region", {
+    name: "Version comparison",
+    exact: true,
+  });
+  const olderChoice = comparison.getByLabel("Older", { exact: true });
+  const newerChoice = comparison.getByLabel("Newer", { exact: true });
+  await timeline
+    .getByRole("button", { name: "View Fourth checkpoint" })
+    .click();
+  await olderChoice.selectOption(first!.id);
+
+  await inspector
+    .getByRole("button", { name: "Delete version", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete version", exact: true })
+    .click();
+  await expect(
+    inspector.getByRole("heading", { level: 2, name: "Third checkpoint" }),
+  ).toBeVisible();
+  await expect(olderChoice).toHaveValue(second!.id);
+  await expect(newerChoice).toHaveValue(third!.id);
+});
+
+// Critique D7 (S26): a label that already begins with its kind word does
+// not repeat it; the icon marks the kind, and the description keeps it.
+test("a History row does not repeat a kind word its label begins with", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    versions: [
+      at(2, "Published structure", "2026-10-18T10:05:00Z", "published"),
+      at(1, "Release snapshot", "2026-10-18T09:05:00Z", "published"),
+    ],
+  });
+  await page.goto("/sandbox?section=history");
+  const { timeline } = historyRegions(page);
+  const repeated = timeline.getByRole("button", {
+    name: "View Published structure",
+  });
+  const plain = timeline.getByRole("button", { name: "View Release snapshot" });
+  await expect(plain.getByText("Published", { exact: true })).toBeVisible();
+  await expect(repeated).toHaveAccessibleDescription(/^Published · /);
+  await expect(repeated.getByText("Published", { exact: true })).toHaveCount(0);
 });

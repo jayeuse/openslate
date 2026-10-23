@@ -96,6 +96,7 @@ import { duplicateDesignTarget } from "../helpers/designer-duplication";
 import {
   compatibleRelationshipMappings,
   deletionImpact,
+  fieldDeletionNeedsReview,
   deletionTargetName,
   mappingFieldReference,
   plural,
@@ -136,7 +137,6 @@ import {
   FIELD_TYPES,
   fieldTypeLabel,
   canonicalFieldType,
-  counts,
   compactDefaultLayout,
   RELATIONSHIP_KINDS,
   relationshipKind,
@@ -471,6 +471,10 @@ export function Designer({
   const pendingMove = useRef<{ id: string; department: string } | null>(null);
   const [deleteTarget, setDeleteTarget] =
     useState<SandboxInspectorTarget | null>(null);
+  const deleteTargetState = deleteTarget;
+  const requestDeleteRef = useRef<(target: SandboxInspectorTarget) => void>(
+    () => {},
+  );
   const deleteOpener = useRef<HTMLElement | null>(null);
   const deleteFallbackId = useRef<string | null>(null);
   const viewPreferencesRef = useRef(viewPreferences);
@@ -761,7 +765,7 @@ export function Designer({
         keyboardTarget
       ) {
         event.preventDefault();
-        requestDelete(keyboardTarget);
+        requestDeleteRef.current(keyboardTarget);
       }
     }
     window.addEventListener("keydown", handleDesignerShortcut);
@@ -793,6 +797,11 @@ export function Designer({
     setDeleteError("");
     setDeleteTarget(target);
   }
+
+  // The Delete shortcut, registered above, reaches the current handler.
+  useEffect(() => {
+    requestDeleteRef.current = requestDelete;
+  });
 
   async function duplicateTarget(
     target: SandboxInspectorTarget,
@@ -1081,7 +1090,15 @@ export function Designer({
     setCardinality(relationship.cardinality);
     setFieldMappings(relationship.fieldMappings);
   }
-  async function removeSelected(): Promise<void> {
+  /**
+   * Deletes the target under review, or `requested` at once when it needs
+   * no review (S26). A failed immediate delete opens the review with its
+   * error, so it can be retried.
+   */
+  async function removeSelected(
+    requested?: SandboxInspectorTarget,
+  ): Promise<void> {
+    const deleteTarget = requested ?? deleteTargetState;
     if (!deleteTarget) return;
     if (pending) return;
     const deletedKindLabel =
@@ -1174,6 +1191,7 @@ export function Designer({
     });
     if (!result.ok) {
       setDeleteError(result.error);
+      if (requested) setDeleteTarget(requested);
       return;
     }
     setDeleteTarget(null);
@@ -1183,6 +1201,29 @@ export function Designer({
         ? `${removedFieldName.current} deleted · ${plural(removedMappings.current, "linked field")} removed`
         : `${deletedKindLabel} deleted`,
     );
+    // The delete button went with its field; focus lands as the review's
+    // close would put it.
+    if (requested) requestAnimationFrame(() => deleteFinalFocus()?.focus());
+  }
+  /**
+   * A field that no trigger or linked field uses deletes at once, with Undo,
+   * as a trigger does (D5, S26); anything else, or a live field, opens the
+   * review first.
+   */
+  function deleteOrReview(
+    target: SandboxInspectorTarget,
+    opener?: HTMLElement | null,
+  ): void {
+    if (
+      target.kind === "field" &&
+      !bindingFor(target) &&
+      !fieldDeletionNeedsReview(design, target.id)
+    ) {
+      deleteOpener.current = null;
+      void removeSelected(target);
+      return;
+    }
+    requestDelete(target, opener);
   }
   function deleteFinalFocus(): HTMLElement | null {
     if (deleteOpener.current?.isConnected) return deleteOpener.current;
@@ -1720,9 +1761,8 @@ export function Designer({
             ) : null}
             {crossDepartment ? (
               <Alert id="sandbox-editor-departments" role="note">
-                This relationship connects modules in {sourceDepartment.name}{" "}
-                and {targetDepartment.name}. A person sees each link only when
-                they can read both modules.
+                Spans {sourceDepartment.name} and {targetDepartment.name}; only
+                people who read both see links.
               </Alert>
             ) : null}
             {relationshipError ? (
@@ -1835,7 +1875,7 @@ export function Designer({
         (previous) => updateProjectedFieldOrThrow(previous, id, patch),
         `sandbox.design.field:${id}`,
       ),
-    onDeleteSelected: requestDelete,
+    onDeleteSelected: deleteOrReview,
     onDuplicate: duplicateTarget,
     onToggleLifecycle: toggleLifecycle,
     onPurge: purgeLifecycle,
@@ -2043,7 +2083,6 @@ export function Designer({
         </div>
       ) : editor && editor !== "relationship" ? null : (
         <DesignerSummary
-          facts={counts(design)}
           items={attentionItems}
           review={attention.review}
           pending={pending}
@@ -2236,7 +2275,7 @@ export function Designer({
                           pending={pending}
                           lifecycleReason={lifecycleReason}
                           onDelete={() =>
-                            requestDelete({
+                            deleteOrReview({
                               kind: "field",
                               id: canvasFieldId(selectedModule.id, f.id),
                             })
@@ -2401,7 +2440,7 @@ export function Designer({
               bound={Boolean(bindingFor(inspectedTarget))}
               pending={pending}
               onToggle={() => void toggleLifecycle(inspectedTarget)}
-              onDelete={() => requestDelete(inspectedTarget)}
+              onDelete={() => deleteOrReview(inspectedTarget)}
               onPurge={() => void purgeLifecycle(inspectedTarget)}
             />
           </AdvancedSection>
@@ -2968,10 +3007,12 @@ export function Designer({
                         <ChevronRight aria-hidden="true" />
                       </Button>
                     </div>
+                    {/* Rows revealed at the top clear the pinned title and
+                        search (S25). */}
                     <TabsContent
                       value="Structure"
                       keepMounted
-                      className="relative min-h-0 flex-1 overflow-y-auto"
+                      className="relative min-h-0 flex-1 scroll-pt-24 overflow-y-auto"
                     >
                       {structurePane}
                     </TabsContent>
@@ -3052,7 +3093,7 @@ export function Designer({
               variant="destructive"
               pending={pending}
               pendingLabel="Deleting…"
-              onClick={removeSelected}
+              onClick={() => void removeSelected()}
             >
               {currentDeleteImpact?.action ?? "Delete"}
             </Button>

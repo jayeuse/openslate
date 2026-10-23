@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { registerWorkspaceSessionClear } from "@/components/systems/shared/runtime/workspace-identity";
-import { reportDone } from "@/lib/feedback";
+import { toast } from "@/components/ui/toast";
+import { reportDone, reportUndoable } from "@/lib/feedback";
 import { parseSandboxDocumentValue } from "../domain/document-parser";
 import type {
   SandboxDocumentV4,
@@ -43,6 +44,12 @@ export type TriggerDraft = {
   discardKept: () => KeptTriggerRecord | null;
   /** Offers kept edits again (Undo after Discard on the prompt). */
   keepAgain: (record: KeptTriggerRecord) => void;
+  /**
+   * Shows a done notice with Undo that ends at the next edit or a successful
+   * save: the notice closes, and a late click changes nothing, so an old
+   * notice never brings back saved or replaced work (S25, S26).
+   */
+  offerUndo: (title: string, onUndo: () => void) => void;
 };
 
 /** Kept edits as stored: the saved triggers they began from, and the edits. */
@@ -270,8 +277,25 @@ export function useTriggerDraft({
     designRef.current = document?.design;
   });
 
+  // Undo notices on show, and the edits and saves since they were offered.
+  const undoNotices = useRef(new Set<string>());
+  const changeCount = useRef(0);
+  const endUndo = useCallback(() => {
+    changeCount.current += 1;
+    for (const id of undoNotices.current) toast.close(id);
+    undoNotices.current.clear();
+  }, []);
+  const offerUndo = useCallback((title: string, onUndo: () => void) => {
+    const offered = changeCount.current;
+    const id = reportUndoable(title, () => {
+      if (changeCount.current === offered) onUndo();
+    });
+    if (id) undoNotices.current.add(id);
+  }, []);
+
   const update = useCallback<TriggerDraft["update"]>(
     (next) => {
+      endUndo();
       const current = savedRef.current;
       const value =
         typeof next === "function"
@@ -310,6 +334,7 @@ export function useTriggerDraft({
     setPending(true);
     try {
       await persist(snapshot);
+      endUndo();
       setEdits(null);
       setError("");
       reportDone("Triggers saved");
@@ -385,5 +410,6 @@ export function useTriggerDraft({
     restoreKept,
     discardKept,
     keepAgain,
+    offerUndo,
   };
 }

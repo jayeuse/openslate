@@ -708,3 +708,34 @@ export async function expectPinnedDialog(
     await expect(action).toBeInViewport({ ratio: 1 });
   }
 }
+
+/**
+ * On a phone, a detail opened from a list lands below the sticky app bar:
+ * its heading starts at or under the bar's bottom edge (S25).
+ */
+export async function expectBelowAppBar(page: Page, target: Locator) {
+  await expect
+    .poll(async () => {
+      const [bar, box] = await Promise.all([
+        page.locator('header[data-skin="topbar"]').boundingBox(),
+        target.boundingBox(),
+      ]);
+      return box && bar ? Math.round(box.y - (bar.y + bar.height)) : null;
+    })
+    .toBeGreaterThanOrEqual(0);
+}
+
+/**
+ * A small control keeps a larger tap target (EXIT-9): a click `offset`
+ * pixels outside its box, to the right of it, still reaches it.
+ */
+export async function clickBesideBox(
+  page: Page,
+  control: Locator,
+  offset = 20,
+) {
+  await control.scrollIntoViewIfNeeded();
+  const box = await control.boundingBox();
+  if (!box) throw new Error("The control has no box");
+  await page.mouse.click(box.x + box.width + offset, box.y + box.height / 2);
+}

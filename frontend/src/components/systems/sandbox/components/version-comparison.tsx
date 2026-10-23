@@ -80,14 +80,17 @@ function VersionChoice({
   onChange: (value: string) => void;
 }) {
   const controlId = useId();
+  const chosen = versions.find((version) => version.id === value);
   return (
     <Field className="min-w-0 gap-1.5">
       <FieldLabel htmlFor={controlId} className="text-xs">
         {label}
       </FieldLabel>
+      {/* A long label ends in an ellipsis; the title holds all of it (S25). */}
       <NativeSelect
         id={controlId}
-        className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-8"
+        className="w-full [&_select]:min-h-11 [&_select]:truncate xl:[&_select]:min-h-8"
+        title={chosen ? versionName(chosen) : undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
@@ -289,7 +292,10 @@ function ChangeRow({
             </span>
           )}
         </th>
-        <td className="w-full px-2 whitespace-nowrap tabular-nums">
+        {/* On a phone the count may wrap after its arrow, so the table
+            fits its frame and the last column keeps its end padding in
+            every look (S25). */}
+        <td className="w-full px-2 tabular-nums sm:whitespace-nowrap">
           {before === null || after === null ? null : (
             <>
               {before} <span aria-hidden="true">→</span>

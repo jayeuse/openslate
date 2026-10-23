@@ -205,7 +205,8 @@ function ChangeGroup<T>({
           type="button"
           variant="ghost"
           size="sm"
-          className="justify-self-start"
+          // Aligned with the list text, not inset by the button padding.
+          className="-ml-3 justify-self-start"
           aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}
         >
