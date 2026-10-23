@@ -1,0 +1,198 @@
+# Manage relayout: the Access grammar
+
+> **Status: draft for owner approval (2026-10-24).** Phase 0 is done (results below). Comps for Audit and Organization are in `.impeccable/mocks/manage/` (renders in `.playwright-mcp/manage-relayout/comp/`). No code has changed.
+
+## Outcome
+
+Manage uses the layout grammar that Access and the Sandbox already use. That grammar is:
+
+- slim controls
+- 40px rows
+- label-left rows
+- quick filters, with the Filters popover and chips
+- Advanced last
+- summary first, then detail
+- still pages from 1280px
+
+A person sees what a section is for and its state at a glance. They find an event, backup, or job quickly. Each account sees only the sections it can use.
+
+**In scope.** The Manage page (`/manage`) and its five sections: Organization, Backup, Audit, Jobs, and Updates & licensing. The scope covers:
+
+- their dialogs and sheets
+- their 390px layouts
+- which accounts see each section
+
+**Out of scope.**
+
+- Other pages.
+- Backend contracts, schema, and wire formats.
+- New capabilities, such as restoring from the browser, scheduling jobs, or license keys.
+- Moving security events out of Audit.
+
+**Preserved behavior.**
+
+- Every capability stays reachable.
+- URLs and `?view=` values stay the same.
+- Drafts, saves, conflicts, exports, and backup requests behave as they do now.
+- Server refusals stay the source of truth.
+- The organization look picker previews before Save.
+
+## How the issues were found
+
+1. **Baseline sweep.** 19 states at 1440×900 and 390×844, in the four looks, light and dark. The capture used the production export with Harbor Operations Group data, signed in as the installation owner (`.playwright-mcp/manage-relayout/baseline/`). Nothing was saved.
+2. **Baseline numbers.** These are in `.agent-runtime/manage-relayout/metrics.md`.
+3. **Hands-on pass.** Run as `ho-admin` and `ho-manager` (`.playwright-mcp/manage-relayout/handson/`).
+4. **Design critique (`impeccable critique`).** The baseline scores are recorded below.
+5. **Comps.** Audit and Organization, built on the app's current tokens.
+
+## Baseline (Phase 0)
+
+| Measure                                 | Baseline                                                                                                |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Document scroll at 1280×720             | Organization 1571px, Backup 725px, Audit 553px, Updates 158px, Jobs 86px                                |
+| Document scroll at 1440×900             | Organization 1331px, Backup 545px, Audit 373px                                                          |
+| Fields, selects, buttons (median, 1440) | 44px (Jobs selects 32px)                                                                                |
+| Rows                                    | Audit 77px, Backup 88px, Jobs 39px                                                                      |
+| Helper words (1440, Slate dark)         | Organization 122, Backup 99, Updates 85, Backup schedule dialog 79, Audit 28, Jobs 20                   |
+| Field edges below 3:1                   | None (lowest 3.12)                                                                                      |
+| Targets below 44px at 390               | Jobs subject links (21px), Backup schedule close (36px), dialog Close (36px), Audit export Retry (36px) |
+| Horizontal overflow at 390              | None                                                                                                    |
+
+## Findings
+
+| ID    | Pri | Area          | Finding                                                                                                                                                                                                                                                                                               | Evidence                                                      |
+| ----- | --- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| M-F1  | P1  | Access        | Backup and Updates refuse an organization administrator with "Only administrators can review…" and offer a Retry that can never succeed. The real requirement is the installation owner (`require_platform_operator`, code `operator_required`). The frontend already knows this (`AuthMe.operator`). | `handson/admin-1440-backup.png`, `admin-1440-updates.png`     |
+| M-F2  | P1  | Access        | A department manager sees Backup, Audit, and Updates with full admin controls (search, filters, disabled Export) and 403 errors with Retry. Jobs, by contrast, is hidden.                                                                                                                             | `handson/manager-1440-audit.png`, `manager-1440-backup.png`   |
+| M-F3  | P2  | Organization  | The page scrolls 1331–1571px with 44px label-above fields and 122 helper words. Save sits at the end of the form (y≈3040 on a phone). It is disabled at rest with no reason.                                                                                                                          | `handson/admin-1440-org-full.png`, `admin-390-org-bottom.png` |
+| M-F4  | P2  | Organization  | A reader sees greyed, boxed fields (blank for unset values) and disabled look tiles. DESIGN says a read-only value is plain text.                                                                                                                                                                     | `handson/manager-1440-landing.png`                            |
+| M-F5  | P2  | Audit         | Rows are 77px, each with a 44px "View details" button. Notification read receipts flood the list: most of the 18,804 events are "In App Notifications · name unavailable". On a phone each event is a card of about 230px.                                                                            | `handson/admin-1440-audit.png`, `admin-390-audit.png`         |
+| M-F6  | P2  | Audit         | "More filters" is an inline panel that pushes the table down. It uses label-above fields and native date pickers. Security events offers a native select with 37 options. No active filter shows as a chip.                                                                                           | `handson/admin-1440-audit-filters.png`                        |
+| M-F7  | P2  | Audit         | The detail shows a raw diff ("Read At: null" beside an ISO time). Unchanged fields are not marked.                                                                                                                                                                                                    | `handson/admin-1440-audit-detail.png`                         |
+| M-F8  | P2  | Audit         | Security events still uses the old Access words: "Attempt window", "Lockout duration", "Session retention" (`security-events-view.tsx:104-115`, `security-event-sentences.ts:32,223`).                                                                                                                | Code                                                          |
+| M-F9  | P2  | Audit         | The Export preview opens in an error state when more than 10,000 rows match, yet it still shows "Download CSV".                                                                                                                                                                                       | `baseline/1440/*/15-*`                                        |
+| M-F10 | P2  | Backup        | The state is spread across a schedule card, a banner, and a history panel. "Back up now" sits inside the history panel. Rows are 88px. The schedule dialog shows a "Saved / Discard / Save" bar before anything is edited.                                                                            | `baseline/1440/*/04-*`, `09-*`                                |
+| M-F11 | P3  | Every section | Every section repeats the same idea three times: a source chip (Organization or Server), a sentence under the title, and on Backup and Updates a banner.                                                                                                                                              | `baseline/1440/*/19-*`                                        |
+| M-F12 | P3  | Jobs          | The Actions column is empty for every row. "Not recorded" and "0" fill rows that never ran. Subjects are blue links (stored data should be ink). Three loose selects and "Refresh Jobs" sit above the table. Subject links are 21px tall on phones.                                                   | `baseline/1440/*/16-*`                                        |
+| M-F13 | P3  | Updates       | Two headings, a banner, and a paragraph explain the same fact ("the person who runs your server installs updates"). The release check is a stack of label-above values.                                                                                                                               | `baseline/1440/*/19-*`                                        |
+| M-F14 | P3  | Words         | The Backup header button "Security" opens Access › Security and does not say so. Audit's "View audit <target>" button names break label-in-name.                                                                                                                                                      | Hands-on                                                      |
+
+## Layout direction
+
+1. **Every section.**
+   - Slim controls from 1280px (`slim-ui`).
+   - Still pages from 1280px: only panels scroll.
+   - The header is the section title and one short meta line. The source chip, the repeated sentence, and the banner go away.
+   - Actions are quiet, and one primary action is allowed per section.
+2. **Who sees what.**
+   - The navigation shows a section only to an account that can open it:
+     - Organization: every member. Administrators edit; everyone else reads.
+     - Audit: administrators.
+     - Jobs: unchanged.
+     - Backup and Updates & licensing: the installation owner.
+   - A direct link to a hidden section shows the Access notice pattern ("Backup is managed by the installation owner.") with a way back, no Retry, and no refused request.
+3. **Organization** (comp `organization.html`).
+   - Two panes: the settings panel and the preview.
+   - Settings use label-left rows in three groups: Identity, Region (format, timezone, currency, working week), and Look.
+   - The optional profile (legal name, description, contact, address) sits in a closed Profile block, last.
+   - A pinned footer holds the save-state chip, Discard, and Save. Save says why it is disabled at rest.
+   - A reader sees plain-text rows, the current look as one tile, and one line saying who can change it.
+4. **Audit** (comp `audit.html`).
+   - Activity and Security events stay as two views, switched in the header.
+   - The toolbar holds a search, quick filters (All, Changes, Created, Deleted) with counts, the Filters popover (Person, Area, From, To; on Security events, a searchable Event type), and removable chips.
+   - Rows are 40px and one line: time, person, "Changed Status on Quote Q-1042", and area. The whole row opens the event.
+   - System events (read receipts and similar) fold into one row, "n system events hidden · Show".
+   - The event opens a sheet. It shows "What changed" as old → new rows for the changed fields only, then the record and its link, then Advanced with the raw values.
+   - Export is a quiet button. When more than 10,000 rows match, Export is disabled and gives its reason ("Narrow the filters to 10,000 events or fewer to export.").
+5. **Backup.**
+   - Summary first: one status panel with the schedule (on or off, how often, how long kept), the last good backup, the service status, and the queue. "Back up now" is the primary action and "Edit schedule" is quiet.
+   - History becomes a list and a detail, like Sandbox History. Rows are 40px with a status dot and word, a search, and status quick filters.
+   - The schedule dialog shows its Save bar only after an edit.
+6. **Jobs.**
+   - Rows are 40px with a state dot and word.
+   - State quick filters with counts: All, Pending, Running, Failed, Succeeded. Job kind moves into Filters.
+   - Subjects are ink, not blue links. Empty attempts show "—", and rows that never ran hide "0".
+   - Row actions (Retry, Cancel) sit in a row ⋯ menu only where they apply. The empty Actions column goes away.
+   - Refresh becomes a quiet icon button.
+7. **Updates & licensing.**
+   - One summary panel of label-left rows: version and channel, release check (last check and result), and license (one row, "No license required · self-hosted").
+   - "Refresh release status" is a quiet action. "Update procedure" is a link that names where it goes.
+   - One sentence states who installs updates.
+8. **Dialogs.**
+   - A pinned header and footer, and a named close button.
+   - A Save bar appears only after an edit.
+9. **Phones.**
+   - The two-row header used in the Sandbox.
+   - Lists open details on their own screen.
+   - Filters become a bottom sheet.
+   - Targets are 44px.
+
+## Decisions
+
+Each decision names what it removes.
+
+| ID   | Decision                                                                                                                                       | Removes                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| MD1  | Manage carries `slim-ui`, and from 1280px its pages are still.                                                                                 | 44px controls and page scroll from 1280px                                            |
+| MD2  | The header is the title and one meta line.                                                                                                     | The source chip, the repeated sentence, and the Backup and Updates banners           |
+| MD3  | The navigation shows each section only to an account that can open it, and a hidden section's link shows a notice.                             | Refusals with a useless Retry, and admin chrome over 403s                            |
+| MD4  | Organization uses two panes, label-left groups, a closed optional Profile block, and a pinned footer.                                          | The 1300–1500px scroll, label-above fields, and the Save at the end of the form      |
+| MD5  | A reader sees Organization as plain text.                                                                                                      | Disabled, boxed fields and disabled look tiles                                       |
+| MD6  | Audit has quick filters, a Filters popover, and chips, with 40px sentence rows, system events folded, and an event sheet listing changes only. | 77px rows, per-row "View details" buttons, the inline filter panel, and the raw diff |
+| MD7  | Export is disabled with a reason above 10,000 rows.                                                                                            | An Export dialog that opens in an error state                                        |
+| MD8  | Backup shows a status summary first, then history as a list and a detail. The schedule dialog's Save bar appears only after an edit.           | A scattered state, 88px rows, and a Save bar before any edit                         |
+| MD9  | Jobs has state quick filters, ink subjects, row menus only where they apply, and "—" for runs that have not happened.                          | The empty Actions column, blue data links, and "Not recorded / 0" noise              |
+| MD10 | Updates & licensing is one summary of label-left rows.                                                                                         | Two headings, a banner, and a paragraph that repeat the same fact                    |
+| MD11 | Security events uses the Access glossary words.                                                                                                | "Attempt window", "Lockout duration", and "Session retention"                        |
+
+## Shared files outside Manage
+
+Each change only adds behavior.
+
+- `frontend/src/components/workspace-navigation.ts`: hide sections by role (MD3).
+- `frontend/src/components/systems/access/components/security-events-view.tsx` and `security-event-sentences.ts`: words only (MD11). They live in the Access folder but render only in Manage › Audit.
+
+## Phases
+
+Each phase ends with these checks:
+
+- tests that fail first
+- one code review
+- screenshots at 1440 and 390
+- the budget specs (`comms-js-budget`) whenever a phase touches shared shell or `ui/` code
+
+| Phase | Content                                                                                                                                            | Proof                                                                |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 0     | Discovery (done)                                                                                                                                   | This spec, baseline, comps                                           |
+| 1     | MD1, MD2, MD3: slim controls, still pages, headers, who sees what                                                                                  | Manage and navigation specs; notices for `ho-manager` and `ho-admin` |
+| 2     | Organization: MD4, MD5                                                                                                                             | `manage-refactor-journeys`, organization specs                       |
+| 3     | Audit: MD6, MD7, MD11                                                                                                                              | `manage-audit-api`, `access-security-events`                         |
+| 4     | Backup: MD8                                                                                                                                        | `manage-backup-exports`, `manage-security-recovery`                  |
+| 5     | Jobs and Updates: MD9, MD10                                                                                                                        | `manage-jobs`, `updates-panel`                                       |
+| 6     | Dialogs and phone                                                                                                                                  | All `manage-*` specs                                                 |
+| 7     | Plain-words pass (decided under the owner's delegation, recorded in a glossary table)                                                              | Glossary table                                                       |
+| 8     | 390 sweep in the four looks, light and dark; still page; critique; `ui-reviewer`; hands-on as `ho-admin`, `ho-manager`, and the installation owner | Exit criteria                                                        |
+
+## Exit criteria
+
+| ID      | Criterion                                                                                                                                                               |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EXIT-1  | A new `impeccable critique` finds no P1. Heuristics 4 and 8 score 3 or more.                                                                                            |
+| EXIT-2  | Every Manage action that changes data gives feedback before, during, and after it runs.                                                                                 |
+| EXIT-3  | Helper words and default-visible controls do not rise above the baseline in any measured state, unless the spec records the addition. Every capability stays reachable. |
+| EXIT-4  | Every finding M-F1 to M-F14 has a test that failed first, or a recorded reason.                                                                                         |
+| EXIT-5  | All Manage isolated and HTTP tests pass, the budget specs pass, and the frontend static checks are clean.                                                               |
+| EXIT-6  | `ui-reviewer` returns "ship" on the final screenshots.                                                                                                                  |
+| EXIT-7  | A hands-on pass as `ho-admin`, `ho-manager`, and the installation owner finds no open defect.                                                                           |
+| EXIT-8  | From 1280px, no Manage state scrolls the page at 1280×720, 1440×900, or 1920×1080. Below 1280px nothing scrolls sideways.                                               |
+| EXIT-9  | Every field edge is at least 3:1 in the four looks, light and dark. Targets are at least 44px at 390.                                                                   |
+| EXIT-10 | The owner approves the 390px sweep.                                                                                                                                     |
+
+## Risks
+
+| Risk                                                                        | Solution                                                                                                                                             |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hiding sections by role could hide one from an account that can open it.    | Use the same signals the server uses (`role` for Audit, `operator` for Backup and Updates). A refusal still shows the notice. Add one test per role. |
+| Folding system events in Audit could hide something an administrator needs. | The fold names how many events it hides and offers Show. A search always lists matches. The rule lives in one function with a test.                  |
+| A pinned Save in Organization can disagree with the look preview.           | The look draft has one owner, and the footer reads the same dirty state.                                                                             |
+| 5 Manage HTTP specs and several isolated specs pin selectors and words.     | Keep accessible names unless the name is the fix. Give every changed assertion a ledger row.                                                         |
