@@ -6,7 +6,7 @@ import {
   useLayoutEffect,
   type ReactNode,
 } from "react";
-import { clearAccessDraftStorageExcept } from "../../access/state/draft-journal-storage";
+import { clearAccessDraftStorageExcept } from "../../access/state/draft-journal-session";
 import {
   bindWorkspaceConnections,
   pauseWorkspaceConnections,

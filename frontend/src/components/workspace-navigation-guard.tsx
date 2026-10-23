@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
@@ -14,18 +15,9 @@ import {
 import type { ComponentProps, ReactNode } from "react";
 
 import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import {
   abandonUncertainDrafts,
   accessDraftsHoldUncertainSave,
-} from "@/components/systems/access/state/draft-journal-storage";
+} from "@/components/systems/access/state/draft-journal-session";
 import {
   organizationLinkExit,
   type WorkspaceNavigationExit,
@@ -57,6 +49,14 @@ const WorkspaceNavigationGuardContext =
 
 const acceptNavigation: WorkspaceNavigationGuard = () => true;
 
+// Every signed-in page mounts this provider, and the question rarely shows,
+// so its dialog loads on first use instead of with each page.
+const WorkspaceUncertainSaveDialog = dynamic(() =>
+  import("@/components/workspace-uncertain-save-dialog").then(
+    (module) => module.WorkspaceUncertainSaveDialog,
+  ),
+);
+
 export function WorkspaceNavigationGuardProvider({
   children,
   onAcceptedNavigation,
@@ -81,6 +81,8 @@ export function WorkspaceNavigationGuardProvider({
     proceed: () => void;
   } | null>(null);
   const [discardFailed, setDiscardFailed] = useState(false);
+  // Once asked, the dialog stays mounted, so it closes like any other dialog.
+  const [dialogUsed, setDialogUsed] = useState(false);
 
   const value = useMemo<WorkspaceNavigationGuardContextValue>(() => {
     // An Access save that may have completed stays in the tab's journal on
@@ -90,6 +92,11 @@ export function WorkspaceNavigationGuardProvider({
       exit !== undefined &&
       userId !== null &&
       accessDraftsHoldUncertainSave(userId);
+    const ask = (proceed: () => void) => {
+      setDiscardFailed(false);
+      setDialogUsed(true);
+      setUnresolvedExit({ proceed });
+    };
     return {
       openOrganization: onOpenOrganization,
       organizationId,
@@ -108,13 +115,11 @@ export function WorkspaceNavigationGuardProvider({
             finish();
             return;
           }
-          setDiscardFailed(false);
-          setUnresolvedExit({ proceed: finish });
+          ask(finish);
         };
         if (!guardRef.current.guard(href, afterPage, exit)) return false;
         if (asksFirst(exit)) {
-          setDiscardFailed(false);
-          setUnresolvedExit({ proceed: finish });
+          ask(finish);
           return false;
         }
         onAcceptedNavigation();
@@ -137,51 +142,23 @@ export function WorkspaceNavigationGuardProvider({
   return (
     <WorkspaceNavigationGuardContext.Provider value={value}>
       {children}
-      <AlertDialog
-        open={unresolvedExit !== null}
-        onOpenChange={(open) => !open && setUnresolvedExit(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
-            <AlertDialogDescription>
-              A change in Access may not have been saved. Leaving this page
-              discards it.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {discardFailed ? (
-            <p role="alert" className="text-destructive text-sm">
-              Your draft could not be cleared from this browser. Keep editing,
-              or try again.
-            </p>
-          ) : null}
-          <AlertDialogFooter>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={() => setUnresolvedExit(null)}
-            >
-              Keep editing
-            </Button>
-            <Button
-              variant="destructive"
-              className="min-h-11"
-              onClick={() => {
-                const next = unresolvedExit;
-                if (!next || userId === null) return;
-                if (!abandonUncertainDrafts(userId)) {
-                  setDiscardFailed(true);
-                  return;
-                }
-                setUnresolvedExit(null);
-                next.proceed();
-              }}
-            >
-              Discard changes
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {dialogUsed ? (
+        <WorkspaceUncertainSaveDialog
+          open={unresolvedExit !== null}
+          discardFailed={discardFailed}
+          onKeepEditing={() => setUnresolvedExit(null)}
+          onDiscard={() => {
+            const next = unresolvedExit;
+            if (!next || userId === null) return;
+            if (!abandonUncertainDrafts(userId)) {
+              setDiscardFailed(true);
+              return;
+            }
+            setUnresolvedExit(null);
+            next.proceed();
+          }}
+        />
+      ) : null}
     </WorkspaceNavigationGuardContext.Provider>
   );
 }
