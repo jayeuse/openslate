@@ -231,7 +231,7 @@ export function SecurityView({
       mfaFactorId === null &&
       mfa.status === null;
     if (acceptedStatus || acceptedEnrollment || acceptedVerification)
-      void afterAccessMfaObservation(queryClient);
+      void afterAccessMfaObservation(queryClient, userId);
   }, [active, admitted, mfa.status, mfaFactorId, queryClient, userId]);
   useEffect(
     () =>
@@ -929,7 +929,7 @@ export function SecurityView({
                   }
                   // From md a 44px hit area from a pseudo-element, so the line
                   // keeps its normal height.
-                  className="text-action-text focus-visible:outline-ring relative rounded-sm font-medium underline-offset-4 after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  className="text-action-text focus-visible:outline-ring relative min-w-11 rounded-sm text-left font-medium underline-offset-4 after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
                   onClick={openMfa}
                 >
                   {ownMfaOn === false ? "Set up" : "Manage"}

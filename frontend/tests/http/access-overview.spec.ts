@@ -82,12 +82,24 @@ test("Who's here counts people by last sign-in and its legend opens the matching
 }) => {
   const api = await mockAccessApi(page);
   seedActivity(api);
+  // A disabled person is not in the bar, and the total says so.
+  const gus = fixtureId(311);
+  api.users.set(
+    gus,
+    person({
+      id: gus,
+      username: "gus",
+      display_name: "Gus Lee",
+      status: "disabled",
+    }),
+  );
   await page.goto("/access?view=overview");
   const who = block(page, "Who's here");
 
   await expect(who).toContainText(
     "1 signed in now · 1 in the last day · 2 in the last 7 days, of 6 people",
   );
+  await expect(who).toContainText("of 6 people · 1 disabled not counted");
   await expect(
     who.getByRole("img", {
       name: "6 people by last sign-in: 1 now, 0 earlier in the last day, 1 earlier in the last 7 days, 1 earlier in the last 30 days, 1 older, 1 never signed in, 1 invited",
@@ -147,6 +159,41 @@ test("Who's here counts people by last sign-in and its legend opens the matching
   await expect(page).toHaveURL(/view=security/);
 });
 
+test("on a phone the more-signed-in link is a full target in the avatar row", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const api = await mockAccessApi(page);
+  api.adminSessions = [
+    adminSession(0, ids.rosa, "Rosa Reyes"),
+    adminSession(1, ids.ben, "Ben Cruz"),
+    adminSession(2, ids.ana, "Ana Santos"),
+    adminSession(3, ids.dee, "Dee Lim"),
+  ];
+  await page.goto("/access?view=overview");
+  const roster = block(page, "Who's here").getByRole("list", {
+    name: "Signed in now",
+    exact: true,
+  });
+  const more = roster.getByRole("link", {
+    name: "2 more signed in: open Security",
+    exact: true,
+  });
+  const box = await more.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(44);
+  expect(box?.height).toBeGreaterThanOrEqual(44);
+  // It sits on the avatars' line.
+  const chip = await roster.getByRole("link").first().boundingBox();
+  expect(
+    Math.abs(
+      (box?.y ?? 0) +
+        (box?.height ?? 0) / 2 -
+        ((chip?.y ?? 0) + (chip?.height ?? 0) / 2),
+    ),
+  ).toBeLessThan(1);
+  await expectNoHorizontalScroll(page);
+});
+
 test("a cold Overview makes one read per block count and a revisit reads nothing", async ({
   page,
 }) => {
@@ -172,11 +219,11 @@ test("a cold Overview makes one read per block count and a revisit reads nothing
   ).toHaveCount(4);
   await expect(attention(page).getByRole("listitem").first()).toBeVisible();
   await expect(block(page, "Who's here")).toContainText("signed in now");
-  // Summaries for 1, 7 and 30 days; five one-row user counts; groups twice
+  // Summaries for 1, 7 and 30 days; six one-row user counts; groups twice
   // counted and once listed; the department catalog; one bounded guest
   // read (the Read cap); sessions; two event reads; and one lookup of the
   // people the feed and the roster name.
-  await expect.poll(() => accessReads().length).toBe(17);
+  await expect.poll(() => accessReads().length).toBe(18);
   expect(
     accessReads().filter((call) =>
       /^\/api\/users\/[0-9a-f-]{36}/.test(call.path),
@@ -215,6 +262,45 @@ test("Recent sign-ins show sign-in results newest first and link to all security
   await expect(
     feed.getByRole("link", { name: "All security events", exact: true }),
   ).toHaveAttribute("href", "/manage?view=audit&audit=security-events");
+});
+
+test("an older sign-in shows its day above its time and keeps the row height", async ({
+  page,
+}) => {
+  // Friday 23 October 2026, 18:00 UTC, the zone these pages show.
+  await page.clock.setFixedTime(new Date("2026-10-23T18:00:00Z"));
+  const api = await mockAccessApi(page);
+  api.securityEvents = [
+    ["2026-10-23T17:00:00Z", "198.51.100.1"],
+    ["2026-10-22T16:12:00Z", "198.51.100.2"],
+    ["2026-10-20T16:12:00Z", "198.51.100.3"],
+    ["2026-10-12T16:12:00Z", "198.51.100.4"],
+  ].map(([occurred_at, ip_address], index) =>
+    signInEvent(200 + index, 0, { occurred_at, metadata: { ip_address } }),
+  );
+  for (const [width, height, rowHeight] of [
+    [1280, 720, 40],
+    [390, 844, 52],
+  ] as const) {
+    await page.setViewportSize({ width, height });
+    await page.goto("/access?view=overview");
+    const rows = block(page, "Recent sign-ins")
+      .getByRole("list", { name: "Sign-ins", exact: true })
+      .getByRole("listitem");
+    await expect(rows).toHaveCount(4);
+    // Today shows its time alone; older rows read day, then time.
+    await expect(rows.nth(0).locator("time")).toHaveText(/^5:00\sPM$/);
+    await expect(rows.nth(1).locator("time")).toHaveText(
+      /^Yesterday 4:12\sPM$/,
+    );
+    await expect(rows.nth(2).locator("time")).toHaveText(/^Tue 4:12\sPM$/);
+    await expect(rows.nth(3).locator("time")).toHaveText(/^Oct 12 4:12\sPM$/);
+    // The two lines fit the row: every row keeps the one-line height.
+    for (const row of await rows.all())
+      expect(Math.round((await row.boundingBox())?.height ?? 0)).toBe(
+        rowHeight,
+      );
+  }
 });
 
 test("Recent sign-ins show the rows that fit and page by time through every sign-in once", async ({

@@ -4,8 +4,10 @@ import {
   attentionItems,
   departmentAccess,
   lastSignInSegments,
+  notCountedWords,
   recentSignIns,
   signedInNow,
+  signInWhen,
   signInPage,
   type SignInCursor,
   type SignInPage,
@@ -58,6 +60,37 @@ test("the bar never shows a negative segment when the counts disagree", () => {
     3, 0, 0, 0, 0, 1, 0,
   ]);
   expect(bar.total).toBe(4);
+});
+
+test("Who's here says how many disabled people its total leaves out", () => {
+  for (const [disabled, expected] of [
+    [0, ""],
+    [1, " · 1 disabled not counted"],
+    [3, " · 3 disabled not counted"],
+  ] as const)
+    expect(notCountedWords(disabled), String(disabled)).toBe(expected);
+});
+
+test("a sign-in older than today shows its day above its time", () => {
+  // Friday 23 October 2026, 18:00 in the organization's UTC zone.
+  const now = Date.parse("2026-10-23T18:00:00Z");
+  const region = { timezone: "UTC", locale: "en-US" };
+  for (const [value, day, time] of [
+    ["2026-10-23T07:51:00Z", null, "7:51 AM"],
+    ["2026-10-22T16:12:00Z", "Yesterday", "4:12 PM"],
+    ["2026-10-21T16:12:00Z", "Wed", "4:12 PM"],
+    ["2026-10-17T09:05:00Z", "Sat", "9:05 AM"],
+    ["2026-10-16T16:12:00Z", "Oct 16", "4:12 PM"],
+  ] as const)
+    expect(signInWhen(value, now, region), value).toEqual({ day, time });
+  // The organization's zone decides the day: 01:00 UTC on the 23rd is
+  // still the 22nd in New York.
+  expect(
+    signInWhen("2026-10-23T01:00:00Z", now, {
+      timezone: "America/New_York",
+      locale: "en-US",
+    }),
+  ).toEqual({ day: "Yesterday", time: "9:00 PM" });
 });
 
 test("signed in now counts each person once, however many sessions they have", () => {

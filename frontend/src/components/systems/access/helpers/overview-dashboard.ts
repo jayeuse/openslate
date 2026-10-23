@@ -1,3 +1,7 @@
+import {
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time-display";
 import type { AccessSecurityEvent } from "../adapters/security-events-api";
 import type { AccessGroup, AccessLevel } from "../state/api-contracts";
 
@@ -81,6 +85,43 @@ export function lastSignInSegments(input: {
       .map((segment) => `${segment.count} ${words[segment.id]}`)
       .join(", ")}`,
   };
+}
+
+/** What the bar's total leaves out: disabled people are not in it. */
+export function notCountedWords(disabled: number): string {
+  return disabled > 0 ? ` · ${disabled} disabled not counted` : "";
+}
+
+/**
+ * A feed row's time: the day above the time. Today has no day word;
+ * yesterday is "Yesterday", the rest of the week its weekday ("Wed"), and
+ * older rows their date ("Oct 16"). Days follow the organization's zone.
+ */
+export function signInWhen(
+  value: string,
+  now: number,
+  region: WorkspaceRegion | undefined,
+): { day: string | null; time: string } {
+  const format = (at: string, options: Intl.DateTimeFormatOptions) =>
+    region
+      ? formatWorkspaceDateTime(at, region, options)
+      : new Intl.DateTimeFormat(undefined, options).format(new Date(at));
+  const dayOf = (at: number) =>
+    format(new Date(at).toISOString(), { dateStyle: "short" });
+  const time = format(value, { timeStyle: "short" });
+  const date = dayOf(Date.parse(value));
+  const back = [0, 1, 2, 3, 4, 5, 6].find(
+    (days) => dayOf(now - days * 86_400_000) === date,
+  );
+  const day =
+    back === 0
+      ? null
+      : back === 1
+        ? "Yesterday"
+        : back !== undefined
+          ? format(value, { weekday: "short" })
+          : format(value, { month: "short", day: "numeric" });
+  return { day, time };
 }
 
 /** Distinct people with an active session, in the order the read gave. */

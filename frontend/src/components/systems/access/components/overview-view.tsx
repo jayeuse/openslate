@@ -20,10 +20,7 @@ import {
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { ApiError } from "@/lib/api";
-import {
-  formatWorkspaceDateTime,
-  type WorkspaceRegion,
-} from "@/lib/date-time-display";
+import { formatWorkspaceDateTime } from "@/lib/date-time-display";
 
 import {
   accessAdminSessionsOptions,
@@ -44,6 +41,7 @@ import {
   lastSignInSegments,
   signedInNow,
   signInPage,
+  signInWhen,
   type SignInCursor,
   type SignInRow,
 } from "../helpers/overview-dashboard";
@@ -142,33 +140,6 @@ function blockState<Data>(
   return data === null ? { status: "loading" } : { status: "ready", data };
 }
 
-function sameDay(left: Date, right: Date, region: WorkspaceRegion | undefined) {
-  const day = (value: Date) =>
-    region
-      ? formatWorkspaceDateTime(value.toISOString(), region, {
-          dateStyle: "short",
-        })
-      : value.toDateString();
-  return day(left) === day(right);
-}
-
-/** "7:51 AM" today, "Yesterday", or "Oct 3" before. */
-function signInWhen(
-  value: string,
-  now: number,
-  region: WorkspaceRegion | undefined,
-) {
-  const date = new Date(value);
-  const format = (options: Intl.DateTimeFormatOptions) =>
-    region
-      ? formatWorkspaceDateTime(value, region, options)
-      : new Intl.DateTimeFormat(undefined, options).format(date);
-  if (sameDay(date, new Date(now), region))
-    return format({ timeStyle: "short" });
-  if (sameDay(date, new Date(now - 86_400_000), region)) return "Yesterday";
-  return format({ month: "short", day: "numeric" });
-}
-
 /**
  * The administrator's dashboard: who is here, recent sign-ins, what needs
  * attention, and access by department. Every count comes from an existing
@@ -204,6 +175,9 @@ export function OverviewView() {
   const ending = useQuery(statusCountOptions("ending"));
   const pending = useQuery(statusCountOptions("pending"));
   const active = useQuery(statusCountOptions("active"));
+  // Who's here leaves disabled people out and says how many (People's
+  // Disabled total, the same one-row read).
+  const disabled = useQuery(statusCountOptions("disabled"));
   // The activity windows: active people inactive for more than 1, 7, 30 days.
   const day = useQuery(userSummaryOptions(1));
   const week = useQuery(userSummaryOptions(7));
@@ -310,6 +284,7 @@ export function OverviewView() {
     ending,
     pending,
     active,
+    disabled,
     day,
     week,
     month,
@@ -327,13 +302,14 @@ export function OverviewView() {
   );
 
   const presence = blockState(
-    [day, week, month, active, pending, sessions],
+    [day, week, month, active, pending, disabled, sessions],
     () =>
       day.data &&
       week.data &&
       month.data &&
       active.data &&
       pending.data &&
+      disabled.data &&
       roster
         ? {
             bar: lastSignInSegments({
@@ -347,6 +323,7 @@ export function OverviewView() {
               },
               neverSignedIn: month.data.no_recorded_sign_in,
             }),
+            disabled: disabled.data.pagination.total,
             roster: roster.map((person) => ({
               id: person.id,
               label: person.id === viewerId ? "You" : person.name,
@@ -372,7 +349,7 @@ export function OverviewView() {
             : "Unknown account";
         return {
           id: row.id,
-          when: signInWhen(row.occurredAt, now, region),
+          ...signInWhen(row.occurredAt, now, region),
           dateTime: row.occurredAt,
           label: row.personId === viewerId ? "You" : name,
           name,

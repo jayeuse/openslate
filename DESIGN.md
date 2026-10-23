@@ -329,7 +329,7 @@ Correct: the Triplicate block sets `--button-edge: var(--action); --button-ink: 
 
 Wrong: `[data-theme="triplicate"] [data-slot="button"][data-variant="outline"] { border-color: var(--action); color: var(--action); }` (every outline button turns blue, and no call site can change it back).
 
-**The Advanced Last Rule.** A panel shows the controls that its common task needs. Every other control goes in one closed **Advanced** block (`AdvancedSection`), the last block of the panel. Advanced remembers its state for each viewer, and when closed its header counts the controls whose value differs from the default ("Advanced · 2 set"). Lifecycle actions (Close, Reopen, Delete, Permanently delete) always live in Advanced. A control that applies only in one case appears only in that case.
+**The Advanced Last Rule.** A panel shows the controls that its common task needs. Every other control goes in one closed **Advanced** block (`AdvancedSection`), the last block of the panel. Advanced remembers its state for each viewer, and when closed its header counts the controls whose value differs from the default ("Advanced · 2 set"). An error inside a closed Advanced block opens it for that render (`forceOpen`) without storing the choice, so the person sees the field that failed. Lifecycle actions (Close, Reopen, Delete, Permanently delete) always live in Advanced. A control that applies only in one case appears only in that case.
 
 Correct: The module panel shows the name, the field list, and "Add field", then "Advanced · 1 set" (closed).
 
@@ -753,7 +753,9 @@ Hairline rows with 14px cells. Cells stay `--ink` in every look, so stored data 
 
 **Undo inside a sheet.** A sheet covers the toast region, so an Undo there could not be clicked. Inside an Access sheet, a discarded edit shows an inline line under the tab, "Changes discarded · Undo", in muted text with a ghost Undo, until the next edit or the sheet closes. An action that closes the sheet (Delete person) uses the ordinary Undo toast.
 
-**Status quick filters.** Beside the People search, a segmented control filters by status with counts: All, Active, Invited, Ending soon, Disabled, and a final "More" menu with the rare statuses (Expired, Deleted, Everyone); a rare status shows as the selected item ("Status: Deleted"). The counts are organization totals and do not follow the search. Status lives only here. On phones the control scrolls sideways instead of wrapping.
+**Status quick filters.** Beside the People search, a segmented control filters by status with counts: All, Active, Invited, Ending soon, Disabled, and a final "More" menu with the rare statuses (Expired, Deleted, Everyone); a rare status shows as the selected item ("Status: Deleted"). The counts are organization totals and do not follow the search. Status lives only here. On phones the control scrolls sideways instead of wrapping. The Sort select at the toolbar end is a field like any other: it keeps the field skin and its 3:1 edge, with a "Sort:" label before it.
+
+**A section the account cannot open.** A link to an Access section that the account cannot open lands on the section it can open, with one default notice at the top that names the asked section ("People is not available to your account."). The next navigation inside Access clears it. Never a silent redirect.
 
 **Filters.** Every other filter sits behind one quiet "Filters" button. From 768px it opens a popover anchored to the button's right edge: label-left rows of slim fields (a 96px muted label column), searchable dropdowns for long lists (Group, Department), filters that apply as they are chosen, and a ghost "Clear all". Below 768px it opens as a bottom sheet. The table never moves when it opens. Active filters show as removable chips in a slim row above the table ("Showing Role: Administrator ✕ · Two-step: Off ✕ · Clear all"); each ✕ is a named button, the Filters button carries the count, the row is absent when nothing is active, and links from the Overview land as chips. Groups and Sessions use the same button, popover, and chips.
 
@@ -843,12 +845,26 @@ A radio group of four tiles (two columns from 640px, four from 1280px). Each til
 
 The Access Overview answers "who is here" and "what needs attention", from existing data only, and stays still from 1280px.
 
-- **Who's here:** one line with tabular figures ("5 signed in now · 8 in the last day · 16 in the last 7 days, of 35 people"), the people signed in now as small chips (the viewer last, "+n" to Security), and one bar of everyone by last sign-in: Now, Last day, Last 7 days, Last 30 days (a ramp from `--action` to a faint tint), Older (`--rule-strong`), Never signed in (hatched), Invited (outlined). The windows are rolling, so the words are exact. The bar has a full accessible sentence. Legend words that open a filtered list are in `--action-text`; the time windows are plain ink.
-- **Recent sign-ins:** Access rows with the time, the person (or "Unknown account"), the address, and a dot and a word in a fixed 6rem column (Signed in, Failed in danger, Locked in warn).
+- **Who's here:** one line with tabular figures ("5 signed in now · 8 in the last day · 16 in the last 7 days, of 35 people", then " · 3 disabled not counted" when any are disabled), the people signed in now as small chips (the viewer last, "+n" to Security), and one bar of everyone by last sign-in: Now, Last day, Last 7 days, Last 30 days (a ramp from `--action` to a faint tint), Older (`--rule-strong`), Never signed in (hatched), Invited (outlined). The windows are rolling, so the words are exact. The bar has a full accessible sentence. Legend words that open a filtered list are in `--action-text`; the time windows are plain ink.
+- **Recent sign-ins:** Access rows with the time, the person (or "Unknown account"), the address, and a dot and a word in a fixed 6rem column (Signed in, Failed in danger, Locked in warn). A row from an earlier day stacks the day in 12px muted ink ("Yesterday", a weekday within 7 days, else "Oct 21") over the time, inside the same 40px row and 4.5rem column; today shows the time alone. Days follow the organization time zone.
 - **Needs attention:** only items above zero, in severity order, as 40px rows with a toned icon, a bold count, and a verb ("Review", "Add to groups", "Show"); then one "All clear: …" line that names the zeros. It stays whole from 768px tall; below that its body scrolls, and the cut row is the cue.
 - **Access by department:** each department with its mark, the people who can reach it, and a level bar that differs by pattern, not hue: Read outlined, Write hatched, Manage solid `--action`. The counts ("R 8 · W 0 · M 3") replace the bar on hover, focus, and touch. A guest counts at Read; administrators are named apart ("2 administrators manage all.").
 - **Overflow:** a card that scrolls always shows that it does. The sign-in feed never scrolls: it shows the rows that fit and pages by time ("‹ Newer · Older ›", time cursors over the merged events, so no row is skipped or repeated). Needs attention and Access by department scroll inside, with a soft bottom fade and an edge shadow while more is below (neither covers a focused row), the header count, and for departments a footer count ("2 of 14 shown"). One shared hook (`useScrollCue`) drives all three.
 - **States:** each block draws its frame first and its own skeleton; a failed read shows the destructive Alert with Retry inside, few words ("Needs attention could not be loaded.").
+
+### Access account policy
+
+The Security page and its policy dialog keep the policy quiet until someone changes it.
+
+- **Summary:** one card with one line of facts ("12-character passwords · Two-step for administrators · 60-minute timeout"), the viewer's own line ("Your two-step verification: Off · Set up"; in warn ink with "required for your role" when the policy requires it), and one button: Edit policy for the installation owner, View policy for everyone else. Below 768px "Set up" takes its own line, so the wrapped text keeps its line height.
+- **Dialog:** label-left rows from 768px. The common settings come first (roles that must use two-step, days to set up two-step, session timeout); allowed addresses, password rules, session limits, history, and sign-in attempts go in Advanced. The footer is fixed: the save-state chip ("Unsaved changes", "Saved", or "Changes discarded" with Undo), any save error as `role="alert"` above the buttons, then Cancel, Discard changes, and Save settings. A viewer who cannot change the policy sees the values as text on the sunken fill and a footer with one Close.
+- **Quiet danger:** "End all remote sessions" is an outline button in danger ink with no fill. Its confirmation names the count ("Signs out 4 sessions on 1 person"), and the result is a toast that says how many are still active.
+- **Session rows:** the device line drops unknown parts and says "Unknown device" once; on phones only the current row shows a status word, and the sign-in address stays visible.
+- **Stockroom:** the "Saved" chip carries `data-save-state` and takes the light tape, like the Sandbox save chip.
+
+Correct: a non-owner administrator opens View policy and reads "Session timeout 60 minutes" on the sunken fill, with one Close in the footer.
+
+Wrong: a disabled select for every setting, or a save error at the top of a dialog that the person has scrolled past.
 
 ### Sandbox canvas (signature)
 

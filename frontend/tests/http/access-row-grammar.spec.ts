@@ -553,6 +553,34 @@ test("Sessions use list rows on phones and size Sort to its longest option", asy
   expect(fits).toBe(true);
 });
 
+test("the People Sort select has the field edge of the other selects", async ({
+  page,
+}) => {
+  await mockAccessApi(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/access?view=people");
+  const skin = (select: Locator) =>
+    select.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [
+        style.borderTopColor,
+        style.borderTopWidth,
+        style.borderBottomColor,
+        style.borderBottomWidth,
+        style.backgroundColor,
+      ];
+    });
+  const sort = page.getByRole("combobox", { name: "Sort", exact: true });
+  await expect(sort).toBeVisible();
+  // "Sort:" stays as its visible label.
+  await expect(page.getByText("Sort:", { exact: true })).toBeVisible();
+  expect(await skin(sort)).toEqual(
+    await skin(
+      page.getByRole("combobox", { name: "Rows per page", exact: true }),
+    ),
+  );
+});
+
 test("the People toolbar keeps one row at 1280 px", async ({ page }) => {
   // Three-digit counts make the status filters as wide as a real directory.
   const api = await mockAccessApi(page);

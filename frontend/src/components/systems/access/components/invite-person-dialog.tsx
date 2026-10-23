@@ -399,6 +399,7 @@ export function InvitePersonDialog({
                   <Input
                     type="search"
                     aria-label="Search invitation groups"
+                    placeholder="Search groups"
                     className="min-h-11"
                     value={groupSearch.search}
                     onChange={(event) =>

@@ -168,6 +168,8 @@ test("session pages expose later devices and retain global revocation", async ({
   await expect(
     sheet.getByText("No active sessions.", { exact: true }),
   ).toBeVisible();
+  // The empty state says it once; no "0 active sessions" line above it.
+  await expect(sheet.getByText(/^0 active sessions$/)).toHaveCount(0);
   expect(api.sent("DELETE", `/api/users/${ids.ben}/sessions`)).toHaveLength(1);
 });
 

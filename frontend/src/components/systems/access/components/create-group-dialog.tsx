@@ -213,9 +213,7 @@ export function CreateGroupDialog({
         <DialogContent className="access-ui max-w-2xl">
           <DialogHeader>
             <DialogTitle>Create a group</DialogTitle>
-            <DialogDescription>
-              Add its first members now. You choose its access next.
-            </DialogDescription>
+            <DialogDescription>You choose its access next.</DialogDescription>
           </DialogHeader>
           <form
             noValidate
@@ -252,6 +250,7 @@ export function CreateGroupDialog({
               <GroupMemberPicker
                 selected={form.member_ids}
                 disabled={pending}
+                creating
                 onChange={(member_ids) => update({ member_ids })}
               />
             </div>

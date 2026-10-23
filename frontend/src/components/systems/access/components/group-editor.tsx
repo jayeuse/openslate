@@ -1008,7 +1008,7 @@ export function GroupEditor({
             onSubmit={submit("members")}
           >
             <p className="text-muted-foreground text-sm">
-              Members get the access this group gives. Guests can only read.
+              Guests can only read.
             </p>
             <GroupMemberPicker
               source={admin ? "users" : "candidates"}

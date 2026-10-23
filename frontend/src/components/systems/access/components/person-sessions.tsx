@@ -101,11 +101,14 @@ export function PersonSessions({
           <h3 id="person-sessions-title" className="font-semibold">
             Sessions
           </h3>
-          <p className="text-muted-foreground text-sm tabular-nums">
-            {sessions.data
-              ? `${total} active ${total === 1 ? "session" : "sessions"}`
-              : "Devices where this person is signed in."}
-          </p>
+          {/* With no sessions the empty state below says it once. */}
+          {sessions.data && total === 0 ? null : (
+            <p className="text-muted-foreground text-sm tabular-nums">
+              {sessions.data
+                ? `${total} active ${total === 1 ? "session" : "sessions"}`
+                : "Devices where this person is signed in."}
+            </p>
+          )}
         </div>
         {(
           self

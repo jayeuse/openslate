@@ -135,13 +135,33 @@ export const userSummaryOptions = (inactiveDays = INACTIVE_DAYS_DEFAULT) =>
   });
 
 /** Observation writes do not emit a User ORM invalidation. Never refresh the
- * person-security query here: its accepted read calls this follow-up. */
-export function afterAccessMfaObservation(client: QueryClient) {
-  return invalidateAll(client, [
-    accessKeys.directory(),
-    accessKeys.userSummary(),
-    accessKeys.ownMfa(),
-  ]);
+ * person-security query here: its accepted read calls this follow-up. The
+ * person's recorded status also shows in any cached list read that holds
+ * their row (the open sheet reads them by id), so those are read again. */
+export function afterAccessMfaObservation(client: QueryClient, userId: string) {
+  const lists = ["access", "users", "list"] as const;
+  const holding = new Set(
+    client
+      .getQueryCache()
+      .findAll({ queryKey: lists })
+      .filter((query) => {
+        // Every read under this key is a page of `/api/users` rows.
+        const page = query.state.data as
+          { items: readonly { id: string }[] } | undefined;
+        return page?.items.some((item) => item.id === userId) ?? false;
+      }),
+  );
+  return Promise.all([
+    invalidateAll(client, [
+      accessKeys.directory(),
+      accessKeys.userSummary(),
+      accessKeys.ownMfa(),
+    ]),
+    client.invalidateQueries({
+      queryKey: lists,
+      predicate: (query) => holding.has(query),
+    }),
+  ]).then(() => undefined);
 }
 
 /**
@@ -445,7 +465,7 @@ export const personSecurityOptions = (userId: string, actorId: string) =>
       ]);
       if (actor.user_id !== actorId)
         throw new Error("Security identity changed.");
-      if (!signal.aborted) await afterAccessMfaObservation(client);
+      if (!signal.aborted) await afterAccessMfaObservation(client, userId);
       return { status, assurance: actor.assurance_level };
     },
   });
@@ -462,7 +482,7 @@ export async function afterPersonSecurityChange(
   return Promise.all([
     client.fetchQuery({ ...userSessionsOptions(userId), staleTime: 0 }),
     client.invalidateQueries({ queryKey: accessKeys.adminSessions() }),
-    afterAccessMfaObservation(client),
+    afterAccessMfaObservation(client, userId),
     client.invalidateQueries({
       queryKey: accessKeys.personSecurity(userId),
       refetchType: "none",

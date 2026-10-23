@@ -36,12 +36,13 @@ import { cn } from "@/lib/utils";
 import { useScrollCue } from "../hooks/use-scroll-cue";
 import { ReadError } from "./read-error";
 
-import type {
-  AttentionItem,
-  DepartmentAccessRow,
-  SignInBar,
-  SignInResult,
-  SignInSegmentId,
+import {
+  notCountedWords,
+  type AttentionItem,
+  type DepartmentAccessRow,
+  type SignInBar,
+  type SignInResult,
+  type SignInSegmentId,
 } from "../helpers/overview-dashboard";
 
 // The four Overview blocks (docs/specs/access-ui-ux-pass.md, Phase 4). Each
@@ -185,6 +186,8 @@ function Swatch({
 
 export type Presence = {
   bar: SignInBar;
+  /** Disabled people, whom the bar leaves out. */
+  disabled: number;
   /** Signed in now, newest first; avatars once the names read lands. */
   roster: {
     id: string;
@@ -249,7 +252,7 @@ export function WhoIsHere({
 }
 
 function Presence({ data }: { data: Presence }) {
-  const { bar, roster, partial } = data;
+  const { bar, roster, partial, disabled } = data;
   const more = roster.length - ROSTER_SHOWN;
   const visible = bar.segments.filter((segment) => segment.count > 0);
   return (
@@ -263,6 +266,7 @@ function Presence({ data }: { data: Presence }) {
           signed in now · <b>{bar.today}</b> in the last day · <b>{bar.week}</b>{" "}
           in the last 7 days, of <b>{bar.total}</b>{" "}
           {bar.total === 1 ? "person" : "people"}
+          {notCountedWords(disabled)}
         </p>
         {roster.length ? (
           <div className="flex min-w-0 items-center gap-2">
@@ -300,7 +304,7 @@ function Presence({ data }: { data: Presence }) {
                     <GuardedWorkspaceLink
                       href="/access?view=security"
                       aria-label={`${count} more signed in: open Security`}
-                      className="flex min-h-11 items-center rounded-sm px-1.5 text-sm text-[var(--action-text)] tabular-nums hover:underline xl:min-h-8"
+                      className="flex min-h-11 min-w-11 items-center justify-center rounded-sm px-1.5 text-sm text-[var(--action-text)] tabular-nums hover:underline xl:min-h-8"
                     >
                       +{count}
                     </GuardedWorkspaceLink>
@@ -380,7 +384,9 @@ function OnlineAvatar({ name, url }: { name: string; url: string | null }) {
 
 export type FeedRow = {
   id: string;
-  when: string;
+  /** "Yesterday", a weekday or a date; null today. */
+  day: string | null;
+  time: string;
   dateTime: string;
   /** "You", the person's name, or why there is none. */
   label: string;
@@ -430,11 +436,13 @@ export function RecentSignIns({
   const shown = state.status === "ready" ? state.data : [];
   const newest = shown[0];
   const oldest = shown.at(-1);
+  // The pager names days; a page of today names its times.
+  const label = (row: FeedRow) => row.day ?? row.time;
   const range =
     newest && oldest
-      ? newest.when === oldest.when
-        ? newest.when
-        : `${oldest.when} – ${newest.when}`
+      ? label(newest) === label(oldest)
+        ? label(newest)
+        : `${label(oldest)} – ${label(newest)}`
       : "";
   // A turn in progress keeps both buttons as they are (the turn ignores a
   // second press), so the pressed button is never replaced mid-turn.
@@ -556,11 +564,18 @@ function SignInLine({ row }: { row: FeedRow }) {
   const tone = resultTone[row.result];
   return (
     <li className="grid min-h-13 grid-cols-[4.5rem_minmax(0,1fr)_6rem] items-center gap-3 px-4 text-sm sm:grid-cols-[4.5rem_minmax(0,1.3fr)_minmax(0,1fr)_6rem] xl:min-h-10">
+      {/* Older rows put the day above the time; the space between them
+          keeps the words apart for assistive technology. */}
       <time
         dateTime={row.dateTime}
-        className="text-muted-foreground tabular-nums"
+        className="text-muted-foreground leading-tight tabular-nums"
       >
-        {row.when}
+        {row.day ? (
+          <>
+            <span className="block text-xs">{row.day}</span>{" "}
+          </>
+        ) : null}
+        <span className="block">{row.time}</span>
       </time>
       <span className="flex min-w-0 items-center gap-2.5">
         {row.person ? (

@@ -46,6 +46,7 @@ import {
   accessDraftsHoldUncertainSave,
 } from "./state/draft-journal-storage";
 import { GroupsView } from "./components/groups-view";
+import { blockedSectionNotice } from "./helpers/blocked-section";
 import { OverviewView, useOverviewMeta } from "./components/overview-view";
 import { SecurityView } from "./components/security-view";
 import { PeopleView } from "./components/people-view";
@@ -78,6 +79,9 @@ const accessViews = {
 } as const;
 
 type AccessView = keyof typeof accessViews;
+
+/** Where a department manager's Access page always lands. */
+const managerSearch = "view=groups";
 
 function isAccessView(value: string | null): value is AccessView {
   return value !== null && Object.hasOwn(accessViews, value);
@@ -170,12 +174,36 @@ function AccessControlCenter() {
   if (access !== null && access !== lastAccess) setLastAccess(access);
   const shownAccess =
     access ?? (verifying && !identity.isError ? lastAccess : null);
+  const [blocked, setBlocked] = useState<{
+    notice: string;
+    from: string;
+  } | null>(null);
   const requestedView = searchParams.get("view");
-  const navigationBlock = useUnsavedDraftGuard(userId, securityBusy);
+  // Any accepted workspace navigation clears the manager's section line,
+  // also a click on the section they are already on.
+  const clearBlocked = useCallback(() => setBlocked(null), []);
+  const navigationBlock = useUnsavedDraftGuard(
+    userId,
+    securityBusy,
+    clearBlocked,
+  );
   useEffect(() => {
     if (access === "groups" && requestedView !== "groups")
-      router.replace(`${pathname}?view=groups` as Route);
+      router.replace(`${pathname}?${managerSearch}` as Route);
   }, [access, pathname, requestedView, router]);
+  // A manager's link to another section lands on Groups with one line that
+  // names the section. The landing keeps it; the next navigation clears it.
+  const search = searchParams.toString();
+  const asked = access === "groups" ? blockedSectionNotice(searchParams) : null;
+  if (asked !== null && blocked?.from !== search)
+    setBlocked({ notice: asked, from: search });
+  else if (
+    asked === null &&
+    blocked !== null &&
+    search !== blocked.from &&
+    search !== managerSearch
+  )
+    setBlocked(null);
   const view =
     shownAccess === null || shownAccess === "none"
       ? null
@@ -237,6 +265,9 @@ function AccessControlCenter() {
           aria-busy={verifying}
           className={view === "security" ? undefined : "access-fill"}
         >
+          {view === "groups" && blocked ? (
+            <Alert className="mb-3 shrink-0">{blocked.notice}</Alert>
+          ) : null}
           {view === "people" ? (
             <PeopleView />
           ) : view === "groups" ? (
@@ -287,6 +318,7 @@ const discardFailed =
 function useUnsavedDraftGuard(
   userId: string,
   securityBusy: boolean,
+  onAccepted: () => void,
 ): ReactNode {
   const { hasUnsavedDraft, hasPendingOperation, discardUnsavedDrafts } =
     useAccessDraftNavigation();
@@ -303,18 +335,25 @@ function useUnsavedDraftGuard(
         setNotice(finishFirst);
         return false;
       }
-      if (!hasUnsavedDraft) return true;
-      if (new URL(href, window.location.origin).href === window.location.href)
+      if (
+        !hasUnsavedDraft ||
+        new URL(href, window.location.origin).href === window.location.href
+      ) {
+        onAccepted();
         return true;
+      }
       setNotice("");
       setDiscardError("");
       setPending({
-        resume,
+        resume: () => {
+          onAccepted();
+          resume();
+        },
         unresolved: exit !== undefined && accessDraftsHoldUncertainSave(userId),
       });
       return false;
     },
-    [hasUnsavedDraft, securityBusy, hasPendingOperation, userId],
+    [hasUnsavedDraft, securityBusy, hasPendingOperation, userId, onAccepted],
   );
   useWorkspaceNavigationGuard(guard);
 

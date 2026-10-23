@@ -69,7 +69,14 @@ test("a department manager sees and opens only Groups", async ({ page }) => {
   await expect(
     page.getByRole("heading", { level: 1, name: "Groups" }),
   ).toBeVisible();
+  const notice = page.getByText("Overview is not available to your account.", {
+    exact: true,
+  });
+  await expect(notice).toBeVisible();
   await expect(accessLinks(page)).toHaveText(["Groups"]);
+  // Groups, the section already open, still clears the line.
+  await accessLinks(page).first().click();
+  await expect(notice).toHaveCount(0);
   await expect(
     page.getByRole("main").getByRole("link", { name: "Security", exact: true }),
   ).toHaveCount(0);

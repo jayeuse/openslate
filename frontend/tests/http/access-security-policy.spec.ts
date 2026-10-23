@@ -321,6 +321,29 @@ test("a non-owner administrator reads the policy as text and sets up their own t
   expect(state.writes).toEqual([]);
 });
 
+test("the viewer's own two-step setup is a full target on a phone", async ({
+  page,
+}) => {
+  const state = await mockManageSecurity(page);
+  state.policy.mfa_require_admin = true;
+  await signInAsAdministrator(page, {
+    organization: false,
+    installation: false,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/access?view=security");
+  const workspace = page.getByRole("region", {
+    name: "Security workspace",
+    exact: true,
+  });
+  await expect(workspace).toContainText("Your two-step verification: Off");
+  const box = await workspace
+    .getByRole("button", { name: "Set up two-step verification", exact: true })
+    .boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(44);
+  expect(box?.height).toBeGreaterThanOrEqual(44);
+});
+
 test("an organization owner edits two-step and the address list but reads installation rules as text", async ({
   page,
 }) => {

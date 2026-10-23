@@ -169,6 +169,13 @@ test("inviting a member sends the chosen groups", async ({ page }) => {
   await dialog.getByLabel("Email").fill("eve.stone@example.com");
   await expect(dialog.getByLabel("Username")).toHaveValue("eve_stone");
   await dialog.getByLabel("Name", { exact: true }).fill("Eve Stone");
+  // The group search shows what it searches, under a name of its own.
+  await expect(
+    dialog.getByRole("searchbox", {
+      name: "Search invitation groups",
+      exact: true,
+    }),
+  ).toHaveAttribute("placeholder", "Search groups");
   await dialog.getByRole("checkbox", { name: "Finance readers" }).click();
   await dialog.getByRole("button", { name: "Send invitation" }).click();
 

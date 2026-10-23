@@ -139,6 +139,58 @@ test("person security is lazy, current and recovery acceptance never claims deli
   });
 });
 
+test("a security read shows the newly recorded two-step status in Details and the People row without a reload", async ({
+  page,
+}) => {
+  // The Two-step column shows from 1280px.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const api = await setup(page);
+  const unknown = {
+    active_session_count: 0,
+    mfa_verified_totp: null,
+    mfa_observed_at: null,
+  };
+  api.monitoring.set(ids.ben, unknown);
+  // The server records what the provider says while it answers.
+  api.on("GET", `/api/users/${ids.ben}/security`, (route) => {
+    api.monitoring.set(ids.ben, {
+      ...unknown,
+      mfa_verified_totp: true,
+      mfa_observed_at: "2026-10-01T08:00:00Z",
+    });
+    return route.fulfill({ json: status() });
+  });
+  // Ben is not on the Disabled page, so the sheet reads him by id.
+  await page.goto(`/access?view=people&status=disabled&user=${ids.ben}`);
+  const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+  const recorded = sheet
+    .getByRole("region", { name: "Recorded activity", exact: true })
+    .getByText("Two-step verification", { exact: true })
+    .locator("+ dd");
+  await expect(recorded).toHaveText("Unknown");
+
+  await sheet.getByRole("tab", { name: "Security", exact: true }).click();
+  await expect(
+    sheet.getByText("Two-step verification: On", { exact: true }),
+  ).toBeVisible();
+  await sheet.getByRole("tab", { name: "Details", exact: true }).click();
+  await expect(recorded).toHaveText(/^On/);
+
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+  await page
+    .getByRole("group", { name: "Status", exact: true })
+    .getByRole("button", { name: /^All/ })
+    .click();
+  await expect(
+    page
+      .getByRole("table", { name: "People", exact: true })
+      .getByRole("row")
+      .filter({ hasText: "Ben Cruz" })
+      .getByText("On", { exact: true }),
+  ).toBeVisible();
+});
+
 test("unavailable and malformed status stay unavailable until a fresh Retry", async ({
   page,
 }) => {

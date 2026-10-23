@@ -111,6 +111,10 @@ test("creating a group sends its first members and opens its access", async ({
     dialog.getByRole("button", { name: "Add Rosa Reyes" }),
   ).toHaveCount(0);
   await dialog.getByRole("button", { name: "Add Ben Cruz" }).click();
+  // Create adds the members, so the announcement asks for no Save.
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "Ben Cruz" }),
+  ).toHaveText("Ben Cruz added.");
   await dialog.getByRole("button", { name: "Create group" }).click();
 
   await expect(dialog).toBeHidden();
@@ -241,11 +245,19 @@ test("a department manager changes members only, from the candidates list", asyn
       ),
     }),
   );
-  await page.goto("/access?view=groups");
+  // A person link lands on Groups and says why; the next step clears it.
+  await page.goto(`/access?view=people&user=${ids.ana}`);
+  await expect(page).toHaveURL(/\/access\?view=groups$/);
+  const notice = page.getByText("People is not available to your account.", {
+    exact: true,
+  });
+  await expect(notice).toBeVisible();
   await expect(page.getByRole("button", { name: "Create group" })).toHaveCount(
     0,
   );
   await openGroup(page, "Inventory clerks");
+  await expect(page).toHaveURL(/group=/);
+  await expect(notice).toHaveCount(0);
   const sheet = panel(page, "Inventory clerks");
 
   await expect(sheet.getByRole("tab", { name: "Members" })).toHaveAttribute(

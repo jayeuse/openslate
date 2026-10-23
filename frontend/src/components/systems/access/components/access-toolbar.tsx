@@ -267,17 +267,16 @@ export function AccessToolbar<T extends string>({
   const wide = useWideScreen();
   const sortInFilters = sortInFiltersBelowMd && !wide;
   const count = chips.length;
-  const sortSelect = (ghost: boolean) => (
+  const sortSelect = (inToolbar: boolean) => (
     <NativeSelect
       id={`${id}-sort`}
       aria-label={sortLabel}
-      // A ghost select is a quiet "Sort: Name" control; it leaves the field
-      // skins (data-slot) and sizes to the chosen option where the browser
+      // The toolbar's "Sort: Name" control keeps the field edge of every
+      // other select and sizes to the chosen option where the browser
       // supports field-sizing (to its longest option elsewhere).
-      {...(ghost ? { "data-slot": "ghost-select" } : {})}
       className={
-        ghost
-          ? "[&_select]:field-sizing-content [&_select]:min-h-11 [&_select]:border-transparent [&_select]:bg-transparent [&_select]:pl-1.5 [&_select]:font-medium [&_select]:hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] xl:[&_select]:min-h-8"
+        inToolbar
+          ? "[&_select]:field-sizing-content [&_select]:min-h-11 [&_select]:font-medium xl:[&_select]:min-h-8"
           : "w-full [&_select]:min-h-11"
       }
       value={sort}
@@ -310,7 +309,7 @@ export function AccessToolbar<T extends string>({
       {sortSelect(false)}
     </Field>
   ) : (
-    <div className="flex shrink-0 items-center gap-0.5 md:ml-auto">
+    <div className="flex shrink-0 items-center gap-2 md:ml-auto">
       <label
         htmlFor={`${id}-sort`}
         className="text-muted-foreground text-sm whitespace-nowrap"
