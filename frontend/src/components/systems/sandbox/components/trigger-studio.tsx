@@ -533,7 +533,7 @@ export function TriggerStudio({
                     </div>
                   ) : (
                     <p className="text-muted-foreground text-sm">
-                      Select or create a trigger to edit its settings.
+                      Create a trigger to edit its settings.
                     </p>
                   )}
                   {recentActivity}

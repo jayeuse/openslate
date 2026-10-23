@@ -110,7 +110,12 @@ export function SandboxPageHeader({
   /** Replays the title signature after each publish. */
   publishCount: number;
   /** The save-state chip, or null while the page first loads. */
-  chip: { text: string; variant: "destructive" | "warning" | "outline" } | null;
+  chip: {
+    text: string;
+    /** The phone words ("Unpublished · Saved"); `text` stays the content. */
+    short: string;
+    variant: "destructive" | "warning" | "outline";
+  } | null;
   attention: {
     issues: readonly BuildAttentionIssue[];
     onOpen: (issue: SandboxValidationIssue) => void;
@@ -143,8 +148,17 @@ export function SandboxPageHeader({
           {chip ? (
             // One save-state chip: the publish state, then what is
             // happening to the draft right now (the Four Moments Rule).
-            <Badge data-sandbox-save-state role="status" variant={chip.variant}>
-              {chip.text}
+            // Below 640px it shows short words, drawn by CSS with an empty
+            // alternative, so the full words stay its text for assistive
+            // technology and the phone header keeps two rows (S27).
+            <Badge
+              data-sandbox-save-state
+              data-short={chip.short}
+              role="status"
+              variant={chip.variant}
+              className='max-sm:before:[content:attr(data-short)_/_""]'
+            >
+              <span className="max-sm:sr-only">{chip.text}</span>
             </Badge>
           ) : null}
           <SandboxAttention

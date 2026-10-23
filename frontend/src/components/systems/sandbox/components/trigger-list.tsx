@@ -139,48 +139,51 @@ export function TriggerList({
           New trigger
         </Button>
       </div>
-      <div className="border-border flex flex-wrap items-center gap-2 border-b p-3">
-        <div className="relative min-w-40 flex-1">
-          <Search
-            aria-hidden="true"
-            className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-          />
-          <Input
-            type="search"
-            aria-label="Search triggers"
-            placeholder="Search triggers"
-            className="min-h-11 pl-9"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
+      {/* Nothing to search or filter until a trigger exists (S27). */}
+      {triggers.length ? (
+        <div className="border-border flex flex-wrap items-center gap-2 border-b p-3">
+          <div className="relative min-w-40 flex-1">
+            <Search
+              aria-hidden="true"
+              className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+            />
+            <Input
+              type="search"
+              aria-label="Search triggers"
+              placeholder="Search triggers"
+              className="min-h-11 pl-9"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+          <ToggleGroup
+            aria-label="Status"
+            variant="segmented"
+            multiple={false}
+            value={[status]}
+            className="w-fit flex-nowrap [&>*]:shrink-0"
+            onValueChange={(selection) => {
+              const next = statusFilters.find(
+                (filter) => filter.value === selection[0],
+              );
+              if (next) onStatusChange(next.value);
+            }}
+          >
+            {statusFilters.map((filter) => (
+              <ToggleGroupItem
+                key={filter.value}
+                value={filter.value}
+                className="flex-none gap-1.5 px-2 text-sm whitespace-nowrap"
+              >
+                {filter.label}{" "}
+                <span className="text-muted-foreground font-normal tabular-nums">
+                  {counts[filter.value]}
+                </span>
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
         </div>
-        <ToggleGroup
-          aria-label="Status"
-          variant="segmented"
-          multiple={false}
-          value={[status]}
-          className="w-fit flex-nowrap [&>*]:shrink-0"
-          onValueChange={(selection) => {
-            const next = statusFilters.find(
-              (filter) => filter.value === selection[0],
-            );
-            if (next) onStatusChange(next.value);
-          }}
-        >
-          {statusFilters.map((filter) => (
-            <ToggleGroupItem
-              key={filter.value}
-              value={filter.value}
-              className="flex-none gap-1.5 px-2 text-sm whitespace-nowrap"
-            >
-              {filter.label}{" "}
-              <span className="text-muted-foreground font-normal tabular-nums">
-                {counts[filter.value]}
-              </span>
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      </div>
+      ) : null}
       <nav
         aria-label="Trigger list"
         className={cn(
@@ -231,7 +234,9 @@ export function TriggerList({
             </Button>
           );
         })}
-        {triggers.length && !rows.length ? (
+        {!triggers.length ? (
+          <p className="text-muted-foreground p-4 text-sm">No triggers yet.</p>
+        ) : !rows.length ? (
           <p className="text-muted-foreground p-4 text-sm">
             No triggers match.
           </p>

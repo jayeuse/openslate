@@ -1649,8 +1649,13 @@ test("an empty trigger list explains how to start and offers no save", async ({
 
   const settings = page.getByRole("region", { name: "Trigger details" });
   await expect(settings).toContainText(
-    "Select or create a trigger to edit its settings.",
+    "Create a trigger to edit its settings.",
   );
+  // With no triggers there is nothing to search or filter (S27).
+  const list = page.getByRole("navigation", { name: "Trigger list" });
+  await expect(list).toContainText("No triggers yet.");
+  await expect(page.getByLabel("Search triggers")).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Status" })).toHaveCount(0);
   await expect(
     settings.getByRole("button", { name: "Save triggers" }),
   ).toHaveCount(0);

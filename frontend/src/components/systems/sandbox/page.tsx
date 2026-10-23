@@ -188,7 +188,8 @@ function sandboxStillLoading(): SandboxCommandFailure {
   return { ok: false, error: "Sandbox is still loading." };
 }
 
-type PublishStatus = { label: string; publishable: boolean };
+/** `short` is the phone chip's word (S27); `label` stays its full text. */
+type PublishStatus = { label: string; short: string; publishable: boolean };
 
 // The header status names the draft's real state, and Review & Publish is
 // available only when publishing would change something.
@@ -197,21 +198,35 @@ function publishStatus(
   design: Design,
   conflict: boolean,
 ): PublishStatus {
-  if (conflict) return { label: "Unsaved changes", publishable: false };
+  if (conflict)
+    return { label: "Unsaved changes", short: "Unsaved", publishable: false };
   const published = session?.publishedHash !== undefined;
   if (
     !published &&
     design.departments.length === 0 &&
     design.modules.length === 0
   )
-    return { label: "Nothing to publish yet", publishable: false };
+    return {
+      label: "Nothing to publish yet",
+      short: "Nothing to publish",
+      publishable: false,
+    };
   if (
     session?.hasUnpublishedChanges === true ||
     (published && session.contentHash !== session.publishedHash)
   )
-    return { label: "Unpublished changes", publishable: true };
-  if (published) return { label: "Published", publishable: false };
-  return { label: "Not published yet", publishable: true };
+    return {
+      label: "Unpublished changes",
+      short: "Unpublished",
+      publishable: true,
+    };
+  if (published)
+    return { label: "Published", short: "Published", publishable: false };
+  return {
+    label: "Not published yet",
+    short: "Not published",
+    publishable: true,
+  };
 }
 
 function emptyDocument(): SandboxDocumentV4 {
@@ -1454,6 +1469,15 @@ function SandboxWorkspace() {
                           ? `${triggerDraft.changes} unsaved trigger ${
                               triggerDraft.changes === 1 ? "change" : "changes"
                             }`
+                          : "Saved"
+                    }`,
+                short: conflict
+                  ? "Not saved"
+                  : `${status.short} · ${
+                      saving
+                        ? "Saving…"
+                        : triggerDraft.changes > 0
+                          ? `${triggerDraft.changes} unsaved`
                           : "Saved"
                     }`,
               }

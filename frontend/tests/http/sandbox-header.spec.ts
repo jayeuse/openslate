@@ -282,6 +282,34 @@ test("on a phone the header is two rows with 44 px targets", async ({
   }
 });
 
+// S27: below 640 px the chip shows short words, so even Stockroom's wide
+// monospace chip leaves the attention button on its row; the full words
+// stay its text for assistive technology.
+test("on a phone in Stockroom the save chip and attention button share a row", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    hasUnpublishedChanges: true,
+  });
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "stockroom";
+  });
+  const header = page.locator("[data-sandbox-page] > header");
+  const chip = header.locator("[data-sandbox-save-state]");
+  const attention = header.getByRole("button", { name: "1 needs attention" });
+  await expect(chip).toHaveText("Unpublished changes · Saved");
+  await expect
+    .poll(async () => {
+      const [a, b] = await Promise.all([
+        chip.boundingBox(),
+        attention.boundingBox(),
+      ]);
+      return Math.abs(a!.y + a!.height / 2 - (b!.y + b!.height / 2)) < 12;
+    })
+    .toBe(true);
+});
+
 test("on a phone Undo and Redo sit beside the Build pane tabs and say why they wait", async ({
   page,
 }) => {
