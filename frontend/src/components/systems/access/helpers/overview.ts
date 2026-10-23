@@ -3,22 +3,8 @@ import type {
   AccessInvitationSettingsPatch,
 } from "../state/api-contracts";
 
-// Pure rules for the Access overview: the health count shape and the
-// invitation settings form. Each count matches the People or Groups view its
-// card opens.
-
-export type OverviewHealth = {
-  /** Active administrators. One or none leaves nobody to step in. */
-  administrators: number;
-  /** Members and guests, not deleted, in no group: they have no access. */
-  withoutGroup: number;
-  groupsWithoutAccess: number;
-  groupsWithoutMembers: number;
-  /** Active or pending people whose access ends within 14 days. */
-  guestsEndingSoon: number;
-  /** Invitations sent and not accepted, not revoked. */
-  pendingInvitations: number;
-};
+// Pure rules for the invitation settings form (on People since Phase 4).
+// The Overview dashboard's rules are in overview-dashboard.ts.
 
 // Invitation settings
 

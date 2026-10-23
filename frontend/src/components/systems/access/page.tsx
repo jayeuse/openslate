@@ -12,8 +12,8 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, ShieldCheck } from "lucide-react";
 
+import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,6 @@ import {
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  GuardedWorkspaceLink,
   useWorkspaceNavigationGuard,
   type WorkspaceNavigationExit,
 } from "@/components/workspace-navigation-guard";
@@ -47,7 +46,7 @@ import {
   accessDraftsHoldUncertainSave,
 } from "./state/draft-journal-storage";
 import { GroupsView } from "./components/groups-view";
-import { OverviewView } from "./components/overview-view";
+import { OverviewView, useOverviewMeta } from "./components/overview-view";
 import { SecurityView } from "./components/security-view";
 import { PeopleView } from "./components/people-view";
 import {
@@ -64,7 +63,8 @@ const accessViews = {
   },
   overview: {
     title: "Access overview",
-    description: "See who has access and where it needs attention.",
+    // The Overview shows its group and department totals instead.
+    description: "",
   },
   people: {
     title: "People",
@@ -180,10 +180,13 @@ function AccessControlCenter() {
       ? null
       : viewFor(shownAccess, searchParams);
   const copy = view === null ? null : accessViews[view];
+  const overviewMeta = useOverviewMeta(view === "overview");
   const description =
     shownAccess === "groups"
       ? "Change who is in the groups you manage."
-      : (copy?.description ?? "");
+      : view === "overview"
+        ? overviewMeta
+        : (copy?.description ?? "");
   const identityMismatch =
     !suspended &&
     !roleAwaitingVerification &&
@@ -247,8 +250,7 @@ function AccessControlCenter() {
     <AccessFrame
       title={copy?.title ?? "Access"}
       description={description}
-      showSecurityLink={shownAccess === "all" && view === "overview"}
-      still={view !== null && view !== "overview"}
+      still={view !== null}
       verifying={verifying}
     >
       <AccessVerifyingProvider verifying={verifying}>
@@ -363,21 +365,19 @@ function useUnsavedDraftGuard(
 
 /**
  * The Access page. `access-ui` scopes the slim controls (globals.css). A
- * still view (People, Groups, Security) never scrolls from 1280px: its body
- * shrinks to the viewport and only its table scrolls. The Overview and
- * narrower screens scroll the body as before.
+ * still view (every view) never scrolls from 1280px: its body shrinks to
+ * the viewport and only its panels or table scroll. Narrower screens scroll
+ * the body. The title is the shared PageHeader; its margin is the gap.
  */
 function AccessFrame({
   title,
   description,
-  showSecurityLink = false,
   still = false,
   verifying = false,
   children,
 }: {
   title: string;
   description: string;
-  showSecurityLink?: boolean;
   still?: boolean;
   /** Header actions wait, like the page content, while the role is checked. */
   verifying?: boolean;
@@ -385,41 +385,21 @@ function AccessFrame({
 }) {
   const [actions, setActions] = useState<HTMLDivElement | null>(null);
   return (
-    <div className="access-ui flex h-full min-h-0 min-w-0 flex-col gap-3 p-3 sm:px-5 sm:py-4">
-      <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <h1
-            data-slot="page-title"
-            className="text-2xl font-semibold tracking-tight sm:text-3xl"
-          >
-            {title}
-          </h1>
-          {description ? (
-            <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
-              {description}
-            </p>
-          ) : null}
-        </div>
-        {showSecurityLink ? (
-          <Button
-            asChild
-            variant="outline"
-            className="min-h-11 w-full shrink-0 px-3 sm:w-auto"
-          >
-            <GuardedWorkspaceLink href="/access?view=security">
-              <ShieldCheck aria-hidden="true" />
-              Security
-              <ArrowUpRight aria-hidden="true" />
-            </GuardedWorkspaceLink>
-          </Button>
-        ) : null}
-        <div
-          ref={setActions}
-          inert={verifying}
-          aria-busy={verifying || undefined}
-          className="flex min-w-0 flex-wrap items-center justify-between gap-3 empty:hidden sm:justify-end"
+    <div className="access-ui flex h-full min-h-0 min-w-0 flex-col p-3 sm:px-5 sm:py-4">
+      <div className="shrink-0">
+        <PageHeader
+          title={title}
+          description={description}
+          actions={
+            <div
+              ref={setActions}
+              inert={verifying}
+              aria-busy={verifying || undefined}
+              className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2 empty:hidden sm:w-auto sm:justify-end"
+            />
+          }
         />
-      </header>
+      </div>
       <div
         className={cn(
           "min-h-0 flex-1 overflow-y-auto overscroll-contain",

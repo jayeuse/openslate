@@ -9,6 +9,7 @@ import { getMfaStatus } from "@/lib/mfa-api";
 import { INACTIVE_DAYS_DEFAULT } from "../state/api-contracts";
 import { ApiError } from "@/lib/api";
 import {
+  defaultAccessSessionsRequest,
   getAccessSecurityPolicy,
   getPersonSecurity,
   listAccessSessions,
@@ -31,6 +32,7 @@ import {
   type AccessUserListOptions,
 } from "../state/api";
 import {
+  defaultSecurityEventsRequest,
   getAccessSecurityEvent,
   listAccessSecurityEvents,
   type AccessSecurityEventsRequest,
@@ -329,6 +331,40 @@ export function readAccessSecurityEvent(
     getAccessSecurityEvent(eventId, signal),
   );
 }
+// The Overview dashboard's own reads. Its counts reuse the one-row status
+// reads of People and the default user summary; these add the activity
+// windows, who is signed in now, recent sign-ins and the group access.
+
+/** Active sessions, newest first: one page counts who is signed in now. */
+export const overviewSessionsRequest: AccessSessionsRequest = {
+  ...defaultAccessSessionsRequest,
+  limit: 100,
+};
+export const OVERVIEW_SIGN_IN_ROWS = 15;
+/**
+ * `event_type` filters one exact type, so two reads cover the feed: the
+ * search matches `identity.sign_in` and `identity.sign_in_failure` (the
+ * server searches event types by substring), and lockouts have their own.
+ */
+export const overviewSignInRequests: readonly AccessSecurityEventsRequest[] = [
+  {
+    ...defaultSecurityEventsRequest,
+    limit: OVERVIEW_SIGN_IN_ROWS,
+    search: "identity.sign_in",
+  },
+  {
+    ...defaultSecurityEventsRequest,
+    limit: OVERVIEW_SIGN_IN_ROWS,
+    event_type: "identity.lockout",
+  },
+];
+/** The groups whose access entries and members give access by department. */
+export const OVERVIEW_GROUP_LIMIT = 100;
+export const overviewGroupsOptions = () =>
+  groupListOptions("exclude", { limit: OVERVIEW_GROUP_LIMIT, offset: 0 });
+/** The activity windows of the last-sign-in bar, in days. */
+export const OVERVIEW_WINDOWS = [1, 7, 30] as const;
+
 export function afterAccessSecurityChange(
   client: QueryClient,
   policy: AccessSecurityPolicy,

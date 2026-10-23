@@ -975,6 +975,106 @@ html[data-density="spacious"]
   }
 }
 
+/* The Overview dashboard (Phase 4). Who's here: the last-sign-in ramp
+   runs from the action color to a faint tint; Older is the strong rule,
+   Never is hatched, and Invited is outlined, so no segment depends on hue,
+   and the legend names each with its count. Access by department: Read is
+   the strong rule, Write the muted ink, Manage the action color. */
+.access-ui .access-segment[data-segment="now"] {
+  background: var(--action);
+}
+.access-ui .access-segment[data-segment="today"] {
+  background: color-mix(in oklab, var(--action) 72%, var(--surface));
+}
+.access-ui .access-segment[data-segment="week"] {
+  background: color-mix(in oklab, var(--action) 48%, var(--surface));
+}
+.access-ui .access-segment[data-segment="month"] {
+  background: color-mix(in oklab, var(--action) 28%, var(--surface));
+}
+.access-ui .access-segment[data-segment="older"] {
+  background: var(--rule-strong);
+}
+.access-ui .access-segment[data-segment="never"] {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--rule-strong) 0 3px,
+    transparent 3px 6px
+  );
+}
+.access-ui .access-segment[data-segment="invited"] {
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+}
+/* Levels never rest on hue alone (WCAG 1.4.1): Read is an outline, Write
+   the muted-ink hatch, Manage solid action. Each department row also shows
+   its counts ("R 12 · W 4 · M 2") under the pointer, on focus, and on touch
+   screens, where there is no pointer. */
+.access-ui .access-level[data-level="read"] {
+  box-shadow: inset 0 0 0 1px var(--ink-muted);
+}
+.access-ui .access-level[data-level="write"] {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--ink-muted) 0 2px,
+    transparent 2px 4px
+  );
+}
+.access-ui .access-level[data-level="manage"] {
+  background: var(--action);
+}
+.access-ui .access-department-row:is(:hover, :focus-visible) .access-level-bar {
+  visibility: hidden;
+}
+.access-ui
+  .access-department-row:is(:hover, :focus-visible)
+  .access-level-counts {
+  display: flex;
+}
+@media (hover: none) {
+  .access-ui .access-level-bar {
+    visibility: hidden;
+  }
+  .access-ui .access-level-counts {
+    display: flex;
+  }
+}
+/* From 1280px the Overview is still: Who's here across the top, the
+   sign-ins feed on the left, Needs attention whole on the right, and the
+   department list below it takes the rest. Only panel bodies scroll. The
+   DOM order is the phone order. */
+@media (min-width: 1280px) {
+  .access-ui .access-overview {
+    display: grid;
+    flex: 1 1 0%;
+    min-height: 0;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    row-gap: 0.875rem;
+    /* Departments keep their head, two rows, the key and the panel's 2px
+       border (9.75rem); below that,
+       Needs attention's body scrolls (whole from 768px tall). */
+    grid-template-rows: auto minmax(0, auto) minmax(9.75rem, 1fr);
+    grid-template-areas:
+      "who who"
+      "signins attention"
+      "signins departments";
+  }
+  .access-ui .access-overview > [data-overview-area="who"] {
+    grid-area: who;
+  }
+  .access-ui .access-overview > [data-overview-area="signins"] {
+    grid-area: signins;
+  }
+  .access-ui .access-overview > [data-overview-area="attention"] {
+    grid-area: attention;
+  }
+  .access-ui .access-overview > [data-overview-area="departments"] {
+    grid-area: departments;
+  }
+  .access-ui .access-overview [data-overview-body] {
+    overflow-y: auto;
+  }
+}
+
 /* Chips in Slate: --secondary is the sunken fill, which vanishes on the
    card surface in dark, so Access chips (the Write level, the sheet
    header's role) take the hover fill, as in the Sandbox. Read stays the

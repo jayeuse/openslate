@@ -329,9 +329,7 @@ test("the inactivity history filter lives in People and its period stays in the 
   ).toHaveValue("45");
   // The Overview no longer holds the period form.
   await page.goto("/access?view=overview");
-  await expect(
-    page.getByRole("heading", { name: "Known inactive people" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Who's here" })).toBeVisible();
   await expect(page.getByLabel("Inactive for (days)")).toHaveCount(0);
 });
 

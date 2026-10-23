@@ -12,6 +12,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogCloseButton,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { toast } from "@/components/ui/toast";
@@ -53,12 +61,83 @@ function days(count: number) {
   return `${count} ${count === 1 ? "day" : "days"}`;
 }
 
+/** Unsaved invitation settings wait in the journal, for example after Back. */
+export function hasKeptInvitationSettings(userId: string): boolean {
+  return invitationSettingsDraftJournal.read(userId) !== null;
+}
+
+/**
+ * Invitation settings in a small dialog beside Invite person (A4): they
+ * apply to the invitations sent from People. Closing keeps unsaved values
+ * in the journal; the next open shows them again.
+ */
+export function InvitationSettingsDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const titleId = useId();
+  // A save in progress keeps the dialog open: its answer lands here.
+  // The request starts before the next render, so close reads a ref.
+  const [saving, setSaving] = useState(false);
+  const savingNow = useRef(false);
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && savingNow.current) return;
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent aria-labelledby={titleId} className="access-ui max-w-lg">
+        <DialogCloseButton disabled={saving} />
+        <DialogHeader>
+          <DialogTitle id={titleId}>Invitation settings</DialogTitle>
+          <DialogDescription>
+            These apply to the invitations you send from now on.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="mt-4">
+          <InvitationSettings
+            titleId={titleId}
+            onPendingChange={(pending) => {
+              savingNow.current = pending;
+              setSaving(pending);
+            }}
+            onDiscarded={() => onOpenChange(false)}
+            onCancel={() => onOpenChange(false)}
+            onRestored={() => onOpenChange(true)}
+          />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /**
  * How long an invitation link works and the starting access length of a new
  * guest. The workspace revision travels with a save; a stale revision shows
  * the newer values and keeps the draft for a second save.
  */
-export function InvitationSettings({ titleId }: { titleId: string }) {
+export function InvitationSettings({
+  titleId,
+  onPendingChange,
+  onDiscarded,
+  onRestored,
+  onCancel,
+}: {
+  titleId: string;
+  /** Told when a save starts and ends. */
+  onPendingChange?: (pending: boolean) => void;
+  /** Discard ends the edit; a dialog closes. */
+  onDiscarded?: () => void;
+  /** Undo brought the edits back after the form closed; a dialog reopens. */
+  onRestored?: () => void;
+  /** A dialog's Cancel: closes and keeps unsaved values for the next open. */
+  onCancel?: () => void;
+}) {
   const id = useId();
   const client = useQueryClient();
   const signedInId = useVerifiedWorkspaceUserId();
@@ -109,9 +188,18 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
     pending,
   });
 
-  /** Undo for Discard: brings the edits back unless newer ones exist. */
+  /**
+   * Undo for Discard: brings the edits back unless newer ones exist. When
+   * the form has closed, the journal keeps them and the form opens again.
+   */
   function restore(removed: Partial<InvitationSettingsForm>) {
-    if (!mounted.current || Object.keys(latestForm.current).length) return;
+    if (!mounted.current) {
+      if (invitationSettingsDraftJournal.read(signedInId) !== null) return;
+      invitationSettingsDraftJournal.write(signedInId, removed);
+      onRestored?.();
+      return;
+    }
+    if (Object.keys(latestForm.current).length) return;
     setForm(removed);
     invitationSettingsDraftJournal.write(signedInId, removed);
   }
@@ -143,6 +231,7 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
       return;
     }
     setPending(true);
+    onPendingChange?.(true);
     setError("");
     try {
       const result = await updateAccessInvitationSettings(patch);
@@ -165,6 +254,7 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
       );
     } finally {
       setPending(false);
+      onPendingChange?.(false);
     }
   }
 
@@ -252,6 +342,17 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
           <ActionError message={error} />
           <ActionError message={discardIssue} title={null} />
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            {onCancel ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={pending}
+                onClick={onCancel}
+              >
+                Cancel
+              </Button>
+            ) : null}
             {dirty || stale ? (
               <Button
                 type="button"
@@ -268,6 +369,7 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
                   }
                   setDiscardIssue("");
                   reportUndoable("Changes discarded", () => restore(removed));
+                  onDiscarded?.();
                 }}
               >
                 Discard changes

@@ -208,8 +208,11 @@ test("Discard in the person and group editors can be undone", async ({
 
 test("invitation settings Discard offers Undo", async ({ page }) => {
   await mockAccessApi(page);
-  await page.goto("/access?view=overview");
-  const settings = page.getByRole("region", {
+  await page.goto("/access?view=people");
+  await page
+    .getByRole("button", { name: "Invitation settings", exact: true })
+    .click();
+  const settings = page.getByRole("dialog", {
     name: "Invitation settings",
     exact: true,
   });
@@ -219,9 +222,15 @@ test("invitation settings Discard offers Undo", async ({ page }) => {
   await settings
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
-  await expect(guest).toHaveValue("45");
+  // Discard ends the edit: the dialog closes and Undo opens it again.
+  await expect(settings).toBeHidden();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(guest).toHaveValue("60");
+  await settings
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Invitation settings" }).click();
+  await expect(guest).toHaveValue("45");
 });
 
 test("controls that wait for a list say why", async ({ page }) => {

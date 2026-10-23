@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Search, UserRoundPlus, UsersRound } from "lucide-react";
+import { Search, Settings2, UserRoundPlus, UsersRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
@@ -59,6 +59,10 @@ import { AccessHeaderActions } from "./access-header-actions";
 import { AccessToolbar } from "./access-toolbar";
 import { TableSkeleton } from "./table-skeleton";
 import { hasKeptInvitation, InvitePersonDialog } from "./invite-person-dialog";
+import {
+  hasKeptInvitationSettings,
+  InvitationSettingsDialog,
+} from "./invitation-settings";
 import { PeopleFilterRows, StatusStrip } from "./people-filters";
 import { usePeopleSearch } from "../hooks/use-people-search";
 import { usePeopleMemberships } from "../hooks/use-people-memberships";
@@ -68,6 +72,7 @@ import {
   catalogGroups,
 } from "../hooks/use-access-catalog";
 import { PersonPanel } from "./person-panel";
+import { ReadError } from "./read-error";
 import {
   DepartmentMarks,
   GroupChips,
@@ -197,6 +202,14 @@ export function PeopleView() {
   // link opens a person.
   const [inviteOpen, setInviteOpen] = useState(
     () => !searchParams.get("user") && hasKeptInvitation(signedInId),
+  );
+  // Unsaved invitation settings open again on return too, unless the link
+  // opens a person or an invitation is waiting first.
+  const [settingsOpen, setSettingsOpen] = useState(
+    () =>
+      !searchParams.get("user") &&
+      !hasKeptInvitation(signedInId) &&
+      hasKeptInvitationSettings(signedInId),
   );
   const [now] = useState(() => Date.now());
   const full = useSyncExternalStore(
@@ -389,25 +402,14 @@ export function PeopleView() {
 
   if (failed)
     return (
-      <div role="alert" className="max-w-lg space-y-4 rounded-lg border p-6">
-        <div>
-          <h2 className="text-base font-semibold">
-            People could not be loaded
-          </h2>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Check your connection and try again.
-          </p>
-        </div>
-        <Button
-          className="min-h-11"
-          onClick={() => {
-            if (users.isError) void users.refetch();
-            if (catalogRequested && catalog.isError) void catalog.refetch();
-          }}
-        >
-          Retry
-        </Button>
-      </div>
+      <ReadError
+        className="max-w-lg"
+        message="People could not be loaded."
+        retry={() => {
+          if (users.isError) void users.refetch();
+          if (catalogRequested && catalog.isError) void catalog.refetch();
+        }}
+      />
     );
 
   return (
@@ -416,12 +418,14 @@ export function PeopleView() {
         People directory
       </h2>
       <AccessHeaderActions>
-        <p className="text-muted-foreground text-sm" aria-live="polite">
-          {/* The organization total; the table footer counts the filter. */}
-          {counts.current.data
-            ? `${counts.current.data.pagination.total} ${counts.current.data.pagination.total === 1 ? "person" : "people"}`
-            : " "}
-        </p>
+        <Button
+          variant="outline"
+          className="min-h-11"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <Settings2 aria-hidden="true" />
+          Invitation settings
+        </Button>
         <DisabledReason reason={rows === null ? "Loading people…" : null}>
           <Button className="min-h-11" onClick={() => setInviteOpen(true)}>
             <UserRoundPlus aria-hidden="true" />
@@ -617,6 +621,10 @@ export function PeopleView() {
         open={inviteOpen}
         onOpenChange={setInviteOpen}
         onFound={replaceUserParam}
+      />
+      <InvitationSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
       />
     </div>
   );

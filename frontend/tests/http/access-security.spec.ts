@@ -2295,20 +2295,19 @@ for (const observation of ["status", "enrollment", "verification"] as const)
         .getByRole("row", { name: /Monitoring Actor/ }),
     ).toContainText(observation === "status" ? "Unknown" : "Off");
     await page.getByRole("link", { name: "Overview", exact: true }).click();
-    const card = page.getByRole("region", {
-      name: "Administrator two-step verification",
-      exact: true,
-    });
-    await expect(
-      card.getByText(observation === "status" ? "2 unknown" : "1 unknown", {
-        exact: true,
-      }),
-    ).toBeVisible();
+    const card = page
+      .getByRole("region", { name: "Needs attention", exact: true })
+      .getByRole("listitem");
+    await expect(card.filter({ hasText: "two-step unknown" })).toHaveText(
+      observation === "status"
+        ? /^2 administrators, two-step unknown/
+        : /^1 administrator, two-step unknown/,
+    );
     const summaryReadsBefore = api.summaryReads;
     if (observation !== "status") auth.statusFailure = 503;
-    // The Overview header shortcut, not the sidebar section link.
+    // The Overview has no Security shortcut; the sidebar opens Security.
     await page
-      .getByRole("main")
+      .getByRole("navigation", { name: "Main navigation" })
       .getByRole("link", { name: "Security", exact: true })
       .click();
     const dialog = await manageMfa();
@@ -2361,13 +2360,15 @@ for (const observation of ["status", "enrollment", "verification"] as const)
     await expect
       .poll(() => api.summaryReads)
       .toBeGreaterThan(summaryReadsBefore);
-    await expect(
-      card.getByText(
-        observation === "verification"
-          ? "0 without two-step verification"
-          : "1 without two-step verification",
-        { exact: true },
-      ),
-    ).toBeVisible();
-    await expect(card.getByText("1 unknown", { exact: true })).toBeVisible();
+    const without = card.filter({ hasText: "without two-step" });
+    if (observation === "verification") {
+      await expect(without).toHaveCount(0);
+      await expect(
+        page.getByRole("region", { name: "Needs attention", exact: true }),
+      ).toContainText("All clear: administrators without two-step");
+    } else
+      await expect(without).toHaveText(/^1 administrator without two-step/);
+    await expect(card.filter({ hasText: "two-step unknown" })).toHaveText(
+      /^1 administrator, two-step unknown/,
+    );
   });

@@ -51,6 +51,7 @@ import { CreateGroupDialog, hasKeptNewGroup } from "./create-group-dialog";
 import { DepartmentReach } from "./group-access-editor";
 import type { GroupEditorTab } from "./group-editor";
 import { GroupPanel } from "./group-panel";
+import { ReadError } from "./read-error";
 import { useDepartmentOrder } from "./people-row-parts";
 import {
   openRowClassName,
@@ -332,24 +333,13 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
 
   if (failed)
     return (
-      <div role="alert" className="max-w-lg space-y-4 rounded-lg border p-6">
-        <div>
-          <h2 className="text-base font-semibold">
-            Groups could not be loaded
-          </h2>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Check your connection and try again.
-          </p>
-        </div>
-        <Button
-          className="min-h-11"
-          onClick={() => {
-            if (groups.isError) void groups.refetch();
-          }}
-        >
-          Retry
-        </Button>
-      </div>
+      <ReadError
+        className="max-w-lg"
+        message="Groups could not be loaded."
+        retry={() => {
+          if (groups.isError) void groups.refetch();
+        }}
+      />
     );
 
   return (

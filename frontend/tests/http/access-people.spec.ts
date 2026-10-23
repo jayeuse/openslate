@@ -584,7 +584,9 @@ for (const width of [1440, 390])
     await page.setViewportSize({ width, height: width > 400 ? 900 : 844 });
     await mockAccessApi(page);
     await page.goto(`/access?view=people`);
-    await expect(page.getByText("5 people")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^All\s*5$/ }).first(),
+    ).toBeVisible();
     await expectNoHorizontalScroll(page);
 
     await page

@@ -96,8 +96,11 @@ test("a window return keeps open forms, dialogs, the open tab and filters", asyn
     "Dispatch",
   );
 
-  await page.goto("/access?view=overview");
-  const expiry = page.getByLabel("Invitation link works for (days)");
+  await page.goto("/access?view=people");
+  await page.getByRole("button", { name: "Invitation settings" }).click();
+  const expiry = page
+    .getByRole("dialog", { name: "Invitation settings" })
+    .getByLabel("Invitation link works for (days)");
   await expiry.fill("9");
   await leaveAndReturn(page);
   await expect(expiry).toHaveValue("9");
@@ -143,24 +146,27 @@ test("Back and Forward bring back an unsent invitation, a new group and invitati
     .getByRole("button", { name: "Discard changes" })
     .click();
 
-  await sideLink(page, "Overview").click();
-  await expect(page).toHaveURL(/view=overview$/);
-  const expiry = page.getByLabel("Invitation link works for (days)");
+  await sideLink(page, "People").click();
+  await expect(page).toHaveURL(/view=people$/);
+  await page.getByRole("button", { name: "Invitation settings" }).click();
+  const settings = page.getByRole("dialog", {
+    name: "Invitation settings",
+    exact: true,
+  });
+  const expiry = settings.getByLabel("Invitation link works for (days)");
   await expiry.fill("9");
   await page.goBack();
   await expect(page).toHaveURL(/view=groups$/);
   await page.goForward();
   await expect(expiry).toHaveValue("9");
   await expect(
-    page.getByRole("button", { name: "Save settings" }),
+    settings.getByRole("button", { name: "Save settings" }),
   ).toBeEnabled();
 
-  // A kept invitation does not open over a person the link opens.
-  await sideLink(page, "People").click();
-  await page
-    .getByRole("alertdialog", { name: "Discard unsaved changes?" })
-    .getByRole("button", { name: "Discard changes" })
-    .click();
+  // A kept invitation (or kept settings) does not open over a person the
+  // link opens.
+  await page.keyboard.press("Escape");
+  await expect(settings).toBeHidden();
   await page.getByRole("button", { name: "Invite person" }).click();
   await invite.getByLabel("Email").fill("kept@example.com");
   await page.goto(`/access?view=people&user=${ids.ben}`);
@@ -294,25 +300,29 @@ test("a save in flight holds Discard, closing and leaving until it ends", async 
     await settingsSave.released;
     return "next" as const;
   });
-  await page.goto("/access?view=overview");
-  await page.getByLabel("Invitation link works for (days)").fill("9");
-  await page.getByRole("button", { name: "Save settings" }).click();
+  await page.goto("/access?view=people");
+  await page.getByRole("button", { name: "Invitation settings" }).click();
+  const settings = page.getByRole("dialog", {
+    name: "Invitation settings",
+    exact: true,
+  });
+  await settings.getByLabel("Invitation link works for (days)").fill("9");
+  await settings.getByRole("button", { name: "Save settings" }).click();
   await settingsSave.entered;
-  await sideLink(page, "People").click();
-  const leaving = page.getByText(
-    "Finish the current change before leaving this page.",
-  );
-  await expect(leaving).toBeVisible();
+  // The settings dialog stays open while its save runs, so the answer
+  // lands where the person is.
+  await page.keyboard.press("Escape");
   await settleReact(page);
-  expect(new URL(page.url()).searchParams.get("view")).toBe("overview");
-  await expect(page.getByLabel("Invitation link works for (days)")).toHaveValue(
-    "9",
-  );
+  await expect(settings).toBeVisible();
+  await expect(
+    settings.getByLabel("Invitation link works for (days)"),
+  ).toHaveValue("9");
   settingsSave.release();
-  // The page notice ends with the change it waited for.
-  await expect(leaving).toBeHidden();
-  await sideLink(page, "People").click();
-  await expect(page).toHaveURL(/view=people$/);
+  await expect(
+    settings.getByRole("button", { name: "Save settings" }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(settings).toBeHidden();
 });
 
 /**

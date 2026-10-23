@@ -1,6 +1,8 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { authMeBody, isEventStream } from "./test";
 import { pageOf } from "../../helpers/pagination";
+import type { AccessSecurityEvent } from "../../../src/components/systems/access/adapters/security-events-api";
+import type { AccessAdminSession } from "../../../src/components/systems/access/adapters/security-api";
 
 // A mocked Access API for the People, Groups and Overview HTTP specs. Every
 // response matches the strict frontend contracts, and every list answers
@@ -175,6 +177,10 @@ const unknownMonitoring: Monitoring = {
 export type Api = {
   monitoring: Map<string, Monitoring>;
   sessions: Session[];
+  /** Every active session in the organization (`/api/auth/admin-sessions`). */
+  adminSessions: AccessAdminSession[];
+  /** The organization's security events (`/api/security-events`). */
+  securityEvents: AccessSecurityEvent[];
   listReads: URLSearchParams[];
   /** One-row `/api/users` reads that only need a total. */
   countReads: URLSearchParams[];
@@ -343,11 +349,42 @@ export async function mockAccessApi(
       },
     ],
   ]);
+  const adminSessions: AccessAdminSession[] = [
+    adminSession(0, ids.rosa, "Rosa Reyes", { current: true }),
+    adminSession(1, ids.ben, "Ben Cruz", { device: "Mobile" }),
+    adminSession(2, ids.ben, "Ben Cruz"),
+  ];
+  const securityEvents: AccessSecurityEvent[] = [
+    signInEvent(0, -10 * MINUTE, { actor_id: ids.rosa, subject_id: ids.rosa }),
+    signInEvent(1, -30 * MINUTE, {
+      event_type: "identity.sign_in_failure",
+      outcome: "failure",
+      metadata: { ip_address: "203.0.113.9" },
+    }),
+    signInEvent(2, -2 * 60 * MINUTE, {
+      actor_id: ids.ben,
+      subject_id: ids.ben,
+    }),
+    signInEvent(3, -3 * 60 * MINUTE, {
+      event_type: "identity.lockout",
+      outcome: "denied",
+      subject_id: ids.ana,
+      metadata: {},
+    }),
+    // Not a sign-in: the feed never shows it.
+    signInEvent(4, -4 * 60 * MINUTE, {
+      event_type: "identity.mfa.enrolled",
+      actor_id: ids.dee,
+      subject_id: ids.dee,
+    }),
+  ];
   const calls: Call[] = [];
   const handlers = new Map<string, Handler>();
   const api: Api = {
     monitoring,
     sessions,
+    adminSessions,
+    securityEvents,
     listReads: [],
     countReads: [],
     summaryReads: 0,
@@ -447,6 +484,40 @@ export async function mockAccessApi(
           as_of: new Date(capturedAt).toISOString(),
           inactive_days: inactiveDays,
         },
+      });
+    }
+    if (path === "/api/auth/admin-sessions" && method === "GET")
+      return route.fulfill({
+        json: listPage(
+          [...api.adminSessions].sort((left, right) =>
+            right.refreshed_at.localeCompare(left.refreshed_at),
+          ),
+          url,
+        ),
+      });
+    if (path === "/api/security-events" && method === "GET") {
+      const query = url.searchParams;
+      const search = (query.get("search") ?? "").toLowerCase();
+      const type = query.get("event_type");
+      return route.fulfill({
+        json: listPage(
+          api.securityEvents
+            .filter(
+              (event) =>
+                (!type || event.event_type === type) &&
+                (!search ||
+                  [
+                    event.event_type,
+                    event.source,
+                    event.reason ?? "",
+                    event.request_path ?? "",
+                  ].some((value) => value.toLowerCase().includes(search))),
+            )
+            .sort((left, right) =>
+              right.occurred_at.localeCompare(left.occurred_at),
+            ),
+          url,
+        ),
       });
     }
     if (path === "/api/users" && method === "GET") {
@@ -881,6 +952,57 @@ export async function mockAccessApi(
   });
 
   return api;
+}
+
+export const MINUTE = 60_000;
+
+/** An active session, refreshed `index` minutes ago. */
+export function adminSession(
+  index: number,
+  userId: string,
+  personName: string,
+  fields: Partial<AccessAdminSession> = {},
+): AccessAdminSession {
+  return {
+    id: fixtureId(1500 + index),
+    user_id: userId,
+    person_name: personName,
+    user_agent: "Mozilla/5.0",
+    device: "Desktop",
+    browser: "Chrome",
+    created_at: created,
+    refreshed_at: at(-index * MINUTE),
+    expires_at: at(DAY),
+    current: false,
+    ip_address: "198.51.100.10",
+    ...fields,
+  };
+}
+
+/** A sign-in event `offset` ms from now; no person unless given. */
+export function signInEvent(
+  index: number,
+  offset: number,
+  fields: Partial<AccessSecurityEvent> = {},
+): AccessSecurityEvent {
+  return {
+    id: fixtureId(1700 + index),
+    occurred_at: at(offset),
+    event_type: "identity.sign_in",
+    outcome: "success",
+    source: "identity.login",
+    operation_id: fixtureId(1800 + index),
+    actor_id: null,
+    subject_id: null,
+    labels: {},
+    fingerprint: null,
+    reason: null,
+    request_id: null,
+    request_method: null,
+    request_path: null,
+    metadata: { ip_address: "198.51.100.7" },
+    ...fields,
+  };
 }
 
 export function etag(item: { id: string; revision: number }): string {

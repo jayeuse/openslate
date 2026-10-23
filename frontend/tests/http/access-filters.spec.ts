@@ -168,7 +168,7 @@ test("an Overview link lands as chips that each clear their own filter and survi
   await page.goto("/access?view=overview");
   await page
     .getByRole("link", {
-      name: "Show administrators without two-step verification",
+      name: "Review: 1 administrator without two-step",
       exact: true,
     })
     .click();
