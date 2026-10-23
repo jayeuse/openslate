@@ -106,6 +106,42 @@ test("a window return keeps open forms, dialogs, the open tab and filters", asyn
   await expect(expiry).toHaveValue("9");
 });
 
+test("Back and Forward bring back an invitation and a new group started on the Overview", async ({
+  page,
+}) => {
+  await mockAccessApi(page);
+  await page.goto("/access?view=groups");
+  await sideLink(page, "Overview").click();
+  await expect(page).toHaveURL(/view=overview$/);
+  await page.getByRole("button", { name: "Invite person" }).click();
+  const invite = page.getByRole("dialog", { name: "Invite a person" });
+  await invite.getByLabel("Email").fill("zed@example.com");
+  await page.goBack();
+  await expect(page).toHaveURL(/view=groups$/);
+  await page.goForward();
+  await expect(invite.getByLabel("Email")).toHaveValue("zed@example.com");
+  await invite.getByRole("button", { name: "Cancel" }).click();
+  await page
+    .getByRole("alertdialog", { name: "Discard this invitation?" })
+    .getByRole("button", { name: "Discard changes" })
+    .click();
+  await expect(invite).toBeHidden();
+
+  await sideLink(page, "Security").click();
+  await expect(page).toHaveURL(/view=security$/);
+  await sideLink(page, "Overview").click();
+  await expect(page).toHaveURL(/view=overview$/);
+  await page.getByRole("button", { name: "Create group" }).first().click();
+  const create = page.getByRole("dialog", { name: "Create a group" });
+  await create.getByLabel("Name", { exact: true }).fill("Dispatch");
+  await page.goBack();
+  await expect(page).toHaveURL(/view=security$/);
+  await page.goForward();
+  await expect(create.getByLabel("Name", { exact: true })).toHaveValue(
+    "Dispatch",
+  );
+});
+
 test("Back and Forward bring back an unsent invitation, a new group and invitation settings", async ({
   page,
 }) => {

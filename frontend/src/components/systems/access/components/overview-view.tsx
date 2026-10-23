@@ -49,8 +49,8 @@ import { personName } from "../helpers/people";
 import { catalogDepartments } from "../hooks/use-access-catalog";
 import { useScrollCue } from "../hooks/use-scroll-cue";
 import { AccessHeaderActions } from "./access-header-actions";
-import { CreateGroupDialog } from "./create-group-dialog";
-import { InvitePersonDialog } from "./invite-person-dialog";
+import { CreateGroupDialog, hasKeptNewGroup } from "./create-group-dialog";
+import { hasKeptInvitation, InvitePersonDialog } from "./invite-person-dialog";
 import {
   AccessByDepartment,
   NeedsAttention,
@@ -151,8 +151,14 @@ export function OverviewView() {
   const region = useWorkspaceDisplayRegion();
   const viewerId = useVerifiedWorkspaceUserId();
   const [now] = useState(() => Date.now());
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
+  // A kept invitation or new group opens again on return (Back, Forward),
+  // as it does on People and Groups; the invitation goes first.
+  const [inviteOpen, setInviteOpen] = useState(() =>
+    hasKeptInvitation(viewerId),
+  );
+  const [createOpen, setCreateOpen] = useState(
+    () => !hasKeptInvitation(viewerId) && hasKeptNewGroup(viewerId),
+  );
 
   // One-row totals, shared with the People status filters.
   const administrators = useQuery(
