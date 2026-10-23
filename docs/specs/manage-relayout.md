@@ -1,6 +1,6 @@
 # Manage relayout: the Access grammar
 
-> **Status: draft for owner approval (2026-10-24).** Phase 0 is done (results below). Comps for Audit and Organization are in `.impeccable/mocks/manage/` (renders in `.playwright-mcp/manage-relayout/comp/`). No code has changed.
+> **Status: approved (2026-10-24).** The owner approved the spec; in-scope design decisions made during the work are recorded in the Decisions table. Phase 0 is done (results below). Comps for Audit and Organization are in `.impeccable/mocks/manage/` (renders in `.playwright-mcp/manage-relayout/comp/`). No code has changed.
 
 ## Outcome
 
