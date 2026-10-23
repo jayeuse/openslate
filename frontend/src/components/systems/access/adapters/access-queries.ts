@@ -73,6 +73,9 @@ export const accessKeys = {
     ["access", "users", "access", userId] as const,
   personSecurity: (userId: string) =>
     ["access", "users", "security", userId] as const,
+  /** The signed-in viewer's own two-step verification status. */
+  ownMfa: () => ["access", "own-mfa"] as const,
+  ownMfaFor: (userId: string) => ["access", "own-mfa", userId] as const,
   userSessions: (userId: string) =>
     ["access", "users", "sessions", userId] as const,
   userSessionPage: (userId: string, request: AccessSessionListOptions) =>
@@ -136,8 +139,24 @@ export function afterAccessMfaObservation(client: QueryClient) {
   return invalidateAll(client, [
     accessKeys.directory(),
     accessKeys.userSummary(),
+    accessKeys.ownMfa(),
   ]);
 }
+
+/**
+ * The viewer's own two-step status for the Security page line. A status for
+ * another account (a late answer after an account change) is refused.
+ */
+export const accessOwnMfaOptions = (userId: string) =>
+  queryOptions({
+    queryKey: accessKeys.ownMfaFor(userId),
+    queryFn: async ({ signal }) => {
+      const status = await getMfaStatus(signal);
+      if (status.user_id !== userId)
+        throw new Error("Security identity changed.");
+      return status;
+    },
+  });
 
 /** One person's effective access and the groups that give it. */
 export const userAccessOptions = (userId: string) =>
@@ -339,6 +358,16 @@ export function readAccessSecurityEvent(
 export const overviewSessionsRequest: AccessSessionsRequest = {
   ...defaultAccessSessionsRequest,
   limit: 100,
+};
+/**
+ * Every other session in the organization, for the End all remote sessions
+ * count: the total is the session count, and the distinct people on this
+ * page are the people (a lower bound when more pages exist).
+ */
+export const remoteSessionsCountRequest: AccessSessionsRequest = {
+  ...defaultAccessSessionsRequest,
+  limit: 100,
+  status: "remote",
 };
 export const OVERVIEW_SIGN_IN_ROWS = 15;
 /**

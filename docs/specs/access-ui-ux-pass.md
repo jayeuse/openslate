@@ -358,6 +358,17 @@ The owner kept the filters but asked that they follow the new layout and look. C
 
 **Phase 4 results (2026-10-23).** O1 to O5 pass (409 isolated, 370 HTTP); one `ui-reviewer` fix round resolved. Live on Harbor the page stays still at 1440×900 and 1280×720. Decisions during the work: rolling time words ("in the last day", "Last 7 days"); Now opens Security and the three time windows are text, because People has no activity-window filter; the feed shows the address, because security events carry no device; administrators are named apart and guests count at Read in Access by department (one bounded guest read); Needs attention stays whole from 768px tall; level bars differ by pattern (WCAG 1.4.1); the People header count was removed because the status strip shows it; read errors use the destructive Alert (People and Groups too). A cold Overview makes 17 Access reads; an aggregate endpoint stays out of scope (A7).
 
+### Phase 4b: overflow in the Overview cards (owner, 2026-10-23)
+
+The owner asked what happens when the cards hold more than they show, and approved this rule: a card that scrolls always shows that it does, and the sign-in feed pages instead of scrolling.
+
+| ID  | Change                                                                                                                                                                                                                                                                                       | Proof                                                                               |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| V1  | Recent sign-ins shows exactly the rows that fit (no inner scroll) and a "‹ Newer · Older ›" pager in its footer that pages by time (`occurred_before` / `occurred_after` cursors over the merged sign-in and lockout events, so no row is skipped or repeated); "All security events" stays. | HTTP: Older shows the next rows with no gap or repeat; Newer returns                |
+| V2  | Needs attention keeps every item (severity order, the header count stays); when its body scrolls, a soft fade at the bottom edge shows there is more. Access by department always keeps its head and two rows.                                                                               | HTTP at 1280×720 with 7 items: the fade shows; department head and two rows visible |
+| V3  | Access by department scrolls with a bottom fade when more rows are below and a footer count ("6 of 14 departments shown"); order stays the Sandbox order.                                                                                                                                    | HTTP with 14 departments                                                            |
+| V4  | DESIGN.md records the rule: a scrolling card always shows that it scrolls.                                                                                                                                                                                                                   | Doc                                                                                 |
+
 ### Phase 5: Security and the account policy
 
 | ID  | Change                                                                                                                                         | Proof               |
@@ -366,6 +377,8 @@ The owner kept the filters but asked that they follow the new layout and look. C
 | Y2  | Installation rules the viewer cannot change show as text. The viewer's own two-step setup moves out of the dialog.                             | HTTP as a non-owner |
 | Y3  | End all remote sessions uses danger ink, and its confirmation states the count. The pending label is on the button.                            | HTTP                |
 | Y4  | Sessions open at 10 rows and show display names. The policy success shows inside the dialog. The page description matches what the page shows. | HTTP                |
+
+**Phase 5 results (2026-10-23).** Y1 to Y3 pass, and Y4 except one part (422 isolated, 309 HTTP). Decisions during the work: the admin sessions API has no username or email, so phone session rows show the device as their second line (no API change); the "End all" count can overstate for an administrator who does not own the installation, because the server skips accounts shared with other organizations (accepted; "at least n" past 100 sessions); a cold Security load makes one more read for the viewer's own two-step line; an error inside the closed Advanced block opens it; the viewer's own two-step setup moved to the Security page ("Your two-step verification: Off · Set up").
 
 ### Phase 6: plain-language pass
 

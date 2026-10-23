@@ -58,8 +58,8 @@ import {
 const accessViews = {
   security: {
     title: "Security",
-    description:
-      "Review account policy, sign-in sessions and recorded security events across your organization.",
+    // Security events live in Manage › Audit; the page links there.
+    description: "Account policy and sign-in sessions.",
   },
   overview: {
     title: "Access overview",

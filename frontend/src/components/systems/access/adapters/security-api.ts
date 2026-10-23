@@ -333,7 +333,7 @@ export type AccessSessionsRequest = {
   device: "all" | z.output<typeof sessionDeviceSchema>;
 };
 export const defaultAccessSessionsRequest: AccessSessionsRequest = {
-  limit: 4,
+  limit: 10,
   offset: 0,
   search: "",
   sort_by: "refreshed_at",

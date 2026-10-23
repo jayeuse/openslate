@@ -28,6 +28,8 @@ import { Field, FieldLabel } from "@/components/ui/field";
 
 export type ConfirmState = {
   origin?: "admin-sessions";
+  /** End all remote sessions states its count, read when it opens. */
+  kind?: "end-all";
   title: string;
   description: string;
   confirmLabel: string;
