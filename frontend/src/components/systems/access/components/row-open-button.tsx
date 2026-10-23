@@ -23,7 +23,8 @@ export function RowOpenButton({
   onOpen,
 }: {
   title: string;
-  subtitle?: string | null;
+  /** Text, or marks and chips whose text reads as one phrase. */
+  subtitle?: ReactNode;
   leading?: ReactNode;
   label?: string;
   inline?: boolean;

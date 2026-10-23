@@ -238,10 +238,11 @@ export function PersonSessions({
             <Button
               variant="destructive"
               className="min-h-11"
-              disabled={pending}
+              pending={pending}
+              pendingLabel="Signing out…"
               onClick={() => void confirm()}
             >
-              {pending ? "Signing out…" : "Sign out"}
+              Sign out
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

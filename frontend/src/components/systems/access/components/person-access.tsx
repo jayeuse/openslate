@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ShieldCheck } from "lucide-react";
 
+import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,8 @@ import {
   catalogModules,
 } from "../hooks/use-access-catalog";
 import type { AccessUser } from "../state/api";
+import { AccessLevelBadge } from "./access-level-badge";
+import { useDepartmentOrder } from "./people-row-parts";
 
 // A person's effective access: per department and module, the level and the
 // groups that give it. The backend decides it; this view only names it.
@@ -43,11 +46,21 @@ function InactiveNote({ admin }: { admin: boolean }) {
   );
 }
 
-function AccessEntry({ row }: { row: AccessRow }) {
+function AccessEntry({
+  row,
+  position,
+}: {
+  row: AccessRow;
+  position: (id: string) => number | null;
+}) {
+  const mark = position(row.departmentId);
   return (
     <li className="flex min-w-0 flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
-        <p className="font-medium break-words">{row.departmentName}</p>
+        <p className="flex min-w-0 items-center gap-1.5 font-medium">
+          {mark === null ? null : <DepartmentMark departmentIndex={mark} />}
+          <span className="min-w-0 break-words">{row.departmentName}</span>
+        </p>
         <p className="text-muted-foreground text-sm break-words">
           {row.moduleName ?? "All modules"}
         </p>
@@ -61,7 +74,7 @@ function AccessEntry({ row }: { row: AccessRow }) {
         </p>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <Badge variant="secondary">{row.levelLabel}</Badge>
+        <AccessLevelBadge level={row.level} />
         {row.capped ? <Badge variant="outline">Guest limit</Badge> : null}
       </div>
     </li>
@@ -70,6 +83,7 @@ function AccessEntry({ row }: { row: AccessRow }) {
 
 export function PersonAccess({ person }: { person: AccessUser }) {
   const [now] = useState(() => Date.now());
+  const position = useDepartmentOrder();
   // The route refuses deleted people: they have no access to explain.
   const access = useQuery({
     ...userAccessOptions(person.id),
@@ -170,13 +184,12 @@ export function PersonAccess({ person }: { person: AccessUser }) {
                   className="divide-border divide-y rounded-lg border px-4"
                 >
                   {view.rows.map((row) => (
-                    <AccessEntry key={row.key} row={row} />
+                    <AccessEntry key={row.key} row={row} position={position} />
                   ))}
                 </ul>
               ) : view.inactive ? null : (
                 <p className="text-muted-foreground rounded-lg border p-4 text-sm">
-                  No access yet. Add this person to a group on the Groups tab to
-                  give them access.
+                  No access yet. Add them to a group in Details.
                 </p>
               )}
             </div>

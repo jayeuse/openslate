@@ -232,6 +232,10 @@ test("Groups use the slim rows and show Description only when a group has one", 
   await page.goto("/access?view=groups");
   const table = page.getByRole("table", { name: "Groups", exact: true });
   await expect(table.getByRole("row")).toHaveCount(3);
+  // One open target per row, named like People rows.
+  await expect(
+    table.getByRole("button", { name: "Manage Inventory clerks", exact: true }),
+  ).toBeVisible();
   expect(await headers(table)).not.toContain("Description");
   for (const row of await table.locator("tbody tr").all())
     expect(await height(row)).toBe(40);

@@ -267,8 +267,13 @@ export function CreateGroupDialog({
                 Cancel
               </Button>
               <DisabledReason reason={verifying ? verifyingReason : null}>
-                <Button type="submit" className="min-h-11" disabled={pending}>
-                  {pending ? "Creating…" : "Create group"}
+                <Button
+                  type="submit"
+                  className="min-h-11"
+                  pending={pending}
+                  pendingLabel="Creating…"
+                >
+                  Create group
                 </Button>
               </DisabledReason>
             </DialogFooter>

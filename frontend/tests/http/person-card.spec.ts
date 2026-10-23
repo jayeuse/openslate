@@ -30,7 +30,7 @@ async function visit(
   surface: CardSurface = "platform",
 ) {
   await page.goto(api.href);
-  if (surface === "platform")
+  if (surface === "platform" || surface === "access")
     await page.getByRole("searchbox", { name: "Search workspace" }).fill("Ana");
   await expect(trigger(page).first()).toBeVisible();
 }
@@ -504,8 +504,15 @@ for (const surface of [
     expect(api.writes).toEqual([]);
     await page.keyboard.press("Escape");
     if (surface === "access") {
-      const row = page.getByRole("row").filter({ hasText: "Ana Santos" });
-      await row.getByRole("button", { name: /Manage Ana Santos/ }).click();
+      // The card's Open action leads to the person's Access sheet.
+      await page
+        .getByRole("link", { name: "Open Ana Santos", exact: true })
+        .click();
+      await expect(page).toHaveURL(
+        (url) =>
+          url.pathname === "/access" &&
+          url.searchParams.get("user") === cardTarget,
+      );
       await expect(
         page.getByRole("dialog", { name: "Ana Santos", exact: true }),
       ).toBeVisible();
@@ -560,13 +567,9 @@ for (const surface of [
   });
 }
 
-for (const surface of [
-  "access",
-  "posts",
-  "openview",
-  "calendar",
-  "platform",
-] as const) {
+// Access has no card host of its own: its card is the workspace search
+// card, which the platform rows already fit.
+for (const surface of ["posts", "openview", "calendar", "platform"] as const) {
   for (const theme of ["light", "dark"] as const) {
     for (const viewport of [
       { width: 1440, height: 900 },

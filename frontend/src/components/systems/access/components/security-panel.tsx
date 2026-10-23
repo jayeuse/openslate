@@ -17,6 +17,7 @@ import { AccessToolbar } from "./access-toolbar";
 import { TableSkeleton } from "./table-skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
@@ -122,6 +123,13 @@ export function SecurityPanel({
 }: SecurityPanelProps) {
   const region = useWorkspaceDisplayRegion();
   const response = sessions.status === "loading" ? undefined : sessions.page;
+  // A row's End waits for a current list (the Four Moments Rule).
+  const endReason =
+    sessions.status === "ready"
+      ? null
+      : sessions.status === "loading"
+        ? "Loading sessions…"
+        : "Retry sessions first.";
   const page: PageResult<AccessAdminSession> | undefined = response
     ? {
         kind: "page",
@@ -238,17 +246,18 @@ export function SecurityPanel({
             —
           </span>
         ) : (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="relative z-10 min-h-11 px-2 xl:min-h-7"
-            aria-label={`End session for ${session.person_name}`}
-            disabled={sessions.status !== "ready"}
-            onClick={(event) => actions.endSession(session, event)}
-          >
-            End
-          </Button>
+          <DisabledReason reason={endReason}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="relative z-10 min-h-11 px-2 xl:min-h-7"
+              aria-label={`End session for ${session.person_name}`}
+              onClick={(event) => actions.endSession(session, event)}
+            >
+              End
+            </Button>
+          </DisabledReason>
         ),
     },
   ];
@@ -271,15 +280,22 @@ export function SecurityPanel({
             Review signed-in devices across your organization.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11"
-          disabled={!hasRemoteSessions}
-          onClick={actions.endAllRemoteSessions}
+        <DisabledReason
+          reason={
+            hasRemoteSessions
+              ? null
+              : (endReason ?? "No remote sessions to end.")
+          }
         >
-          <UsersRound data-icon="inline-start" /> End all remote sessions
-        </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={actions.endAllRemoteSessions}
+          >
+            <UsersRound data-icon="inline-start" /> End all remote sessions
+          </Button>
+        </DisabledReason>
       </div>
 
       <AccessToolbar
@@ -438,18 +454,19 @@ export function SecurityPanel({
                               className="inline-block size-11 shrink-0"
                             />
                           ) : (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              className="min-h-11 min-w-11 shrink-0 px-2"
-                              aria-label={`End session for ${session.person_name}`}
-                              disabled={sessions.status !== "ready"}
-                              onClick={(event) =>
-                                actions.endSession(session, event)
-                              }
-                            >
-                              End
-                            </Button>
+                            <DisabledReason reason={endReason}>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="min-h-11 min-w-11 shrink-0 px-2"
+                                aria-label={`End session for ${session.person_name}`}
+                                onClick={(event) =>
+                                  actions.endSession(session, event)
+                                }
+                              >
+                                End
+                              </Button>
+                            </DisabledReason>
                           )}
                         </li>
                       );

@@ -5,7 +5,7 @@ import {
   test,
   type Page,
 } from "./helpers/test";
-import { ids, mockAccessApi } from "./helpers/access-api";
+import { ids, mockAccessApi, openAdvanced } from "./helpers/access-api";
 import { deferredMfaResponse } from "./helpers/mfa";
 
 const operationId = "00000000-0000-4000-8000-000000000911";
@@ -81,6 +81,11 @@ async function open(page: Page, userId = ids.ben, name = "Ben Cruz") {
   return sheet;
 }
 async function confirmRecovery(page: Page, revoke = false) {
+  // Recovery with a sign-out waits in the tab's Advanced block.
+  if (revoke)
+    await openAdvanced(
+      page.getByRole("tabpanel", { name: "Security", exact: true }),
+    );
   await page
     .getByRole("button", {
       name: revoke ? "Send recovery and sign out" : "Send recovery email",
@@ -203,15 +208,23 @@ for (const refusal of ["smtp", "ineligible", "aal1", "foreign"]) {
         sheet.getByRole("button", { name: "Send recovery email", exact: true }),
       ).toHaveCount(0);
     } else {
-      await expect(
-        sheet.getByRole("button", {
-          name:
-            refusal === "aal1"
-              ? "Reset two-step verification"
-              : "Send recovery email",
-          exact: true,
-        }),
-      ).toBeDisabled();
+      await openAdvanced(sheet);
+      const gated = sheet.getByRole("button", {
+        name:
+          refusal === "aal1"
+            ? "Reset two-step verification"
+            : "Send recovery email",
+        exact: true,
+      });
+      await expect(gated).toBeDisabled();
+      // The control stays focusable and says why it cannot act.
+      await expect(gated).toHaveAccessibleDescription(
+        refusal === "smtp"
+          ? "Recovery email is not turned on."
+          : refusal === "aal1"
+            ? "Complete your own two-step verification in Security before you reset it for someone else."
+            : "This person is not eligible for security actions.",
+      );
       await expect(sheet).toContainText(
         refusal === "smtp"
           ? "Recovery email is not turned on"
@@ -229,6 +242,7 @@ test("reset uses its own confirmation and strict empty command", async ({
 }) => {
   const api = await setup(page);
   const sheet = await open(page);
+  await openAdvanced(sheet);
   await sheet
     .getByRole("button", {
       name: "Reset two-step verification",
@@ -257,24 +271,11 @@ test("reset uses its own confirmation and strict empty command", async ({
   );
 });
 
-test("pending security blocks close, tab and route while preserving an existing person draft", async ({
+test("a pending security action keeps its dialog and pending label, then shows the result beside the action", async ({
   page,
 }) => {
   const api = await setup(page);
   const held = deferredMfaResponse();
-  api.on("GET", "/api/auth/mfa", (route) =>
-    route.fulfill({
-      json: {
-        user_id: ids.rosa,
-        assurance_level: "aal1",
-        required: false,
-        policy_required: false,
-        required_since: null,
-        enrollment_deadline: null,
-        factors: [],
-      },
-    }),
-  );
   api.on("POST", `/api/users/${ids.ben}/recovery`, async (route) => {
     held.start();
     await held.waiting;
@@ -291,23 +292,32 @@ test("pending security blocks close, tab and route while preserving an existing 
   await sheet.getByRole("tab", { name: "Security", exact: true }).click();
   await confirmRecovery(page);
   await held.begun;
-  await sheet.getByRole("button", { name: "Close", exact: true }).click();
-  await expect(sheet).toBeVisible();
-  await sheet.getByRole("tab", { name: "Details", exact: false }).click();
-  await expect(
-    sheet.getByRole("tab", { name: "Security", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await sheet.getByRole("link", { name: "Security", exact: true }).click();
-  await expect(page).toHaveURL(
-    new RegExp(`/access\\?view=people&user=${ids.ben}`),
-  );
+  const dialog = page.getByRole("alertdialog", {
+    name: "Send recovery email?",
+    exact: true,
+  });
+  const sending = dialog.getByRole("button", { name: "Sending…", exact: true });
+  await expect(sending).toHaveAttribute("aria-busy", "true");
+  // Escape cannot close the dialog or the sheet while the request runs.
+  await page.keyboard.press("Escape");
+  await expect(sending).toBeVisible();
   expect(api.sent("POST", `/api/users/${ids.ben}/recovery`)).toHaveLength(1);
   held.release();
+  await expect(dialog).toBeHidden();
+  await expect(sheet).toBeVisible();
+  // The result sits in the Recovery email block, beside its buttons.
+  const recoveryBlock = sheet.getByRole("region", {
+    name: "Recovery email",
+    exact: true,
+  });
   await expect(
-    sheet.getByRole("status").filter({
-      hasText: /Recovery email sent|Two-step verification reset/,
+    recoveryBlock.getByRole("status").filter({
+      hasText: "Recovery email sent",
     }),
-  ).toContainText("Recovery email sent");
+  ).toBeVisible();
+  await expect(
+    sheet.getByRole("button", { name: "Send recovery email", exact: true }),
+  ).toBeFocused();
   await sheet.getByRole("tab", { name: /Details/ }).click();
   await expect(sheet.getByLabel("Job title")).toHaveValue("Retained draft");
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
@@ -643,6 +653,7 @@ test("large-text phone panel keeps security actions and confirmation reachable",
   });
   await setup(page);
   const sheet = await open(page);
+  await openAdvanced(sheet);
   const reset = sheet.getByRole("button", {
     name: "Reset two-step verification",
     exact: true,

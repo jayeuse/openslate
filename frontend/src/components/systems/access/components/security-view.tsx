@@ -717,6 +717,7 @@ export function SecurityView({
         title: "End session",
         description: `${session.person_name}'s ${session.device} ${session.browser} session will be signed out. Your current session stays active.`,
         confirmLabel: "Confirm end session",
+        pendingLabel: "Ending…",
         action: () =>
           runSessionEnd((signal) => endAccessSession(session, signal), false),
       },
@@ -731,6 +732,7 @@ export function SecurityView({
         description:
           "End all other active sessions across the organization? Your current session stays active.",
         confirmLabel: "Confirm end all remote sessions",
+        pendingLabel: "Ending…",
         action: () => runSessionEnd(endAllAccessRemoteSessions, true),
       },
       event,

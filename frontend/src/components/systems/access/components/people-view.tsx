@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useId,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -11,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Search, UserRoundPlus, UsersRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Empty,
   EmptyContent,
@@ -228,6 +230,7 @@ function InactiveDaysField({
 }
 
 export function PeopleView() {
+  const searchId = useId();
   const searchParams = useSearchParams();
   // An Overview link, a reload or a shared link opens the directory filtered.
   const [filters, setFilters] = useState<DirectoryFilters>(() =>
@@ -453,17 +456,16 @@ export function PeopleView() {
             ? `${counts.current.data.pagination.total} ${counts.current.data.pagination.total === 1 ? "person" : "people"}`
             : " "}
         </p>
-        <Button
-          className="min-h-11"
-          disabled={rows === null}
-          onClick={() => setInviteOpen(true)}
-        >
-          <UserRoundPlus aria-hidden="true" />
-          Invite person
-        </Button>
+        <DisabledReason reason={rows === null ? "Loading people…" : null}>
+          <Button className="min-h-11" onClick={() => setInviteOpen(true)}>
+            <UserRoundPlus aria-hidden="true" />
+            Invite person
+          </Button>
+        </DisabledReason>
       </AccessHeaderActions>
       <AccessToolbar
         searchLabel="Search people"
+        searchId={searchId}
         placeholder="Name, email, username, or job title"
         query={filters.query}
         onQueryChange={(query) => {
@@ -843,6 +845,7 @@ export function PeopleView() {
         listFresh={
           !catalog.isFetching && !catalog.isError && !catalog.isPending
         }
+        searchId={searchId}
         onClose={() => replaceUserParam(null)}
       />
       <InvitePersonDialog

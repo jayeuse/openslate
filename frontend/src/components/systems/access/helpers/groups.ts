@@ -188,7 +188,7 @@ export function accessSummary(
     .sort(compareNames);
 }
 
-function moduleCount(count: number): string {
+export function moduleCount(count: number): string {
   return `${count} ${count === 1 ? "module" : "modules"}`;
 }
 

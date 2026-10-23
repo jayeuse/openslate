@@ -250,6 +250,12 @@ test("confirmed Profile Regional choices reach Access people and sessions withou
     sponsor_user_id: ids.rosa,
     expires_at: "2027-01-02T00:30:00Z",
   });
+  access.monitoring.set(ids.ben, {
+    active_session_count: 1,
+    mfa_verified_totp: false,
+    mfa_observed_at: null,
+    last_active_at: "2026-12-27T18:00:00Z",
+  });
   Object.assign(access.sessions[0]!, {
     created_at: "2026-10-01T00:30:00Z",
     refreshed_at: "2026-10-01T00:30:00Z",
@@ -319,7 +325,11 @@ test("confirmed Profile Regional choices reach Access people and sessions withou
   await navigation.getByRole("link", { name: "People", exact: true }).click();
   const table = page.getByRole("table", { name: "People", exact: true });
   const row = table.getByRole("row").filter({ hasText: "Ben Cruz" });
-  await expect(row).toContainText("2027-01-01");
+  // Rows show relative activity; its full time follows the person's choices.
+  await expect(row.locator("time")).toHaveAttribute(
+    "title",
+    /2026-12-27.*10:00/,
+  );
   await row
     .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();

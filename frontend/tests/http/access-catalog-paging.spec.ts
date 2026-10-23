@@ -146,8 +146,8 @@ test("access department and module search keeps unseen saved entries in the repl
     .selectOption("read");
   await sheet.getByRole("button", { name: "Save access", exact: true }).click();
   await expect(
-    sheet.getByRole("button", { name: "Save access", exact: true }),
-  ).toBeDisabled();
+    sheet.getByRole("button", { name: /^(Save access|Saving…)$/ }),
+  ).toHaveCount(0);
   const saved = api.sent("PUT", `/api/access/groups/${ids.readers}/access`)[0]
     ?.body as { access: unknown[] };
   expect(saved.access).toEqual(

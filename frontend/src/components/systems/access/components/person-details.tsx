@@ -67,6 +67,7 @@ import {
 import {
   ActionError,
   ConflictDialog,
+  DiscardedNotice,
   UncertainDraftWarning,
   type DraftReviewValues,
 } from "./editor-conflicts";
@@ -141,6 +142,31 @@ export function PersonDetails({
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [confirmOwnRole, setConfirmOwnRole] = useState(false);
   const [discardIssue, setDiscardIssue] = useState("");
+  // The edit the Discard button removed, for its inline Undo.
+  const [discardedEdit, setDiscardedEdit] = useState<Edit | null>(null);
+  // Where focus goes once the bar under the form changes: the Undo after
+  // Discard, Save after Undo, and the last edited field after a save, so
+  // focus never falls back to the sheet.
+  const saveButton = useRef<HTMLButtonElement>(null);
+  const undoButton = useRef<HTMLButtonElement>(null);
+  const lastField = useRef<string | null>(null);
+  const focusNext = useRef<"undo" | "save" | "field" | null>(null);
+  useEffect(() => {
+    const next = focusNext.current;
+    // A save's field focus waits until the save has fully ended.
+    if (!next || (next === "field" && pending)) return;
+    const element =
+      next === "undo"
+        ? undoButton.current
+        : next === "save"
+          ? saveButton.current
+          : lastField.current
+            ? document.getElementById(lastField.current)
+            : null;
+    if (!element?.isConnected) return;
+    focusNext.current = null;
+    element.focus();
+  });
   const verifying = useAccessVerifying();
   // After "Change my role", focus returns to Role once the save ends (Role
   // is disabled while it runs).
@@ -174,6 +200,7 @@ export function PersonDetails({
     if (!discardPersonDraft(signedInId, person.id)) return false;
     discarded.current += 1;
     setEdit(null);
+    setDiscardedEdit(null);
     setErrors({});
     setError("");
     return true;
@@ -184,12 +211,24 @@ export function PersonDetails({
     pending,
   });
 
+  const fieldIds: Record<PersonDraftField, string> = {
+    display_name: `${id}-name`,
+    username: `${id}-username`,
+    job_title: `${id}-title`,
+    role: `${id}-role`,
+    sponsor_user_id: `${id}-sponsor`,
+    expires_on: `${id}-expires`,
+  };
+
   function update(patch: Partial<PersonDraft>) {
     if (uncertain || pending) return;
+    const field = Object.keys(patch)[0] as PersonDraftField | undefined;
+    if (field) lastField.current = fieldIds[field];
     const baseline = edit?.baseline ?? current;
     const draft = { ...values, ...patch };
     setError("");
     setDiscardIssue("");
+    setDiscardedEdit(null);
     setErrors({});
     if (samePersonDraft(draft, baseline)) {
       clearPersonDraft(signedInId, person.id);
@@ -292,6 +331,8 @@ export function PersonDetails({
     finishPersonSubmission(signedInId, person.id, true);
     if (discarded.current !== run) return;
     setEdit(null);
+    if (mounted.current && !focusRoleAfterSave.current)
+      focusNext.current = "field";
     toast.add({ title: "Changes saved", type: "success" });
     void afterAccessUserChange(client);
   }
@@ -467,7 +508,14 @@ export function PersonDetails({
           <div
             className={cn("flex min-w-0 flex-col gap-2", detailRowClassName)}
           >
-            <p className="md:text-muted-foreground text-sm font-medium">Role</p>
+            {/* Read-only, so plain text; it takes the field-label type hook
+                so it reads like the other labels in the column. */}
+            <p
+              data-slot="field-label"
+              className="md:text-muted-foreground text-sm font-medium"
+            >
+              Role
+            </p>
             <p className="flex min-h-11 items-center text-sm md:min-h-10">
               {roleLabels.guest}
             </p>
@@ -503,6 +551,7 @@ export function PersonDetails({
         {guest ? (
           <>
             <SponsorSearchSelect
+              layout="row"
               id={`${id}-sponsor`}
               value={values.sponsor_user_id}
               disabled={pending}
@@ -525,34 +574,61 @@ export function PersonDetails({
       </div>
       <ActionError message={error} />
       <ActionError message={discardIssue} title={null} />
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        {dirty ? (
+      {dirty ? (
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button
             type="button"
             variant="outline"
             className="min-h-11"
             disabled={pending}
-            onClick={() =>
-              setDiscardIssue(
-                discard()
-                  ? ""
-                  : "Your draft could not be cleared from this browser. Keep editing, or try again.",
-              )
-            }
+            onClick={() => {
+              const removed = edit;
+              if (!discard()) {
+                setDiscardIssue(
+                  "Your draft could not be cleared from this browser. Keep editing, or try again.",
+                );
+                return;
+              }
+              setDiscardIssue("");
+              setDiscardedEdit(removed);
+              focusNext.current = "undo";
+            }}
           >
             Discard changes
           </Button>
-        ) : null}
-        <DisabledReason reason={verifying ? verifyingReason : null}>
-          <Button
-            type="submit"
-            className="min-h-11"
-            disabled={!dirty || pending}
-          >
-            {pending ? "Saving…" : "Save changes"}
-          </Button>
-        </DisabledReason>
-      </div>
+          <DisabledReason reason={verifying ? verifyingReason : null}>
+            <Button
+              ref={saveButton}
+              type="submit"
+              className="min-h-11"
+              pending={pending}
+              pendingLabel="Saving…"
+            >
+              Save changes
+            </Button>
+          </DisabledReason>
+        </div>
+      ) : discardedEdit ? (
+        <DiscardedNotice
+          undoRef={undoButton}
+          onUndo={() => {
+            const kept = discardedEdit;
+            setDiscardedEdit(null);
+            if (edit || pending || uncertain) return;
+            focusNext.current = "save";
+            setEdit(kept);
+            if (
+              !writePersonDraft(signedInId, {
+                personId: person.id,
+                ...kept,
+              })
+            )
+              setJournalIssue(
+                "This browser cannot keep your draft, so unsaved changes will be lost if the page reloads.",
+              );
+          }}
+        />
+      ) : null}
       <ConflictDialog
         open={conflict !== null}
         title="This person changed"

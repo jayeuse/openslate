@@ -851,19 +851,24 @@ html[data-density="spacious"]
    every look from 1280px; below 1280px nothing here applies and the floor
    stays. The well-and-rule skin is Slate only (no data-theme on <html>). */
 @media (min-width: 1280px) {
+  /* The SearchSelect trigger has no data-slot; inside Access it is the one
+     button with the combobox role (its search box renders in a popup). */
   :is(#main-content .access-ui, .access-ui)
     :is(
       [data-slot="input"],
       [data-slot="select"],
       [data-slot="native-select"],
-      [data-slot="input-group"]
+      [data-slot="input-group"],
+      button[role="combobox"]
     ) {
     height: 2rem;
     min-height: 2rem;
     padding-inline-end: 0.625rem;
   }
   :is(#main-content .access-ui, .access-ui)
-    :is([data-slot="input"], [data-slot="select"]):not([class*="pl-"]) {
+    :is([data-slot="input"], [data-slot="select"], button[role="combobox"]):not(
+      [class*="pl-"]
+    ) {
     padding-inline-start: 0.625rem;
   }
   :is(#main-content .access-ui, .access-ui) [data-slot="native-select"] {
@@ -876,14 +881,21 @@ html[data-density="spacious"]
     min-height: 4rem;
     padding-inline: 0.625rem;
   }
+  /* A button with a disabled reason renders as the tooltip trigger, so it
+     keeps its Button data-variant but not its data-slot. */
   :is(#main-content .access-ui, .access-ui)
-    [data-slot="button"]:not([data-size="icon"]) {
+    :is([data-slot="button"], [data-slot="tooltip-trigger"][data-variant]):not(
+      [data-size="icon"]
+    ) {
     height: 2rem;
     min-height: 2rem;
     padding-inline: 0.75rem;
   }
   :is(#main-content .access-ui, .access-ui)
-    [data-slot="button"][data-size="icon"] {
+    :is(
+      [data-slot="button"],
+      [data-slot="tooltip-trigger"][data-variant]
+    )[data-size="icon"] {
     width: 2rem;
     height: 2rem;
     min-width: 2rem;
@@ -958,6 +970,26 @@ html[data-density="spacious"]
   }
 }
 
+/* Chips in Slate: --secondary is the sunken fill, which vanishes on the
+   card surface in dark, so Access chips (the Write level, the sheet
+   header's role) take the hover fill, as in the Sandbox. Read stays the
+   outline chip and Manage the tinted one, so strength rises Read, Write,
+   Manage. */
+:root:not([data-theme]) .access-ui {
+  --secondary: var(--surface-hover);
+}
+.access-ui [data-access-well="surface"] {
+  --access-well: var(--surface);
+}
+/* Below 1280px sheets and dialogs render in portals outside #main-content,
+   so the shell's 44px floor does not reach them; the Advanced toggle keeps
+   it here. */
+@media (max-width: 1279.98px) {
+  .access-ui [data-slot="advanced-section"] > button {
+    min-height: 2.75rem;
+  }
+}
+
 /* Slate skin: a sunken well with a 1px control-edge bottom rule (the 3:1
    edge), the full edge on hover, and the action rule on focus. */
 :root:not([data-theme])
@@ -967,9 +999,12 @@ html[data-density="spacious"]
     [data-slot="select"],
     [data-slot="native-select"],
     [data-slot="textarea"],
-    [data-slot="input-group"]
+    [data-slot="input-group"],
+    button[role="combobox"]
   ) {
-  background-color: var(--surface-sunken);
+  /* A panel that is already sunken sets --access-well to the card surface
+     (data-access-well), so the well still reads; the rule stays the edge. */
+  background-color: var(--access-well, var(--surface-sunken));
   border-color: transparent;
   border-bottom-color: var(--control-edge);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
@@ -983,7 +1018,8 @@ html[data-density="spacious"]
     [data-slot="select"],
     [data-slot="native-select"],
     [data-slot="textarea"],
-    [data-slot="input-group"]
+    [data-slot="input-group"],
+    button[role="combobox"]
   ) {
   border-bottom-color: var(--ink-muted);
 }
@@ -994,7 +1030,8 @@ html[data-density="spacious"]
     [data-slot="select"],
     [data-slot="native-select"],
     [data-slot="textarea"],
-    [data-slot="input-group"]
+    [data-slot="input-group"],
+    button[role="combobox"]
   ):hover:not(:disabled, :focus-visible, :focus-within, [aria-invalid="true"]) {
   border-color: var(--control-edge);
 }
@@ -1006,7 +1043,8 @@ html[data-density="spacious"]
     [data-slot="select"],
     [data-slot="native-select"],
     [data-slot="textarea"],
-    [data-slot="input-group"]
+    [data-slot="input-group"],
+    button[role="combobox"]
   ):hover:not(:disabled, :focus-visible, :focus-within, [aria-invalid="true"]) {
   border-bottom-color: var(--ink-muted);
 }
@@ -1016,7 +1054,8 @@ html[data-density="spacious"]
     [data-slot="input"],
     [data-slot="select"],
     [data-slot="native-select"],
-    [data-slot="textarea"]
+    [data-slot="textarea"],
+    button[role="combobox"]
   ):focus-visible,
 :root:not([data-theme]) .access-ui [data-slot="input-group"]:focus-within {
   border-color: transparent;
@@ -1029,7 +1068,8 @@ html[data-density="spacious"]
     [data-slot="input"],
     [data-slot="select"],
     [data-slot="native-select"],
-    [data-slot="textarea"]
+    [data-slot="textarea"],
+    button[role="combobox"]
   )[aria-invalid="true"] {
   border-color: transparent;
   border-bottom-color: var(--danger);
@@ -1041,7 +1081,8 @@ html[data-density="spacious"]
     [data-slot="input"],
     [data-slot="select"],
     [data-slot="native-select"],
-    [data-slot="textarea"]
+    [data-slot="textarea"],
+    button[role="combobox"]
   ):disabled {
   background-color: transparent;
   border-color: transparent;
@@ -1059,7 +1100,10 @@ html[data-density="spacious"]
    the other looks keep their outline skins. */
 :root:not([data-theme])
   .access-ui
-  [data-slot="button"][data-variant="outline"] {
+  :is(
+    [data-slot="button"],
+    [data-slot="tooltip-trigger"]
+  )[data-variant="outline"] {
   border-color: transparent;
   background-color: var(--surface-sunken);
 }

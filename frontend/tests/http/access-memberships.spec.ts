@@ -15,6 +15,7 @@ import {
   ids,
   listPage,
   mockAccessApi,
+  openAdvanced,
   person,
 } from "./helpers/access-api";
 
@@ -72,6 +73,7 @@ function readGate() {
 
 async function disableBen(page: Page) {
   const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+  await openAdvanced(sheet);
   await sheet.getByRole("button", { name: "Disable", exact: true }).click();
   const confirmation = page.getByRole("alertdialog", {
     name: "Disable Ben Cruz?",

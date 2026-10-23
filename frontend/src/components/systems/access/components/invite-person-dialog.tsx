@@ -487,9 +487,14 @@ export function InvitePersonDialog({
                 Cancel
               </Button>
               <DisabledReason reason={verifying ? verifyingReason : null}>
-                <Button type="submit" className="min-h-11" disabled={pending}>
+                <Button
+                  type="submit"
+                  className="min-h-11"
+                  pending={pending}
+                  pendingLabel="Sending…"
+                >
                   <Send aria-hidden="true" />
-                  {pending ? "Sending…" : "Send invitation"}
+                  Send invitation
                 </Button>
               </DisabledReason>
             </DialogFooter>

@@ -1703,9 +1703,12 @@ test("a failed background session reread retains rows while disabling session-en
     sessionRead.release();
   }
   await expect(table).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "End session for Eli", exact: true }),
-  ).toBeDisabled();
+  const endEli = page.getByRole("button", {
+    name: "End session for Eli",
+    exact: true,
+  });
+  await expect(endEli).toBeDisabled();
+  await expect(endEli).toHaveAccessibleDescription("Retry sessions first.");
   expect(state.writes).toEqual([]);
   state.sessionReadStatus = 200;
   await page

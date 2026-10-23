@@ -611,6 +611,7 @@ export type AccessSource = {
 };
 export type AccessRow = {
   key: string;
+  departmentId: string;
   departmentName: string;
   /** Null for an entry that covers the whole department. */
   moduleName: string | null;
@@ -659,6 +660,7 @@ export function presentAccess(
       .sort(byName);
     return {
       key: `${entry.department_id}:${entry.module_id ?? "*"}`,
+      departmentId: entry.department_id,
       departmentName:
         departmentNames.get(entry.department_id) ?? "Unavailable department",
       moduleName:

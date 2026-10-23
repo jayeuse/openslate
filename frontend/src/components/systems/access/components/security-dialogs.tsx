@@ -31,6 +31,8 @@ export type ConfirmState = {
   title: string;
   description: string;
   confirmLabel: string;
+  /** The confirm button's label while the action runs ("Ending…"). */
+  pendingLabel?: string;
   requiresDraftAck?: boolean;
   body?: ReactNode;
   action: () => Promise<boolean>;
@@ -87,7 +89,6 @@ export function AccessConfirmationDialog({
             {error}
           </Alert>
         ) : null}
-        {pending ? <p role="status">Saving changes…</p> : null}
         {confirm?.body}
         {confirm?.requiresDraftAck ? (
           <Field className="mt-4 flex-row items-center gap-3">
@@ -121,8 +122,9 @@ export function AccessConfirmationDialog({
             type="button"
             variant="destructive"
             className="min-h-11"
+            pending={pending}
+            pendingLabel={confirm?.pendingLabel ?? "Saving…"}
             disabled={Boolean(
-              pending ||
               actionsDisabled ||
               (confirm?.requiresDraftAck && !draftAcknowledged),
             )}

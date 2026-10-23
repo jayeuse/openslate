@@ -13,6 +13,7 @@ import {
   ids,
   listPage,
   mockAccessApi,
+  openAdvanced,
   person,
 } from "./helpers/access-api";
 
@@ -307,9 +308,10 @@ test("a role change that meets a newer save asks which value to keep", async ({
     job_title: "Lead",
     role: "admin",
   });
+  // Nothing is left to save, so Save goes.
   await expect(
-    sheet.getByRole("button", { name: "Save changes" }),
-  ).toBeDisabled();
+    sheet.getByRole("button", { name: /^(Save changes|Saving…)$/ }),
+  ).toHaveCount(0);
 });
 
 test("a save refused as stale re-reads the person before asking again", async ({
@@ -353,16 +355,30 @@ test("disabling sends the status and a refusal shows the server's reason", async
       json: { detail: "At least one active administrator must remain" },
     }),
   );
+  const disabling = heldResponse();
+  api.on("PATCH", `/api/users/${ids.ben}`, async () => {
+    disabling.enter();
+    await disabling.released;
+    return "next" as const;
+  });
   await page.goto(`/access?view=people&user=${ids.ben}`);
   const sheet = panel(page, "Ben Cruz");
+  await openAdvanced(sheet);
   await sheet.getByRole("button", { name: "Disable" }).click();
   const confirm = page.getByRole("alertdialog", { name: "Disable Ben Cruz?" });
   await confirm.getByRole("button", { name: "Disable" }).click();
+  // The dialog names what is running until the server answers.
+  await disabling.entered;
+  await expect(
+    confirm.getByRole("button", { name: "Disabling…", exact: true }),
+  ).toHaveAttribute("aria-busy", "true");
+  disabling.release();
   await expect(confirm).toBeHidden();
   expect(api.sent("PATCH", `/api/users/${ids.ben}`)[0]?.body).toEqual({
     status: "disabled",
   });
-  await expect(sheet.getByRole("button", { name: "Enable" })).toBeVisible();
+  // Focus lands on the action that replaced Disable.
+  await expect(sheet.getByRole("button", { name: "Enable" })).toBeFocused();
   await sheet.getByRole("button", { name: "Close" }).click();
 
   await openPerson(page, "Dee Lim");
@@ -424,6 +440,7 @@ test("a deleted person shows no access and offers a restore", async ({
   await page.goto(`/access?view=people&user=${ids.eli}`);
   const sheet = panel(page, "Eli Tan");
   await expect(sheet.getByText("Deleted", { exact: true })).toBeVisible();
+  await openAdvanced(sheet);
   await expect(sheet.getByRole("button", { name: "Restore" })).toBeVisible();
   await sheet.getByRole("tab", { name: "Access" }).click();
   await expect(sheet).toContainText("Deleted people have no access.");
@@ -490,9 +507,9 @@ test("a save that got no answer is held for review instead of being sent again",
   await expect(
     sheet.getByRole("button", { name: "Reload Access to review" }),
   ).toBeVisible();
-  await expect(sheet.getByRole("button", { name: "Save changes" })).toHaveCount(
-    0,
-  );
+  await expect(
+    sheet.getByRole("button", { name: /^(Save changes|Saving…)$/ }),
+  ).toHaveCount(0);
 
   await page.reload();
   sheet = panel(page, "Ben Cruz");
@@ -890,6 +907,7 @@ test("offpage deleted deep link survives bounded ID loading and Restore", async 
       ),
     )
     .toBe(true);
+  await openAdvanced(sheet);
   await sheet.getByRole("button", { name: "Restore", exact: true }).click();
   const confirmation = page.getByRole("alertdialog", {
     name: "Restore Eli Tan?",
@@ -1121,8 +1139,8 @@ test("an accepted person edit returns an out-of-range last page to current rows"
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
   await expect(
-    sheet.getByRole("button", { name: "Save changes", exact: true }),
-  ).toBeDisabled();
+    sheet.getByRole("button", { name: /^(Save changes|Saving…)$/ }),
+  ).toHaveCount(0);
   await sheet
     .getByLabel("Job title", { exact: true })
     .fill("Kept while paging adjusts");
@@ -1197,7 +1215,7 @@ for (const failure of [0, 503]) {
       .click();
     await requested;
     await expect(
-      confirmation.getByRole("button", { name: "Working…", exact: true }),
+      confirmation.getByRole("button", { name: "Sending…", exact: true }),
     ).toBeDisabled();
     held.release();
     if (failure) {
@@ -1218,6 +1236,7 @@ for (const failure of [0, 503]) {
       await expect(
         sheet.getByRole("button", { name: "Resend invitation", exact: true }),
       ).toBeVisible();
+      await openAdvanced(sheet);
       await expect(
         sheet.getByRole("button", { name: "Revoke invitation", exact: true }),
       ).toBeVisible();
@@ -1259,6 +1278,8 @@ test("reconcile is offered only for nondeleted pending unsent people", async ({
           : "Eli Tan",
     );
     await expect(sheet).toBeVisible();
+    // Disable and Restore wait in Advanced; Resend stays in view.
+    await openAdvanced(sheet);
     await expect(
       sheet.getByRole("button", {
         name:

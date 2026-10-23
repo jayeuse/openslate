@@ -189,18 +189,23 @@ export function GroupChips({ row }: { row: PeopleRow }) {
 /**
  * Each department's position for its mark color: the first catalog page by
  * name, the order OpenComms uses, so a department has the same color in
- * Access and OpenComms. It is the read the People department filter already
- * makes, so the marks add no request; a department past that page has no mark.
+ * Access and OpenComms. It is the read the People department filter and the
+ * group access editor already make, so the marks add no request there; a
+ * department past that page has no mark. Only administrators read the whole
+ * catalog, so other viewers pass `enabled: false` and see names alone.
  */
-export function useDepartmentOrder(): (id: string) => number | null {
-  const order = useQuery(
-    accessCatalogOptions("departments", {
+export function useDepartmentOrder(
+  enabled = true,
+): (id: string) => number | null {
+  const order = useQuery({
+    ...accessCatalogOptions("departments", {
       limit: 25,
       offset: 0,
       search: "",
       deleted: "exclude",
     }),
-  );
+    enabled,
+  });
   return (id) => {
     const index = order.data?.items.findIndex((item) => item.id === id) ?? -1;
     return index < 0 ? null : index;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { X } from "lucide-react";
 
@@ -28,6 +28,7 @@ import { PersonAccess } from "./person-access";
 import { PersonAccount } from "./person-account";
 import { PersonDetails } from "./person-details";
 import { PersonFacts } from "./person-facts";
+import { PersonGroups } from "./person-groups";
 import { PersonSecurity } from "./person-security";
 import { PersonSessions } from "./person-sessions";
 
@@ -47,6 +48,7 @@ export function PersonPanel({
   recorded,
   people,
   listFresh,
+  searchId,
   onClose,
 }: {
   row: DirectoryRow<AccessDirectoryUser> | null;
@@ -58,6 +60,8 @@ export function PersonPanel({
   membership?: PersonMemberships;
   people: readonly AccessUser[];
   listFresh: boolean;
+  /** The directory search, where focus goes when the person is deleted. */
+  searchId: string;
   onClose: () => void;
 }) {
   const signedInId = useVerifiedWorkspaceUserId();
@@ -70,6 +74,8 @@ export function PersonPanel({
   const [confirmClose, setConfirmClose] = useState(false);
   const [discardError, setDiscardError] = useState("");
   const [tab, setTab] = useState<PanelTab>("details");
+  // A deleted person's row leaves the directory, so focus goes to search.
+  const deleted = useRef(false);
   const person = row?.user ?? null;
 
   function requestClose() {
@@ -94,7 +100,14 @@ export function PersonPanel({
           if (!open) requestClose();
         }}
       >
-        <SheetContent className="access-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,42rem)]">
+        <SheetContent
+          className="access-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,42rem)]"
+          finalFocus={() => {
+            if (!deleted.current) return true;
+            deleted.current = false;
+            return document.getElementById(searchId) ?? true;
+          }}
+        >
           {row && person ? (
             <>
               <SheetHeader className="shrink-0 border-b p-5 pr-16">
@@ -201,17 +214,28 @@ export function PersonPanel({
                       people={people}
                       listFresh={listFresh}
                     />
+                    <PersonGroups
+                      key={`groups-${person.id}`}
+                      person={person}
+                      membership={membership}
+                    />
                     <PersonAccount
                       key={`account-${person.id}`}
                       person={person}
-                      groups={row.groups}
-                      membership={membership}
                       self={person.id === signedInId}
-                    />
-                    <PersonFacts
-                      person={recorded?.id === person.id ? recorded : person}
-                      membership={membership}
-                    />
+                      onDeleted={() => {
+                        // The person's unsaved details go with them.
+                        discardUnsavedDrafts(personSheet);
+                        deleted.current = true;
+                        setTab("details");
+                        onClose();
+                      }}
+                    >
+                      <PersonFacts
+                        person={recorded?.id === person.id ? recorded : person}
+                        membership={membership}
+                      />
+                    </PersonAccount>
                   </div>
                 </TabsContent>
                 <TabsContent

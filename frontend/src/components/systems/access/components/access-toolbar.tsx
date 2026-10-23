@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils";
 
 type AccessToolbarProps<T extends string> = {
   searchLabel: string;
+  /** The search box's id, so a view can return focus to it. */
+  searchId?: string;
   placeholder: string;
   query: string;
   onQueryChange: (query: string) => void;
@@ -65,6 +67,7 @@ function useWideScreen(): boolean {
  */
 export function AccessToolbar<T extends string>({
   searchLabel,
+  searchId,
   placeholder,
   query,
   onQueryChange,
@@ -151,14 +154,14 @@ export function AccessToolbar<T extends string>({
               : "w-full sm:w-72 xl:w-auto xl:max-w-72 xl:min-w-36 xl:flex-1",
           )}
         >
-          <FieldLabel htmlFor={`${id}-search`}>Search</FieldLabel>
+          <FieldLabel htmlFor={searchId ?? `${id}-search`}>Search</FieldLabel>
           <div className="relative">
             <Search
               aria-hidden="true"
               className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
             />
             <Input
-              id={`${id}-search`}
+              id={searchId ?? `${id}-search`}
               aria-label={searchLabel}
               type="search"
               maxLength={searchMaxLength}

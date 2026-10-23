@@ -14,6 +14,7 @@ import {
   group,
   ids,
   mockAccessApi,
+  openAdvanced,
   person,
 } from "./helpers/access-api";
 
@@ -22,6 +23,7 @@ import {
 // docs/specs/access-ui-ux-pass.md, Phase 1).
 
 const draftPrefix = "openslate.access.draft.v1.";
+const emptyGroup = "00000000-0000-4000-8000-0000000000a3";
 
 function sheet(page: Page, name: string) {
   return page.getByRole("dialog", { name, exact: true });
@@ -226,6 +228,10 @@ test("a save in flight holds Discard, closing and leaving until it ends", async 
   await ben.getByRole("button", { name: "Save changes" }).click();
   await personSave.entered;
 
+  // Save names what it is doing and stays busy until the server answers.
+  await expect(
+    ben.getByRole("button", { name: "Saving…", exact: true }),
+  ).toHaveAttribute("aria-busy", "true");
   await expect(
     ben.getByRole("button", { name: "Discard changes" }),
   ).toBeDisabled();
@@ -241,8 +247,8 @@ test("a save in flight holds Discard, closing and leaving until it ends", async 
 
   personSave.release();
   await expect(
-    ben.getByRole("button", { name: "Save changes" }),
-  ).toBeDisabled();
+    ben.getByRole("button", { name: /^(Save changes|Saving…)$/ }),
+  ).toHaveCount(0);
   await expect(ben.getByLabel("Job title")).toHaveValue("Team lead");
   // The finished save wrote no draft back to the journal.
   expect(
@@ -277,8 +283,8 @@ test("a save in flight holds Discard, closing and leaving until it ends", async 
   ).toHaveCount(0);
   groupSave.release();
   await expect(
-    readers.getByRole("button", { name: "Save members" }),
-  ).toBeDisabled();
+    readers.getByRole("button", { name: /^(Save members|Saving…)$/ }),
+  ).toHaveCount(0);
   await readers.getByRole("button", { name: "Close" }).click();
   await expect(readers).toBeHidden();
 
@@ -550,6 +556,53 @@ test("while the role is checked again, open forms cannot send", async ({
   expect(api.sent("PATCH", `/api/users/${ids.ben}`)).toHaveLength(0);
   release();
   await expect(saveChanges).not.toHaveAttribute("aria-disabled", "true");
+
+  // Lifecycle confirmations wait for the check too.
+  await ben.getByRole("button", { name: "Discard changes" }).click();
+  await openAdvanced(ben);
+  for (const action of ["Disable", "Delete"]) {
+    await ben.getByRole("button", { name: action, exact: true }).click();
+    const confirm = page.getByRole("alertdialog", {
+      name: `${action} Ben Cruz?`,
+    });
+    await returnAndHold();
+    const run = confirm.getByRole("button", { name: action, exact: true });
+    await expect(run).toHaveAttribute("aria-disabled", "true");
+    await expect(run).toHaveAccessibleDescription("Checking your access.");
+    await run.focus();
+    await page.keyboard.press("Enter");
+    await settleReact(page);
+    release();
+    await expect(run).not.toHaveAttribute("aria-disabled", "true");
+    await confirm.getByRole("button", { name: "Cancel" }).click();
+  }
+  expect(api.calls.filter((call) => call.method !== "GET")).toEqual([]);
+
+  api.groups.set(emptyGroup, group(emptyGroup, "New hires", [], []));
+  await page.goto(`/access?view=groups&group=${emptyGroup}`);
+  const hires = sheet(page, "New hires");
+  await openAdvanced(hires);
+  await hires.getByRole("button", { name: "Delete group" }).click();
+  const confirmDelete = page.getByRole("alertdialog", {
+    name: "Delete New hires?",
+  });
+  await returnAndHold();
+  const deleteGroup = confirmDelete.getByRole("button", {
+    name: "Delete",
+    exact: true,
+  });
+  await expect(deleteGroup).toHaveAttribute("aria-disabled", "true");
+  await expect(deleteGroup).toHaveAccessibleDescription(
+    "Checking your access.",
+  );
+  await deleteGroup.focus();
+  await page.keyboard.press("Enter");
+  await settleReact(page);
+  release();
+  await expect(deleteGroup).not.toHaveAttribute("aria-disabled", "true");
+  expect(api.sent("DELETE", `/api/access/groups/${emptyGroup}`)).toHaveLength(
+    0,
+  );
 });
 
 test("changing one's own role asks first and shows the server's refusal beside Role", async ({

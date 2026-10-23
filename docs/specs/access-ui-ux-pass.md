@@ -319,18 +319,30 @@ Each phase starts with failing tests, ends with the Access batch (lint, build, t
 - Rows say "Pending" but the quick filter says "Invited"; Phase 6 aligns the words. "Manage <group>" names for Groups rows wait for Phase 3.
 - Add to group (A2, H7) is still to do in Phase 3.
 
+### Phase 3b: filters (owner, 2026-10-23)
+
+The owner kept the filters but asked that they follow the new layout and look. Comp: `.impeccable/mocks/access/people.html?chips=1&filters=1` (screenshots `f00` to `f03` in `.playwright-mcp/access-review/comp/`). This replaces the bordered Filters panel that Phase 2 kept.
+
+| ID  | Change                                                                                                                                                                                                                                                                                                                                                                                 | Proof                                                                  |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| F1  | The quiet Filters button opens a popover anchored to it (not a panel that pushes the table down): label-left rows of slim fields (Role, Group, Department, Two-step, Activity with "Inactive for · n · days"), filters apply as they are chosen, "Clear all" in the footer. Escape and an outside click close it and return focus to the button. On phones it opens as a bottom sheet. | HTTP: open, choose, close, focus returns; still page holds at 1280×720 |
+| F2  | Group and Department are searchable dropdowns with counts; the separate unlabeled search boxes go.                                                                                                                                                                                                                                                                                     | HTTP: type "fin", choose Finance Review                                |
+| F3  | Status lives only in the status strip; the panel's Status select goes. The rare statuses (Expired, Deleted, Everyone) sit under a "More" item at the end of the strip.                                                                                                                                                                                                                 | HTTP: More → Deleted shows deleted people                              |
+| F4  | Active filters show as removable chips above the table ("Showing Role: Administrator ✕ · Two-step: Off ✕ · Clear all"); the Filters button carries the count; filters stay in the URL, and Overview links land as chips.                                                                                                                                                               | HTTP: an Overview link lands as a chip; ✕ and Clear all clear it       |
+| F5  | Groups and the Sessions table use the same Filters button, popover, and chips for their own filters.                                                                                                                                                                                                                                                                                   | HTTP per view                                                          |
+
 ### Phase 3: person and group sheets
 
-| ID  | Change                                                                                                            | Proof                                      |
-| --- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| H1  | Lifecycle actions move into one closed Advanced block, last, in danger ink (person and group).                    | HTTP: Advanced opens by keyboard           |
-| H2  | Save and Discard show only when the tab has edits. Pending labels name the action ("Disabling…", "Deleting…").    | HTTP                                       |
-| H3  | Every disabled control states why (`DisabledReason`, `aria-disabled`), including Reset two-step verification.     | Accessible-description checks              |
-| H4  | Delete shows an Undo notice that runs Restore (A5). Discard in an editor gives Undo.                              | HTTP                                       |
-| H5  | Person Security keeps the result next to the action, and focus returns to a control that still exists (R10, R11). | HTTP focus checks                          |
-| H6  | Departments show their `DepartmentMark`; levels use `LevelBadge` (A6).                                            | Screenshots                                |
-| H7  | Add to group in the person sheet (A2).                                                                            | HTTP journey, including a members conflict |
-| H8  | The Description column shows only when a group has a description.                                                 | HTTP                                       |
+| ID  | Change                                                                                                                             | Proof                                      |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| H1  | Lifecycle actions move into one closed Advanced block, last, in danger ink (person and group).                                     | HTTP: Advanced opens by keyboard           |
+| H2  | Save and Discard show only when the tab has edits. Pending labels name the action ("Disabling…", "Deleting…").                     | HTTP                                       |
+| H3  | Every disabled control states why (`DisabledReason`, `aria-disabled`), including Reset two-step verification.                      | Accessible-description checks              |
+| H4  | Delete shows an Undo notice that runs Restore (A5). Discard in an editor gives Undo.                                               | HTTP                                       |
+| H5  | Person Security keeps the result next to the action, and focus returns to a control that still exists (R10, R11).                  | HTTP focus checks                          |
+| H6  | Departments show their `DepartmentMark`; levels use `LevelBadge` (A6).                                                             | Screenshots                                |
+| H7  | Add to group in the person sheet (A2).                                                                                             | HTTP journey, including a members conflict |
+| H8  | Groups rows name their open target "Manage <group>", like People rows. (The Description column became conditional in Phase 2, P2.) | HTTP                                       |
 
 ### Phase 4: Overview dashboard
 

@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useId, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/ui/alert";
@@ -8,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { toast } from "@/components/ui/toast";
+import { reportUndoable } from "@/lib/feedback";
 import { ApiError } from "@/lib/api";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
@@ -66,6 +74,18 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
   const [stale, setStale] = useState(false);
   const [pending, setPending] = useState(false);
   const [discardIssue, setDiscardIssue] = useState("");
+  // Undo runs from a notice after later renders, so it reads the newest form.
+  const latestForm = useRef(form);
+  const mounted = useRef(false);
+  useEffect(() => {
+    latestForm.current = form;
+  });
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const saved = settings.data;
   const values = saved ? { ...settingsFormFrom(saved), ...form } : null;
@@ -88,6 +108,13 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
     discard,
     pending,
   });
+
+  /** Undo for Discard: brings the edits back unless newer ones exist. */
+  function restore(removed: Partial<InvitationSettingsForm>) {
+    if (!mounted.current || Object.keys(latestForm.current).length) return;
+    setForm(removed);
+    invitationSettingsDraftJournal.write(signedInId, removed);
+  }
 
   function update(patch: Partial<InvitationSettingsForm>) {
     const next = { ...form, ...patch };
@@ -231,13 +258,17 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
                 variant="outline"
                 className="min-h-11"
                 disabled={pending}
-                onClick={() =>
-                  setDiscardIssue(
-                    discard()
-                      ? ""
-                      : "Your draft could not be cleared from this browser. Keep editing, or try again.",
-                  )
-                }
+                onClick={() => {
+                  const removed = form;
+                  if (!discard()) {
+                    setDiscardIssue(
+                      "Your draft could not be cleared from this browser. Keep editing, or try again.",
+                    );
+                    return;
+                  }
+                  setDiscardIssue("");
+                  reportUndoable("Changes discarded", () => restore(removed));
+                }}
               >
                 Discard changes
               </Button>
@@ -245,9 +276,11 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
             <Button
               type="submit"
               className="min-h-11"
-              disabled={!dirty || pending}
+              disabled={!dirty}
+              pending={pending}
+              pendingLabel="Saving…"
             >
-              {pending ? "Saving…" : stale ? "Save again" : "Save settings"}
+              {stale ? "Save again" : "Save settings"}
             </Button>
           </div>
         </form>

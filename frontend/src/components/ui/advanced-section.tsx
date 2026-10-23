@@ -48,6 +48,11 @@ export interface AdvancedSectionProps {
   storageKey: string;
   /** Controls inside whose value differs from the default. */
   setCount?: number;
+  /**
+   * What the closed block holds, when that says more than a count (a
+   * panel's lifecycle actions: "Disable, Delete"). It replaces the count.
+   */
+  summary?: string;
   children: ReactNode;
   className?: string;
 }
@@ -60,6 +65,7 @@ export interface AdvancedSectionProps {
 export function AdvancedSection({
   storageKey,
   setCount = 0,
+  summary,
   children,
   className,
 }: AdvancedSectionProps) {
@@ -83,7 +89,9 @@ export function AdvancedSection({
           className="size-4 shrink-0 transition-transform duration-(--motion-fast) group-data-[panel-open]:rotate-90 motion-reduce:transition-none"
         />
         <span>Advanced</span>
-        {!open && setCount > 0 ? (
+        {!open && summary ? (
+          <span className="text-xs font-normal"> · {summary}</span>
+        ) : !open && setCount > 0 ? (
           <span className="text-xs font-normal"> · {setCount} set</span>
         ) : null}
       </CollapsibleTrigger>

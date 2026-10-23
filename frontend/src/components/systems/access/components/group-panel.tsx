@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { X } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
@@ -33,12 +33,15 @@ export function GroupPanel({
   mode,
   listFresh,
   initialTab,
+  searchId,
   onClose,
 }: {
   row: GroupRow | null;
   mode: "admin" | "manager";
   listFresh: boolean;
   initialTab: GroupEditorTab | null;
+  /** The list search, where focus goes when the group is deleted. */
+  searchId: string;
   onClose: () => void;
 }) {
   const { unsavedIn, pendingIn, discardUnsavedDrafts } =
@@ -50,6 +53,8 @@ export function GroupPanel({
   const [discardError, setDiscardError] = useState("");
   const defaultTab: GroupEditorTab = mode === "manager" ? "members" : "details";
   const [tab, setTab] = useState<GroupEditorTab | null>(null);
+  // A deleted group's row is gone, so focus goes to the list search.
+  const deleted = useRef(false);
   const group = row?.group ?? null;
 
   function close() {
@@ -80,7 +85,14 @@ export function GroupPanel({
           if (!open) requestClose();
         }}
       >
-        <SheetContent className="access-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,44rem)]">
+        <SheetContent
+          className="access-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,44rem)]"
+          finalFocus={() => {
+            if (!deleted.current) return true;
+            deleted.current = false;
+            return document.getElementById(searchId) ?? true;
+          }}
+        >
           {row && group ? (
             <>
               <SheetHeader className="shrink-0 border-b p-5 pr-16">
@@ -126,7 +138,10 @@ export function GroupPanel({
                 listFresh={listFresh}
                 tab={tab ?? initialTab ?? defaultTab}
                 onTabChange={setTab}
-                onDeleted={close}
+                onDeleted={() => {
+                  deleted.current = true;
+                  close();
+                }}
               />
             </>
           ) : null}

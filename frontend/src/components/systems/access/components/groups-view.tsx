@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, Search, UsersRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Empty,
   EmptyContent,
@@ -47,9 +48,11 @@ import { AccessHeaderActions } from "./access-header-actions";
 import { AccessToolbar } from "./access-toolbar";
 import { TableSkeleton } from "./table-skeleton";
 import { CreateGroupDialog, hasKeptNewGroup } from "./create-group-dialog";
+import { DepartmentReach } from "./group-access-editor";
 import type { GroupEditorTab } from "./group-editor";
 import { GroupPanel } from "./group-panel";
 import { SelectField } from "./people-fields";
+import { useDepartmentOrder } from "./people-row-parts";
 import {
   openRowClassName,
   RowOpenButton,
@@ -99,8 +102,17 @@ function memberCount(count: number) {
   return `${count} ${count === 1 ? "member" : "members"}`;
 }
 
-/** Departments a group reaches, on one line: levels and "+n more". */
-function Reach({ row }: { row: GroupRow }) {
+/**
+ * Departments a group reaches, on one line: each with its mark and level
+ * chip, then "+n more".
+ */
+function Reach({
+  row,
+  position,
+}: {
+  row: GroupRow;
+  position: (id: string) => number | null;
+}) {
   if (!row.reach.length)
     return <span className="text-muted-foreground">No access</span>;
   const more = row.reach.length - REACH_SHOWN;
@@ -110,8 +122,8 @@ function Reach({ row }: { row: GroupRow }) {
       title={row.reach.map(summaryLabel).join(", ")}
     >
       {row.reach.slice(0, REACH_SHOWN).map((item) => (
-        <span key={item.departmentId} className="min-w-0 truncate">
-          {summaryLabel(item)}
+        <span key={item.departmentId} className="flex min-w-0">
+          <DepartmentReach summary={item} position={position} />
         </span>
       ))}
       {more > 0 ? (
@@ -128,7 +140,10 @@ function Reach({ row }: { row: GroupRow }) {
  */
 export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
   const admin = mode === "admin";
+  const searchId = useId();
   const searchParams = useSearchParams();
+  // Marks follow the whole department catalog, which administrators read.
+  const position = useDepartmentOrder(admin);
   const [filters, setFilters] = useState<GroupFilters>(() =>
     groupFiltersFromParams(searchParams),
   );
@@ -231,6 +246,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
       cell: (row) => (
         <RowOpenButton
           title={row.group.name}
+          label={`Manage ${row.group.name}`}
           inline
           onOpen={() => openGroup(row.group.id)}
         />
@@ -271,7 +287,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
       id: "departments",
       header: "Departments reached",
       width: "w-[34%]",
-      cell: (row) => <Reach row={row} />,
+      cell: (row) => <Reach row={row} position={position} />,
     },
   ];
 
@@ -320,18 +336,17 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
             : " "}
         </p>
         {admin ? (
-          <Button
-            className="min-h-11"
-            disabled={rows === null}
-            onClick={() => setCreateOpen(true)}
-          >
-            <Plus aria-hidden="true" />
-            Create group
-          </Button>
+          <DisabledReason reason={rows === null ? "Loading groups…" : null}>
+            <Button className="min-h-11" onClick={() => setCreateOpen(true)}>
+              <Plus aria-hidden="true" />
+              Create group
+            </Button>
+          </DisabledReason>
         ) : null}
       </AccessHeaderActions>
       <AccessToolbar
         searchLabel="Search groups"
+        searchId={searchId}
         placeholder="Name, description, or department"
         query={filters.query}
         onQueryChange={(query) => changeFilters({ query })}
@@ -466,10 +481,25 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
                 >
                   <RowOpenButton
                     title={row.group.name}
+                    label={`Manage ${row.group.name}`}
                     subtitle={
-                      row.reach.length
-                        ? row.reach.map(summaryLabel).join(", ")
-                        : "No access"
+                      row.reach.length ? (
+                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          {row.reach.map((item, index) => (
+                            <span key={item.departmentId} className="min-w-0">
+                              <DepartmentReach
+                                summary={item}
+                                position={position}
+                              />
+                              {index < row.reach.length - 1 ? (
+                                <span className="sr-only">, </span>
+                              ) : null}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        "No access"
+                      )
                     }
                     onOpen={() => openGroup(row.group.id)}
                   />
@@ -501,6 +531,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
         mode={mode}
         listFresh={!groups.isFetching && !groups.isError}
         initialTab={openTab ?? linkedTab}
+        searchId={searchId}
         onClose={() => {
           setOpenTab(null);
           replaceGroupParam(null);

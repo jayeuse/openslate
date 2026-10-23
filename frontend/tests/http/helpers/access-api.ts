@@ -1,4 +1,4 @@
-import { expect, type Page, type Route } from "@playwright/test";
+import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { authMeBody, isEventStream } from "./test";
 import { pageOf } from "../../helpers/pagination";
 
@@ -816,6 +816,15 @@ export async function mockAccessApi(
         return user.is_deleted
           ? route.fulfill({ status: 404, json: { detail: "User not found" } })
           : route.fulfill({ json: user });
+      if (rest === "" && method === "DELETE") {
+        users.set(user.id, {
+          ...user,
+          is_deleted: true,
+          deleted_at: at(0),
+          updated_at: at(0),
+        });
+        return route.fulfill({ status: 204, body: "" });
+      }
       if (rest === "/restore" && method === "POST") {
         const restored = {
           ...user,
@@ -900,4 +909,16 @@ export function addPeople(api: Api, count: number, start: number): void {
 /** The journey sent no create, update or delete request to the Access API. */
 export function expectNoWrites(api: Api): void {
   expect(api.calls.filter((call) => call.method !== "GET")).toEqual([]);
+}
+
+/**
+ * Opens a person or group sheet's Advanced block, where lifecycle actions
+ * wait. It stays open for this viewer, so a later sheet may already show it.
+ */
+export async function openAdvanced(sheet: Locator): Promise<void> {
+  const trigger = sheet.getByRole("button", { name: /^Advanced/ });
+  await expect(trigger).toBeVisible();
+  if ((await trigger.getAttribute("aria-expanded")) !== "true")
+    await trigger.click();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
 }
