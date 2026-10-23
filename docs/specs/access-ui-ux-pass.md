@@ -409,6 +409,21 @@ The owner approves a glossary before the strings change, as in the Sandbox follo
 
 Screenshots at 390 px of every section, sheet, and dialog in the four looks, light and dark, and the still-page check (EXIT-8) at 1280×720, 1440×900, and 1920×1080. Then the exit review below.
 
+**Phase 7 results (2026-10-23).** A live sweep took 152 screenshots at 390 px and 152 at 1440 px (19 states, four looks, light and dark; `.playwright-mcp/access-review/phase-7/final/`). A hands-on pass as `ho-admin` and `ho-manager` found 5 low defects; a `ui-reviewer` round ("fix", one P1) and a re-run critique (no P1) found the rest. All were fixed with failing-first tests where a test layer exists (c91c01de, b081bbcc). Decisions during the work: the Overview says how many disabled people it leaves out; older sign-ins stack the day over the time; a manager's link to a closed section lands on Groups with one line that names it; the Who's here legend uses range words (Under a day, 1–7 days, 7–30 days) so it never repeats a phrase of the summary line, and "Now" counts the roster; below 1280 px the Access frame scrolls as one; Groups rows show marks, a count, and the strongest level. Left as follow-ups outside Access: the shell Search icon is 40 px wide at 390; per-row group reads on People (already on `main`); Platform › Account and Manage › Audit words; Stockroom section headings in the policy dialog; disabled primary buttons in Whiteboard and Stockroom dark; one save-state pattern for Invitation settings and Account policy.
+
+| Exit | Result |
+| --- | --- |
+| EXIT-1 | Pass. Critique 24 → 28 of 40; no P1; heuristics 4 and 8 score 3 (archive `.impeccable/critique/2026-10-23T11-20-53Z__…`). |
+| EXIT-2 | Pass. Every data-changing action has feedback (Phases 1, 3, 5). |
+| EXIT-3 | Pass with recorded exceptions. Helper words drop in 13 of 14 measured states; the Overview rises (35 → 46) and controls rise on People (+7), Overview (+1) and Security (+1), each from an owner-approved addition (dashboard, status quick filters and Filters, the viewer's own two-step line). Every capability stays reachable (hands-on pass). |
+| EXIT-4 | Pass (Phase 1). |
+| EXIT-5 | Pass. 352 HTTP and 293 isolated tests on the final build; lint, types and format clean. |
+| EXIT-6 | Pass. `ui-reviewer` "ship" on the final screenshots. |
+| EXIT-7 | Pass. All hands-on defects fixed and checked live. |
+| EXIT-8 | Pass. No document scroll at 1280×720, 1440×900, 1920×1080; no horizontal overflow at 390. |
+| EXIT-9 | Pass. Field edges at least 3:1 in all looks after the Sort select fix; Access targets at least 44 px at 390. |
+| EXIT-10 | Pending the owner's approval of the 390 px sheets in the pull request. |
+
 ## Measurement
 
 Numbers stay in `.agent-runtime/access-ui-ux/metrics.md`. The same script runs on the same data before and after. Baseline peaks: Account policy dialog 130 helper words and 22 controls; Overview 164 words when its cards are counted; Person · Security 59 words.

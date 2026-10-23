@@ -46,6 +46,7 @@ import { useAccessDraftRegistration } from "../state/draft-navigation";
 import { invitationSettingsDraftJournal } from "../state/form-drafts";
 import { ActionError } from "./editor-conflicts";
 import { TextField } from "./people-fields";
+import { ReadError } from "./read-error";
 
 function isStaleRevision(error: unknown): boolean {
   if (!(error instanceof ApiError) || error.status !== 409) return false;
@@ -263,18 +264,10 @@ export function InvitationSettings({
 
   if (settings.isError && !saved)
     return (
-      <div role="alert" className="space-y-3">
-        <p className="text-muted-foreground text-sm">
-          The invitation settings could not be loaded.
-        </p>
-        <Button
-          variant="outline"
-          className="min-h-11"
-          onClick={() => void settings.refetch()}
-        >
-          Retry
-        </Button>
-      </div>
+      <ReadError
+        message="The invitation settings could not be loaded."
+        retry={() => void settings.refetch()}
+      />
     );
 
   return (

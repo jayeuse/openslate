@@ -387,7 +387,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
       <AccessToolbar
         searchLabel="Search groups"
         searchId={searchId}
-        placeholder="Name, description, or department"
+        placeholder="Name or department"
         query={filters.query}
         onQueryChange={(query) => changeFilters({ query })}
         sort={filters.sort}
