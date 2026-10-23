@@ -45,13 +45,12 @@ import {
   type GroupSort,
 } from "../helpers/groups";
 import { AccessHeaderActions } from "./access-header-actions";
-import { AccessToolbar } from "./access-toolbar";
+import { AccessToolbar, FilterSelect } from "./access-toolbar";
 import { TableSkeleton } from "./table-skeleton";
 import { CreateGroupDialog, hasKeptNewGroup } from "./create-group-dialog";
 import { DepartmentReach } from "./group-access-editor";
 import type { GroupEditorTab } from "./group-editor";
 import { GroupPanel } from "./group-panel";
-import { SelectField } from "./people-fields";
 import { useDepartmentOrder } from "./people-row-parts";
 import {
   openRowClassName,
@@ -66,7 +65,7 @@ const sortOptions: readonly { value: GroupSort; label: string }[] = [
 ];
 
 const gapOptions: readonly { value: GroupGapFilter; label: string }[] = [
-  { value: "all", label: "All groups" },
+  { value: "all", label: "Any group" },
   { value: "no-access", label: "Without access" },
   { value: "no-members", label: "Without members" },
 ];
@@ -91,6 +90,22 @@ function replaceGroupParam(groupId: string | null) {
   if (groupId) url.searchParams.set("group", groupId);
   else url.searchParams.delete("group");
   // Next syncs useSearchParams only for calls without its own history state.
+  window.history.replaceState(
+    null,
+    "",
+    `${url.pathname}${url.search}${url.hash}`,
+  );
+}
+
+/**
+ * Keep the gap filter in the URL, so a removed chip stays removed after a
+ * reload and an Overview link's filter can be cleared.
+ */
+function replaceGapParam(filter: GroupGapFilter) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", "groups");
+  if (filter === "all") url.searchParams.delete("filter");
+  else url.searchParams.set("filter", filter);
   window.history.replaceState(
     null,
     "",
@@ -176,6 +191,16 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
     ...(filters.filter === "no-members" ? { without_members: true } : {}),
   };
   const groups = useQuery(groupListOptions("exclude", request));
+  // The header counts every group the viewer can see, like People; the
+  // table footer counts the filter. An unfiltered page already has it.
+  const listNarrowed = filters.filter !== "all" || appliedSearch !== "";
+  const allGroups = useQuery({
+    ...groupListOptions("exclude", { limit: 1, offset: 0, search: "" }),
+    enabled: listNarrowed,
+  });
+  const groupTotal = listNarrowed
+    ? allGroups.data?.pagination.total
+    : groups.data?.pagination.total;
   const rows = useMemo(
     () => (groups.data ? groupRows(groups.data.items) : null),
     [groups.data],
@@ -217,6 +242,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
   function changeFilters(patch: Partial<GroupFilters>) {
     setFilters((current) => ({ ...current, ...patch }));
     setPageIndex(0);
+    if (patch.filter) replaceGapParam(patch.filter);
   }
 
   function openGroup(groupId: string, tab: GroupEditorTab | null = null) {
@@ -331,9 +357,9 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
       <h2 className="sr-only">Group list</h2>
       <AccessHeaderActions>
         <p className="text-muted-foreground text-sm" aria-live="polite">
-          {rows
-            ? `${page.total} ${page.total === 1 ? "group" : "groups"}`
-            : " "}
+          {groupTotal === undefined
+            ? " "
+            : `${groupTotal} ${groupTotal === 1 ? "group" : "groups"}`}
         </p>
         {admin ? (
           <DisabledReason reason={rows === null ? "Loading groups…" : null}>
@@ -353,18 +379,29 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
         sort={filters.sort}
         sortOptions={sortOptions}
         onSortChange={(sort) => changeFilters({ sort })}
-        activeFilterCount={filters.filter === "all" ? 0 : 1}
+        chips={
+          filters.filter === "all"
+            ? []
+            : [
+                {
+                  key: "filter",
+                  label: "Show",
+                  value:
+                    gapOptions.find((item) => item.value === filters.filter)
+                      ?.label ?? "",
+                  onRemove: () => changeFilters({ filter: "all" }),
+                },
+              ]
+        }
+        onClearFilters={() => changeFilters({ filter: "all" })}
         sortInFiltersBelowMd
       >
-        <SelectField
+        <FilterSelect
           id="groups-gap-filter"
           label="Show"
           value={filters.filter}
           options={gapOptions}
-          onChange={(value) => {
-            const option = gapOptions.find((item) => item.value === value);
-            if (option) changeFilters({ filter: option.value });
-          }}
+          onChange={(filter) => changeFilters({ filter })}
         />
       </AccessToolbar>
 

@@ -551,8 +551,12 @@ test("group members retain the complete later-page catalog and refresh paged mem
   await expect(page).toHaveURL(/\/access\?view=people(?:&|$)/);
   const people = page.getByRole("table", { name: "People", exact: true });
   await expect(people).toBeVisible();
-  await page.getByRole("button", { name: "More filters", exact: true }).click();
-  await page.getByLabel("Group", { exact: true }).selectOption(ids.readers);
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Filters", exact: true })
+    .getByRole("combobox", { name: "Group", exact: true })
+    .click();
+  await page.getByRole("option", { name: /Finance readers/ }).click();
   await expect(people.getByRole("row", { name: /Zzz Member/ })).toBeVisible();
   expect(
     api.sent("PUT", `/api/access/groups/${ids.readers}/members`)[0]?.body,

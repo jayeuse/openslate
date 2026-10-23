@@ -13,7 +13,7 @@ import {
 import { type MouseEvent, type ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import { AccessToolbar } from "./access-toolbar";
+import { AccessToolbar, FilterSelect } from "./access-toolbar";
 import { TableSkeleton } from "./table-skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -69,6 +69,15 @@ const SESSION_SORT_OPTIONS: readonly {
   { value: "activity", label: "Last refreshed (newest)" },
   { value: "person-asc", label: "Person (A–Z)" },
   { value: "person-desc", label: "Person (Z–A)" },
+];
+
+const SESSION_STATUS_OPTIONS: readonly {
+  value: AccessSessionsRequest["status"];
+  label: string;
+}[] = [
+  { value: "all", label: "Any status" },
+  { value: "current", label: "Current session" },
+  { value: "remote", label: "Other device" },
 ];
 
 const SESSION_PAGE_SIZES = [4, 10, 25] as const;
@@ -159,8 +168,31 @@ export function SecurityPanel({
       (filtered ||
         page.total > page.items.filter((session) => session.current).length),
     );
-  const activeFilterCount =
-    Number(request.status !== "all") + Number(request.device !== "all");
+  const filterChips = [
+    ...(request.status === "all"
+      ? []
+      : [
+          {
+            key: "status",
+            label: "Status",
+            value:
+              SESSION_STATUS_OPTIONS.find(
+                (option) => option.value === request.status,
+              )?.label ?? request.status,
+            onRemove: () => changeRequest({ status: "all" }),
+          },
+        ]),
+    ...(request.device === "all"
+      ? []
+      : [
+          {
+            key: "device",
+            label: "Device",
+            value: request.device,
+            onRemove: () => changeRequest({ device: "all" }),
+          },
+        ]),
+  ];
   function changeRequest(change: Partial<AccessSessionsRequest>) {
     onRequestChange({ ...request, ...change, offset: 0 });
   }
@@ -315,50 +347,31 @@ export function SecurityPanel({
             sort_order: value === "person-asc" ? "asc" : "desc",
           });
         }}
-        activeFilterCount={activeFilterCount}
-        filtersClassName="sm:grid-cols-2"
+        chips={filterChips}
+        onClearFilters={() => changeRequest({ status: "all", device: "all" })}
       >
-        <Field className="min-w-0">
-          <FieldLabel htmlFor="session-status-filter">Status</FieldLabel>
-          <NativeSelect
-            id="session-status-filter"
-            aria-label="Session status"
-            className="w-full [&_select]:min-h-11"
-            value={request.status}
-            onChange={(event) => {
-              changeRequest({
-                status: event.target.value as AccessSessionsRequest["status"],
-              });
-            }}
-          >
-            <NativeSelectOption value="all">All statuses</NativeSelectOption>
-            <NativeSelectOption value="current">
-              Current session
-            </NativeSelectOption>
-            <NativeSelectOption value="remote">Other device</NativeSelectOption>
-          </NativeSelect>
-        </Field>
-        <Field className="min-w-0">
-          <FieldLabel htmlFor="session-device-filter">Device</FieldLabel>
-          <NativeSelect
-            id="session-device-filter"
-            aria-label="Session device"
-            className="w-full [&_select]:min-h-11"
-            value={request.device}
-            onChange={(event) => {
-              changeRequest({
-                device: event.target.value as AccessSessionsRequest["device"],
-              });
-            }}
-          >
-            <NativeSelectOption value="all">All devices</NativeSelectOption>
-            {sessionDeviceSchema.options.map((device) => (
-              <NativeSelectOption key={device} value={device}>
-                {device}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </Field>
+        <FilterSelect
+          id="session-status-filter"
+          label="Status"
+          ariaLabel="Session status"
+          value={request.status}
+          options={SESSION_STATUS_OPTIONS}
+          onChange={(status) => changeRequest({ status })}
+        />
+        <FilterSelect
+          id="session-device-filter"
+          label="Device"
+          ariaLabel="Session device"
+          value={request.device}
+          options={[
+            { value: "all", label: "Any device" },
+            ...sessionDeviceSchema.options.map((device) => ({
+              value: device,
+              label: device,
+            })),
+          ]}
+          onChange={(device) => changeRequest({ device })}
+        />
       </AccessToolbar>
 
       {sessions.status === "error" ? (

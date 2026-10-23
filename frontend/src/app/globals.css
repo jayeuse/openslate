@@ -851,24 +851,29 @@ html[data-density="spacious"]
    every look from 1280px; below 1280px nothing here applies and the floor
    stays. The well-and-rule skin is Slate only (no data-theme on <html>). */
 @media (min-width: 1280px) {
-  /* The SearchSelect trigger has no data-slot; inside Access it is the one
-     button with the combobox role (its search box renders in a popup). */
+  /* The SearchSelect trigger and its search box have no data-slot; inside
+     Access they are the button and the input with the combobox role (the
+     search box renders in a popup that carries access-ui). */
   :is(#main-content .access-ui, .access-ui)
     :is(
       [data-slot="input"],
       [data-slot="select"],
       [data-slot="native-select"],
       [data-slot="input-group"],
-      button[role="combobox"]
+      button[role="combobox"],
+      input[role="combobox"]
     ) {
     height: 2rem;
     min-height: 2rem;
     padding-inline-end: 0.625rem;
   }
   :is(#main-content .access-ui, .access-ui)
-    :is([data-slot="input"], [data-slot="select"], button[role="combobox"]):not(
-      [class*="pl-"]
-    ) {
+    :is(
+      [data-slot="input"],
+      [data-slot="select"],
+      button[role="combobox"],
+      input[role="combobox"]
+    ):not([class*="pl-"]) {
     padding-inline-start: 0.625rem;
   }
   :is(#main-content .access-ui, .access-ui) [data-slot="native-select"] {
@@ -1000,7 +1005,8 @@ html[data-density="spacious"]
     [data-slot="native-select"],
     [data-slot="textarea"],
     [data-slot="input-group"],
-    button[role="combobox"]
+    button[role="combobox"],
+    input[role="combobox"]
   ) {
   /* A panel that is already sunken sets --access-well to the card surface
      (data-access-well), so the well still reads; the rule stays the edge. */
@@ -1019,7 +1025,8 @@ html[data-density="spacious"]
     [data-slot="native-select"],
     [data-slot="textarea"],
     [data-slot="input-group"],
-    button[role="combobox"]
+    button[role="combobox"],
+    input[role="combobox"]
   ) {
   border-bottom-color: var(--ink-muted);
 }
@@ -1031,7 +1038,8 @@ html[data-density="spacious"]
     [data-slot="native-select"],
     [data-slot="textarea"],
     [data-slot="input-group"],
-    button[role="combobox"]
+    button[role="combobox"],
+    input[role="combobox"]
   ):hover:not(:disabled, :focus-visible, :focus-within, [aria-invalid="true"]) {
   border-color: var(--control-edge);
 }
@@ -1044,7 +1052,8 @@ html[data-density="spacious"]
     [data-slot="native-select"],
     [data-slot="textarea"],
     [data-slot="input-group"],
-    button[role="combobox"]
+    button[role="combobox"],
+    input[role="combobox"]
   ):hover:not(:disabled, :focus-visible, :focus-within, [aria-invalid="true"]) {
   border-bottom-color: var(--ink-muted);
 }
@@ -1055,7 +1064,8 @@ html[data-density="spacious"]
     [data-slot="select"],
     [data-slot="native-select"],
     [data-slot="textarea"],
-    button[role="combobox"]
+    button[role="combobox"],
+    input[role="combobox"]
   ):focus-visible,
 :root:not([data-theme]) .access-ui [data-slot="input-group"]:focus-within {
   border-color: transparent;
@@ -1069,7 +1079,8 @@ html[data-density="spacious"]
     [data-slot="select"],
     [data-slot="native-select"],
     [data-slot="textarea"],
-    button[role="combobox"]
+    button[role="combobox"],
+    input[role="combobox"]
   )[aria-invalid="true"] {
   border-color: transparent;
   border-bottom-color: var(--danger);
@@ -1082,7 +1093,8 @@ html[data-density="spacious"]
     [data-slot="select"],
     [data-slot="native-select"],
     [data-slot="textarea"],
-    button[role="combobox"]
+    button[role="combobox"],
+    input[role="combobox"]
   ):disabled {
   background-color: transparent;
   border-color: transparent;

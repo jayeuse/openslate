@@ -34,7 +34,6 @@ import {
   DEFAULT_TABLE_PAGE_SIZE,
   TablePagination,
 } from "@/components/ui/table-pagination";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
@@ -45,26 +44,22 @@ import {
   userListOptions,
 } from "../adapters/access-queries";
 import {
-  activeFilterCount,
+  clearedDirectoryFilters,
   defaultDirectoryFilters,
+  directoryFilterChips,
   directoryFiltersFromParams,
   directoryParams,
   directoryRows,
   directoryRequest,
-  inactiveDaysError,
-  parseInactiveDays,
-  quickStatusFilters,
-  roleLabels,
   type DirectoryFilters,
   type DirectorySort,
 } from "../helpers/people";
-import { INACTIVE_DAYS_MAX, INACTIVE_DAYS_MIN } from "../state/api-contracts";
 import type { AccessDirectoryUser } from "../state/api";
 import { AccessHeaderActions } from "./access-header-actions";
 import { AccessToolbar } from "./access-toolbar";
 import { TableSkeleton } from "./table-skeleton";
 import { hasKeptInvitation, InvitePersonDialog } from "./invite-person-dialog";
-import { SelectField, TextField } from "./people-fields";
+import { PeopleFilterRows, StatusStrip } from "./people-filters";
 import { usePeopleSearch } from "../hooks/use-people-search";
 import { usePeopleMemberships } from "../hooks/use-people-memberships";
 import {
@@ -72,7 +67,6 @@ import {
   catalogDepartments,
   catalogGroups,
 } from "../hooks/use-access-catalog";
-import { Input } from "@/components/ui/input";
 import { PersonPanel } from "./person-panel";
 import {
   DepartmentMarks,
@@ -97,17 +91,6 @@ const sortOptions: readonly { value: DirectorySort; label: string }[] = [
   { value: "newest", label: "Newest first" },
   { value: "expiry", label: "Access ends soonest" },
 ];
-
-const statusOptions = [
-  { value: "current", label: "Everyone but deleted" },
-  { value: "active", label: "Active" },
-  { value: "pending", label: "Pending" },
-  { value: "disabled", label: "Disabled" },
-  { value: "expired", label: "Expired" },
-  { value: "ending", label: "Access ends soon" },
-  { value: "deleted", label: "Deleted" },
-  { value: "all", label: "Everyone" },
-] as const;
 
 /** Replace the `user` parameter without a navigation or a history entry. */
 function replaceUserParam(userId: string | null) {
@@ -196,35 +179,6 @@ function OpenPerson({
         />
       }
       onOpen={() => onOpen(row.user.id)}
-    />
-  );
-}
-
-/** The inactivity period of the history filter, applied once it is valid. */
-function InactiveDaysField({
-  days,
-  onApply,
-}: {
-  days: number;
-  onApply: (days: number) => void;
-}) {
-  const [draft, setDraft] = useState(String(days));
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <TextField
-      id="people-inactive-days"
-      label="Inactive for (days)"
-      inputMode="numeric"
-      value={draft}
-      description={`Whole days from ${INACTIVE_DAYS_MIN} to ${INACTIVE_DAYS_MAX}.`}
-      error={error}
-      onChange={(value) => {
-        setDraft(value);
-        const problem = inactiveDaysError(value);
-        setError(problem);
-        const parsed = parseInactiveDays(value);
-        if (!problem && parsed !== null) onApply(parsed);
-      }}
     />
   );
 }
@@ -352,9 +306,21 @@ export function PeopleView() {
     total: users.data?.pagination.total ?? 0,
     offset: users.data?.pagination.offset ?? request.offset ?? 0,
   };
-  const filterCount = activeFilterCount(filters);
+  const chips = directoryFilterChips(filters, {
+    group: catalogGroups(groupFilter.combined).find(
+      (group) => group.id === filters.groupId,
+    )?.name,
+    department: catalogDepartments(departmentFilter.combined).find(
+      (department) => department.id === filters.departmentId,
+    )?.department_name,
+  }).map((chip) => ({
+    key: chip.key,
+    label: chip.label,
+    value: chip.value,
+    onRemove: () => changeFilters(chip.clear),
+  }));
   const narrowed =
-    filterCount > 0 ||
+    chips.length > 0 ||
     filters.status !== "current" ||
     filters.query.trim() !== "";
 
@@ -466,7 +432,7 @@ export function PeopleView() {
       <AccessToolbar
         searchLabel="Search people"
         searchId={searchId}
-        placeholder="Name, email, username, or job title"
+        placeholder="Name, email, or job title"
         query={filters.query}
         onQueryChange={(query) => {
           setFilters((current) => ({ ...current, query }));
@@ -475,231 +441,30 @@ export function PeopleView() {
         sort={filters.sort}
         sortOptions={sortOptions}
         onSortChange={(sort) => changeFilters({ sort })}
-        activeFilterCount={filterCount}
+        chips={chips}
+        onClearFilters={() => applyFilters(clearedDirectoryFilters(filters))}
         sortInFiltersBelowMd
         quickFilters={
-          <ToggleGroup
-            aria-label="Status"
-            variant="segmented"
-            multiple={false}
-            value={[filters.status]}
-            className="w-full max-w-full flex-nowrap overflow-x-auto md:w-fit [&>*]:shrink-0"
-            onValueChange={(selection) => {
-              const next = quickStatusFilters.find(
-                (filter) => filter.status === selection[0],
-              );
-              if (next) changeFilters({ status: next.status });
+          <StatusStrip
+            status={filters.status}
+            totals={{
+              current: counts.current.data?.pagination.total,
+              active: counts.active.data?.pagination.total,
+              pending: counts.pending.data?.pagination.total,
+              ending: counts.ending.data?.pagination.total,
+              disabled: counts.disabled.data?.pagination.total,
             }}
-          >
-            {quickStatusFilters.map((filter) => {
-              const total =
-                counts[filter.status as keyof typeof counts].data?.pagination
-                  .total;
-              return (
-                <ToggleGroupItem
-                  key={filter.status}
-                  value={filter.status}
-                  className="flex-none gap-1.5 px-2 text-sm whitespace-nowrap"
-                >
-                  {filter.label}
-                  {total === undefined ? null : (
-                    <span className="text-muted-foreground font-normal tabular-nums">
-                      {total}
-                    </span>
-                  )}
-                </ToggleGroupItem>
-              );
-            })}
-          </ToggleGroup>
+            onChange={changeFilters}
+          />
         }
       >
-        <SelectField
-          id="people-role-filter"
-          label="Role"
-          value={filters.role}
-          options={[
-            { value: "all", label: "All roles" },
-            { value: "admin", label: roleLabels.admin },
-            { value: "member", label: roleLabels.member },
-            { value: "guest", label: roleLabels.guest },
-          ]}
-          onChange={(role) => {
-            if (
-              role === "all" ||
-              role === "admin" ||
-              role === "member" ||
-              role === "guest"
-            )
-              changeFilters({ role });
-          }}
+        <PeopleFilterRows
+          filters={filters}
+          groups={groupFilter}
+          departments={departmentFilter}
+          onChange={changeFilters}
         />
-        <SelectField
-          id="people-status-filter"
-          label="Status"
-          value={filters.status}
-          options={statusOptions}
-          onChange={(status) => {
-            const option = statusOptions.find((item) => item.value === status);
-            if (option) changeFilters({ status: option.value });
-          }}
-        />
-        <div className="space-y-2">
-          <Input
-            type="search"
-            aria-label="Search group filters"
-            className="min-h-11"
-            value={groupFilter.search}
-            onChange={(event) => groupFilter.onSearchChange(event.target.value)}
-          />
-          <SelectField
-            id="people-group-filter"
-            label="Group"
-            value={filters.groupId}
-            options={[
-              { value: "all", label: "All groups" },
-              { value: "none", label: "In no group" },
-              ...catalogGroups(groupFilter.combined).map((group) => ({
-                value: group.id,
-                label: group.name,
-              })),
-            ]}
-            onChange={(groupId) => changeFilters({ groupId })}
-          />
-          {groupFilter.error ? (
-            <div role="alert">
-              <p>{groupFilter.error}</p>
-              <Button
-                type="button"
-                className="min-h-11"
-                variant="outline"
-                onClick={() => void groupFilter.retry()}
-              >
-                Retry groups
-              </Button>
-            </div>
-          ) : null}
-          {groupFilter.hasMore ? (
-            <Button
-              type="button"
-              className="min-h-11"
-              variant="outline"
-              disabled={groupFilter.loadingMore}
-              onClick={() => void groupFilter.loadMore()}
-            >
-              Load more groups
-            </Button>
-          ) : null}
-        </div>
-        <div className="space-y-2">
-          <Input
-            type="search"
-            aria-label="Search department filters"
-            className="min-h-11"
-            value={departmentFilter.search}
-            onChange={(event) =>
-              departmentFilter.onSearchChange(event.target.value)
-            }
-          />
-          <SelectField
-            id="people-department-filter"
-            label="Department"
-            value={filters.departmentId}
-            options={[
-              { value: "all", label: "All departments" },
-              ...catalogDepartments(departmentFilter.combined).map(
-                (department) => ({
-                  value: department.id,
-                  label: department.department_name,
-                }),
-              ),
-            ]}
-            onChange={(departmentId) => changeFilters({ departmentId })}
-          />
-          {departmentFilter.error ? (
-            <div role="alert">
-              <p>{departmentFilter.error}</p>
-              <Button
-                type="button"
-                className="min-h-11"
-                variant="outline"
-                onClick={() => void departmentFilter.retry()}
-              >
-                Retry departments
-              </Button>
-            </div>
-          ) : null}
-          {departmentFilter.hasMore ? (
-            <Button
-              type="button"
-              className="min-h-11"
-              variant="outline"
-              disabled={departmentFilter.loadingMore}
-              onClick={() => void departmentFilter.loadMore()}
-            >
-              Load more departments
-            </Button>
-          ) : null}
-        </div>
-        <SelectField
-          id="people-mfa-filter"
-          label="Administrator two-step verification"
-          value={filters.mfa ?? "all"}
-          options={[
-            { value: "all", label: "Any status" },
-            { value: "without", label: "Not set up" },
-            { value: "unknown", label: "Unknown" },
-          ]}
-          onChange={(mfa) => {
-            if (mfa === "all" || mfa === "without" || mfa === "unknown")
-              changeFilters({ mfa });
-          }}
-        />
-        <div className="space-y-2">
-          <SelectField
-            id="people-history-filter"
-            label="Activity"
-            value={filters.history ?? "all"}
-            options={[
-              { value: "all", label: "Any activity" },
-              { value: "no-recorded-sign-in", label: "No recorded sign-in" },
-              { value: "inactive", label: "Inactive for a period" },
-            ]}
-            onChange={(history) => {
-              if (
-                history === "all" ||
-                history === "no-recorded-sign-in" ||
-                history === "inactive"
-              )
-                changeFilters({ history });
-            }}
-          />
-          {filters.history === "inactive" ? (
-            <InactiveDaysField
-              days={
-                filters.inactiveDays ?? defaultDirectoryFilters.inactiveDays!
-              }
-              onApply={(inactiveDays) => changeFilters({ inactiveDays })}
-            />
-          ) : null}
-        </div>
       </AccessToolbar>
-
-      {filters.history && filters.history !== "all" ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 text-sm">
-          <p className="text-muted-foreground">
-            {filters.history === "no-recorded-sign-in"
-              ? "Showing active people with no recorded sign-in."
-              : `Showing active people with recorded activity older than ${filters.inactiveDays} days.`}
-          </p>
-          <Button
-            variant="ghost"
-            className="text-action-text min-h-11 px-0 underline underline-offset-4 hover:bg-transparent"
-            onClick={() => changeFilters({ history: "all" })}
-          >
-            Clear history filter
-          </Button>
-        </div>
-      ) : null}
 
       <LoadingRegion
         loading={loading}

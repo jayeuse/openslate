@@ -284,6 +284,7 @@ export function PersonGroups({
         >
           <SearchSelect
             id={`${id}-group`}
+            popupClassName="access-ui"
             label="Group"
             value={choice}
             options={options}

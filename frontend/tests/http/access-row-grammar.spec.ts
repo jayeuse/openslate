@@ -300,13 +300,19 @@ test("the inactivity history filter lives in People and its period stays in the 
   const api = await mockAccessApi(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/access?view=people");
-  await page.getByRole("button", { name: "More filters", exact: true }).click();
-  await page.getByLabel("Activity", { exact: true }).selectOption("inactive");
-  const days = page.getByLabel("Inactive for (days)", { exact: true });
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  const filters = page.getByRole("dialog", { name: "Filters", exact: true });
+  await filters
+    .getByLabel("Activity", { exact: true })
+    .selectOption("inactive");
+  const days = filters.getByLabel("Inactive for (days)", { exact: true });
   await expect(days).toHaveValue("30");
   await days.fill("45");
   await expect(page).toHaveURL(/history=inactive/);
   await expect(page).toHaveURL(/inactive_days=45/);
+  await expect(
+    page.getByRole("group", { name: "Active filters", exact: true }),
+  ).toContainText("Activity: Inactive 45 days");
   await expect
     .poll(() => Object.fromEntries(api.listReads.at(-1) ?? []))
     .toMatchObject({ history: "inactive", inactive_days: "45" });
@@ -314,7 +320,7 @@ test("the inactivity history filter lives in People and its period stays in the 
   await expect(days).toHaveAccessibleDescription(/whole number from 1/i);
   await expect(page).toHaveURL(/inactive_days=45/);
   await page.reload();
-  await page.getByRole("button", { name: "More filters", exact: true }).click();
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
   await expect(page.getByLabel("Activity", { exact: true })).toHaveValue(
     "inactive",
   );
@@ -562,16 +568,15 @@ test("the People toolbar keeps one row at 1280 px", async ({ page }) => {
   const parts = [
     controls.getByRole("searchbox", { name: "Search people" }),
     controls.getByRole("group", { name: "Status", exact: true }),
-    controls.getByRole("button", { name: "More filters", exact: true }),
+    controls.getByRole("button", { name: "Filters", exact: true }),
     controls.getByRole("combobox", { name: "Sort", exact: true }),
   ];
-  const centers = await Promise.all(
-    parts.map(async (part) => {
-      const box = await part.boundingBox();
-      return (box?.y ?? 0) + (box?.height ?? 0) / 2;
-    }),
-  );
+  const boxes = await Promise.all(parts.map((part) => part.boundingBox()));
+  const centers = boxes.map((box) => (box?.y ?? 0) + (box?.height ?? 0) / 2);
   expect(Math.max(...centers) - Math.min(...centers)).toBeLessThan(4);
+  // Nothing is pushed past the edge of the screen.
+  for (const box of boxes)
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(1280);
   await expect(
     controls.getByRole("button", { name: /^All 125/ }),
   ).toBeVisible();

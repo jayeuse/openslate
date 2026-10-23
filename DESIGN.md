@@ -753,7 +753,9 @@ Hairline rows with 14px cells. Cells stay `--ink` in every look, so stored data 
 
 **Undo inside a sheet.** A sheet covers the toast region, so an Undo there could not be clicked. Inside an Access sheet, a discarded edit shows an inline line under the tab, "Changes discarded · Undo", in muted text with a ghost Undo, until the next edit or the sheet closes. An action that closes the sheet (Delete person) uses the ordinary Undo toast.
 
-**Status quick filters.** Beside the People search, a segmented control filters by status with counts: All, Active, Invited, Ending soon, Disabled. The counts are organization totals and do not follow the search. Other filters stay under one Filters button with an active count. On phones the control scrolls sideways instead of wrapping.
+**Status quick filters.** Beside the People search, a segmented control filters by status with counts: All, Active, Invited, Ending soon, Disabled, and a final "More" menu with the rare statuses (Expired, Deleted, Everyone); a rare status shows as the selected item ("Status: Deleted"). The counts are organization totals and do not follow the search. Status lives only here. On phones the control scrolls sideways instead of wrapping.
+
+**Filters.** Every other filter sits behind one quiet "Filters" button. From 768px it opens a popover anchored to the button's right edge: label-left rows of slim fields (a 96px muted label column), searchable dropdowns for long lists (Group, Department), filters that apply as they are chosen, and a ghost "Clear all". Below 768px it opens as a bottom sheet. The table never moves when it opens. Active filters show as removable chips in a slim row above the table ("Showing Role: Administrator ✕ · Two-step: Off ✕ · Clear all"); each ✕ is a named button, the Filters button carries the count, the row is absent when nothing is active, and links from the Overview land as chips. Groups and Sessions use the same button, popover, and chips.
 
 Correct: "Active 43" in the segmented control and a 40px row "Ana Castillo ana.castillo@… · Member · ● Active · Service Triage · ■■ 2 · Off · 3 hours ago".
 

@@ -559,19 +559,31 @@ test("Session search, filters and sorting use the full server collection", async
   await expect(table.locator("tbody tr")).toHaveCount(1);
   await expect(table).toContainText("Unknown · Unknown");
   await search.fill("");
-  await page
+  const sessionFilters = page
     .getByRole("region", { name: "Search sessions controls", exact: true })
-    .getByRole("button", { name: "More filters", exact: true })
-    .click();
+    .getByRole("button", { name: "Filters", exact: true });
+  await sessionFilters.click();
   await page
+    .getByRole("dialog", { name: "Filters", exact: true })
     .getByLabel("Session device", { exact: true })
     .selectOption("Unknown");
   await expect(table.locator("tbody tr")).toHaveCount(1);
   await expect(table).toContainText("Rhea");
-  await page.getByLabel("Session device", { exact: true }).selectOption("all");
+  await page.keyboard.press("Escape");
+  const chips = page.getByRole("group", {
+    name: "Active filters",
+    exact: true,
+  });
+  await expect(chips).toContainText("Device: Unknown");
+  await chips
+    .getByRole("button", { name: "Remove Device filter", exact: true })
+    .click();
+  await expect(chips).toHaveCount(0);
+  await sessionFilters.click();
   await page
     .getByLabel("Session status", { exact: true })
     .selectOption("remote");
+  await page.keyboard.press("Escape");
   await page
     .getByLabel("Sort sessions", { exact: true })
     .selectOption("person-desc");

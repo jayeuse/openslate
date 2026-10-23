@@ -68,8 +68,16 @@ test("Groups pages and server search preserve enriched reach without catalog cra
   await expect(
     page.getByText("Showing 1–1 of 1", { exact: true }),
   ).toBeVisible();
-  expect(reads.at(-1)?.searchParams.get("search")).toBe("Remote department");
-  expect(reads.at(-1)?.searchParams.get("offset")).toBe("0");
+  // A search adds one one-row read for the header's organization total,
+  // which still counts every group.
+  await expect(page.getByText("31 groups", { exact: true })).toBeVisible();
+  const pageReads = reads.filter(
+    (url) => url.searchParams.get("limit") !== "1",
+  );
+  expect(pageReads.at(-1)?.searchParams.get("search")).toBe(
+    "Remote department",
+  );
+  expect(pageReads.at(-1)?.searchParams.get("offset")).toBe("0");
   // Department marks read one first catalog page; paging and search never
   // crawl the catalog.
   await expect.poll(() => api.sent("GET", "/api/departments").length).toBe(1);

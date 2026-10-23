@@ -48,6 +48,10 @@ test("health cards count what needs attention and open the filtered list", async
   const people = page.getByRole("table", { name: "People" });
   await expect(people.getByRole("row")).toHaveCount(2);
   await expect(people.getByRole("row", { name: /cy/ })).toBeVisible();
+  // The link lands as a chip.
+  await expect(
+    page.getByRole("group", { name: "Active filters", exact: true }),
+  ).toContainText("Group: In no group");
 
   await page.goto("/access?view=overview");
   await card(page, "Groups without access")
@@ -57,6 +61,25 @@ test("health cards count what needs attention and open the filtered list", async
   const groups = page.getByRole("table", { name: "Groups" });
   await expect(groups.getByRole("row")).toHaveCount(2);
   await expect(groups.getByRole("row", { name: /New hires/ })).toBeVisible();
+  // Groups use the same chips; removing one clears it from the URL too.
+  const chips = page.getByRole("group", {
+    name: "Active filters",
+    exact: true,
+  });
+  await expect(chips).toContainText("Show: Without access");
+  // The header counts every group; the table footer counts the filter.
+  await expect(page.getByText("3 groups", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Showing 1–1 of 1", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Filters", exact: true }),
+  ).toContainText("1");
+  await chips
+    .getByRole("button", { name: "Remove Show filter", exact: true })
+    .click();
+  await expect(page).not.toHaveURL(/filter=/);
+  await expect(groups.getByRole("row")).toHaveCount(4);
   await expect(groups.getByRole("row", { name: /New hires/ })).toContainText(
     "No access",
   );

@@ -270,9 +270,15 @@ export const quickStatusFilters: readonly {
   { label: "Disabled", status: "disabled" },
 ];
 
-export function isQuickStatus(status: DirectoryStatusFilter): boolean {
-  return quickStatusFilters.some((filter) => filter.status === status);
-}
+/** The rare statuses under the strip's More menu, in order. */
+export const rareStatusFilters: readonly {
+  label: string;
+  status: DirectoryStatusFilter;
+}[] = [
+  { label: "Expired", status: "expired" },
+  { label: "Deleted", status: "deleted" },
+  { label: "Everyone", status: "all" },
+];
 
 /**
  * The URL parameters that keep the directory filters, defaults left out.
@@ -297,16 +303,91 @@ export function directoryParams(filters: DirectoryFilters): [string, string][] {
   return params.filter((entry): entry is [string, string] => entry[1] !== null);
 }
 
-/** Filters hidden under More filters; a quick status shows beside the search. */
+const inactiveFor = (days: number) =>
+  `Inactive ${days} ${days === 1 ? "day" : "days"}`;
+
+/** One removable chip for an active Filters filter. */
+export type DirectoryFilterChip = {
+  key: "role" | "group" | "department" | "mfa" | "history";
+  label: string;
+  value: string;
+  /** The patch that clears this filter only. */
+  clear: Partial<DirectoryFilters>;
+};
+
+/**
+ * The active Filters filters as chips, in the order of the Filters rows.
+ * The search and the strip's status are not chips. `names` holds the group
+ * and department names once they are read.
+ */
+export function directoryFilterChips(
+  filters: DirectoryFilters,
+  names: { group?: string; department?: string },
+): DirectoryFilterChip[] {
+  const chips: DirectoryFilterChip[] = [];
+  if (filters.role !== "all")
+    chips.push({
+      key: "role",
+      label: "Role",
+      value: roleLabels[filters.role],
+      clear: { role: "all" },
+    });
+  if (filters.groupId !== "all")
+    chips.push({
+      key: "group",
+      label: "Group",
+      value:
+        filters.groupId === "none"
+          ? "In no group"
+          : (names.group ?? "Selected group"),
+      clear: { groupId: "all" },
+    });
+  if (filters.departmentId !== "all")
+    chips.push({
+      key: "department",
+      label: "Department",
+      value: names.department ?? "Selected department",
+      clear: { departmentId: "all" },
+    });
+  if (filters.mfa && filters.mfa !== "all")
+    chips.push({
+      key: "mfa",
+      label: "Two-step",
+      // The filter finds administrators only, as its select says.
+      value:
+        filters.mfa === "without"
+          ? "Off (administrators)"
+          : "Unknown (administrators)",
+      clear: { mfa: "all" },
+    });
+  if (filters.history && filters.history !== "all")
+    chips.push({
+      key: "history",
+      label: "Activity",
+      value:
+        filters.history === "no-recorded-sign-in"
+          ? "No recorded sign-in"
+          : inactiveFor(filters.inactiveDays ?? INACTIVE_DAYS_DEFAULT),
+      clear: { history: "all" },
+    });
+  return chips;
+}
+
+/** The number on the Filters button: one per chip. */
 export function activeFilterCount(filters: DirectoryFilters): number {
-  return [
-    filters.role !== "all",
-    !isQuickStatus(filters.status),
-    filters.groupId !== "all",
-    filters.departmentId !== "all",
-    Boolean(filters.mfa && filters.mfa !== "all"),
-    Boolean(filters.history && filters.history !== "all"),
-  ].filter(Boolean).length;
+  return directoryFilterChips(filters, {}).length;
+}
+
+/** Clear all: every Filters filter; the search, status and sort stay. */
+export function clearedDirectoryFilters(
+  filters: DirectoryFilters,
+): DirectoryFilters {
+  return {
+    ...defaultDirectoryFilters,
+    query: filters.query,
+    status: filters.status,
+    sort: filters.sort,
+  };
 }
 
 /** Predicates belong to the server, before its total and page window. */

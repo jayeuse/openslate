@@ -830,7 +830,7 @@ test("inactivity days validate drafts in the People history filter and reach the
     .getByRole("table", { name: "People", exact: true })
     .locator("tbody tr");
   await expect(rows).toHaveCount(2);
-  await page.getByRole("button", { name: "More filters", exact: true }).click();
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
   const days = page.getByLabel("Inactive for (days)", { exact: true });
   await expect(days).toHaveValue("30");
   const beforeInvalidDrafts = api.listReads.length;
@@ -863,7 +863,9 @@ test("inactivity days validate drafts in the People history filter and reach the
       .poll(() => api.listReads.at(-1)?.get("inactive_days"))
       .toBe(value);
   }
-  await expect(page.getByRole("main")).toContainText("older than 1 days");
+  await expect(
+    page.getByRole("group", { name: "Active filters", exact: true }),
+  ).toContainText("Activity: Inactive 1 day");
   // A period read before comes from the cache.
   await days.fill("30");
   await expect(rows).toHaveCount(2);
