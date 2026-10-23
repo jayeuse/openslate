@@ -168,13 +168,16 @@ export function PersonDetails({
   });
   const verifying = useAccessVerifying();
   // After "Change my role", focus returns to Role once the save ends (Role
-  // is disabled while it runs).
+  // is disabled while it runs) and the confirmation has finished closing, so
+  // a fast answer cannot lose focus to the closing dialog.
   const focusRoleAfterSave = useRef(false);
+  const closeKeepsFocus = useRef(false);
+  const [confirmSettled, setConfirmSettled] = useState(true);
   useEffect(() => {
-    if (pending || !focusRoleAfterSave.current) return;
+    if (pending || !confirmSettled || !focusRoleAfterSave.current) return;
     focusRoleAfterSave.current = false;
     document.getElementById(`${id}-role`)?.focus();
-  }, [pending, id]);
+  }, [pending, confirmSettled, id]);
   // Advances when the person discards the draft; a save that answers
   // afterwards writes nothing back.
   const discarded = useRef(0);
@@ -645,10 +648,14 @@ export function PersonDetails({
       <AlertDialog
         open={confirmOwnRole}
         onOpenChange={(open) => !open && setConfirmOwnRole(false)}
+        onOpenChangeComplete={(open) => {
+          if (open) closeKeepsFocus.current = false;
+          setConfirmSettled(!open);
+        }}
       >
         <AlertDialogContent
           className="access-ui"
-          finalFocus={() => !focusRoleAfterSave.current}
+          finalFocus={() => !closeKeepsFocus.current}
         >
           <AlertDialogHeader>
             <AlertDialogTitle>Change your own role?</AlertDialogTitle>
@@ -670,6 +677,8 @@ export function PersonDetails({
               onClick={() => {
                 if (!edit || verifying) return;
                 focusRoleAfterSave.current = true;
+                closeKeepsFocus.current = true;
+                setConfirmSettled(false);
                 setConfirmOwnRole(false);
                 void save(edit);
               }}

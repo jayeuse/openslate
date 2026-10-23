@@ -55,6 +55,7 @@ async function prepare(
     at: number;
     status?: number;
     completedAt?: number;
+    failedAt?: number;
   }[] = [];
   const requests = new WeakMap<Request, (typeof calls)[number]>();
   const warnings: string[] = [];
@@ -80,6 +81,10 @@ async function prepare(
       value.status = response.status();
       value.completedAt = Date.now();
     }
+  });
+  page.on("requestfailed", (request) => {
+    const value = requests.get(request);
+    if (value) value.failedAt = Date.now();
   });
   const server = await installCommsLiveApi(page, {
     role,
@@ -997,6 +1002,22 @@ test("a thread event reads no quoted message again", async ({
     await expect(
       page.getByText("Refreshing conversations…", { exact: true }),
     ).toBeHidden();
+    // A first connection that lands after the initial read repairs the read
+    // model, which reads every root and its quote again, and nothing on screen
+    // waits for it. Mark only once no Comms read has been open for a moment.
+    await expect
+      .poll(() => {
+        const comms = api.calls.filter((call) =>
+          call.path.startsWith("/api/comms/"),
+        );
+        if (comms.some((call) => !call.completedAt && !call.failedAt))
+          return false;
+        const last = Math.max(
+          ...comms.map((call) => call.completedAt ?? call.failedAt ?? call.at),
+        );
+        return Date.now() - last > 300;
+      })
+      .toBe(true);
     await settleReact(page);
     const before = api.calls.length;
     await api.server.runtime.controls
