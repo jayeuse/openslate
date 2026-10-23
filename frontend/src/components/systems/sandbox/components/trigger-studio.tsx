@@ -444,7 +444,13 @@ export function TriggerStudio({
                 aria-label="Trigger details"
                 className="bg-card border-border @container/detail flex min-w-0 flex-col rounded-xl border @min-[900px]/studio:h-full @min-[900px]/studio:overflow-clip"
               >
-                <div className="border-border flex min-h-14 flex-wrap items-center gap-x-2.5 gap-y-1 border-b px-5 py-2">
+                <div
+                  className={cn(
+                    "border-border flex min-h-14 flex-wrap items-center gap-x-2.5 gap-y-1 border-b px-5 py-2",
+                    // With no trigger open, the desktop detail has no head.
+                    !selected && !phone && "hidden",
+                  )}
+                >
                   {phone ? (
                     <Button
                       variant="ghost"

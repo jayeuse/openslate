@@ -144,7 +144,7 @@ export function SandboxPageHeader({
         >
           {section}
         </h1>
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 max-md:col-span-2 max-md:row-start-2">
+        <div className="flex min-h-11 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 max-md:col-span-2 max-md:row-start-2 xl:min-h-8">
           {chip ? (
             // One save-state chip: the publish state, then what is
             // happening to the draft right now (the Four Moments Rule).

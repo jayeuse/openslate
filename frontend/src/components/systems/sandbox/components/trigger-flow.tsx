@@ -108,7 +108,7 @@ export function triggerText(
     ? `${triggerModule.name}${triggerModule.closed ? " (closed)" : ""}`
     : trigger.moduleId
       ? "Unavailable module"
-      : "Choose a module";
+      : "[choose a module]";
   if (trigger.kind === "schedule") {
     const cadence =
       trigger.frequency === "daily"
