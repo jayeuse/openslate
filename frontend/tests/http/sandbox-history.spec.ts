@@ -343,6 +343,7 @@ test("Restore is a quiet button in the version head and keeps its confirmation",
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.clock.install();
   const { timeline, inspector } = await openHistory(page);
   await timeline.getByRole("button", { name: "View Q4 structure" }).click();
   const heading = inspector.getByRole("heading", {
@@ -378,8 +379,16 @@ test("Restore is a quiet button in the version head and keeps its confirmation",
   await expect(dialog).toContainText(
     "Your current draft is saved as a checkpoint first. Live data stays as it is.",
   );
+  // Frames wait for the clock, so a late focus move cannot hide in timing.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(restore).toBeFocused();
+  // Closing returns focus once: the next frames leave it where the person
+  // moved it, so the search gets what they type.
+  const search = timeline.getByLabel("Find a version", { exact: true });
+  await search.focus();
+  await page.clock.runFor(100);
+  await expect(search).toBeFocused();
 });
 
 test("on a phone, the list opens one version's detail with a back link", async ({

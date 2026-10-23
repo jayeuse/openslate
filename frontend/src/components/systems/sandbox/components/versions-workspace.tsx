@@ -494,11 +494,8 @@ export function VersionsWorkspace({
     if (pending) return;
     setConfirm(null);
     setActionError("");
-    requestAnimationFrame(() => {
-      const returnTarget = versionActionReturnFocus.current;
-      if (returnTarget?.isConnected) returnTarget.focus();
-      else versionsHeading.current?.focus();
-    });
+    // The dialog's finalFocus returns focus as it closes. A second move a
+    // frame later would pull focus from wherever the person went next.
   }
 
   const listBody: VersionListBody =
