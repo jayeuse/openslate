@@ -1,288 +1,359 @@
 "use client";
 
+import { useId, useState, type Ref } from "react";
 import {
-  ArrowDownRight,
-  ArrowUpRight,
-  Building2,
-  Boxes,
-  Check,
   ChevronDown,
-  FileText,
-  GitBranch,
-  Layers,
+  ChevronRight,
+  GitCompareArrows,
   Minus,
   Plus,
   SlidersHorizontal,
-  Zap,
-  type LucideIcon,
 } from "lucide-react";
-import {
-  Table,
-  TableCaption,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from "@/components/ui/table";
-import {
-  Collapsible,
-  CollapsibleTrigger,
-  CollapsibleContent,
-} from "@/components/ui/collapsible";
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { cn } from "@/lib/utils";
 import { projectSandboxDocument } from "../domain/document-bridge";
-import type { SandboxVersionDetail } from "../state/api";
+import type { SandboxVersion, SandboxVersionDetail } from "../state/api";
 
-const areas: { prefix: string; label: string; icon: LucideIcon }[] = [
-  { prefix: "Department", label: "Departments", icon: Building2 },
-  { prefix: "Module", label: "Modules", icon: Boxes },
-  { prefix: "Field", label: "Fields", icon: FileText },
-  { prefix: "Relationship", label: "Relationships", icon: GitBranch },
-  { prefix: "Trigger", label: "Triggers", icon: Zap },
-  { prefix: "Scenario", label: "Scenarios", icon: Layers },
-];
+// Compare inside the version detail (docs/specs/sandbox-relayout.md S8):
+// Older, then Newer, and Compare; the result is one row per area with its
+// count from older to newer and added, removed, and changed tags. A row with
+// changes opens its entries.
 
-function structureCounts(version: SandboxVersionDetail) {
+type Operation = "added" | "removed" | "changed";
+
+const areas = [
+  { prefix: "Department", label: "Departments" },
+  { prefix: "Module", label: "Modules" },
+  { prefix: "Field", label: "Fields" },
+  { prefix: "Relationship", label: "Relationships" },
+  { prefix: "Trigger", label: "Triggers" },
+  { prefix: "Scenario", label: "Scenarios" },
+] as const;
+
+type Area = (typeof areas)[number]["label"] | "Other changes";
+
+function areaCounts(
+  version: SandboxVersionDetail,
+): Record<Area, number | null> {
   const design = projectSandboxDocument(version.document);
-  return [
-    design.departments.length,
-    design.modules.length,
-    design.modules.reduce((total, item) => total + item.fields.length, 0),
-    design.relationships.length,
-    design.rules.length,
-  ];
+  return {
+    Departments: design.departments.length,
+    Modules: design.modules.length,
+    Fields: design.modules.reduce(
+      (total, item) => total + item.fields.length,
+      0,
+    ),
+    Relationships: design.relationships.length,
+    Triggers: design.rules.length,
+    Scenarios: version.document.scenarios.length,
+    "Other changes": null,
+  };
 }
 
-export function VersionComparison({
-  first,
-  second,
+function operationOf(change: string): Operation {
+  const operation = change.match(/^[A-Za-z]+ (added|removed):/)?.[1];
+  return operation === "added" || operation === "removed"
+    ? operation
+    : "changed";
+}
+
+function versionName(version: SandboxVersion): string {
+  return `v${version.sequence} · ${version.label}`;
+}
+
+function VersionChoice({
+  label,
+  value,
+  versions,
+  onChange,
+}: {
+  label: "Older" | "Newer";
+  value: string;
+  versions: readonly SandboxVersion[];
+  onChange: (value: string) => void;
+}) {
+  const controlId = useId();
+  return (
+    <Field className="min-w-0 gap-1.5">
+      <FieldLabel htmlFor={controlId} className="text-xs">
+        {label}
+      </FieldLabel>
+      <NativeSelect
+        id={controlId}
+        className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-8"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {versions.map((version) => (
+          <NativeSelectOption key={version.id} value={version.id}>
+            {versionName(version)}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+    </Field>
+  );
+}
+
+export function VersionCompare({
+  headingRef,
+  versions,
+  older,
+  newer,
+  onOlderChange,
+  onNewerChange,
+  onCompare,
+  disabled,
+  comparing,
+  error,
+  result,
+  hint,
+}: {
+  headingRef: Ref<HTMLHeadingElement>;
+  /** Every version the page knows, newest first. */
+  versions: readonly SandboxVersion[];
+  older: string;
+  newer: string;
+  onOlderChange: (id: string) => void;
+  onNewerChange: (id: string) => void;
+  onCompare: () => void;
+  disabled: boolean;
+  comparing: boolean;
+  error: string;
+  /** The compared pair while it matches the selects. */
+  result: {
+    older: SandboxVersionDetail;
+    newer: SandboxVersionDetail;
+    changes: readonly string[];
+  } | null;
+  hint: string;
+}) {
+  return (
+    <section
+      aria-label="Version comparison"
+      className="border-border grid min-w-0 gap-3 border-t pt-5"
+    >
+      <h3
+        ref={headingRef}
+        tabIndex={-1}
+        data-slot="section-title"
+        className="font-semibold outline-none"
+      >
+        Compare
+      </h3>
+      {versions.length ? (
+        <div className="grid min-w-0 gap-3 @min-[34rem]/detail:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] @min-[34rem]/detail:items-end">
+          <VersionChoice
+            label="Older"
+            value={older}
+            versions={versions}
+            onChange={onOlderChange}
+          />
+          <ChevronRight
+            aria-hidden="true"
+            className="text-muted-foreground hidden size-4 xl:mb-2 @min-[34rem]/detail:mb-2.5 @min-[34rem]/detail:block"
+          />
+          <VersionChoice
+            label="Newer"
+            value={newer}
+            versions={versions}
+            onChange={onNewerChange}
+          />
+          <Button
+            variant="ghost"
+            className="min-h-11 justify-self-start xl:min-h-8"
+            disabled={disabled || !older || !newer}
+            pending={comparing}
+            pendingLabel="Comparing…"
+            onClick={onCompare}
+          >
+            <GitCompareArrows aria-hidden="true" />
+            Compare<span className="sr-only"> versions</span>
+          </Button>
+        </div>
+      ) : null}
+      {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {result ? (
+        <VersionChangeTable {...result} />
+      ) : (
+        <p className="text-muted-foreground text-sm">{hint}</p>
+      )}
+    </section>
+  );
+}
+
+function VersionChangeTable({
+  older,
+  newer,
   changes,
 }: {
-  first: SandboxVersionDetail;
-  second: SandboxVersionDetail;
+  older: SandboxVersionDetail;
+  newer: SandboxVersionDetail;
   changes: readonly string[];
 }) {
-  const before = structureCounts(first);
-  const after = structureCounts(second);
-  const changedAreas = before.filter(
-    (value, index) => value !== after[index],
-  ).length;
-  const groups = [
+  const before = areaCounts(older);
+  const after = areaCounts(newer);
+  const rows = [
     ...areas.map((area) => ({
-      ...area,
+      label: area.label as Area,
       entries: changes.filter((change) => change.startsWith(area.prefix + " ")),
     })),
     {
-      prefix: "Other",
-      label: "Other changes",
-      icon: SlidersHorizontal,
+      label: "Other changes" as Area,
       entries: changes.filter(
         (change) => !areas.some((area) => change.startsWith(area.prefix + " ")),
       ),
     },
-  ].filter((group) => group.entries.length);
+  ].filter(
+    // The five structure areas always show; Scenarios and Other only with
+    // changes.
+    (row, index) => index < 5 || row.entries.length > 0,
+  );
   return (
-    <div className="border-border mt-6 border-t pt-5">
-      <div className="grid grid-cols-2 gap-5">
-        {[
-          { version: first, marker: "A", label: "Before" },
-          { version: second, marker: "B", label: "After" },
-        ].map(({ version, marker, label }) => (
-          <div key={marker} className="min-w-0">
-            <p className="text-muted-foreground flex items-center gap-2 text-xs">
-              <span className="border-action-text/30 bg-action-tint text-action-text flex size-6 shrink-0 items-center justify-center rounded-md border font-semibold">
-                {marker}
-              </span>
-              {label} · v{version.sequence}
-            </p>
-            <h3 className="mt-2 text-sm font-semibold break-words">
-              {version.label}
-            </h3>
-          </div>
+    <div className="border-border overflow-hidden rounded-lg border">
+      <table className="w-full border-collapse text-left text-sm">
+        <caption className="sr-only">
+          Changes from {versionName(older)} to {versionName(newer)}
+        </caption>
+        <thead className="sr-only">
+          <tr>
+            <th scope="col">Area</th>
+            <th scope="col">Count, older to newer</th>
+            <th scope="col">Changes</th>
+          </tr>
+        </thead>
+        {rows.map((row) => (
+          <ChangeRow
+            key={`${older.id}-${newer.id}-${row.label}`}
+            label={row.label}
+            before={before[row.label]}
+            after={after[row.label]}
+            entries={row.entries}
+          />
         ))}
-      </div>
-      <div className="border-border mt-5 overflow-hidden rounded-xl border">
-        <Table className="w-full table-fixed text-left text-sm [&_td]:whitespace-normal [&_th]:whitespace-normal">
-          <TableCaption className="sr-only">
-            Structure counts for the saved comparison
-          </TableCaption>
-          <colgroup>
-            <col className="w-[38%]" />
-            <col className="w-[15%]" />
-            <col className="w-[15%]" />
-            <col className="w-[32%]" />
-          </colgroup>
-          <TableHeader className="bg-muted/60 text-muted-foreground text-xs">
-            <TableRow>
-              <TableHead scope="col" className="px-3 py-3 font-medium">
-                Structure
-              </TableHead>
-              <TableHead
-                scope="col"
-                aria-label={`Before: ${first.label}`}
-                className="px-1 py-3 text-center font-medium"
-              >
-                Before
-              </TableHead>
-              <TableHead
-                scope="col"
-                aria-label={`After: ${second.label}`}
-                className="px-1 py-3 text-center font-medium"
-              >
-                After
-              </TableHead>
-              <TableHead
-                scope="col"
-                className="px-2 py-3 text-right font-medium"
-              >
-                Difference
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {areas.slice(0, 5).map(({ label, icon: Icon }, index) => {
-              const delta = after[index] - before[index];
-              const Direction =
-                delta > 0 ? ArrowUpRight : delta < 0 ? ArrowDownRight : Minus;
-              const tone =
-                delta > 0
-                  ? "text-success"
-                  : delta < 0
-                    ? "text-destructive"
-                    : "text-muted-foreground";
-              return (
-                <TableRow
-                  key={label}
-                  className={`border-border border-t ${delta > 0 ? "bg-success/5" : delta < 0 ? "bg-destructive/5" : "bg-card/30"}`}
-                >
-                  <TableHead
-                    scope="row"
-                    className="px-3 py-4 font-medium break-words"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Icon
-                        aria-hidden="true"
-                        className="text-muted-foreground hidden size-4 shrink-0 2xl:block"
-                      />
-                      {label}
-                    </span>
-                  </TableHead>
-                  <TableCell className="text-muted-foreground px-1 py-4 text-center tabular-nums">
-                    {before[index]}
-                  </TableCell>
-                  <TableCell className="px-1 py-4 text-center text-base font-semibold tabular-nums">
-                    {after[index]}
-                  </TableCell>
-                  <TableCell className={`px-2 py-4 text-right text-xs ${tone}`}>
-                    <span className="inline-flex max-w-full flex-wrap items-center justify-end gap-1">
-                      <Direction
-                        aria-hidden="true"
-                        className="size-3.5 shrink-0"
-                      />
-                      <span className="break-words tabular-nums">
-                        {delta === 0
-                          ? "No change"
-                          : `${Math.abs(delta)} ${delta > 0 ? "more" : "fewer"}`}
-                      </span>
-                    </span>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
-      <p className="text-muted-foreground mt-3 text-xs leading-relaxed">
-        {changedAreas
-          ? `${changedAreas} of 5 structure totals differ.`
-          : "Structure totals are unchanged."}{" "}
-        Counts can stay the same when names or settings change.
-      </p>
-
-      <section aria-label="Change details" className="mt-7">
-        <div className="flex items-center justify-between gap-3">
-          <h3 data-slot="section-title" className="font-semibold">
-            What changed
-          </h3>
-          <Badge variant="secondary" className="px-2 py-1 tabular-nums">
-            {changes.length} {changes.length === 1 ? "entry" : "entries"}
-          </Badge>
-        </div>
-        <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
-          Grouped by area. Open a section to review its changes.
-        </p>
-        {groups.length ? (
-          <div className="border-border mt-4 divide-y rounded-xl border">
-            {groups.map(({ prefix, label, icon: Icon, entries }) => (
-              <Collapsible
-                key={`${first.id}-${second.id}-${prefix}`}
-                className="group border-border"
-              >
-                <CollapsibleTrigger
-                  aria-label={`${label}, ${entries.length} change entries`}
-                  className="hover:bg-muted/50 focus-visible:outline-ring flex min-h-16 w-full cursor-pointer list-none items-center gap-3 px-4 py-3 text-left outline-offset-2 focus-visible:outline-2 [&::-webkit-details-marker]:hidden"
-                >
-                  <Icon
-                    aria-hidden="true"
-                    className="text-muted-foreground size-4 shrink-0"
-                  />
-                  <span className="min-w-0 flex-1 text-sm font-medium">
-                    {label}
-                  </span>
-                  <span className="text-muted-foreground text-xs tabular-nums">
-                    {entries.length}
-                  </span>
-                  <ChevronDown
-                    aria-hidden="true"
-                    className="text-muted-foreground size-4 shrink-0 transition-transform group-data-[open]:rotate-180 motion-reduce:transition-none"
-                  />
-                </CollapsibleTrigger>
-                <CollapsibleContent keepMounted>
-                  <ul className="border-border bg-muted/20 space-y-3 border-t px-4 py-4">
-                    {entries.map((change, index) => {
-                      const operation = change.match(
-                        /^[A-Za-z]+ (added|removed):/,
-                      )?.[1];
-                      const Mark =
-                        operation === "added"
-                          ? Plus
-                          : operation === "removed"
-                            ? Minus
-                            : SlidersHorizontal;
-                      return (
-                        <li
-                          key={`${change}-${index}`}
-                          className="flex items-start gap-3 text-sm leading-relaxed [overflow-wrap:anywhere]"
-                        >
-                          <Mark
-                            aria-hidden="true"
-                            className={`mt-1 size-3.5 shrink-0 ${operation === "added" ? "text-success" : operation === "removed" ? "text-destructive" : "text-muted-foreground"}`}
-                          />
-                          <span className="min-w-0">{change}</span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </CollapsibleContent>
-              </Collapsible>
-            ))}
-          </div>
-        ) : (
-          <div className="border-border mt-4 flex items-start gap-3 rounded-xl border p-4">
-            <Check
-              aria-hidden="true"
-              className="text-muted-foreground mt-0.5 size-4 shrink-0"
-            />
-            <p className="text-sm">
-              No structural changes between these versions.
-            </p>
-          </div>
-        )}
-      </section>
-      <p className="border-border text-muted-foreground mt-5 border-t pt-4 text-xs">
-        Comparing saved designs does not change your draft.
-      </p>
+      </table>
     </div>
+  );
+}
+
+function ChangeRow({
+  label,
+  before,
+  after,
+  entries,
+}: {
+  label: Area;
+  before: number | null;
+  after: number | null;
+  entries: readonly string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const entriesId = useId();
+  const tally: Record<Operation, number> = { added: 0, removed: 0, changed: 0 };
+  for (const entry of entries) tally[operationOf(entry)] += 1;
+  return (
+    <tbody className="border-border border-t first:border-t-0">
+      <tr className="align-middle">
+        <th scope="row" className="w-2/5 py-0 pr-2 pl-1 font-normal">
+          {entries.length ? (
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-controls={entriesId}
+              aria-label={`${label}, ${entries.length} change ${entries.length === 1 ? "entry" : "entries"}`}
+              className="hover:bg-muted focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-left font-medium outline-offset-2 focus-visible:outline-2 xl:min-h-9"
+              onClick={() => setOpen((value) => !value)}
+            >
+              {open ? (
+                <ChevronDown
+                  aria-hidden="true"
+                  className="text-muted-foreground size-3.5 shrink-0"
+                />
+              ) : (
+                <ChevronRight
+                  aria-hidden="true"
+                  className="text-muted-foreground size-3.5 shrink-0"
+                />
+              )}
+              <span className="min-w-0">{label}</span>
+            </button>
+          ) : (
+            <span className="text-muted-foreground flex min-h-11 items-center pl-7 xl:min-h-9">
+              {label}
+            </span>
+          )}
+        </th>
+        <td className="w-full px-2 whitespace-nowrap tabular-nums">
+          {before === null || after === null ? null : (
+            <>
+              {before} <span aria-hidden="true">→</span>
+              <span className="sr-only">to</span> {after}
+            </>
+          )}
+        </td>
+        <td className="px-3 py-1.5 text-right whitespace-nowrap">
+          {entries.length ? (
+            <span className="inline-flex flex-wrap justify-end gap-1">
+              {tally.added ? (
+                <Badge variant="success">{tally.added} added</Badge>
+              ) : null}
+              {tally.removed ? (
+                <Badge variant="destructive">{tally.removed} removed</Badge>
+              ) : null}
+              {tally.changed ? (
+                <Badge variant="outline">{tally.changed} changed</Badge>
+              ) : null}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">No change</span>
+          )}
+        </td>
+      </tr>
+      {entries.length ? (
+        <tr id={entriesId} hidden={!open}>
+          <td
+            colSpan={3}
+            className="bg-muted/30 border-border border-t px-4 py-3"
+          >
+            <ul className="grid gap-2">
+              {entries.map((change, index) => {
+                const operation = operationOf(change);
+                const Mark =
+                  operation === "added"
+                    ? Plus
+                    : operation === "removed"
+                      ? Minus
+                      : SlidersHorizontal;
+                return (
+                  <li
+                    key={`${change}-${index}`}
+                    className="flex items-start gap-2.5 text-sm leading-relaxed [overflow-wrap:anywhere]"
+                  >
+                    <Mark
+                      aria-hidden="true"
+                      className={cn(
+                        "mt-1 size-3.5 shrink-0",
+                        operation === "added"
+                          ? "text-success"
+                          : operation === "removed"
+                            ? "text-destructive"
+                            : "text-muted-foreground",
+                      )}
+                    />
+                    <span className="min-w-0">{change}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </td>
+        </tr>
+      ) : null}
+    </tbody>
   );
 }

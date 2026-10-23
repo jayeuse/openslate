@@ -4124,7 +4124,10 @@ test("History timeline filters preserve the selected action target and published
     inspector.getByRole("button", { name: "Restore version", exact: true }),
   ).toBeFocused();
   await timeline.getByLabel("Find a version").fill("");
-  await timeline.getByLabel("Filter versions").selectOption("published");
+  await timeline
+    .getByRole("group", { name: "Filter versions", exact: true })
+    .getByRole("button", { name: "Published", exact: true })
+    .click();
   await expect(
     timeline.getByRole("button", { name: "View Before import", exact: true }),
   ).toHaveCount(0);
@@ -4140,7 +4143,10 @@ test("History timeline filters preserve the selected action target and published
       exact: true,
     }),
   ).toHaveCount(0);
-  await timeline.getByLabel("Filter versions").selectOption("all");
+  await timeline
+    .getByRole("group", { name: "Filter versions", exact: true })
+    .getByRole("button", { name: "All", exact: true })
+    .click();
   await timeline
     .getByRole("button", { name: "View Release snapshot 1", exact: true })
     .click();
@@ -4177,15 +4183,15 @@ test("changing a compared version clears the old comparison", async ({
     });
   });
   await page.getByRole("link", { name: "History", exact: true }).click();
-  await page.getByLabel("Compare first version").selectOption(versions[0].id);
-  await page.getByLabel("Compare second version").selectOption(versions[1].id);
+  await page.getByLabel("Older", { exact: true }).selectOption(versions[0].id);
+  await page.getByLabel("Newer", { exact: true }).selectOption(versions[1].id);
   await page
     .getByRole("button", { name: "Compare versions", exact: true })
     .click();
   const { comparison } = historyRegions(page);
   await expect(comparison).toContainText("Updated requests");
 
-  await page.getByLabel("Compare second version").selectOption(versions[2].id);
+  await page.getByLabel("Newer", { exact: true }).selectOption(versions[2].id);
   await expect(comparison).not.toContainText("Updated requests");
   await expect(comparison).toContainText(
     "Ready to compare Published structure (v1) with Before import (v3).",
@@ -4224,8 +4230,8 @@ test("History comparison stays tied to compared versions while inspecting anothe
     });
   });
   await page.getByRole("link", { name: "History", exact: true }).click();
-  await page.getByLabel("Compare first version").selectOption(versions[0].id);
-  await page.getByLabel("Compare second version").selectOption(versions[1].id);
+  await page.getByLabel("Older", { exact: true }).selectOption(versions[0].id);
+  await page.getByLabel("Newer", { exact: true }).selectOption(versions[1].id);
   expect(reads).toBe(0);
   await page
     .getByRole("button", { name: "Compare versions", exact: true })
@@ -4382,7 +4388,7 @@ test("History deletion failure retains its target and successful deletion select
     inspector.getByRole("button", { name: "Delete version", exact: true }),
   ).toBeDisabled();
   await expect(
-    page.getByRole("heading", { level: 2, name: "History", exact: true }),
+    page.getByRole("heading", { level: 2, name: "Versions", exact: true }),
   ).toBeFocused();
 });
 
@@ -4412,8 +4418,8 @@ test("History change groups keep large comparisons scannable without hiding acce
     });
   });
   await page.getByRole("link", { name: "History", exact: true }).click();
-  await page.getByLabel("Compare first version").selectOption(first.id);
-  await page.getByLabel("Compare second version").selectOption(second.id);
+  await page.getByLabel("Older", { exact: true }).selectOption(first.id);
+  await page.getByLabel("Newer", { exact: true }).selectOption(second.id);
   await page
     .getByRole("button", { name: "Compare versions", exact: true })
     .click();
@@ -4997,7 +5003,7 @@ test("History pages and server-searches later versions while retaining inspectio
   await timeline
     .getByRole("button", { name: "View Saved checkpoint 27", exact: true })
     .click();
-  await page.getByLabel("Compare first version").selectOption(versions[26].id);
+  await page.getByLabel("Older", { exact: true }).selectOption(versions[26].id);
   await timeline.getByRole("button", { name: "Next page" }).click();
   await expect(
     timeline.getByRole("button", { name: "Retry versions", exact: true }),
@@ -5014,7 +5020,7 @@ test("History pages and server-searches later versions while retaining inspectio
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.getByLabel("Compare first version")).toHaveValue(
+  await expect(page.getByLabel("Older", { exact: true })).toHaveValue(
     versions[26].id,
   );
   await expect(timeline).not.toContainText("Private history canary");
@@ -5025,7 +5031,7 @@ test("History pages and server-searches later versions while retaining inspectio
   await expect(
     timeline.getByRole("button", { name: "Retry versions", exact: true }),
   ).toHaveCount(0);
-  await page.getByLabel("Compare second version").selectOption(versions[0].id);
+  await page.getByLabel("Newer", { exact: true }).selectOption(versions[0].id);
   await page
     .getByRole("button", { name: "Compare versions", exact: true })
     .click();
@@ -5048,7 +5054,10 @@ test("History pages and server-searches later versions while retaining inspectio
       exact: true,
     }),
   ).toBeVisible();
-  await timeline.getByLabel("Filter versions").selectOption("imported");
+  await timeline
+    .getByRole("group", { name: "Filter versions", exact: true })
+    .getByRole("button", { name: "Imported", exact: true })
+    .click();
   await expect
     .poll(() =>
       requests.some(
@@ -5062,7 +5071,7 @@ test("History pages and server-searches later versions while retaining inspectio
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.getByLabel("Compare first version")).toHaveValue(
+  await expect(page.getByLabel("Older", { exact: true })).toHaveValue(
     versions[26].id,
   );
   for (const mode of ["light", "dark"] as const) {
@@ -5080,12 +5089,14 @@ test("History pages and server-searches later versions while retaining inspectio
       await page.evaluate(async () => {
         await document.fonts.ready;
       });
-      // The kind filter is one compact select that fits its column.
+      // The kind quick filters fit inside the list pane.
       await expect
         .poll(() =>
-          timeline
-            .getByLabel("Filter versions")
-            .evaluate((element) => element.scrollWidth <= element.clientWidth),
+          timeline.getByLabel("Filter versions").evaluate((element) => {
+            const group = element.getBoundingClientRect();
+            const pane = element.closest("section")!.getBoundingClientRect();
+            return group.left >= pane.left && group.right <= pane.right;
+          }),
         )
         .toBe(true);
     }
@@ -5117,9 +5128,9 @@ test("History clears a missing compared version after a transient lookup and nev
   await page.getByRole("link", { name: "History", exact: true }).click();
   const { timeline, comparison } = historyRegions(page);
   const savedComparison = comparison.getByRole("table");
-  const unavailableHeading = comparison.getByRole("heading", {
-    name: "Saved checkpoint 27",
-    exact: true,
+  // The result table names the compared pair.
+  const unavailableHeading = comparison.getByRole("table", {
+    name: /v27 · Saved checkpoint 27 to/,
   });
   await expect(
     timeline.getByRole("button", {
@@ -5128,9 +5139,9 @@ test("History clears a missing compared version after a transient lookup and nev
     }),
   ).toBeVisible();
   await page
-    .getByLabel("Compare first version")
+    .getByLabel("Older", { exact: true })
     .selectOption(unavailableVersion.id);
-  await page.getByLabel("Compare second version").selectOption(versions[0].id);
+  await page.getByLabel("Newer", { exact: true }).selectOption(versions[0].id);
   await page
     .getByRole("button", { name: "Compare versions", exact: true })
     .click();
@@ -5144,7 +5155,7 @@ test("History clears a missing compared version after a transient lookup and nev
   ).toBeVisible();
   await expect(savedComparison).toBeVisible();
   await expect(unavailableHeading).toBeVisible();
-  await expect(page.getByLabel("Compare first version")).toHaveValue(
+  await expect(page.getByLabel("Older", { exact: true })).toHaveValue(
     unavailableVersion.id,
   );
 
@@ -5166,11 +5177,11 @@ test("History clears a missing compared version after a transient lookup and nev
   expect(missing.status()).toBe(404);
   await expect(savedComparison).toHaveCount(0);
   await expect(unavailableHeading).toHaveCount(0);
-  await expect(page.getByLabel("Compare first version")).not.toHaveValue(
+  await expect(page.getByLabel("Older", { exact: true })).not.toHaveValue(
     unavailableVersion.id,
   );
 
-  await page.getByLabel("Compare first version").selectOption(versions[26].id);
+  await page.getByLabel("Older", { exact: true }).selectOption(versions[26].id);
   await expect(savedComparison).toHaveCount(0);
   await expect(unavailableHeading).toHaveCount(0);
   await page
@@ -5178,9 +5189,8 @@ test("History clears a missing compared version after a transient lookup and nev
     .click();
   await expect(savedComparison).toBeVisible();
   await expect(
-    comparison.getByRole("heading", {
-      name: "Saved checkpoint 2",
-      exact: true,
+    comparison.getByRole("table", {
+      name: /^Changes from v2 · Saved checkpoint 2 to/,
     }),
   ).toBeVisible();
   await expect(unavailableHeading).toHaveCount(0);
@@ -5237,9 +5247,11 @@ for (const status of [401, 403, 404]) {
         exact: true,
       }),
     ).toBeVisible();
-    await page.getByLabel("Compare first version").selectOption(versions[1].id);
     await page
-      .getByLabel("Compare second version")
+      .getByLabel("Older", { exact: true })
+      .selectOption(versions[1].id);
+    await page
+      .getByLabel("Newer", { exact: true })
       .selectOption(versions[0].id);
     await page
       .getByRole("button", { name: "Compare versions", exact: true })
@@ -5308,10 +5320,10 @@ for (const status of [401, 403, 404]) {
         exact: true,
       }),
     ).toBeVisible();
-    await expect(page.getByLabel("Compare first version")).toHaveValue(
+    await expect(page.getByLabel("Older", { exact: true })).toHaveValue(
       versions[1].id,
     );
-    await expect(page.getByLabel("Compare second version")).toHaveValue(
+    await expect(page.getByLabel("Newer", { exact: true })).toHaveValue(
       versions[0].id,
     );
     await expect(comparison.getByRole("table")).toHaveCount(0);
@@ -5353,8 +5365,8 @@ test("History detail 403 cannot be removed by a cached-page transition", async (
       exact: true,
     }),
   ).toBeVisible();
-  await page.getByLabel("Compare first version").selectOption(versions[1].id);
-  await page.getByLabel("Compare second version").selectOption(versions[0].id);
+  await page.getByLabel("Older", { exact: true }).selectOption(versions[1].id);
+  await page.getByLabel("Newer", { exact: true }).selectOption(versions[0].id);
   refuseDetail = true;
   const [response] = await Promise.all([
     page.waitForResponse(
@@ -5394,7 +5406,7 @@ test("History detail 403 cannot be removed by a cached-page transition", async (
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.getByLabel("Compare first version")).toHaveValue(
+  await expect(page.getByLabel("Older", { exact: true })).toHaveValue(
     versions[1].id,
   );
 });
@@ -5618,8 +5630,8 @@ test("History success from an imperative read started before refusal cannot rest
       exact: true,
     }),
   ).toBeVisible();
-  await page.getByLabel("Compare first version").selectOption(versions[1].id);
-  await page.getByLabel("Compare second version").selectOption(versions[0].id);
+  await page.getByLabel("Older", { exact: true }).selectOption(versions[1].id);
+  await page.getByLabel("Newer", { exact: true }).selectOption(versions[0].id);
   const pendingList = page.waitForRequest(
     (request) =>
       new URL(request.url()).pathname === "/api/sandbox/versions" &&
@@ -5726,8 +5738,8 @@ test("History older off-page metadata cannot restore a target marked missing by 
   );
   await page.getByRole("link", { name: "History", exact: true }).click();
   const { timeline, inspector, comparison } = historyRegions(page);
-  const firstChoice = page.getByLabel("Compare first version");
-  const secondChoice = page.getByLabel("Compare second version");
+  const firstChoice = page.getByLabel("Older", { exact: true });
+  const secondChoice = page.getByLabel("Newer", { exact: true });
   const missingHeading = inspector.getByRole("heading", {
     name: "Saved checkpoint 27",
     exact: true,

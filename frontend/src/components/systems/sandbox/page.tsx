@@ -101,6 +101,7 @@ import {
   type SandboxDocumentSession,
 } from "./state/document-session";
 import { VersionsWorkspace } from "./components/versions-workspace";
+import { DISCARD_CHECKPOINT } from "./domain/version-history";
 import { TriggerStudio } from "./components/trigger-studio";
 import { triggerPublicationBlockers } from "./domain/trigger-rules";
 import { useTriggerDraft } from "./components/use-trigger-draft";
@@ -1146,8 +1147,8 @@ export default function SandboxPage() {
       await createSandboxVersion({
         expectedRevision: session.revision,
         kind: "checkpoint",
-        label: "Before discard",
-        note: "Saved automatically before discarding draft changes.",
+        // History folds this checkpoint as an automatic save (S9).
+        ...DISCARD_CHECKPOINT,
       });
       await syncVersionMetadata();
       const refreshed = await loadSandboxDocument();

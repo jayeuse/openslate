@@ -1719,7 +1719,7 @@ test.describe("Sandbox", () => {
 
     await page.getByRole("link", { name: "History", exact: true }).click();
     await expect(
-      page.getByRole("heading", { level: 2, name: "History" }),
+      page.getByRole("heading", { level: 2, name: "Versions" }),
     ).toBeVisible();
     // Other specs in the same run also publish; History then adds the version number
     // to every "Published structure" label, so select this test's own version.
