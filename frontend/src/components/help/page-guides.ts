@@ -8,10 +8,10 @@ export const PAGE_GUIDES = {
   sandbox: {
     title: "Sandbox",
     entries: [
-      "Build your departments and record structure on the canvas. Structure offers the same editing controls without dragging.",
-      "Select an item to inspect its fields and relationships. Design changes are saved to your draft, not published immediately.",
-      "Use Triggers to describe what should happen when a record changes. Test uses temporary inputs, not operational records.",
-      "Review & Publish explains the changes before you confirm them. History lets you inspect saved versions and compare designs.",
+      "Build: arrange departments and modules on the canvas, or pick them in Structure. With nothing selected, the Summary shows what needs attention; select an item to change it in Properties.",
+      "Triggers: the list shows each trigger On or Off. Open one to set When it runs, If it checks something, and Then what it does, then choose Save triggers.",
+      "Test: fill in the Setup and run it to see the Result. A result shows only while it matches the current setup.",
+      "History: versions are grouped by day, with automatic saves folded. Compare puts the older version before the newer one, and Restore saves your draft as a checkpoint first.",
     ],
   },
   boards: {

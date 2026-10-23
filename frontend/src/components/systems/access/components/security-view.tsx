@@ -998,7 +998,7 @@ export function SecurityView({
         dismissible={!livePending}
       >
         <DialogContent
-          className="access-ui max-w-3xl"
+          className="access-ui slim-ui max-w-3xl"
           finalFocus={() => policyOpener.current}
         >
           {/* The header stays while the policy scrolls, like its footer:

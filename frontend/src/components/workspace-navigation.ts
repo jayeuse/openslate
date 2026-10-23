@@ -127,8 +127,9 @@ const sandboxLegacySections: Readonly<Record<string, string>> = {
  * Administrators see every entry. A member with `manage` on any department
  * or module sees only Groups, where they change the members of the groups
  * they manage. Everyone else, and an identity that is still loading or
- * failed to load, sees no Access entry. The backend enforces every rule;
- * this only hides controls that would be refused.
+ * failed to load, sees no Access entry. Only "all" (an administrator) also
+ * sees the Sandbox. The backend enforces every rule; this only hides
+ * controls that would be refused.
  */
 export type AccessNavigation = "all" | "groups" | "none";
 
@@ -151,6 +152,8 @@ function visibleItems(
   jobsAdmitted: boolean,
 ): readonly { id: string; label: string }[] {
   const items = definition.items;
+  // Every Sandbox API requires an administrator (`require_admin`).
+  if (definition.id === "sandbox") return access === "all" ? items : [];
   if (definition.id === "manage")
     return items.filter((item) => item.id !== "jobs" || jobsAdmitted);
   if (definition.id !== "access" || access === "all") return items;

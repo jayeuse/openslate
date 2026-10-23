@@ -6,6 +6,7 @@ import {
   useState,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
   searchSandboxStructure,
@@ -28,6 +29,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -70,6 +76,59 @@ function commandFailed(
   result: void | SandboxCommandResult<unknown>,
 ): result is { ok: false; error: string } {
   return result?.ok === false;
+}
+
+/**
+ * An icon button that says what it does on hover and focus (F13); its
+ * accessible name is the same words.
+ */
+function NamedIconButton({
+  label,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-11 shrink-0 xl:size-9"
+            aria-label={label}
+            disabled={disabled}
+            onClick={onClick}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * Scrolls a tree row into its panel without moving focus, so Structure shows
+ * the item selected elsewhere (the canvas, a link). A hidden panel (another
+ * workbench tab) has no layout, so the row waits until the panel shows.
+ */
+export function revealOutlineRow(
+  root: HTMLElement | null,
+  id: string | null,
+): void {
+  if (root === null || !id) return;
+  const row = root.querySelector<HTMLElement>(
+    `[data-outline-id="${CSS.escape(id)}"]`,
+  );
+  if (row?.getClientRects().length) row.scrollIntoView({ block: "nearest" });
 }
 
 /** The tree key of an "Add module" or "Add field" item. */
@@ -467,6 +526,33 @@ export function SandboxInspectorOutline({
     );
   }
 
+  // Structure follows the selection (F8): an item selected elsewhere opens
+  // the branches above it here and scrolls into view. Focus stays where it
+  // is, and a branch the person closes again stays closed.
+  const followDepartmentId =
+    sandboxModule?.departmentId ?? selectedFieldModule?.departmentId ?? null;
+  const followModuleId = selectedFieldModule?.id ?? null;
+  useEffect(() => {
+    if (followDepartmentId)
+      setCollapsedDepartments((current) => {
+        if (!current.has(followDepartmentId)) return current;
+        const next = new Set(current);
+        next.delete(followDepartmentId);
+        return next;
+      });
+    if (followModuleId)
+      setCollapsedModules((current) => {
+        if (!current.has(followModuleId)) return current;
+        const next = new Set(current);
+        next.delete(followModuleId);
+        return next;
+      });
+    const frame = requestAnimationFrame(() =>
+      revealOutlineRow(outlineRef.current, selectedCellId),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [selectedCellId, followDepartmentId, followModuleId]);
+
   function jumpToSelection(): void {
     if (!selectedCellId) return;
     setStructureQuery("");
@@ -675,6 +761,7 @@ export function SandboxInspectorOutline({
             </ContextMenuTrigger>
             <ContextMenuContent
               data-sandbox-portal
+              className="slim-ui"
               anchor={contextMenuAnchor ?? undefined}
               aria-label={`Actions for ${kind} ${item.name}`}
               finalFocus={() =>
@@ -807,7 +894,10 @@ export function SandboxInspectorOutline({
   return visible ? (
     <div ref={outlineRef}>
       <Card data-testid="inspector-outline" className="border-0 p-0">
-        <div className="flex flex-col gap-3">
+        {/* From 1280px the workbench panel scrolls the tree; the title and
+            search stay pinned above it, so following a selection never
+            leaves the search half out of view (S25). */}
+        <div className="xl:bg-card flex flex-col gap-3 xl:sticky xl:top-0 xl:z-10 xl:-mx-3 xl:-mt-3 xl:px-3 xl:pt-3 xl:pb-2">
           <SectionTitle>Structure</SectionTitle>
           <div className="flex min-w-0 items-center gap-1">
             <div className="relative min-w-0 flex-1">
@@ -827,13 +917,8 @@ export function SandboxInspectorOutline({
             </div>
             {/* One toggle: it offers whichever of expand or collapse applies. */}
             {collapsedDepartments.size === 0 && collapsedModules.size === 0 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-11 shrink-0 xl:size-9"
-                aria-label="Collapse all"
-                title="Collapse all"
+              <NamedIconButton
+                label="Collapse all"
                 disabled={state.departments.length === 0}
                 onClick={() => {
                   setCollapsedDepartments(
@@ -845,15 +930,10 @@ export function SandboxInspectorOutline({
                 }}
               >
                 <ChevronsDownUp aria-hidden="true" />
-              </Button>
+              </NamedIconButton>
             ) : (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-11 shrink-0 xl:size-9"
-                aria-label="Expand all"
-                title="Expand all"
+              <NamedIconButton
+                label="Expand all"
                 disabled={state.departments.length === 0}
                 onClick={() => {
                   setCollapsedDepartments(new Set());
@@ -861,23 +941,29 @@ export function SandboxInspectorOutline({
                 }}
               >
                 <ChevronsUpDown aria-hidden="true" />
-              </Button>
+              </NamedIconButton>
             )}
-            <DisabledReason
-              reason={selectedCellId ? null : "Select an item first."}
-            >
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-11 shrink-0 xl:size-9"
-                aria-label="Jump to selection"
-                disabled={!selectedCellId}
+            {selectedCellId ? (
+              <NamedIconButton
+                label="Jump to selection"
                 onClick={jumpToSelection}
               >
                 <LocateFixed aria-hidden="true" />
-              </Button>
-            </DisabledReason>
+              </NamedIconButton>
+            ) : (
+              <DisabledReason reason="Select an item first.">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-11 shrink-0 xl:size-9"
+                  aria-label="Jump to selection"
+                  disabled
+                >
+                  <LocateFixed aria-hidden="true" />
+                </Button>
+              </DisabledReason>
+            )}
           </div>
         </div>
 

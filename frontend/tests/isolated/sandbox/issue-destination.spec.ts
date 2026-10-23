@@ -69,3 +69,21 @@ test("scenario, structure and trigger-target issues keep their sections", () => 
   expect(field.kind === "query" && field.params.get("section")).toBe("build");
   expect(field.kind === "query" && field.params.get("inspect")).toBeTruthy();
 });
+
+// The Triggers quick filter in a link is a one-time request; an issue link
+// never carries it, so it cannot hide the trigger it opens.
+test("an issue link drops the Triggers filter", () => {
+  const current = new URLSearchParams("section=triggers&status=off");
+  for (const [found, triggers] of [
+    [issue("trigger.field_missing", "urgent-alert"), new Set<string>()],
+    [
+      issue("design.reference_closed", "urgent-alert"),
+      new Set(["urgent-alert"]),
+    ],
+    [issue("module.name_missing", "orders"), new Set<string>()],
+  ] as const) {
+    const destination = sandboxIssueDestination(found, triggers, current);
+    if (destination.kind !== "query") throw new Error("Expected a query");
+    expect(destination.params.get("status"), found.code).toBeNull();
+  }
+});

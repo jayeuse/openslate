@@ -1,6 +1,16 @@
 import { canvasFieldId } from "../helpers/bridge";
 import type { SandboxValidationIssue } from "./validation-types";
 
+/**
+ * The page's parameters for an issue link, without the Triggers quick
+ * filter: a filter could hide the trigger the link opens.
+ */
+function linkParams(current: URLSearchParams): URLSearchParams {
+  const params = new URLSearchParams(current.toString());
+  params.delete("status");
+  return params;
+}
+
 /** Where the Sandbox screen opens a validation issue. */
 export type SandboxIssueDestination =
   | { kind: "section"; section: "Build" | "Test" }
@@ -19,13 +29,13 @@ export function sandboxIssueDestination(
   if (issue.code.startsWith("scenario."))
     return { kind: "section", section: "Test" };
   if (issue.code.startsWith("trigger.")) {
-    const params = new URLSearchParams(current.toString());
+    const params = linkParams(current);
     if (issue.targetId) params.set("rule", issue.targetId);
     params.set("section", "triggers");
     return { kind: "query", params };
   }
   if (!issue.targetId) return { kind: "section", section: "Build" };
-  const params = new URLSearchParams(current.toString());
+  const params = linkParams(current);
   if (triggerIds.has(issue.targetId)) {
     params.set("rule", issue.targetId);
     params.set("section", "triggers");

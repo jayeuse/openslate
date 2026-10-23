@@ -213,7 +213,7 @@ export function DiscardChangesDialog({
 }) {
   return (
     <AlertDialog open={open} onOpenChange={(next) => !next && onKeep()}>
-      <AlertDialogContent className="access-ui">
+      <AlertDialogContent className="access-ui slim-ui">
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>

@@ -49,16 +49,29 @@ function counted(count: number, [one, many]: readonly [string, string]) {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-/** "14 changes: 6 departments, 1 module, 6 fields, 1 relationship". */
+const SHARED_ACTION_WORDS: Partial<Record<Change["action"], string>> = {
+  create: "new",
+  close: "closed",
+  reopen: "reopened",
+};
+
+/**
+ * The review's plain summary (F11): a count per kind, such as "7 trigger
+ * changes" or "3 module changes · 7 trigger changes". When every change
+ * shares one action that says more than "changes" (a first publish), the
+ * rows drop their chips and the summary says it once: "2 new modules".
+ */
 export function publicationChangeSummary(changes: readonly Change[]): string {
-  const parts = KIND_ORDER.flatMap((kind) => {
-    const count = changes.filter((change) => change.kind === kind).length;
-    return count ? [counted(count, KIND_NOUNS[kind])] : [];
-  });
   const action = sharedAction(changes);
-  const total = counted(changes.length, ["change", "changes"]);
-  const scope = action ? `, all ${ACTION_LABELS[action].toLowerCase()}` : "";
-  return `${total}${scope}: ${parts.join(", ")}`;
+  const shared = action ? SHARED_ACTION_WORDS[action] : undefined;
+  return KIND_ORDER.flatMap((kind) => {
+    const count = changes.filter((change) => change.kind === kind).length;
+    if (!count) return [];
+    const [one, many] = KIND_NOUNS[kind];
+    return shared
+      ? [`${count} ${shared} ${count === 1 ? one : many}`]
+      : [`${count} ${one} ${count === 1 ? "change" : "changes"}`];
+  }).join(" · ");
 }
 
 /** The one action every change shares, such as a first publish. */
@@ -192,7 +205,8 @@ function ChangeGroup<T>({
           type="button"
           variant="ghost"
           size="sm"
-          className="justify-self-start"
+          // Aligned with the list text, not inset by the button padding.
+          className="-ml-3 justify-self-start"
           aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}
         >

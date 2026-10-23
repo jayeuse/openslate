@@ -463,7 +463,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
           if (!open && !pending) setAction(null);
         }}
       >
-        <AlertDialogContent className="access-ui">
+        <AlertDialogContent className="access-ui slim-ui">
           <AlertDialogHeader>
             <AlertDialogTitle>
               {action ? copies[action].title : "Confirm security action"}

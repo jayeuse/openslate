@@ -98,6 +98,10 @@ export const toast = {
   addPublic(options: NoticeOptions) {
     return addNotice(options, false);
   },
+  /** Ends a notice early, such as an Undo that no longer applies. */
+  close(id: string | null | undefined) {
+    if (id) manager.close(id);
+  },
 };
 function ToastList() {
   const { toasts } = Toast.useToastManager<NoticeData>();

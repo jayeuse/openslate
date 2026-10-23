@@ -846,18 +846,20 @@ html[data-density="spacious"]
   height: max(44px, 2.75rem);
 }
 
-/* Slim controls, in Access only (A8, docs/specs/access-ui-ux-pass.md).
-   `access-ui` sits on the Access page root and on the content of every
-   Access sheet and dialog, which render in portals outside #main-content.
-   :is() takes its strongest argument, so each rule beats the ID-scoped 44px
-   floor in the page and the layered utilities in a portal. Sizes apply to
-   every look from 1280px; below 1280px nothing here applies and the floor
-   stays. The well-and-rule skin is Slate only (no data-theme on <html>). */
+/* Slim controls, in Access and the Sandbox (A8, docs/specs/access-ui-ux-pass.md;
+   S1, docs/specs/sandbox-relayout.md). `slim-ui` sits on each page's control
+   areas and on the content of every sheet, dialog, popover and menu, which
+   render in portals outside #main-content; the Sandbox canvas never carries
+   it. `access-ui` keeps only the Access page layout below. :is() takes its
+   strongest argument, so each rule beats the ID-scoped 44px floor in the page
+   and the layered utilities in a portal. Sizes apply to every look from
+   1280px; below 1280px nothing here applies and the floor stays. The
+   well-and-rule skin is Slate only (no data-theme on <html>). */
 @media (min-width: 1280px) {
   /* The SearchSelect trigger and its search box have no data-slot; inside
-     Access they are the button and the input with the combobox role (the
-     search box renders in a popup that carries access-ui). */
-  :is(#main-content .access-ui, .access-ui)
+     slim-ui they are the button and the input with the combobox role (the
+     search box renders in a popup that carries slim-ui). */
+  :is(#main-content .slim-ui, .slim-ui)
     :is(
       [data-slot="input"],
       [data-slot="select"],
@@ -871,7 +873,7 @@ html[data-density="spacious"]
   }
   /* :where keeps this end padding weaker than the select rules below, so
      a select keeps room for its chevron. */
-  :is(#main-content .access-ui, .access-ui)
+  :is(#main-content .slim-ui, .slim-ui)
     :where(
       [data-slot="input"],
       [data-slot="input-group"],
@@ -880,7 +882,7 @@ html[data-density="spacious"]
     ) {
     padding-inline-end: 0.625rem;
   }
-  :is(#main-content .access-ui, .access-ui)
+  :is(#main-content .slim-ui, .slim-ui)
     :is(
       [data-slot="input"],
       [data-slot="select"],
@@ -889,27 +891,30 @@ html[data-density="spacious"]
     ):not([class*="pl-"]) {
     padding-inline-start: 0.625rem;
   }
-  :is(#main-content .access-ui, .access-ui) [data-slot="native-select"] {
+  :is(#main-content .slim-ui, .slim-ui) [data-slot="native-select"] {
     padding-inline-end: 2rem;
   }
-  :is(#main-content .access-ui, .access-ui) [data-slot="select"] {
+  :is(#main-content .slim-ui, .slim-ui) [data-slot="select"] {
     padding-inline-end: 2.25rem;
   }
-  :is(#main-content .access-ui, .access-ui) [data-slot="textarea"] {
+  :is(#main-content .slim-ui, .slim-ui) [data-slot="textarea"] {
     min-height: 4rem;
     padding-inline: 0.625rem;
   }
   /* A button with a disabled reason renders as the tooltip trigger, so it
-     keeps its Button data-variant but not its data-slot. */
-  :is(#main-content .access-ui, .access-ui)
+     keeps its Button data-variant but not its data-slot. A Button sized by
+     its content (h-auto: a list row or a disclosure header) is not a
+     control and keeps its own size. */
+  :is(#main-content .slim-ui, .slim-ui)
     :is([data-slot="button"], [data-slot="tooltip-trigger"][data-variant]):not(
-      [data-size="icon"]
+      [data-size="icon"],
+      [class~="h-auto"]
     ) {
     height: 2rem;
     min-height: 2rem;
     padding-inline: 0.75rem;
   }
-  :is(#main-content .access-ui, .access-ui)
+  :is(#main-content .slim-ui, .slim-ui)
     :is(
       [data-slot="button"],
       [data-slot="tooltip-trigger"][data-variant]
@@ -920,34 +925,40 @@ html[data-density="spacious"]
     min-height: 2rem;
   }
   /* The page number between the pager arrows. */
-  :is(#main-content .access-ui, .access-ui)
+  :is(#main-content .slim-ui, .slim-ui)
     nav
     [aria-current="page"][class~="size-11"] {
     width: 2rem;
     height: 2rem;
   }
-  :is(#main-content .access-ui, .access-ui) [data-slot="field-label"] {
+  :is(#main-content .slim-ui, .slim-ui) [data-slot="field-label"] {
     font-size: 0.75rem;
     line-height: 1rem;
     font-weight: 500;
   }
-  :is(#main-content .access-ui, .access-ui) [data-slot="toggle-group-item"] {
+  :is(#main-content .slim-ui, .slim-ui) [data-slot="toggle-group-item"] {
     height: 1.75rem;
     min-height: 1.75rem;
   }
-  :is(#main-content .access-ui, .access-ui) [data-slot="checkbox"] {
+  :is(#main-content .slim-ui, .slim-ui) [data-slot="checkbox"] {
     width: 0.875rem;
     height: 0.875rem;
   }
-  :is(#main-content .access-ui, .access-ui) [data-slot="switch"][data-size] {
+  :is(#main-content .slim-ui, .slim-ui) [data-slot="switch"][data-size] {
     width: 1.75rem;
     height: 1rem;
   }
-  :is(#main-content .access-ui, .access-ui) [data-slot="switch-thumb"] {
+  /* The 16px track keeps a 44px hit area in the page: its 14px padding box
+     plus 15px above and below. */
+  #main-content .slim-ui [data-slot="switch"][data-size]::after {
+    top: -15px;
+    bottom: -15px;
+  }
+  :is(#main-content .slim-ui, .slim-ui) [data-slot="switch-thumb"] {
     width: 0.75rem;
     height: 0.75rem;
   }
-  :is(#main-content .access-ui, .access-ui)
+  :is(#main-content .slim-ui, .slim-ui)
     [data-slot="switch"][data-checked]
     [data-slot="switch-thumb"] {
     translate: 0.75rem 0;
@@ -1137,8 +1148,8 @@ html[data-density="spacious"]
 :root:not([data-theme]) .access-ui {
   --secondary: var(--surface-hover);
 }
-.access-ui [data-access-well="surface"] {
-  --access-well: var(--surface);
+.slim-ui [data-slim-well="surface"] {
+  --slim-well: var(--surface);
 }
 /* Below 1280px sheets and dialogs render in portals outside #main-content,
    so the shell's 44px floor does not reach them; the Advanced toggle keeps
@@ -1152,7 +1163,7 @@ html[data-density="spacious"]
 /* Slate skin: a sunken well with a 1px control-edge bottom rule (the 3:1
    edge), the full edge on hover, and the action rule on focus. */
 :root:not([data-theme])
-  .access-ui
+  .slim-ui
   :is(
     [data-slot="input"],
     [data-slot="select"],
@@ -1162,9 +1173,9 @@ html[data-density="spacious"]
     button[role="combobox"],
     input[role="combobox"]
   ) {
-  /* A panel that is already sunken sets --access-well to the card surface
-     (data-access-well), so the well still reads; the rule stays the edge. */
-  background-color: var(--access-well, var(--surface-sunken));
+  /* A panel that is already sunken sets --slim-well to the card surface
+     (data-slim-well), so the well still reads; the rule stays the edge. */
+  background-color: var(--slim-well, var(--surface-sunken));
   border-color: transparent;
   border-bottom-color: var(--control-edge);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
@@ -1172,7 +1183,7 @@ html[data-density="spacious"]
 /* In Slate light, --control-edge is 2.98:1 against the well; --ink-muted keeps
    the field edge above 3:1. Later state rules (focus, error, disabled) win. */
 :root:not([data-theme]):not(.dark)
-  .access-ui
+  .slim-ui
   :is(
     [data-slot="input"],
     [data-slot="select"],
@@ -1185,7 +1196,7 @@ html[data-density="spacious"]
   border-bottom-color: var(--ink-muted);
 }
 :root:not([data-theme])
-  .access-ui
+  .slim-ui
   :is(
     [data-slot="input"],
     [data-slot="select"],
@@ -1199,7 +1210,7 @@ html[data-density="spacious"]
 }
 /* Slate light keeps the stronger bottom rule under the pointer too. */
 :root:not([data-theme]):not(.dark)
-  .access-ui
+  .slim-ui
   :is(
     [data-slot="input"],
     [data-slot="select"],
@@ -1212,7 +1223,7 @@ html[data-density="spacious"]
   border-bottom-color: var(--ink-muted);
 }
 :root:not([data-theme])
-  .access-ui
+  .slim-ui
   :is(
     [data-slot="input"],
     [data-slot="select"],
@@ -1221,13 +1232,13 @@ html[data-density="spacious"]
     button[role="combobox"],
     input[role="combobox"]
   ):focus-visible,
-:root:not([data-theme]) .access-ui [data-slot="input-group"]:focus-within {
+:root:not([data-theme]) .slim-ui [data-slot="input-group"]:focus-within {
   border-color: transparent;
   border-bottom-color: var(--action);
   box-shadow: inset 0 -1px 0 var(--action);
 }
 :root:not([data-theme])
-  .access-ui
+  .slim-ui
   :is(
     [data-slot="input"],
     [data-slot="select"],
@@ -1241,7 +1252,7 @@ html[data-density="spacious"]
   box-shadow: inset 0 -1px 0 var(--danger);
 }
 :root:not([data-theme])
-  .access-ui
+  .slim-ui
   :is(
     [data-slot="input"],
     [data-slot="select"],
@@ -1258,14 +1269,14 @@ html[data-density="spacious"]
 }
 /* A disabled select reads like a disabled input: no faded wrapper. */
 :root:not([data-theme])
-  .access-ui
+  .slim-ui
   [data-slot="native-select-wrapper"]:has(select:disabled) {
   opacity: 1;
 }
 /* Quiet buttons: an outline button is a sunken fill with no edge in Slate;
    the other looks keep their outline skins. */
 :root:not([data-theme])
-  .access-ui
+  .slim-ui
   :is(
     [data-slot="button"],
     [data-slot="tooltip-trigger"]
@@ -1274,7 +1285,7 @@ html[data-density="spacious"]
   background-color: var(--surface-sunken);
 }
 :root:not([data-theme])
-  .access-ui
+  .slim-ui
   [data-slot="button"][data-variant="outline"]:hover:not(:disabled) {
   background-color: var(--surface-hover);
 }

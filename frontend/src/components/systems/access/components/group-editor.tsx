@@ -1097,7 +1097,7 @@ export function GroupEditor({
         open={deleting}
         onOpenChange={(open) => !open && pending === null && setDeleting(false)}
       >
-        <AlertDialogContent className="access-ui">
+        <AlertDialogContent className="access-ui slim-ui">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {shown.name}?</AlertDialogTitle>
             <AlertDialogDescription>

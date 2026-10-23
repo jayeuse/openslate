@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 import {
-  TriggerFlow,
+  actionsText,
+  conditionsText,
   triggerOperatorOptions,
   weekdayOptions,
 } from "../../../src/components/systems/sandbox/components/trigger-flow";
@@ -13,10 +14,9 @@ import {
   documentSelectField,
   documentTextField,
 } from "../../helpers/sandbox-fixtures";
-import { staticMarkup } from "./static-markup";
 
-// Trigger copy uses plain words: the flow and summary name a select choice by
-// its label (the stored value stays the choice ID), and the schedule and
+// Trigger copy uses plain words: the If and Then step summaries of the rail
+// name a select choice by its label (the stored value stays the choice ID), and the schedule and
 // operator pickers use the same words as the summary ("Every Monday",
 // "is at least") while their stored values stay 1 to 7 and the ASCII symbols.
 
@@ -76,17 +76,15 @@ function statusTrigger(conditionValue: string): SandboxTrigger {
   };
 }
 
-function flowMarkup(recordTrigger: SandboxTrigger): string {
-  return staticMarkup(TriggerFlow, {
-    trigger: recordTrigger,
-    design,
-    selectedStep: "trigger",
-    onSelect: () => undefined,
-  });
+function stepSummaries(recordTrigger: SandboxTrigger): string {
+  return [
+    conditionsText(design, recordTrigger),
+    actionsText(design, recordTrigger),
+  ].join("\n");
 }
 
 test("trigger summaries name a select choice by its label", () => {
-  const markup = flowMarkup(statusTrigger("0460bb8e-open"));
+  const markup = stepSummaries(statusTrigger("0460bb8e-open"));
 
   expect(markup).toContain("Status is Open");
   expect(markup).toContain("Set Status to On hold");
@@ -95,7 +93,7 @@ test("trigger summaries name a select choice by its label", () => {
 });
 
 test("trigger summaries keep a select value that matches no choice", () => {
-  expect(flowMarkup(statusTrigger("retired-choice"))).toContain(
+  expect(stepSummaries(statusTrigger("retired-choice"))).toContain(
     "Status is retired-choice",
   );
 });

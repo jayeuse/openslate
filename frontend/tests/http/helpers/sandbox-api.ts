@@ -64,6 +64,8 @@ export type SandboxOptions = {
   }>;
   bindingFailure?: number;
   bindingRevision?: number;
+  /** The page the journey opens on; Build with nothing selected by default. */
+  path?: string;
 };
 
 export async function openAuthenticatedSandbox(
@@ -392,9 +394,9 @@ export async function openAuthenticatedSandbox(
       }),
     });
   });
-  await page.goto("/sandbox");
+  await page.goto(options.path ?? "/sandbox");
   await expect(
-    page.getByRole("heading", { name: "Sandbox", exact: true }),
+    page.getByRole("heading", { level: 1, name: "Build", exact: true }),
   ).toBeVisible();
   return {
     workspace,
@@ -675,4 +677,65 @@ export function fieldRowTrigger(row: Locator, fieldName: string) {
     name: new RegExp(`^${escaped}\\b`),
     expanded: false,
   });
+}
+
+/**
+ * A Sandbox dialog's frame (docs/specs/sandbox-relayout.md, Dialogs): the
+ * dialog is its only scroller, and its named close button and footer action
+ * stay in view at both ends of that scroll.
+ */
+export async function expectPinnedDialog(
+  dialog: Locator,
+  closeName: string,
+  action: Locator,
+) {
+  const close = dialog.getByRole("button", { name: closeName, exact: true });
+  await expect(close).toBeVisible();
+  const innerScrollers = await dialog.evaluate(
+    (root) =>
+      [...root.querySelectorAll<HTMLElement>("*")].filter(
+        (element) =>
+          /(auto|scroll)/.test(getComputedStyle(element).overflowY) &&
+          element.scrollHeight > element.clientHeight + 1,
+      ).length,
+  );
+  expect(innerScrollers).toBe(0);
+  for (const end of ["bottom", "top"] as const) {
+    await dialog.evaluate((root, to) => {
+      root.scrollTop = to === "top" ? 0 : root.scrollHeight;
+    }, end);
+    await expect(close).toBeInViewport({ ratio: 1 });
+    await expect(action).toBeInViewport({ ratio: 1 });
+  }
+}
+
+/**
+ * On a phone, a detail opened from a list lands below the sticky app bar:
+ * its heading starts at or under the bar's bottom edge (S25).
+ */
+export async function expectBelowAppBar(page: Page, target: Locator) {
+  await expect
+    .poll(async () => {
+      const [bar, box] = await Promise.all([
+        page.locator('header[data-skin="topbar"]').boundingBox(),
+        target.boundingBox(),
+      ]);
+      return box && bar ? Math.round(box.y - (bar.y + bar.height)) : null;
+    })
+    .toBeGreaterThanOrEqual(0);
+}
+
+/**
+ * A small control keeps a larger tap target (EXIT-9): a click `offset`
+ * pixels outside its box, to the right of it, still reaches it.
+ */
+export async function clickBesideBox(
+  page: Page,
+  control: Locator,
+  offset = 20,
+) {
+  await control.scrollIntoViewIfNeeded();
+  const box = await control.boundingBox();
+  if (!box) throw new Error("The control has no box");
+  await page.mouse.click(box.x + box.width + offset, box.y + box.height / 2);
 }

@@ -16,7 +16,6 @@ import {
   Field as FormField,
   FieldError,
   FieldGroup,
-  FieldLabel,
 } from "@/components/ui/field";
 import {
   NativeSelect,
@@ -34,6 +33,8 @@ import {
 import { dateValueInRange } from "../domain/date-values";
 import type { SandboxCommandResult } from "../state/commands";
 import { cn } from "@/lib/utils";
+import { fieldAdvancedSummary } from "../domain/build-summary";
+import { PropertyRow } from "./designer-properties";
 
 type FieldDraft = {
   name: string;
@@ -338,26 +339,24 @@ export function buildField(field: Field, draft: FieldDraft): Field | string {
 }
 
 /**
- * Controls in a field's Advanced block whose value differs from the default
- * (the Advanced Last Rule): description, default value, any limit, and a
- * closed state. The count shows while Advanced is closed.
+ * Which of a field's Advanced settings hold a value that is not the default:
+ * the description, the default value (or checked by default), and any limit.
+ * The closed Advanced header marks each one "(set)".
  */
-export function advancedFieldSetCount(field: Field): number {
+function advancedFieldSettingsSet(field: Field) {
   const draft = draftForField(field);
-  const limits = [
-    draft.maxLength,
-    draft.min,
-    draft.max,
-    draft.type === "Integer" ? "" : draft.step,
-    draft.earliest,
-    draft.latest,
-  ].some((value) => value !== "");
-  return [
-    draft.description.trim() !== "",
-    draft.defaultValue !== "" || draft.checked,
-    limits,
-    field.closed === true,
-  ].filter(Boolean).length;
+  return {
+    description: draft.description.trim() !== "",
+    defaultValue: draft.defaultValue !== "" || draft.checked,
+    limits: [
+      draft.maxLength,
+      draft.min,
+      draft.max,
+      draft.type === "Integer" ? "" : draft.step,
+      draft.earliest,
+      draft.latest,
+    ].some((value) => value !== ""),
+  };
 }
 
 export function FieldSettings({
@@ -446,8 +445,7 @@ export function FieldSettings({
   return (
     <FieldGroup data-field-dirty={dirty || undefined} className="gap-3 pt-1">
       <fieldset disabled={pending} className="contents">
-        <FormField>
-          <FieldLabel htmlFor={controlId("name")}>Name</FieldLabel>
+        <PropertyRow id={controlId("name")} label="Name">
           <Input
             id={controlId("name")}
             aria-label={`${prefix} name`}
@@ -457,38 +455,38 @@ export function FieldSettings({
             maxLength={80}
             onChange={(event) => update("name", event.target.value)}
           />
-        </FormField>
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
-          <FormField>
-            <FieldLabel htmlFor={controlId("type")}>Type</FieldLabel>
-            <NativeSelect
-              id={controlId("type")}
-              aria-label={`${prefix} field type`}
-              className="w-full [&_select]:min-h-10"
-              value={draft.type}
-              onChange={(event) =>
-                update("type", event.target.value as FieldTypeName)
-              }
-            >
-              {FIELD_TYPES.map((entry) => (
-                <NativeSelectOption key={entry.kind} value={entry.name}>
-                  {fieldTypeLabel(entry.name)}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </FormField>
-          <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-10">
+        </PropertyRow>
+        <PropertyRow id={controlId("type")} label="Type">
+          <NativeSelect
+            id={controlId("type")}
+            aria-label={`${prefix} field type`}
+            className="w-full [&_select]:min-h-10"
+            value={draft.type}
+            onChange={(event) =>
+              update("type", event.target.value as FieldTypeName)
+            }
+          >
+            {FIELD_TYPES.map((entry) => (
+              <NativeSelectOption key={entry.kind} value={entry.name}>
+                {fieldTypeLabel(entry.name)}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </PropertyRow>
+        <PropertyRow id={controlId("required")} label="Required" inline>
+          <span className="flex min-h-11 items-center xl:min-h-8">
+            {/* A 44px hit layer around the 16px box; the label beside it
+                is clickable too (EXIT-9, S25). */}
             <Checkbox
               id={controlId("required")}
+              className="after:-inset-3.5"
               checked={draft.required}
               onCheckedChange={(checked) => update("required", checked)}
             />
-            <FieldLabel htmlFor={controlId("required")}>Required</FieldLabel>
-          </FormField>
-        </div>
+          </span>
+        </PropertyRow>
         {draft.type === "Select" ? (
-          <FormField>
-            <FieldLabel htmlFor={controlId("options")}>Options</FieldLabel>
+          <PropertyRow id={controlId("options")} label="Options">
             <Input
               id={controlId("options")}
               aria-label={`${prefix} options`}
@@ -496,7 +494,7 @@ export function FieldSettings({
               placeholder="Open, Closed"
               onChange={(event) => updateOptions(event.target.value)}
             />
-          </FormField>
+          </PropertyRow>
         ) : null}
         {error ? (
           <FormField data-invalid>
@@ -573,12 +571,13 @@ export function FieldSettings({
         </div>
         <AdvancedSection
           storageKey="sandbox.field"
-          setCount={advancedFieldSetCount(field)}
+          summary={fieldAdvancedSummary(
+            draft.type,
+            { closed, canPurge: onPurge !== undefined },
+            advancedFieldSettingsSet(field),
+          )}
         >
-          <FormField>
-            <FieldLabel htmlFor={controlId("description")}>
-              Description
-            </FieldLabel>
+          <PropertyRow id={controlId("description")} label="Description">
             <Input
               id={controlId("description")}
               aria-label={`${prefix} description`}
@@ -586,28 +585,28 @@ export function FieldSettings({
               maxLength={1000}
               onChange={(event) => update("description", event.target.value)}
             />
-          </FormField>
+          </PropertyRow>
           {draft.type === "Checkbox" ? (
-            <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-0">
-              <Checkbox
-                id={controlId("default-checked")}
-                aria-label={`${prefix} checked by default`}
-                checked={draft.checked}
-                onCheckedChange={(checked) => update("checked", checked)}
-              />
-              <FieldLabel htmlFor={controlId("default-checked")}>
-                Checked by default
-              </FieldLabel>
-            </FormField>
+            <PropertyRow
+              id={controlId("default-checked")}
+              label="Checked by default"
+              inline
+            >
+              <span className="flex min-h-11 items-center xl:min-h-8">
+                <Checkbox
+                  id={controlId("default-checked")}
+                  aria-label={`${prefix} checked by default`}
+                  checked={draft.checked}
+                  onCheckedChange={(checked) => update("checked", checked)}
+                />
+              </span>
+            </PropertyRow>
           ) : draft.type === "User" ? (
             <p className="text-muted-foreground text-sm">
               No default: each record sets its user.
             </p>
           ) : draft.type === "Select" ? (
-            <FormField>
-              <FieldLabel htmlFor={controlId("default-value")}>
-                Default value
-              </FieldLabel>
+            <PropertyRow id={controlId("default-value")} label="Default value">
               <NativeSelect
                 id={controlId("default-value")}
                 aria-label={`${prefix} default value`}
@@ -624,12 +623,9 @@ export function FieldSettings({
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
-            </FormField>
+            </PropertyRow>
           ) : (
-            <FormField>
-              <FieldLabel htmlFor={controlId("default-value")}>
-                Default value
-              </FieldLabel>
+            <PropertyRow id={controlId("default-value")} label="Default value">
               <Input
                 id={controlId("default-value")}
                 aria-label={`${prefix} default value`}
@@ -645,13 +641,13 @@ export function FieldSettings({
                 value={draft.defaultValue}
                 onChange={(event) => update("defaultValue", event.target.value)}
               />
-            </FormField>
+            </PropertyRow>
           )}
           {["Text", "Long text", "Email", "URL"].includes(draft.type) ? (
-            <FormField>
-              <FieldLabel htmlFor={controlId("maximum-length")}>
-                Maximum length
-              </FieldLabel>
+            <PropertyRow
+              id={controlId("maximum-length")}
+              label="Maximum length"
+            >
               <Input
                 id={controlId("maximum-length")}
                 aria-label={`${prefix} maximum length`}
@@ -660,12 +656,11 @@ export function FieldSettings({
                 value={draft.maxLength}
                 onChange={(event) => update("maxLength", event.target.value)}
               />
-            </FormField>
+            </PropertyRow>
           ) : null}
           {draft.type === "Number" || draft.type === "Integer" ? (
-            <FieldGroup className="grid grid-cols-2 gap-2">
-              <FormField>
-                <FieldLabel htmlFor={controlId("minimum")}>Minimum</FieldLabel>
+            <>
+              <PropertyRow id={controlId("minimum")} label="Minimum">
                 <Input
                   id={controlId("minimum")}
                   aria-label={`${prefix} minimum`}
@@ -673,9 +668,8 @@ export function FieldSettings({
                   value={draft.min}
                   onChange={(event) => update("min", event.target.value)}
                 />
-              </FormField>
-              <FormField>
-                <FieldLabel htmlFor={controlId("maximum")}>Maximum</FieldLabel>
+              </PropertyRow>
+              <PropertyRow id={controlId("maximum")} label="Maximum">
                 <Input
                   id={controlId("maximum")}
                   aria-label={`${prefix} maximum`}
@@ -683,10 +677,9 @@ export function FieldSettings({
                   value={draft.max}
                   onChange={(event) => update("max", event.target.value)}
                 />
-              </FormField>
+              </PropertyRow>
               {draft.type === "Integer" ? null : (
-                <FormField>
-                  <FieldLabel htmlFor={controlId("step")}>Step</FieldLabel>
+                <PropertyRow id={controlId("step")} label="Step">
                   <Input
                     id={controlId("step")}
                     aria-label={`${prefix} step`}
@@ -694,16 +687,13 @@ export function FieldSettings({
                     value={draft.step}
                     onChange={(event) => update("step", event.target.value)}
                   />
-                </FormField>
+                </PropertyRow>
               )}
-            </FieldGroup>
+            </>
           ) : null}
           {draft.type === "Date" || draft.type === "Date/Time" ? (
-            <FieldGroup className="grid grid-cols-2 gap-2">
-              <FormField>
-                <FieldLabel htmlFor={controlId("earliest")}>
-                  Earliest
-                </FieldLabel>
+            <>
+              <PropertyRow id={controlId("earliest")} label="Earliest">
                 <Input
                   id={controlId("earliest")}
                   aria-label={`${prefix} earliest`}
@@ -711,9 +701,8 @@ export function FieldSettings({
                   value={draft.earliest}
                   onChange={(event) => update("earliest", event.target.value)}
                 />
-              </FormField>
-              <FormField>
-                <FieldLabel htmlFor={controlId("latest")}>Latest</FieldLabel>
+              </PropertyRow>
+              <PropertyRow id={controlId("latest")} label="Latest">
                 <Input
                   id={controlId("latest")}
                   aria-label={`${prefix} latest`}
@@ -721,8 +710,8 @@ export function FieldSettings({
                   value={draft.latest}
                   onChange={(event) => update("latest", event.target.value)}
                 />
-              </FormField>
-            </FieldGroup>
+              </PropertyRow>
+            </>
           ) : null}
           <div
             role="group"

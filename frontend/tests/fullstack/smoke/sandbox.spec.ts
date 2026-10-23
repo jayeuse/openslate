@@ -25,7 +25,7 @@ test("The Sandbox designer publishes a change @sandbox", async ({ page }) => {
   await page.getByRole("button", { name: "Review & Publish" }).click();
   const review = page.getByRole("dialog");
   await expect(
-    review.getByRole("heading", { name: "Review and publish" }),
+    review.getByRole("heading", { name: "Review & Publish" }),
   ).toBeVisible();
   // Publishing asks the administrator to confirm with their password.
   await review

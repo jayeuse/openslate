@@ -6,23 +6,46 @@ import {
   publicationFieldKey,
 } from "../../../src/components/systems/sandbox/components/publish-change-groups";
 
-const change = (kind: "department" | "module", action: "create" | "update") =>
-  ({ kind, action, sandboxId: `${kind}-${action}`, label: kind }) as const;
+const changes = (
+  count: number,
+  kind: "department" | "module" | "field" | "trigger",
+  action: "create" | "update" | "close" | "reopen",
+) =>
+  Array.from(
+    { length: count },
+    (_, index) =>
+      ({ kind, action, sandboxId: `${kind}-${index}`, label: kind }) as const,
+  );
 
-test("a review summary names each kind and, when shared, the one action", () => {
+// The review says what changes in plain words (F11): a count per kind, and
+// the shared action only when it says more than "changes".
+test("a review summary counts the changes of each kind", () => {
+  expect(publicationChangeSummary(changes(7, "trigger", "update"))).toBe(
+    "7 trigger changes",
+  );
   expect(
     publicationChangeSummary([
-      change("department", "create"),
-      change("module", "create"),
-      { ...change("module", "create"), sandboxId: "second" },
+      ...changes(3, "module", "update"),
+      ...changes(7, "trigger", "update"),
     ]),
-  ).toBe("3 changes, all new: 1 department, 2 modules");
+  ).toBe("3 module changes · 7 trigger changes");
   expect(
     publicationChangeSummary([
-      change("department", "create"),
-      change("module", "update"),
+      ...changes(1, "department", "create"),
+      ...changes(1, "module", "update"),
     ]),
-  ).toBe("2 changes: 1 department, 1 module");
+  ).toBe("1 department change · 1 module change");
+  // Every change shares one action, so the rows drop their chips and the
+  // summary says it once.
+  expect(
+    publicationChangeSummary([
+      ...changes(1, "department", "create"),
+      ...changes(2, "module", "create"),
+    ]),
+  ).toBe("1 new department · 2 new modules");
+  expect(publicationChangeSummary(changes(2, "field", "close"))).toBe(
+    "2 closed fields",
+  );
 });
 
 test("the review nests field changes under their module and puts unplaced changes under Other", () => {

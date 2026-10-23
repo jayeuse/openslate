@@ -16,12 +16,17 @@ export function reportDone(title: string) {
 }
 
 /** A done notice for an action that can be undone; it stays long enough to
- * reach Undo by keyboard (the Four Moments Rule, DESIGN.md). */
-export function reportUndoable(title: string, onUndo: () => void) {
-  if (title)
-    toast.add({
-      title,
-      type: "success",
-      action: { label: "Undo", onClick: onUndo },
-    });
+ * reach Undo by keyboard (the Four Moments Rule, DESIGN.md). Returns the
+ * notice id, so a caller can close it when the Undo no longer applies
+ * (`toast.close`), or null when no notice shows. */
+export function reportUndoable(
+  title: string,
+  onUndo: () => void,
+): string | null {
+  if (!title) return null;
+  return toast.add({
+    title,
+    type: "success",
+    action: { label: "Undo", onClick: onUndo },
+  });
 }

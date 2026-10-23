@@ -279,12 +279,12 @@ export function PersonGroups({
         <div
           role="group"
           aria-label="Add to group"
-          data-access-well="surface"
+          data-slim-well="surface"
           className="bg-muted space-y-3 rounded-lg p-3"
         >
           <SearchSelect
             id={`${id}-group`}
-            popupClassName="access-ui"
+            popupClassName="slim-ui"
             label="Group"
             value={choice}
             options={options}

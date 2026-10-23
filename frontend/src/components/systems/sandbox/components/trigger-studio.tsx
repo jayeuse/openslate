@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Collapsible,
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
 import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -15,15 +14,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { Switch } from "@/components/ui/switch";
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  MoreHorizontal,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { ChevronDown, ChevronLeft, MoreHorizontal, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -31,35 +22,26 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import {
-  TriggerFlow,
-  triggerEventLabel,
-  triggerOperatorOptions,
-  weekdayOptions,
-} from "./trigger-flow";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
-import type {
-  SandboxTrigger,
-  SandboxTriggerAction,
-  SandboxTriggerCondition,
-  SandboxTriggerEvent,
-  SandboxDocumentDesign,
-  SandboxDocumentField,
-  SandboxFieldReference,
-  SandboxFieldValue,
-  SandboxValueSource,
-} from "../domain/document";
+import type { SandboxTrigger, SandboxDocumentDesign } from "../domain/document";
 import type { SandboxTriggerRun } from "../state/api";
 import type { TriggerDraft } from "./use-trigger-draft";
-import { issue, type SandboxValidationIssue } from "../domain/validation-types";
-import { dateRangeFits, dateValueInRange } from "../domain/date-values";
-import { reportUndoable } from "@/lib/feedback";
+import {
+  defaultTrigger,
+  replaceAt,
+  triggerStepErrors,
+} from "../domain/trigger-rules";
+import {
+  filterTriggers,
+  TriggerList,
+  triggerDisplayName,
+  type TriggerStatusFilter,
+} from "./trigger-list";
+import { TriggerRail } from "./trigger-rail";
+
+// Triggers (docs/specs/sandbox-relayout.md S5): two panes, the list and the
+// detail of one trigger. The detail is Name, Status, and the When/If/Then
+// rail, then Recent activity, closed and last; the Save bar (October D1)
+// sits under it while changes exist.
 
 export type TriggerStudioProps = {
   design: SandboxDocumentDesign;
@@ -68,21 +50,20 @@ export type TriggerStudioProps = {
   runs: readonly SandboxTriggerRun[];
   activity: { loading: boolean; error: string };
   initialSelectedId?: string;
+  /** The list's first quick filter, from a link ("Show" on Build's triggers that are off). */
+  initialStatus?: TriggerStatusFilter;
   onRefreshActivity: () => Promise<void>;
 };
 
-/** Counts triggers added, changed, or deleted, matched by id. */
-export function unsavedTriggerChanges(
-  draft: readonly SandboxTrigger[],
-  saved: readonly SandboxTrigger[],
-): number {
-  const savedById = new Map(saved.map((item) => [item.id, item]));
-  const draftIds = new Set(draft.map((item) => item.id));
-  const changed = draft.filter((item) => {
-    const before = savedById.get(item.id);
-    return !before || JSON.stringify(before) !== JSON.stringify(item);
-  }).length;
-  return changed + saved.filter((item) => !draftIds.has(item.id)).length;
+/** The flow steps of a trigger, keyed as `triggerStepErrors` keys them. */
+function stepKeys(recordTrigger: SandboxTrigger): string[] {
+  return [
+    "trigger",
+    ...recordTrigger.conditionGroup.conditions.map(
+      (condition) => `condition:${condition.id}`,
+    ),
+    ...recordTrigger.actions.map((action) => `action:${action.id}`),
+  ];
 }
 
 export function triggerRunStatus(run: SandboxTriggerRun): string {
@@ -106,662 +87,13 @@ function runDetail(run: SandboxTriggerRun): string {
   return "The run finished without exposing record data.";
 }
 
-function newId(prefix: string): string {
-  return `${prefix}-${crypto.randomUUID()}`;
-}
-
-function fieldsFor(
-  design: SandboxDocumentDesign,
-  moduleId: string,
-): SandboxDocumentField[] {
-  return design.modules.find((item) => item.id === moduleId)?.fields ?? [];
-}
-
-function defaultLiteral(
-  field: SandboxDocumentField | undefined,
-): SandboxValueSource {
-  if (!field) return { kind: "literal", value: "" };
-  return {
-    kind: "literal",
-    value: field.config.kind === "user" ? null : field.config.defaultValue,
-  };
-}
-
-function firstOpenModule(design: SandboxDocumentDesign): string {
-  return (
-    design.modules.find((item) => !item.closed)?.id ??
-    design.modules[0]?.id ??
-    ""
-  );
-}
-
-function firstOpenField(
-  design: SandboxDocumentDesign,
-  moduleId: string,
-): SandboxDocumentField | undefined {
-  return fieldsFor(design, moduleId).find((field) => !field.closed);
-}
-
-function firstOpenNumberField(
-  design: SandboxDocumentDesign,
-  moduleId: string,
-): SandboxDocumentField | undefined {
-  return fieldsFor(design, moduleId).find(
-    (field) =>
-      !field.closed &&
-      (field.config.kind === "number" || field.config.kind === "integer"),
-  );
-}
-
-export function sandboxFieldsAreDirectionallyCompatible(
-  source: SandboxDocumentField,
-  target: SandboxDocumentField,
-): boolean {
-  if (!source.required && target.required) return false;
-  const sourceKind = source.config.kind;
-  const targetKind = target.config.kind;
-  const textMaximum = (field: SandboxDocumentField) => {
-    const config = field.config;
-    return config.kind === "text" ||
-      config.kind === "long-text" ||
-      config.kind === "email" ||
-      config.kind === "url"
-      ? config.maxLength
-      : undefined;
-  };
-  const sourceMaximum = textMaximum(source);
-  const targetMaximum = textMaximum(target);
-  const rangeFits = <T extends string | number>(
-    sourceMin: T | undefined,
-    sourceMax: T | undefined,
-    targetMin: T | undefined,
-    targetMax: T | undefined,
-  ) =>
-    (targetMin === undefined ||
-      (sourceMin !== undefined && sourceMin >= targetMin)) &&
-    (targetMax === undefined ||
-      (sourceMax !== undefined && sourceMax <= targetMax));
-  const maximumFits =
-    targetMaximum === undefined ||
-    (sourceMaximum !== undefined && sourceMaximum <= targetMaximum);
-  if (sourceKind === "select") {
-    if (targetKind !== "select") return false;
-    const targetOptions = target.config.options;
-    return source.config.options.every((option) =>
-      targetOptions.some((candidate) => candidate.label === option.label),
-    );
-  }
-  if (sourceKind === "number" || sourceKind === "integer") {
-    if (targetKind !== "number" && sourceKind !== targetKind) return false;
-    if (
-      !rangeFits(
-        source.config.min,
-        source.config.max,
-        target.config.min,
-        target.config.max,
-      )
-    )
-      return false;
-    if (target.config.step === undefined) return true;
-    const sourceStep =
-      source.config.step ?? (sourceKind === "integer" ? 1 : undefined);
-    if (sourceStep === undefined) return false;
-    const stepRatio = sourceStep / target.config.step;
-    const baseRatio =
-      ((source.config.min ?? 0) - (target.config.min ?? 0)) /
-      target.config.step;
-    return (
-      Math.abs(stepRatio - Math.round(stepRatio)) <= 1e-9 &&
-      Math.abs(baseRatio - Math.round(baseRatio)) <= 1e-9
-    );
-  }
-  if (sourceKind === "date" || sourceKind === "datetime")
-    return (
-      targetKind === sourceKind &&
-      dateRangeFits(
-        sourceKind,
-        source.config.earliest,
-        source.config.latest,
-        target.config.earliest,
-        target.config.latest,
-      )
-    );
-  if (sourceKind === targetKind)
-    return sourceMaximum === undefined && targetMaximum === undefined
-      ? true
-      : maximumFits;
-  if (
-    ["text", "long-text", "email", "url"].includes(sourceKind) &&
-    ["text", "long-text"].includes(targetKind)
-  )
-    return maximumFits;
-  return false;
-}
-
-function triggerOrigin(
-  recordTrigger: SandboxTrigger,
-  design: SandboxDocumentDesign,
-): string {
-  if (recordTrigger.trigger.kind !== "schedule")
-    return recordTrigger.trigger.moduleId;
-  return recordTrigger.trigger.moduleId ?? firstOpenModule(design);
-}
-
-/**
- * Trigger settings the server cannot publish. Each one is an issue on its
- * trigger, so the page's "need attention" list opens that trigger.
- */
-export function triggerPublicationBlockers(
-  triggers: readonly SandboxTrigger[],
-  design: SandboxDocumentDesign,
-): SandboxValidationIssue[] {
-  return triggers.flatMap((recordTrigger) => {
-    const moduleId = triggerOrigin(recordTrigger, design);
-    const messages: string[] = [];
-    if (
-      recordTrigger.trigger.kind === "schedule" &&
-      !recordTrigger.trigger.moduleId
-    )
-      messages.push(`${recordTrigger.name}: scheduled triggers need a module.`);
-    for (const condition of recordTrigger.conditionGroup.conditions)
-      if (
-        condition.field.moduleId !== moduleId ||
-        condition.field.relationshipId !== undefined ||
-        (condition.value.kind === "field-reference" &&
-          (condition.value.moduleId !== moduleId ||
-            condition.value.relationshipId !== undefined))
-      )
-        messages.push(
-          `${recordTrigger.name}: conditions must use fields from the same module.`,
-        );
-    for (const action of recordTrigger.actions) {
-      if (action.kind !== "set-field") {
-        messages.push(
-          `${recordTrigger.name}: ${action.kind} actions can't be published yet.`,
-        );
-        continue;
-      }
-      if (
-        action.target.moduleId !== moduleId ||
-        action.target.relationshipId !== undefined ||
-        (action.value.kind === "field-reference" &&
-          (action.value.moduleId !== moduleId ||
-            action.value.relationshipId !== undefined))
-      )
-        messages.push(
-          `${recordTrigger.name}: Set field must stay in the same module.`,
-        );
-    }
-    return [...new Set(messages)].map((message) =>
-      issue("trigger.publish_blocked", message, recordTrigger.id),
-    );
-  });
-}
-
-type ReferenceOption = {
-  value: string;
-  label: string;
-  reference: SandboxFieldReference;
-};
-
-export function fieldReferenceOptionValue(
-  reference: SandboxFieldReference,
-): string {
-  return [reference.relationshipId, reference.moduleId, reference.fieldId]
-    .filter((part): part is string => Boolean(part))
-    .join("|");
-}
-
-export function scheduleFrequencyChange(
-  trigger: Extract<SandboxTriggerEvent, { kind: "schedule" }>,
-  frequency: "daily" | "weekly",
-): Extract<SandboxTriggerEvent, { kind: "schedule" }> {
-  const { weekday, ...withoutWeekday } = trigger;
-  return frequency === "weekly"
-    ? { ...withoutWeekday, frequency, weekday: weekday ?? 1 }
-    : { ...withoutWeekday, frequency };
-}
-
-export function compatibleReferenceOptions(
-  design: SandboxDocumentDesign,
-  recordTrigger: SandboxTrigger,
-  target: SandboxDocumentField | undefined,
-): ReferenceOption[] {
-  if (!target) return [];
-  const origin = triggerOrigin(recordTrigger, design);
-  const sandboxModule = design.modules.find((item) => item.id === origin);
-  return (sandboxModule?.fields ?? [])
-    .filter(
-      (field) =>
-        !field.closed && sandboxFieldsAreDirectionallyCompatible(field, target),
-    )
-    .map((field) => ({
-      value: fieldReferenceOptionValue({ moduleId: origin, fieldId: field.id }),
-      label: `${sandboxModule?.name ?? "Module"} · ${field.name}`,
-      reference: { moduleId: origin, fieldId: field.id },
-    }));
-}
-
-function parseLiteral(
-  raw: string,
-  field: SandboxDocumentField | undefined,
-): SandboxFieldValue {
-  if (!field) return raw;
-  if (field.config.kind === "checkbox") return raw === "true";
-  if (field.config.kind === "number" || field.config.kind === "integer") {
-    if (!raw.trim()) return null;
-    const value = Number(raw);
-    return Number.isFinite(value) ? value : null;
-  }
-  return raw;
-}
-
-function displayLiteral(value: SandboxFieldValue): string {
-  return value === null ? "" : String(value);
-}
-
-export function validateFieldLiteral(
-  value: SandboxFieldValue,
-  field: SandboxDocumentField,
-): string | null {
-  if (value === null)
-    return field.required ? `${field.name} is required.` : null;
-  if (field.required && typeof value === "string" && !value.trim())
-    return `${field.name} is required.`;
-  const config = field.config;
-  if (
-    typeof value === "string" &&
-    (config.kind === "text" ||
-      config.kind === "long-text" ||
-      config.kind === "email" ||
-      config.kind === "url")
-  ) {
-    if (config.maxLength !== undefined && value.length > config.maxLength)
-      return `${field.name} exceeds its maximum length.`;
-    if (
-      config.kind === "email" &&
-      value &&
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
-    )
-      return `${field.name} must be a valid email.`;
-    if (config.kind === "url" && value) {
-      try {
-        const url = new URL(value);
-        if (!["http:", "https:"].includes(url.protocol)) throw new Error();
-      } catch {
-        return `${field.name} must be a valid HTTP or HTTPS URL.`;
-      }
-    }
-  }
-  if (
-    (config.kind === "number" || config.kind === "integer") &&
-    value !== null
-  ) {
-    if (
-      typeof value !== "number" ||
-      (config.kind === "integer" && !Number.isInteger(value))
-    )
-      return `${field.name} has an invalid number.`;
-    if (config.min !== undefined && value < config.min)
-      return `${field.name} is below its minimum.`;
-    if (config.max !== undefined && value > config.max)
-      return `${field.name} is above its maximum.`;
-    const step = config.step ?? (config.kind === "integer" ? 1 : undefined);
-    if (
-      step !== undefined &&
-      Math.abs(
-        (value - (config.min ?? 0)) / step -
-          Math.round((value - (config.min ?? 0)) / step),
-      ) > 1e-9
-    )
-      return `${field.name} does not match its step.`;
-  }
-  if (
-    (config.kind === "date" || config.kind === "datetime") &&
-    typeof value === "string" &&
-    value
-  ) {
-    const valid =
-      config.kind === "date"
-        ? /^\d{4}-\d{2}-\d{2}$/.test(value)
-        : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value);
-    if (
-      !valid ||
-      !dateValueInRange(config.kind, value, config.earliest, config.latest)
-    )
-      return `${field.name} is outside its allowed date range.`;
-  }
-  if (
-    config.kind === "select" &&
-    typeof value === "string" &&
-    !config.options.some((option) => option.id === value)
-  )
-    return `${field.name} must use a configured option.`;
-  return null;
-}
-
-/**
- * Fixed values that do not fit their field, by flow step ("trigger",
- * "condition:<id>", "action:<id>"), so the flow can mark a step before
- * Save refuses it.
- */
-export function triggerStepErrors(
-  recordTrigger: SandboxTrigger,
-  design: SandboxDocumentDesign,
-): Map<string, string> {
-  const errors = new Map<string, string>();
-  const check = (
-    step: string,
-    value: SandboxValueSource,
-    field: SandboxDocumentField | undefined,
-  ) => {
-    const error =
-      value.kind === "literal" && field
-        ? validateFieldLiteral(value.value, field)
-        : null;
-    if (error && !errors.has(step)) errors.set(step, error);
-  };
-  const trigger = recordTrigger.trigger;
-  if (trigger.kind === "threshold-crossed")
-    check(
-      "trigger",
-      trigger.value,
-      fieldsFor(design, trigger.moduleId).find(
-        (field) => field.id === trigger.fieldId,
-      ),
-    );
-  for (const condition of recordTrigger.conditionGroup.conditions)
-    check(
-      `condition:${condition.id}`,
-      condition.value,
-      fieldsFor(design, condition.field.moduleId).find(
-        (field) => field.id === condition.field.fieldId,
-      ),
-    );
-  for (const action of recordTrigger.actions) {
-    if (action.kind === "set-field")
-      check(
-        `action:${action.id}`,
-        action.value,
-        fieldsFor(design, action.target.moduleId).find(
-          (field) => field.id === action.target.fieldId,
-        ),
-      );
-    if (action.kind === "create-record")
-      for (const value of action.values)
-        check(
-          `action:${action.id}`,
-          value.value,
-          fieldsFor(design, action.moduleId).find(
-            (field) => field.id === value.fieldId,
-          ),
-        );
-  }
-  return errors;
-}
-
-/** The first fixed value that does not fit its field, as Save reports it. */
-export function triggerLiteralError(
-  recordTrigger: SandboxTrigger,
-  design: SandboxDocumentDesign,
-): string | null {
-  return triggerStepErrors(recordTrigger, design).values().next().value ?? null;
-}
-
-export function defaultTrigger(design: SandboxDocumentDesign): SandboxTrigger {
-  const moduleId = firstOpenModule(design);
-  return {
-    id: newId("trigger"),
-    name: "New trigger",
-    enabled: true,
-    priority: 0,
-    trigger: { kind: "record-created", moduleId },
-    conditionGroup: { operator: "all", conditions: [] },
-    actions: [
-      {
-        id: newId("action"),
-        kind: "set-field",
-        target: {
-          moduleId,
-          fieldId: firstOpenField(design, moduleId)?.id ?? "",
-        },
-        value: defaultLiteral(firstOpenField(design, moduleId)),
-      },
-    ],
-  };
-}
-
-export function addTriggerCondition(
-  recordTrigger: SandboxTrigger,
-  design: SandboxDocumentDesign,
-): SandboxTrigger {
-  if (recordTrigger.conditionGroup.conditions.length >= 20)
-    return recordTrigger;
-  const moduleId = triggerOrigin(recordTrigger, design);
-  const field = firstOpenField(design, moduleId);
-  if (!field) return recordTrigger;
-  const condition: SandboxTriggerCondition = {
-    id: newId("condition"),
-    field: { moduleId, fieldId: field.id },
-    operator: "=",
-    value: defaultLiteral(field),
-  };
-  return {
-    ...recordTrigger,
-    conditionGroup: {
-      ...recordTrigger.conditionGroup,
-      conditions: [...recordTrigger.conditionGroup.conditions, condition],
-    },
-  };
-}
-
-export function addTriggerAction(
-  recordTrigger: SandboxTrigger,
-  design: SandboxDocumentDesign,
-): SandboxTrigger {
-  if (recordTrigger.actions.length >= 20) return recordTrigger;
-  const moduleId = triggerOrigin(recordTrigger, design);
-  const field = firstOpenField(design, moduleId);
-  return {
-    ...recordTrigger,
-    actions: [
-      ...recordTrigger.actions,
-      {
-        id: newId("action"),
-        kind: "set-field",
-        target: { moduleId, fieldId: field?.id ?? "" },
-        value: defaultLiteral(field),
-      },
-    ],
-  };
-}
-
-function replaceAt<T>(items: readonly T[], index: number, next: T): T[] {
-  return items.map((item, itemIndex) => (itemIndex === index ? next : item));
-}
-
-function ValueEditor({
-  design,
-  trigger: recordTrigger,
-  target,
-  value,
-  onChange,
-}: {
-  design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
-  target?: SandboxDocumentField;
-  value: SandboxValueSource;
-  onChange: (value: SandboxValueSource) => void;
-}) {
-  const literalId = useId();
-  const referenceId = useId();
-  const references = compatibleReferenceOptions(design, recordTrigger, target);
-  // Another field as the value is rare: one quiet toggle beside the label,
-  // shown only when a compatible field exists.
-  const sourceToggle = references[0] ? (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      className="text-muted-foreground -my-1 px-2 max-xl:min-h-11"
-      onClick={() =>
-        onChange(
-          value.kind === "literal"
-            ? { kind: "field-reference", ...references[0]!.reference }
-            : defaultLiteral(target),
-        )
-      }
-    >
-      {value.kind === "literal" ? "Use a field" : "Use fixed value"}
-    </Button>
-  ) : null;
-  return (
-    <div className="min-w-0">
-      {value.kind === "literal" ? (
-        <Field>
-          <div className="flex items-center justify-between gap-2">
-            <FieldLabel htmlFor={literalId}>Value</FieldLabel>
-            {sourceToggle}
-          </div>
-          {target?.config.kind === "select" ? (
-            <NativeSelect
-              id={literalId}
-              value={typeof value.value === "string" ? value.value : ""}
-              onChange={(event) =>
-                onChange({
-                  kind: "literal",
-                  value: event.target.value || null,
-                })
-              }
-            >
-              <NativeSelectOption value="">Empty</NativeSelectOption>
-              {target.config.options.map((option) => (
-                <NativeSelectOption key={option.id} value={option.id}>
-                  {option.label}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          ) : target?.config.kind === "checkbox" ? (
-            <NativeSelect
-              id={literalId}
-              value={String(value.value)}
-              onChange={(event) =>
-                onChange({
-                  kind: "literal",
-                  value: event.target.value === "true",
-                })
-              }
-            >
-              <NativeSelectOption value="true">Checked</NativeSelectOption>
-              <NativeSelectOption value="false">Unchecked</NativeSelectOption>
-            </NativeSelect>
-          ) : target?.config.kind === "long-text" ? (
-            <Textarea
-              id={literalId}
-              value={displayLiteral(value.value)}
-              required={target.required}
-              maxLength={target.config.maxLength}
-              onChange={(event) =>
-                onChange({
-                  kind: "literal",
-                  value: parseLiteral(event.target.value, target),
-                })
-              }
-            />
-          ) : (
-            <Input
-              id={literalId}
-              type={
-                target?.config.kind === "number" ||
-                target?.config.kind === "integer"
-                  ? "number"
-                  : target?.config.kind === "email"
-                    ? "email"
-                    : target?.config.kind === "url"
-                      ? "url"
-                      : target?.config.kind === "date"
-                        ? "date"
-                        : target?.config.kind === "datetime"
-                          ? "datetime-local"
-                          : "text"
-              }
-              value={displayLiteral(value.value)}
-              required={target?.required}
-              min={
-                target?.config.kind === "number" ||
-                target?.config.kind === "integer"
-                  ? target.config.min
-                  : target?.config.kind === "date" ||
-                      target?.config.kind === "datetime"
-                    ? target.config.earliest
-                    : undefined
-              }
-              max={
-                target?.config.kind === "number" ||
-                target?.config.kind === "integer"
-                  ? target.config.max
-                  : target?.config.kind === "date" ||
-                      target?.config.kind === "datetime"
-                    ? target.config.latest
-                    : undefined
-              }
-              step={
-                target?.config.kind === "number" ||
-                target?.config.kind === "integer"
-                  ? target.config.step
-                  : undefined
-              }
-              maxLength={
-                target?.config.kind === "text" ||
-                target?.config.kind === "email" ||
-                target?.config.kind === "url"
-                  ? target.config.maxLength
-                  : undefined
-              }
-              onChange={(event) =>
-                onChange({
-                  kind: "literal",
-                  value: parseLiteral(event.target.value, target),
-                })
-              }
-            />
-          )}
-        </Field>
-      ) : (
-        <Field>
-          <div className="flex items-center justify-between gap-2">
-            <FieldLabel htmlFor={referenceId}>Another field</FieldLabel>
-            {sourceToggle}
-          </div>
-          <NativeSelect
-            id={referenceId}
-            value={fieldReferenceOptionValue(value)}
-            onChange={(event) => {
-              const option = references.find(
-                (item) => item.value === event.target.value,
-              );
-              if (option)
-                onChange({ kind: "field-reference", ...option.reference });
-            }}
-          >
-            {references.map((option) => (
-              <NativeSelectOption key={option.value} value={option.value}>
-                {option.label}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </Field>
-      )}
-    </div>
-  );
-}
-
 export function TriggerStudio({
   design,
   triggerDraft,
   runs,
   activity,
   initialSelectedId,
+  initialStatus = "all",
   onRefreshActivity,
 }: TriggerStudioProps) {
   const { draft, dirty, pending, error } = triggerDraft;
@@ -790,23 +122,24 @@ export function TriggerStudio({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const settingsRef = useRef<HTMLDivElement>(null);
-  const [selectedStep, setSelectedStep] = useState("trigger");
-  function selectStep(step: string) {
-    setSelectedStep(step);
-    const section = settingsRef.current?.querySelector<HTMLElement>(
-      `[data-rule-target="${CSS.escape(step)}"]`,
-    );
-    const control = section?.querySelector<HTMLElement>(
-      "input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)",
-    );
-    (control ?? section)?.focus({ preventScroll: true });
-    section?.scrollIntoView({ block: "nearest", behavior: "instant" });
-  }
+  const detailBodyRef = useRef<HTMLDivElement>(null);
+  // A link that asks for a filter opens on the first trigger it shows.
   const [selectedId, setSelectedId] = useState(
     initialSelectedId && draft.some((item) => item.id === initialSelectedId)
       ? initialSelectedId
-      : (draft[0]?.id ?? ""),
+      : (filterTriggers(draft, { query: "", status: initialStatus })[0]?.id ??
+          draft[0]?.id ??
+          ""),
+  );
+  // The list's quick filter. It never hides the trigger a link opens: such
+  // a link starts it, or sets it back, on All.
+  const hides = (status: TriggerStatusFilter, id: string | undefined) =>
+    Boolean(id) &&
+    !filterTriggers(draft, { query: "", status }).some(
+      (item) => item.id === id,
+    );
+  const [listStatus, setListStatus] = useState<TriggerStatusFilter>(() =>
+    hides(initialStatus, selectedId) ? "all" : initialStatus,
   );
   const requestedSelection = useRef(initialSelectedId);
   useEffect(() => {
@@ -819,22 +152,55 @@ export function TriggerStudio({
     if (
       initialSelectedId &&
       draft.some((item) => item.id === initialSelectedId)
-    )
+    ) {
       setSelectedId(initialSelectedId);
+      setListStatus((status) =>
+        hides(status, initialSelectedId) ? "all" : status,
+      );
+    }
   }, [draft, initialSelectedId]);
+  // Another trigger opens at its top, not at the last one's scroll (F10).
+  useEffect(() => {
+    detailBodyRef.current?.scrollTo({ top: 0 });
+  }, [selectedId]);
   const selected = draft.find((item) => item.id === selectedId);
   const updateDraft = triggerDraft.update;
+  // New steps keep a required-value note quiet until they are changed or
+  // left, or Save is tried (S25), keyed "<trigger id>/<step key>".
+  const [quietSteps, setQuietSteps] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const quiet = (keys: readonly string[]) =>
+    setQuietSteps((current) => new Set([...current, ...keys]));
+  function touchStep(target: EventTarget) {
+    const step = (target as HTMLElement).closest<HTMLElement>("[data-step-key]")
+      ?.dataset.stepKey;
+    const key = selected && step ? `${selected.id}/${step}` : "";
+    if (!quietSteps.has(key)) return;
+    setQuietSteps((current) => {
+      const next = new Set(current);
+      next.delete(key);
+      return next;
+    });
+  }
+  const shownStepErrors = selected
+    ? new Map(
+        [...triggerStepErrors(selected, design)].filter(
+          ([step]) => !quietSteps.has(`${selected.id}/${step}`),
+        ),
+      )
+    : new Map<string, string>();
   function discard() {
     const snapshot = { edits: triggerDraft.discard(), selectedId };
-    setSelectedStep("trigger");
+    // Ends at the next edit or save: newer work is never replaced (S25).
     if (snapshot.edits)
-      reportUndoable("Changes discarded", () => {
+      triggerDraft.offerUndo("Changes discarded", () => {
         if (snapshot.edits) triggerDraft.restore(snapshot.edits);
         setSelectedId(snapshot.selectedId);
-        setSelectedStep("trigger");
       });
   }
   async function save() {
+    setQuietSteps(new Set());
     await triggerDraft.save();
   }
   // A failed save brings its reason into view and to the screen reader.
@@ -842,7 +208,7 @@ export function TriggerStudio({
     if (!error) return;
     requestAnimationFrame(() => {
       const alert =
-        settingsRef.current?.querySelector<HTMLElement>("[role=alert]");
+        detailBodyRef.current?.querySelector<HTMLElement>("[role=alert]");
       alert?.scrollIntoView({ block: "nearest" });
       alert?.focus({ preventScroll: true });
     });
@@ -864,20 +230,29 @@ export function TriggerStudio({
   }, []);
   const listRef = useRef<HTMLElement>(null);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
-  /** On phones, opening a trigger shows its detail from the top. */
+  /**
+   * On phones, opening a trigger shows the page from its top: the title and
+   * the detail heading both whole, never cut by the app bar (S25).
+   */
   function openDetail() {
     setPhoneView("detail");
     if (!phone) return;
     requestAnimationFrame(() => {
-      studioRef.current?.scrollIntoView({ block: "start" });
+      studioRef.current
+        ?.closest("[data-sandbox-page]")
+        ?.scrollIntoView({ block: "start" });
       detailHeadingRef.current?.focus({ preventScroll: true });
     });
   }
-  /** Focuses the selected row, or New trigger when the list is empty. */
+  /**
+   * Focuses the selected row; when a filter hides it, the first visible row;
+   * New trigger only when no row shows.
+   */
   function focusCurrentRow() {
     requestAnimationFrame(() =>
       (
         listRef.current?.querySelector<HTMLElement>("[aria-current=true]") ??
+        listRef.current?.querySelector<HTMLElement>("[data-trigger-row]") ??
         listRef.current?.querySelector<HTMLElement>("button")
       )?.focus(),
     );
@@ -889,10 +264,10 @@ export function TriggerStudio({
     // The menu that had focus is gone with the trigger; land on its
     // neighbor in the list.
     setSelectedId((remaining[index] ?? remaining[index - 1])?.id ?? "");
-    setSelectedStep("trigger");
     setPhoneView("list");
     focusCurrentRow();
-    reportUndoable("Trigger deleted", () => {
+    // Ends at the next edit or save: a saved deletion stays deleted (S26).
+    triggerDraft.offerUndo("Trigger deleted", () => {
       updateDraft((current) =>
         current.some((item) => item.id === recordTrigger.id)
           ? current
@@ -903,18 +278,24 @@ export function TriggerStudio({
             ],
       );
       setSelectedId(recordTrigger.id);
-      setSelectedStep("trigger");
       focusCurrentRow();
     });
   }
   function update(next: SandboxTrigger) {
     const index = draft.findIndex((item) => item.id === next.id);
-    if (index >= 0) updateDraft(replaceAt(draft, index, next));
+    if (index < 0) return;
+    const before = new Set(stepKeys(draft[index]!));
+    quiet(
+      stepKeys(next)
+        .filter((step) => !before.has(step))
+        .map((step) => `${next.id}/${step}`),
+    );
+    updateDraft(replaceAt(draft, index, next));
   }
-  // Recent activity is occasional: last in the flow column, and on phones
-  // after the settings (the Advanced Last Rule).
+  // Recent activity is occasional: closed, last in the detail (the
+  // Advanced Last Rule).
   const recentActivity = (
-    <Collapsible className="border-border mt-6 border-t pt-4">
+    <Collapsible className="border-border border-t pt-1">
       <h3>
         <CollapsibleTrigger className="focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center justify-between text-sm font-medium focus-visible:outline-2">
           Recent activity
@@ -991,6 +372,7 @@ export function TriggerStudio({
   // Newer unsaved edits stay editable, so they can be saved or discarded
   // first (the prompt's Restore waits for that).
   const locked = triggerDraft.kept !== null && !dirty;
+  const changes = triggerDraft.changes;
   return (
     <section
       ref={studioRef}
@@ -1003,7 +385,7 @@ export function TriggerStudio({
         </p>
       ) : null}
       <fieldset disabled={locked} className="contents">
-        <div className="border-border min-w-0 shrink-0 overflow-clip rounded-xl border @min-[900px]/studio:h-[calc(100dvh-15rem)] xl:@min-[900px]/studio:h-auto xl:@min-[900px]/studio:min-h-0 xl:@min-[900px]/studio:flex-1 xl:@min-[900px]/studio:shrink">
+        <div className="min-w-0 shrink-0 @min-[900px]/studio:h-[calc(100dvh-15rem)] xl:@min-[900px]/studio:h-auto xl:@min-[900px]/studio:min-h-0 xl:@min-[900px]/studio:flex-1 xl:@min-[900px]/studio:shrink">
           <ResizablePanelGroup
             orientation="horizontal"
             disabled={!wide}
@@ -1011,141 +393,101 @@ export function TriggerStudio({
           >
             <ResizablePanel
               id="trigger-list"
-              defaultSize="18.2rem"
-              minSize={wide ? "18.2rem" : 0}
+              defaultSize="24rem"
+              minSize={wide ? "20rem" : 0}
               groupResizeBehavior="preserve-pixel-size"
               className={cn(
                 "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
                 phone && phoneView === "detail" && "hidden",
               )}
             >
-              <aside
-                ref={listRef}
-                aria-label="Trigger list"
-                className="bg-card border-border min-w-0 border-b p-4 @min-[900px]/studio:h-full @min-[900px]/studio:overflow-y-auto @min-[900px]/studio:border-b-0"
-              >
-                <div className="mb-4 flex items-center justify-between gap-2">
-                  <h2
-                    data-slot="section-title"
-                    id="trigger-studio-title"
-                    className="font-semibold"
-                  >
-                    Triggers
-                  </h2>
-                  <span className="text-muted-foreground text-xs">
-                    {draft.length}
-                  </span>
-                </div>
-                <Button
-                  variant="outline"
-                  className="mb-4 min-h-11 w-full"
-                  onClick={() => {
-                    const next = defaultTrigger(design);
-                    setSelectedId(next.id);
-                    setSelectedStep("trigger");
-                    updateDraft([...draft, next]);
-                    openDetail();
-                  }}
-                  disabled={pending || draft.length >= 500}
-                >
-                  <Plus aria-hidden="true" />
-                  New trigger
-                </Button>
-                <nav
-                  aria-label="Trigger list"
-                  className={cn(
-                    "grid gap-1 @min-[900px]/studio:max-h-none",
-                    !phone && "max-h-64 overflow-y-auto",
-                  )}
-                >
-                  {draft.map((recordTrigger) => (
-                    <Button
-                      key={recordTrigger.id}
-                      variant="ghost"
-                      aria-current={
-                        recordTrigger.id === selectedId ? "true" : undefined
-                      }
-                      className={cn(
-                        // Hover and selected tint from the look's ink, so both
-                        // read in every look, light and dark.
-                        "relative h-auto min-h-16 w-full min-w-0 flex-col items-start justify-center gap-1 px-3 py-3 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
-                        phone && "pr-9",
-                      )}
-                      onClick={() => {
-                        setSelectedId(recordTrigger.id);
-                        setSelectedStep("trigger");
-                        openDetail();
-                      }}
-                    >
-                      {phone ? (
-                        <ChevronRight
-                          aria-hidden="true"
-                          className="text-muted-foreground absolute top-1/2 right-3 -translate-y-1/2"
-                        />
-                      ) : null}
-                      <span className="w-full [overflow-wrap:anywhere] break-words">
-                        {recordTrigger.name || "Untitled trigger"}
-                      </span>
-                      <span className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-normal">
-                        {triggerEventLabel(recordTrigger)}
-                        {!recordTrigger.enabled ? " · Off" : ""}
-                        {/* Which triggers Save will write (the Build field-row
-                          pattern). */}
-                        {triggerDraft.unsaved.has(recordTrigger.id) ? (
-                          <Badge variant="warning">Unsaved</Badge>
-                        ) : null}
-                      </span>
-                    </Button>
-                  ))}
-                </nav>
-              </aside>
+              <TriggerList
+                listRef={listRef}
+                status={listStatus}
+                onStatusChange={setListStatus}
+                triggers={draft}
+                selectedId={selectedId}
+                unsaved={triggerDraft.unsaved}
+                phone={phone}
+                canCreate={!pending && draft.length < 500}
+                onOpen={(id) => {
+                  setSelectedId(id);
+                  openDetail();
+                }}
+                onCreate={() => {
+                  const next = defaultTrigger(design);
+                  quiet(stepKeys(next).map((step) => `${next.id}/${step}`));
+                  setSelectedId(next.id);
+                  updateDraft([...draft, next]);
+                  openDetail();
+                }}
+              />
             </ResizablePanel>
             {wide && (
-              <ResizableHandle withHandle aria-label="Resize trigger list" />
+              // The gutter between the two panes is the handle.
+              <ResizableHandle
+                withHandle
+                aria-label="Resize trigger list"
+                className="w-4 bg-transparent"
+              />
             )}
             <ResizablePanel
-              id="trigger-graph"
-              minSize={wide ? "18rem" : 0}
+              id="trigger-detail"
+              minSize={wide ? "28rem" : 0}
               className={cn(
                 "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
+                !phone && "mt-4 @min-[900px]/studio:mt-0",
                 phone && phoneView === "list" && "hidden",
               )}
             >
-              <div className="border-border min-w-0 border-b p-5 @min-[900px]/studio:h-full @min-[900px]/studio:overflow-y-auto @min-[900px]/studio:border-b-0">
-                {phone ? (
-                  <Button
-                    variant="ghost"
-                    className="mb-3 -ml-2 min-h-11"
-                    onClick={() => {
-                      setPhoneView("list");
-                      focusCurrentRow();
-                    }}
-                  >
-                    <ChevronLeft aria-hidden="true" />
-                    <span className="sr-only">Back to </span>
-                    Triggers
-                  </Button>
-                ) : null}
-                {selected ? (
-                  <>
-                    <div className="border-border mb-5 flex items-start justify-between gap-3 border-b pb-5">
-                      <div className="min-w-0">
-                        <h2
-                          ref={detailHeadingRef}
-                          tabIndex={-1}
-                          data-slot="section-title"
-                          className="text-lg font-semibold [overflow-wrap:anywhere] break-words outline-none"
-                        >
-                          {selected.name || "Untitled trigger"}
-                        </h2>
-                      </div>
+              <section
+                aria-label="Trigger details"
+                className="bg-card border-border @container/detail flex min-w-0 flex-col rounded-xl border @min-[900px]/studio:h-full @min-[900px]/studio:overflow-clip"
+              >
+                <div
+                  className={cn(
+                    "border-border flex min-h-14 flex-wrap items-center gap-x-2.5 gap-y-1 border-b px-5 py-2",
+                    // With no trigger open, the desktop detail has no head.
+                    !selected && !phone && "hidden",
+                  )}
+                >
+                  {phone ? (
+                    <Button
+                      variant="ghost"
+                      className="-ml-2 min-h-11"
+                      onClick={() => {
+                        setPhoneView("list");
+                        focusCurrentRow();
+                      }}
+                    >
+                      <ChevronLeft aria-hidden="true" />
+                      <span className="sr-only">Back to </span>
+                      Triggers
+                    </Button>
+                  ) : null}
+                  {selected ? (
+                    <>
+                      <h2
+                        ref={detailHeadingRef}
+                        tabIndex={-1}
+                        data-slot="section-title"
+                        title={triggerDisplayName(selected)}
+                        className={cn(
+                          "min-w-0 text-lg font-semibold outline-none",
+                          phone
+                            ? "order-last basis-full [overflow-wrap:anywhere] break-words"
+                            : "flex-1 truncate",
+                        )}
+                      >
+                        {triggerDisplayName(selected)}
+                      </h2>
                       <DropdownMenu>
                         <DropdownMenuTrigger
                           render={
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="size-11 shrink-0"
+                              className="ml-auto size-11 shrink-0"
                               aria-label="Trigger options"
                               disabled={pending}
                             />
@@ -1153,7 +495,7 @@ export function TriggerStudio({
                         >
                           <MoreHorizontal aria-hidden="true" />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
+                        <DropdownMenuContent align="end" className="slim-ui">
                           <DropdownMenuItem
                             variant="destructive"
                             disabled={pending}
@@ -1164,60 +506,12 @@ export function TriggerStudio({
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    </div>
-                    <TriggerFlow
-                      trigger={selected}
-                      design={design}
-                      stepErrors={triggerStepErrors(selected, design)}
-                      selectedStep={selectedStep}
-                      onSelect={selectStep}
-                      summaryOnly={phone}
-                    />
-                  </>
-                ) : (
-                  <p className="text-muted-foreground py-10 text-sm">
-                    Create a trigger to define its event, conditions, and
-                    actions.
-                  </p>
-                )}
-                {phone ? null : recentActivity}
-              </div>
-            </ResizablePanel>
-            {wide && (
-              <ResizableHandle
-                withHandle
-                aria-label="Resize trigger settings"
-              />
-            )}
-            <ResizablePanel
-              id="trigger-settings"
-              defaultSize="26rem"
-              minSize={wide ? "13rem" : 0}
-              groupResizeBehavior="preserve-pixel-size"
-              className={cn(
-                "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
-                phone && phoneView === "list" && "hidden",
-              )}
-            >
-              <section
-                aria-label="Trigger settings"
-                className="bg-card @container/settings flex min-w-0 flex-col @min-[900px]/studio:h-full @min-[900px]/studio:min-h-0"
-              >
-                <div className="border-border border-b px-5 py-4">
-                  <h2 data-slot="section-title" className="font-semibold">
-                    Trigger settings
-                  </h2>
+                    </>
+                  ) : null}
                 </div>
                 <div
-                  ref={settingsRef}
-                  className="min-w-0 flex-1 space-y-4 p-4 @min-[900px]/studio:overflow-y-auto [&_[data-slot=native-select-wrapper]]:w-full [&_input]:min-w-0 [&_select]:w-full"
-                  onFocusCapture={(event) => {
-                    const target = (
-                      event.target as HTMLElement
-                    ).closest<HTMLElement>("[data-rule-target]")?.dataset
-                      .ruleTarget;
-                    if (target) setSelectedStep(target);
-                  }}
+                  ref={detailBodyRef}
+                  className="grid min-h-0 min-w-0 flex-1 content-start gap-6 p-5 @min-[900px]/studio:overflow-y-auto"
                 >
                   {error && (
                     <Alert variant="destructive" role="alert" tabIndex={-1}>
@@ -1225,48 +519,66 @@ export function TriggerStudio({
                     </Alert>
                   )}
                   {selected ? (
-                    <TriggerEditor
-                      design={design}
-                      trigger={selected}
-                      pending={pending}
-                      locked={locked}
-                      onChange={update}
-                      selectedStep={phone ? "" : selectedStep}
-                    />
+                    // A change or a focus leaving a step shows its note.
+                    <div
+                      className="contents"
+                      onChange={(event) => touchStep(event.target)}
+                      onBlur={(event) => touchStep(event.target)}
+                    >
+                      <TriggerRail
+                        // Another trigger is a new detail: its switch and
+                        // fields appear in their state, never animate to it.
+                        key={selected.id}
+                        design={design}
+                        trigger={selected}
+                        stepErrors={shownStepErrors}
+                        pending={pending}
+                        locked={locked}
+                        onChange={update}
+                      />
+                    </div>
                   ) : (
                     <p className="text-muted-foreground text-sm">
-                      Select or create a trigger to edit its settings.
+                      Create a trigger to edit its settings.
                     </p>
                   )}
-                  {phone ? recentActivity : null}
+                  {recentActivity}
                 </div>
                 {dirty || pending ? (
-                  <div className="border-border bg-card sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-3 border-t p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+                  // The D1 Save bar: what Save writes, then Discard and Save.
+                  <div className="border-border sticky bottom-0 z-10 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-b-xl border-t bg-[var(--surface-raised)] px-5 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
+                    {changes > 0 ? (
+                      <p className="text-sm font-semibold">
+                        {changes} unsaved {changes === 1 ? "change" : "changes"}
+                      </p>
+                    ) : null}
                     {triggerDraft.baseChanged ? (
                       <p
                         role="status"
-                        className="text-warn-text mr-auto min-w-0 text-sm"
+                        className="text-warn-text order-first basis-full text-sm"
                       >
                         The saved triggers changed while you edited. Saving
                         replaces them with yours.
                       </p>
                     ) : null}
-                    <Button
-                      variant="outline"
-                      className="min-h-11"
-                      onClick={() => discard()}
-                      disabled={pending}
-                    >
-                      Discard changes
-                    </Button>
-                    <Button
-                      className="min-h-11"
-                      onClick={() => void save()}
-                      pending={pending}
-                      pendingLabel="Saving…"
-                    >
-                      Save triggers
-                    </Button>
+                    <div className="ml-auto flex items-center gap-1.5">
+                      <Button
+                        variant="ghost"
+                        className="min-h-11"
+                        onClick={() => discard()}
+                        disabled={pending}
+                      >
+                        Discard<span className="sr-only"> changes</span>
+                      </Button>
+                      <Button
+                        className="min-h-11"
+                        onClick={() => void save()}
+                        pending={pending}
+                        pendingLabel="Saving…"
+                      >
+                        Save triggers
+                      </Button>
+                    </div>
                   </div>
                 ) : null}
               </section>
@@ -1275,689 +587,5 @@ export function TriggerStudio({
         </div>
       </fieldset>
     </section>
-  );
-}
-
-function TriggerEditor({
-  design,
-  trigger: recordTrigger,
-  pending,
-  locked,
-  onChange,
-  selectedStep,
-}: {
-  design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
-  pending: boolean;
-  /** Read-only while kept edits wait; the fieldset does not reach Switch. */
-  locked: boolean;
-  onChange: (recordTrigger: SandboxTrigger) => void;
-  selectedStep: string;
-}) {
-  const nameId = useId();
-  const triggerId = useId();
-  const enabledId = useId();
-  const triggerModuleId = useId();
-  const scheduleModuleId = useId();
-  const scheduleFrequencyId = useId();
-  const scheduleTimeId = useId();
-  const scheduleWeekdayId = useId();
-  const triggerModule = triggerOrigin(recordTrigger, design);
-  const scheduleTrigger =
-    recordTrigger.trigger.kind === "schedule" ? recordTrigger.trigger : null;
-  const thresholdTrigger =
-    recordTrigger.trigger.kind === "threshold-crossed"
-      ? recordTrigger.trigger
-      : null;
-  const changeTrigger = (kind: SandboxTrigger["trigger"]["kind"]) => {
-    const moduleId = firstOpenModule(design);
-    const field =
-      kind === "threshold-crossed"
-        ? firstOpenNumberField(design, moduleId)
-        : firstOpenField(design, moduleId);
-    const trigger =
-      kind === "record-created"
-        ? { kind, moduleId }
-        : kind === "field-changed"
-          ? { kind, moduleId, fieldId: field?.id ?? "" }
-          : kind === "threshold-crossed"
-            ? {
-                kind,
-                moduleId,
-                fieldId: field?.id ?? "",
-                operator: ">=" as const,
-                value: defaultLiteral(field),
-              }
-            : {
-                kind: "schedule" as const,
-                moduleId,
-                frequency: "daily" as const,
-                time: "09:00",
-              };
-    onChange({ ...recordTrigger, trigger });
-  };
-  return (
-    <fieldset
-      className="grid min-w-0 gap-3 border-0 p-0"
-      disabled={pending}
-      aria-busy={pending}
-    >
-      <div className="grid min-w-0 items-end gap-4 @min-[350px]/settings:grid-cols-[minmax(0,1fr)_auto]">
-        <Field>
-          <FieldLabel htmlFor={nameId}>Trigger name</FieldLabel>
-          <Input
-            id={nameId}
-            value={recordTrigger.name}
-            onChange={(event) =>
-              onChange({ ...recordTrigger, name: event.target.value })
-            }
-          />
-        </Field>
-        <Field className="flex-row items-center justify-between gap-3 @min-[350px]/settings:flex-col @min-[350px]/settings:items-end">
-          <FieldLabel htmlFor={enabledId}>
-            <span className="sr-only">Trigger </span>On
-          </FieldLabel>
-          {/* As tall as the name input, so the switch sits on its center
-              line and "On" lines up with "Trigger name". */}
-          <div className="flex h-11 items-center xl:h-9">
-            <Switch
-              id={enabledId}
-              disabled={pending || locked}
-              checked={recordTrigger.enabled}
-              onCheckedChange={(checked) =>
-                onChange({ ...recordTrigger, enabled: checked })
-              }
-            />
-          </div>
-        </Field>
-      </div>
-      <section
-        data-rule-target="trigger"
-        tabIndex={-1}
-        className={`border-border grid grid-cols-1 gap-3 rounded-xl border p-4 @min-[450px]/settings:grid-cols-3 ${selectedStep === "trigger" ? "ring-1 ring-[var(--ink-muted)]" : ""}`}
-      >
-        <h3 data-slot="section-title" className="col-span-full font-semibold">
-          When
-        </h3>
-        <div className="contents">
-          <Field>
-            <FieldLabel htmlFor={triggerId}>Event</FieldLabel>
-            <NativeSelect
-              id={triggerId}
-              value={recordTrigger.trigger.kind}
-              onChange={(event) =>
-                changeTrigger(
-                  event.target.value as SandboxTrigger["trigger"]["kind"],
-                )
-              }
-            >
-              <NativeSelectOption value="record-created">
-                Item added
-              </NativeSelectOption>
-              <NativeSelectOption value="field-changed">
-                Field changed
-              </NativeSelectOption>
-              <NativeSelectOption value="threshold-crossed">
-                Threshold crossed
-              </NativeSelectOption>
-              <NativeSelectOption value="schedule">Schedule</NativeSelectOption>
-            </NativeSelect>
-          </Field>
-        </div>
-        {recordTrigger.trigger.kind !== "schedule" ? (
-          <Field>
-            <FieldLabel htmlFor={triggerModuleId}>Event module</FieldLabel>
-            <NativeSelect
-              id={triggerModuleId}
-              value={triggerModule}
-              onChange={(event) => {
-                const moduleId = event.target.value;
-                const field =
-                  recordTrigger.trigger.kind === "threshold-crossed"
-                    ? firstOpenNumberField(design, moduleId)
-                    : firstOpenField(design, moduleId);
-                const trigger =
-                  recordTrigger.trigger.kind === "record-created"
-                    ? { kind: "record-created" as const, moduleId }
-                    : recordTrigger.trigger.kind === "field-changed"
-                      ? {
-                          kind: "field-changed" as const,
-                          moduleId,
-                          fieldId: field?.id ?? "",
-                        }
-                      : {
-                          kind: "threshold-crossed" as const,
-                          moduleId,
-                          fieldId: field?.id ?? "",
-                          operator: thresholdTrigger?.operator ?? ">=",
-                          value:
-                            thresholdTrigger?.value ?? defaultLiteral(field),
-                        };
-                onChange({ ...recordTrigger, trigger });
-              }}
-            >
-              <ModuleOptions design={design} />
-            </NativeSelect>
-          </Field>
-        ) : scheduleTrigger ? (
-          <div className="col-span-full grid gap-3 @min-[350px]/settings:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor={scheduleModuleId}>Module</FieldLabel>
-              <NativeSelect
-                id={scheduleModuleId}
-                value={scheduleTrigger.moduleId ?? ""}
-                onChange={(event) =>
-                  onChange({
-                    ...recordTrigger,
-                    trigger: {
-                      ...scheduleTrigger,
-                      moduleId: event.target.value,
-                    },
-                  })
-                }
-              >
-                <NativeSelectOption value="">Choose module</NativeSelectOption>
-                <ModuleOptions design={design} />
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={scheduleFrequencyId}>Frequency</FieldLabel>
-              <NativeSelect
-                id={scheduleFrequencyId}
-                value={scheduleTrigger.frequency}
-                onChange={(event) =>
-                  onChange({
-                    ...recordTrigger,
-                    trigger: scheduleFrequencyChange(
-                      scheduleTrigger,
-                      event.target.value as "daily" | "weekly",
-                    ),
-                  })
-                }
-              >
-                <NativeSelectOption value="daily">Daily</NativeSelectOption>
-                <NativeSelectOption value="weekly">Weekly</NativeSelectOption>
-              </NativeSelect>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={scheduleTimeId}>Time</FieldLabel>
-              <Input
-                id={scheduleTimeId}
-                type="time"
-                value={scheduleTrigger.time}
-                onChange={(event) =>
-                  onChange({
-                    ...recordTrigger,
-                    trigger: { ...scheduleTrigger, time: event.target.value },
-                  })
-                }
-              />
-            </Field>
-            {scheduleTrigger.frequency === "weekly" ? (
-              <Field>
-                <FieldLabel htmlFor={scheduleWeekdayId}>Weekday</FieldLabel>
-                <NativeSelect
-                  id={scheduleWeekdayId}
-                  value={String(scheduleTrigger.weekday ?? 1)}
-                  onChange={(event) =>
-                    onChange({
-                      ...recordTrigger,
-                      trigger: {
-                        ...scheduleTrigger,
-                        weekday: Number(event.target.value),
-                      },
-                    })
-                  }
-                >
-                  {weekdayOptions.map((weekday) => (
-                    <NativeSelectOption
-                      key={weekday.value}
-                      value={weekday.value}
-                    >
-                      {weekday.label}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
-            ) : null}
-          </div>
-        ) : null}
-        {recordTrigger.trigger.kind === "field-changed" ||
-        recordTrigger.trigger.kind === "threshold-crossed" ? (
-          <TriggerFieldEditor
-            design={design}
-            trigger={recordTrigger}
-            onChange={onChange}
-          />
-        ) : null}
-      </section>
-      <ConditionEditor
-        design={design}
-        trigger={recordTrigger}
-        onChange={onChange}
-        selectedStep={selectedStep}
-      />
-      <ActionEditor
-        design={design}
-        trigger={recordTrigger}
-        onChange={onChange}
-        selectedStep={selectedStep}
-      />
-    </fieldset>
-  );
-}
-
-function TriggerFieldEditor({
-  design,
-  trigger: recordTrigger,
-  onChange,
-}: {
-  design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
-  onChange: (recordTrigger: SandboxTrigger) => void;
-}) {
-  const triggerFieldId = useId();
-  const thresholdOperatorId = useId();
-  if (
-    recordTrigger.trigger.kind !== "field-changed" &&
-    recordTrigger.trigger.kind !== "threshold-crossed"
-  )
-    return null;
-  const trigger = recordTrigger.trigger;
-  const triggerFields = fieldsFor(design, trigger.moduleId).filter(
-    (item) =>
-      !item.closed &&
-      (trigger.kind !== "threshold-crossed" ||
-        item.config.kind === "number" ||
-        item.config.kind === "integer"),
-  );
-  const field = triggerFields.find((item) => item.id === trigger.fieldId);
-  return (
-    <div
-      className={
-        trigger.kind === "field-changed"
-          ? "contents"
-          : "col-span-full grid gap-3 @min-[350px]/settings:grid-cols-2"
-      }
-    >
-      <Field>
-        <FieldLabel htmlFor={triggerFieldId}>Event field</FieldLabel>
-        <NativeSelect
-          id={triggerFieldId}
-          value={trigger.fieldId}
-          onChange={(event) => {
-            const nextField = triggerFields.find(
-              (item) => item.id === event.target.value,
-            );
-            onChange({
-              ...recordTrigger,
-              trigger:
-                trigger.kind === "field-changed"
-                  ? { ...trigger, fieldId: event.target.value }
-                  : {
-                      ...trigger,
-                      fieldId: event.target.value,
-                      value: defaultLiteral(nextField),
-                    },
-            });
-          }}
-        >
-          {triggerFields.map((item) => (
-            <NativeSelectOption key={item.id} value={item.id}>
-              {item.name}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-      </Field>
-      {trigger.kind === "threshold-crossed" ? (
-        <>
-          <Field>
-            <FieldLabel htmlFor={thresholdOperatorId}>
-              Threshold operator
-            </FieldLabel>
-            <NativeSelect
-              id={thresholdOperatorId}
-              value={trigger.operator}
-              onChange={(event) =>
-                onChange({
-                  ...recordTrigger,
-                  trigger: {
-                    ...trigger,
-                    operator: event.target
-                      .value as SandboxTriggerCondition["operator"],
-                  },
-                })
-              }
-            >
-              {triggerOperatorOptions.map((operator) => (
-                <NativeSelectOption key={operator.value} value={operator.value}>
-                  {operator.label}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </Field>
-          <ValueEditor
-            design={design}
-            trigger={recordTrigger}
-            target={field}
-            value={trigger.value}
-            onChange={(value) =>
-              onChange({ ...recordTrigger, trigger: { ...trigger, value } })
-            }
-          />
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-function ModuleOptions({ design }: { design: SandboxDocumentDesign }) {
-  return (
-    <>
-      {design.modules
-        .filter((item) => !item.closed)
-        .map((item) => (
-          <NativeSelectOption key={item.id} value={item.id}>
-            {item.name}
-          </NativeSelectOption>
-        ))}
-    </>
-  );
-}
-
-function ConditionEditor({
-  design,
-  trigger: recordTrigger,
-  onChange,
-  selectedStep,
-}: {
-  design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
-  onChange: (recordTrigger: SandboxTrigger) => void;
-  selectedStep: string;
-}) {
-  const moduleId = triggerOrigin(recordTrigger, design);
-  const update = (index: number, condition: SandboxTriggerCondition) =>
-    onChange({
-      ...recordTrigger,
-      conditionGroup: {
-        ...recordTrigger.conditionGroup,
-        conditions: replaceAt(
-          recordTrigger.conditionGroup.conditions,
-          index,
-          condition,
-        ),
-      },
-    });
-  return (
-    <fieldset
-      data-rule-target="conditions"
-      tabIndex={-1}
-      className="border-border grid min-w-0 gap-3 rounded-xl border p-4"
-    >
-      <legend className="px-1 font-semibold">If</legend>
-      {recordTrigger.conditionGroup.conditions.length === 0 ? (
-        <p className="text-muted-foreground text-sm">Always</p>
-      ) : null}
-      {recordTrigger.conditionGroup.conditions.length >= 2 ? (
-        <NativeSelect
-          aria-label="Condition group operator"
-          value={recordTrigger.conditionGroup.operator}
-          onChange={(event) =>
-            onChange({
-              ...recordTrigger,
-              conditionGroup: {
-                ...recordTrigger.conditionGroup,
-                operator: event.target.value as "all" | "any",
-              },
-            })
-          }
-        >
-          <NativeSelectOption value="all">
-            All conditions match
-          </NativeSelectOption>
-          <NativeSelectOption value="any">
-            Any condition matches
-          </NativeSelectOption>
-        </NativeSelect>
-      ) : null}
-      {recordTrigger.conditionGroup.conditions.map((condition, index) => {
-        const target = fieldsFor(design, condition.field.moduleId).find(
-          (field) => field.id === condition.field.fieldId,
-        );
-        return (
-          <div
-            key={condition.id}
-            data-rule-target={`condition:${condition.id}`}
-            tabIndex={-1}
-            className={`grid min-w-0 gap-3 rounded-lg p-2 ${selectedStep === `condition:${condition.id}` ? "bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] ring-1 ring-[var(--ink-muted)]" : "bg-muted/40"}`}
-          >
-            <div className="grid gap-2 @min-[350px]/settings:grid-cols-2">
-              <NativeSelect
-                aria-label={`Condition ${index + 1} field`}
-                value={
-                  condition.field.moduleId === moduleId
-                    ? condition.field.fieldId
-                    : (firstOpenField(design, moduleId)?.id ?? "")
-                }
-                onChange={(event) => {
-                  const field = fieldsFor(design, moduleId).find(
-                    (item) => item.id === event.target.value,
-                  );
-                  update(index, {
-                    ...condition,
-                    field: {
-                      moduleId,
-                      fieldId: event.target.value,
-                    },
-                    value: defaultLiteral(field),
-                  });
-                }}
-              >
-                {fieldsFor(design, moduleId)
-                  .filter((field) => !field.closed)
-                  .map((field) => (
-                    <NativeSelectOption key={field.id} value={field.id}>
-                      {field.name}
-                    </NativeSelectOption>
-                  ))}
-              </NativeSelect>
-              <NativeSelect
-                aria-label={`Condition ${index + 1} operator`}
-                value={condition.operator}
-                onChange={(event) =>
-                  update(index, {
-                    ...condition,
-                    operator: event.target
-                      .value as SandboxTriggerCondition["operator"],
-                  })
-                }
-              >
-                {triggerOperatorOptions.map((operator) => (
-                  <NativeSelectOption
-                    key={operator.value}
-                    value={operator.value}
-                  >
-                    {operator.label}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </div>
-            <ValueEditor
-              design={design}
-              trigger={recordTrigger}
-              target={
-                condition.field.moduleId === moduleId
-                  ? target
-                  : firstOpenField(design, moduleId)
-              }
-              value={condition.value}
-              onChange={(value) => update(index, { ...condition, value })}
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              // A small, quiet remove beside its condition, not a full-width
-              // button that outweighs the fields.
-              className="text-muted-foreground hover:text-danger-text justify-self-end font-normal"
-              onClick={() =>
-                onChange({
-                  ...recordTrigger,
-                  conditionGroup: {
-                    ...recordTrigger.conditionGroup,
-                    conditions: recordTrigger.conditionGroup.conditions.filter(
-                      (item) => item.id !== condition.id,
-                    ),
-                  },
-                })
-              }
-            >
-              Remove condition
-            </Button>
-          </div>
-        );
-      })}
-      <Button
-        variant="outline"
-        onClick={() => onChange(addTriggerCondition(recordTrigger, design))}
-        disabled={recordTrigger.conditionGroup.conditions.length >= 20}
-      >
-        Add condition
-      </Button>
-    </fieldset>
-  );
-}
-
-function ActionEditor({
-  design,
-  trigger: recordTrigger,
-  onChange,
-  selectedStep,
-}: {
-  design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
-  onChange: (recordTrigger: SandboxTrigger) => void;
-  selectedStep: string;
-}) {
-  const update = (index: number, action: SandboxTriggerAction) =>
-    onChange({
-      ...recordTrigger,
-      actions: replaceAt(recordTrigger.actions, index, action),
-    });
-  return (
-    <fieldset
-      data-rule-target="actions"
-      tabIndex={-1}
-      className="border-border grid min-w-0 gap-3 rounded-xl border p-4"
-    >
-      <legend className="px-1 font-semibold">Then</legend>
-      {recordTrigger.actions.map((action, index) => (
-        <div
-          key={action.id}
-          data-rule-target={`action:${action.id}`}
-          tabIndex={-1}
-          className={`grid min-w-0 gap-3 rounded-lg p-2 ${selectedStep === `action:${action.id}` ? "bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] ring-1 ring-[var(--ink-muted)]" : "bg-muted/40"}`}
-        >
-          <p className="text-sm font-medium">
-            {action.kind === "set-field"
-              ? "Set field"
-              : `${action.kind.charAt(0).toUpperCase()}${action.kind.slice(1)} · can't publish yet`}
-          </p>
-          {action.kind === "set-field" ? (
-            <SetFieldAction
-              design={design}
-              trigger={recordTrigger}
-              action={action}
-              onChange={(next) => update(index, next)}
-            />
-          ) : (
-            <Alert variant="destructive" role="alert">
-              This imported action is not supported for publishing. Remove it or
-              replace it with Set field.
-            </Alert>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground hover:text-danger-text justify-self-end font-normal"
-            onClick={() =>
-              onChange({
-                ...recordTrigger,
-                actions: recordTrigger.actions.filter(
-                  (item) => item.id !== action.id,
-                ),
-              })
-            }
-          >
-            Remove action
-          </Button>
-        </div>
-      ))}
-      <Button
-        variant="outline"
-        onClick={() => onChange(addTriggerAction(recordTrigger, design))}
-        disabled={recordTrigger.actions.length >= 20}
-      >
-        Add action
-      </Button>
-    </fieldset>
-  );
-}
-
-function SetFieldAction({
-  design,
-  trigger: recordTrigger,
-  action,
-  onChange,
-}: {
-  design: SandboxDocumentDesign;
-  trigger: SandboxTrigger;
-  action: Extract<SandboxTriggerAction, { kind: "set-field" }>;
-  onChange: (action: SandboxTriggerAction) => void;
-}) {
-  const target = fieldsFor(design, action.target.moduleId).find(
-    (field) => field.id === action.target.fieldId,
-  );
-  const moduleId = triggerOrigin(recordTrigger, design);
-  return (
-    <div className="grid gap-2">
-      <NativeSelect
-        aria-label="Set field target"
-        value={
-          action.target.moduleId === moduleId
-            ? action.target.fieldId
-            : (firstOpenField(design, moduleId)?.id ?? "")
-        }
-        onChange={(event) => {
-          const field = fieldsFor(design, moduleId).find(
-            (item) => item.id === event.target.value,
-          );
-          onChange({
-            ...action,
-            target: { moduleId, fieldId: event.target.value },
-            value: defaultLiteral(field),
-          });
-        }}
-      >
-        {fieldsFor(design, moduleId)
-          .filter((field) => !field.closed)
-          .map((field) => (
-            <NativeSelectOption key={field.id} value={field.id}>
-              {field.name}
-            </NativeSelectOption>
-          ))}
-      </NativeSelect>
-      <ValueEditor
-        design={design}
-        trigger={recordTrigger}
-        target={
-          action.target.moduleId === moduleId
-            ? target
-            : firstOpenField(design, moduleId)
-        }
-        value={action.value}
-        onChange={(value) => onChange({ ...action, value })}
-      />
-    </div>
   );
 }

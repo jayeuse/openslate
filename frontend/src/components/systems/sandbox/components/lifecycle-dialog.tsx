@@ -10,12 +10,16 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { LifecyclePurgeReview } from "@/components/systems/shared/lifecycle-purge-review";
+import {
+  SandboxDialogFooter,
+  SandboxDialogHeader,
+  sandboxDialogContentClass,
+} from "./sandbox-dialog-frame";
 import {
   structuralLifecycleErrorMessage,
   type LifecyclePurgeInput,
@@ -145,100 +149,103 @@ export function SandboxLifecycleDialog({
         if (!open) cancel();
       }}
     >
-      <DialogContent className="flex flex-col overflow-hidden p-0 sm:max-w-xl">
-        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
-          <DialogHeader>
-            <DialogTitle>{title}</DialogTitle>
+      <DialogContent className={`${sandboxDialogContentClass} sm:max-w-xl`}>
+        <SandboxDialogHeader
+          title={<DialogTitle>{title}</DialogTitle>}
+          description={
             <DialogDescription>
               {operation === "purge"
                 ? `Permanent deletion removes this live ${binding.kind} and its corresponding current design structure${binding.kind === "department" ? ", including draft modules and fields" : ""}.`
                 : operation === "close"
                   ? "Review the effect on the live workspace before closing this item."
-                  : "Reopen this item and the items included by its original close operation."}
+                  : "Reopens this and everything its close included."}
             </DialogDescription>
-          </DialogHeader>
-          {error ? (
-            <Alert role="alert" variant="destructive">
-              {error}
-            </Alert>
-          ) : null}
-          {busy === "review" ? <p role="status">Preparing review…</p> : null}
-          {preview &&
-          operation === "purge" &&
-          "last_successful_backup_at" in preview ? (
-            <LifecyclePurgeReview preview={preview} region={region.data} />
-          ) : null}
-          {preview && operation === "close" ? (
-            <div className="space-y-3 text-sm">
-              <p role="status">
-                This close affects {preview.impact.rows.length} items. Existing
+          }
+          closeLabel="Close review"
+          closeDisabled={busy === "command"}
+          onClose={cancel}
+        />
+        {error ? (
+          <Alert role="alert" variant="destructive">
+            {error}
+          </Alert>
+        ) : null}
+        {busy === "review" ? <p role="status">Preparing review…</p> : null}
+        {preview &&
+        operation === "purge" &&
+        "last_successful_backup_at" in preview ? (
+          <LifecyclePurgeReview preview={preview} region={region.data} />
+        ) : null}
+        {preview && operation === "close" ? (
+          <div className="space-y-3 text-sm">
+            <p role="status">
+              This close affects {preview.impact.rows.length} items. Existing
+              records are kept.
+            </p>
+            {binding.kind === "relationship" ? (
+              <p>
+                {recordLinkCount} record link
+                {recordLinkCount === 1 ? "" : "s"} will be closed. Existing
                 records are kept.
               </p>
-              {binding.kind === "relationship" ? (
-                <p>
-                  {recordLinkCount} record link
-                  {recordLinkCount === 1 ? "" : "s"} will be closed. Existing
-                  records are kept.
-                </p>
-              ) : null}
-              {binding.kind === "field" ? (
-                <p>
-                  Closing this field removes its linked fields from the current
-                  design.
-                </p>
-              ) : null}
-              {blocked ? (
-                <Alert role="alert" variant="warning">
-                  <p>Closing is blocked</p>
-                  <ul className="list-disc space-y-2 pl-5">
-                    {preview.impact.blockers.map((blocker) => (
-                      <li key={`${blocker.code}-${blocker.entity_id}`}>
-                        {blocker.detail}
-                      </li>
-                    ))}
-                  </ul>
-                </Alert>
-              ) : null}
-            </div>
-          ) : null}
-          {preview ? (
-            <>
-              <p className="text-sm">
-                Confirm the live name:{" "}
-                <strong className="break-words">
-                  {preview.confirmation_name}
-                </strong>
-                .
+            ) : null}
+            {binding.kind === "field" ? (
+              <p>
+                Closing this field removes its linked fields from the current
+                design.
               </p>
-              <Field>
-                <FieldLabel htmlFor={`${id}-name`}>
-                  Type the {binding.kind} name
-                </FieldLabel>
-                <Input
-                  id={`${id}-name`}
-                  value={confirmation}
-                  disabled={busy !== null || blocked}
-                  onChange={(event) => setConfirmation(event.target.value)}
-                  autoComplete="off"
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor={`${id}-password`}>
-                  Administrator password
-                </FieldLabel>
-                <Input
-                  id={`${id}-password`}
-                  type="password"
-                  value={password}
-                  disabled={busy !== null || blocked}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete="current-password"
-                />
-              </Field>
-            </>
-          ) : null}
-        </div>
-        <div className="border-border flex flex-wrap justify-end gap-2 border-t p-5">
+            ) : null}
+            {blocked ? (
+              <Alert role="alert" variant="warning">
+                <p>Closing is blocked</p>
+                <ul className="list-disc space-y-2 pl-5">
+                  {preview.impact.blockers.map((blocker) => (
+                    <li key={`${blocker.code}-${blocker.entity_id}`}>
+                      {blocker.detail}
+                    </li>
+                  ))}
+                </ul>
+              </Alert>
+            ) : null}
+          </div>
+        ) : null}
+        {preview ? (
+          <>
+            <p className="text-sm">
+              Confirm the live name:{" "}
+              <strong className="break-words">
+                {preview.confirmation_name}
+              </strong>
+              .
+            </p>
+            <Field>
+              <FieldLabel htmlFor={`${id}-name`}>
+                Type the {binding.kind} name
+              </FieldLabel>
+              <Input
+                id={`${id}-name`}
+                value={confirmation}
+                disabled={busy !== null || blocked}
+                onChange={(event) => setConfirmation(event.target.value)}
+                autoComplete="off"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${id}-password`}>
+                Administrator password
+              </FieldLabel>
+              <Input
+                id={`${id}-password`}
+                type="password"
+                value={password}
+                disabled={busy !== null || blocked}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+              />
+            </Field>
+          </>
+        ) : null}
+        <SandboxDialogFooter className="flex flex-wrap justify-end gap-2">
           <Button
             variant="outline"
             disabled={busy === "command"}
@@ -272,7 +279,7 @@ export function SandboxLifecycleDialog({
                 ? "Permanently delete"
                 : title}
           </Button>
-        </div>
+        </SandboxDialogFooter>
       </DialogContent>
     </Dialog>
   );

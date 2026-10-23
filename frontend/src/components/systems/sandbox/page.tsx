@@ -4,8 +4,8 @@ import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "next";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Redo2, Undo2 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   subscribeWorkspaceLifecycleSettings,
@@ -15,11 +15,15 @@ import { ApiContractError, ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { reportDone, reportError, reportUndoable } from "@/lib/feedback";
 import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import {
+  accessNavigationFor,
+  getWorkspaceNavigation,
+} from "@/components/workspace-navigation";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import type { SandboxCanvasLayout } from "@/lib/sandbox/model";
 import {
   counts,
@@ -37,7 +41,6 @@ import {
   type SandboxDocumentV4,
 } from "./domain/document";
 import type { SandboxOrganizationTemplate } from "./domain/templates";
-import { openingModuleId } from "./domain/opening-module";
 import { sandboxIssueDestination } from "./domain/issue-destination";
 import { summarizeTestRun, testTraceSteps } from "./domain/test-run-summary";
 import {
@@ -84,10 +87,10 @@ import {
   type SandboxDocumentSession,
 } from "./state/document-session";
 import { VersionsWorkspace } from "./components/versions-workspace";
-import {
-  TriggerStudio,
-  triggerPublicationBlockers,
-} from "./components/trigger-studio";
+import { DISCARD_CHECKPOINT } from "./domain/version-history";
+import { TriggerStudio } from "./components/trigger-studio";
+import type { TriggerStatusFilter } from "./components/trigger-list";
+import { triggerPublicationBlockers } from "./domain/trigger-rules";
 import { useTriggerDraft } from "./components/use-trigger-draft";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { currentOrganizationId } from "@/lib/organization-context";
@@ -96,6 +99,10 @@ import { DisabledReason } from "@/components/ui/disabled-reason";
 import { TestWorkspace } from "./components/test-workspace";
 import { ReviewPublishDialog } from "./components/review-publish-dialog";
 import { SandboxHeaderActions } from "./components/sandbox-header-actions";
+import {
+  SandboxHistoryButtons,
+  SandboxPageHeader,
+} from "./components/sandbox-page-header";
 import { SandboxLifecycleDialog } from "./components/lifecycle-dialog";
 import {
   sandboxBindingsOptions,
@@ -145,6 +152,13 @@ export function sectionFromSearch(
   return requestedRule ? "Triggers" : "Build";
 }
 
+/** The Triggers quick filter a link asks for ("status=off"), if any. */
+function triggerStatusFromSearch(
+  value: string | null,
+): TriggerStatusFilter | undefined {
+  return value === "on" || value === "off" ? value : undefined;
+}
+
 function sectionHref(
   section: SandboxSection,
   current: URLSearchParams,
@@ -174,7 +188,8 @@ function sandboxStillLoading(): SandboxCommandFailure {
   return { ok: false, error: "Sandbox is still loading." };
 }
 
-type PublishStatus = { label: string; publishable: boolean };
+/** `short` is the phone chip's word (S27); `label` stays its full text. */
+type PublishStatus = { label: string; short: string; publishable: boolean };
 
 // The header status names the draft's real state, and Review & Publish is
 // available only when publishing would change something.
@@ -183,21 +198,35 @@ function publishStatus(
   design: Design,
   conflict: boolean,
 ): PublishStatus {
-  if (conflict) return { label: "Unsaved changes", publishable: false };
+  if (conflict)
+    return { label: "Unsaved changes", short: "Unsaved", publishable: false };
   const published = session?.publishedHash !== undefined;
   if (
     !published &&
     design.departments.length === 0 &&
     design.modules.length === 0
   )
-    return { label: "Nothing to publish yet", publishable: false };
+    return {
+      label: "Nothing to publish yet",
+      short: "Nothing to publish",
+      publishable: false,
+    };
   if (
     session?.hasUnpublishedChanges === true ||
     (published && session.contentHash !== session.publishedHash)
   )
-    return { label: "Unpublished changes", publishable: true };
-  if (published) return { label: "Published", publishable: false };
-  return { label: "Not published yet", publishable: true };
+    return {
+      label: "Unpublished changes",
+      short: "Unpublished",
+      publishable: true,
+    };
+  if (published)
+    return { label: "Published", short: "Published", publishable: false };
+  return {
+    label: "Not published yet",
+    short: "Not published",
+    publishable: true,
+  };
 }
 
 function emptyDocument(): SandboxDocumentV4 {
@@ -217,7 +246,8 @@ const sandboxRegionClass =
   "flex flex-col *:flex *:flex-col *:gap-5 xl:min-h-0 xl:flex-1 xl:*:min-h-0 xl:*:flex-1";
 // On desktop, one scroll panel for a section whose own layout does not fill
 // the height. `relative` keeps screen-reader text inside it.
-const sandboxPanelClass = "relative xl:min-h-0 xl:flex-1 xl:overflow-y-auto";
+const sandboxPanelClass =
+  "slim-ui relative xl:min-h-0 xl:flex-1 xl:overflow-y-auto";
 
 /**
  * The Build canvas and its properties panel (phones and tablets: the pane
@@ -277,7 +307,55 @@ function SandboxSkeleton({ build }: { build: boolean }) {
   );
 }
 
+/**
+ * What an account that is not an administrator sees on a Sandbox link: one
+ * calm line and a way to its first workspace. Retry would only send the same
+ * refused requests again.
+ */
+function SandboxUnavailable() {
+  const identity = useQuery(authMeOptions());
+  const home = getWorkspaceNavigation(
+    "/sandbox",
+    new URLSearchParams(),
+    accessNavigationFor(identity.data),
+  ).find((group) => group.id !== "sandbox");
+  return (
+    <section data-sandbox-page className="flex flex-col gap-5">
+      <h1
+        data-slot="page-title"
+        className="text-xl font-semibold tracking-tight sm:text-2xl"
+      >
+        Sandbox
+      </h1>
+      <Alert className="flex flex-wrap items-center justify-between gap-3">
+        <p>Sandbox is not available to your account.</p>
+        {home ? (
+          <Link
+            href={home.href as Route}
+            className="text-action-text inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+          >
+            Go to {home.label}
+          </Link>
+        ) : null}
+      </Alert>
+    </section>
+  );
+}
+
+/**
+ * An account the identity already shows is not an administrator sees the
+ * notice and sends no Sandbox request to be refused (S25). An administrator,
+ * or an identity still loading or failed, opens the workspace (its reads
+ * wait for a loading identity), where a real 403 still shows the notice.
+ */
 export default function SandboxPage() {
+  const viewer = useQuery(authMeOptions());
+  if (viewer.isSuccess && accessNavigationFor(viewer.data) !== "all")
+    return <SandboxUnavailable />;
+  return <SandboxWorkspace />;
+}
+
+function SandboxWorkspace() {
   const search = useSearchParams();
   const router = useRouter();
   const [session, setSession] = useState<SandboxDocumentSession | null>(null);
@@ -317,6 +395,8 @@ export default function SandboxPage() {
   });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  // Every Sandbox API refuses anyone but an administrator (403).
+  const [loadDenied, setLoadDenied] = useState(false);
   const [pending, setPending] = useState(false);
   const [versionRecovery, setVersionRecovery] = useState(false);
   const historyAccess = useSandboxHistoryAccess();
@@ -421,9 +501,9 @@ export default function SandboxPage() {
     traceTarget ??
     search.get("module") ??
     search.get("department");
-  // With no link, open on the first module of the busiest department, the
-  // same department the canvas opens on.
-  const requestedSelection = linkedSelection ?? openingModuleId(design) ?? "";
+  // With no link, Build opens on the whole design with nothing selected, so
+  // Properties shows the summary (F8).
+  const requestedSelection = linkedSelection ?? "";
   const status = publishStatus(session, design, Boolean(conflict));
 
   const refreshVersions = useCallback(async () => {
@@ -561,6 +641,7 @@ export default function SandboxPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError("");
+    setLoadDenied(false);
     void queryClient.invalidateQueries({ queryKey: sandboxKeys.bindings });
     try {
       const [document, testPage] = await Promise.all([
@@ -572,19 +653,51 @@ export default function SandboxPage() {
       setTestRuns(testPage.items);
     } catch (error) {
       setLoadError(commandFailure(error).error);
+      setLoadDenied(error instanceof ApiError && error.status === 403);
     } finally {
       setLoading(false);
     }
   }, [queryClient]);
+  // The first reads wait for the identity, so an account it shows is not
+  // an administrator sends none (S25); a failed identity read still loads.
+  const viewer = useQuery(authMeOptions());
+  const identitySettled = !viewer.isPending;
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (identitySettled) void refresh();
+  }, [identitySettled, refresh]);
+  // An account refused here that becomes an administrator reads the Sandbox
+  // again; only the change itself does, so a refusal never loops.
+  const administrator = accessNavigationFor(viewer.data) === "all";
+  const wasAdministrator = useRef(administrator);
   useEffect(() => {
-    if (section === "Triggers") void refreshTriggerActivity();
-  }, [refreshTriggerActivity, section]);
+    const promoted = administrator && !wasAdministrator.current;
+    wasAdministrator.current = administrator;
+    if (promoted && loadDenied) void refresh();
+  }, [administrator, loadDenied, refresh]);
+  useEffect(() => {
+    if (identitySettled && section === "Triggers")
+      void refreshTriggerActivity();
+  }, [identitySettled, refreshTriggerActivity, section]);
+  // Triggers reads a requested quick filter ("status=off") once, as it
+  // opens; the address then drops it, so the sidebar links that copy the
+  // page's parameters never bring it back. It waits for the draft, so the
+  // list has opened with it first.
+  const requestedStatus = search.get("status");
+  const opened = session !== null;
+  useEffect(() => {
+    if (section !== "Triggers" || requestedStatus === null || !opened) return;
+    const params = new URLSearchParams(search.toString());
+    params.delete("status");
+    router.replace(`/sandbox?${params.toString()}` as Route, { scroll: false });
+  }, [opened, requestedStatus, router, search, section]);
 
   const navigate = useCallback(
-    (target: string, replace = false, bypassPending = false) => {
+    (
+      target: string,
+      replace = false,
+      bypassPending = false,
+      adjust?: (params: URLSearchParams) => void,
+    ) => {
       const next = Object.values(SANDBOX_SECTIONS).includes(
         target as SandboxSection,
       )
@@ -604,7 +717,12 @@ export default function SandboxPage() {
         })
       )
         return;
-      const href = sectionHref(next, new URLSearchParams(search.toString()));
+      const params = new URLSearchParams(search.toString());
+      // The Triggers quick filter is a one-time request; only the move that
+      // asks for it carries it.
+      params.delete("status");
+      adjust?.(params);
+      const href = sectionHref(next, params);
       if (replace) router.replace(href as Route, { scroll: false });
       else router.push(href as Route, { scroll: false });
     },
@@ -1042,8 +1160,8 @@ export default function SandboxPage() {
       await createSandboxVersion({
         expectedRevision: session.revision,
         kind: "checkpoint",
-        label: "Before discard",
-        note: "Saved automatically before discarding draft changes.",
+        // History folds this checkpoint as an automatic save (S9).
+        ...DISCARD_CHECKPOINT,
       });
       await syncVersionMetadata();
       const refreshed = await loadSandboxDocument();
@@ -1174,9 +1292,10 @@ export default function SandboxPage() {
     }
   }, [conflict, persist]);
 
+  if (loadDenied && !session) return <SandboxUnavailable />;
   if (loadError && !session)
     return (
-      <section data-sandbox-page>
+      <section data-sandbox-page className="slim-ui">
         <Alert role="alert" variant="destructive">
           <p>{loadError}</p>
           <Button className="mt-3" onClick={() => void refresh()}>
@@ -1185,6 +1304,9 @@ export default function SandboxPage() {
         </Alert>
       </section>
     );
+  // Undo and Redo wait without a reason while something else is running.
+  const historyBusy =
+    loading || commandBusy || Boolean(conflict) || designerDraftDirty;
   const versionCapacity: VersionCapacityActions = {
     state:
       versionRecovery || historyAccess.denied || capacityRead.error
@@ -1212,6 +1334,46 @@ export default function SandboxPage() {
     onRetry: retryCapacity,
     onPrune: pruneVersions,
   };
+  // Why Review & Publish cannot open, when it cannot: the header button
+  // and the Build summary's Review row say the same thing.
+  const reviewReason =
+    loading || commandBusy || testPending || triggerDraft.pending
+      ? null
+      : triggerDraft.dirty
+        ? "Save trigger changes first."
+        : triggerDraft.kept
+          ? "Restore or discard trigger changes first."
+          : designerDraftDirty
+            ? "Save or cancel your edits first."
+            : !status.publishable
+              ? "Nothing to publish yet."
+              : null;
+  const reviewDisabled =
+    loading ||
+    commandBusy ||
+    testPending ||
+    !status.publishable ||
+    triggerDraft.dirty ||
+    triggerDraft.pending ||
+    triggerDraft.kept !== null ||
+    designerDraftDirty;
+  // What needs attention, as the header list and the Build Summary word it.
+  const attentionIssues = issues.map((issue) => ({
+    key: `${issue.code}:${issue.targetId ?? ""}:${issue.message}`,
+    message: issue.message,
+    verb: issueActionLabel(issue),
+    issue,
+  }));
+  const historyButtons =
+    section === "Build" ? (
+      <SandboxHistoryButtons
+        busy={historyBusy}
+        canUndo={Boolean(session?.history.past.length)}
+        canRedo={Boolean(session?.history.future.length)}
+        onUndo={() => void undo()}
+        onRedo={() => void redo()}
+      />
+    ) : null;
   return (
     <section
       data-sandbox-page
@@ -1222,7 +1384,7 @@ export default function SandboxPage() {
         <Alert
           role="alert"
           variant="destructive"
-          className="flex flex-wrap gap-2"
+          className="slim-ui flex flex-wrap gap-2"
         >
           <div className="space-y-1">
             <p>
@@ -1256,7 +1418,7 @@ export default function SandboxPage() {
           variant={
             bindingsQuery.error || lifecycleRecovery ? "destructive" : "warning"
           }
-          className="flex flex-wrap items-center gap-2"
+          className="slim-ui flex flex-wrap items-center gap-2"
         >
           <span>
             {lifecycleRecovery
@@ -1286,32 +1448,19 @@ export default function SandboxPage() {
           </Button>
         </Alert>
       ) : null}
-      <header className="xl:flex xl:flex-wrap xl:items-end xl:justify-between xl:gap-4">
-        <div className="flex flex-col gap-3 xl:contents">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-            <h1
-              key={publishCount}
-              data-slot="page-title"
-              data-signature={publishCount > 0 ? "play" : undefined}
-              className="text-xl font-semibold tracking-tight sm:text-2xl"
-            >
-              Sandbox
-            </h1>
-            {loading ? null : (
-              // One save-state chip: the publish state, then what is
-              // happening to the draft right now (the Four Moments Rule).
-              <Badge
-                data-sandbox-save-state
-                role="status"
-                variant={
-                  conflict
-                    ? "destructive"
-                    : triggerDraft.changes > 0
-                      ? "warning"
-                      : "outline"
-                }
-              >
-                {conflict
+      <SandboxPageHeader
+        section={section}
+        publishCount={publishCount}
+        chip={
+          loading
+            ? null
+            : {
+                variant: conflict
+                  ? "destructive"
+                  : triggerDraft.changes > 0
+                    ? "warning"
+                    : "outline",
+                text: conflict
                   ? "Not saved"
                   : `${status.label} · ${
                       saving
@@ -1321,109 +1470,56 @@ export default function SandboxPage() {
                               triggerDraft.changes === 1 ? "change" : "changes"
                             }`
                           : "Saved"
-                    }`}
-              </Badge>
-            )}
-          </div>
-          <div className="flex shrink-0 gap-2">
-            {section === "Build" ? (
-              <>
-                <Button
-                  variant="outline"
-                  aria-label="Undo"
-                  className="max-xl:size-11 max-xl:p-0"
-                  disabled={
-                    loading ||
-                    !session?.history.past.length ||
-                    commandBusy ||
-                    Boolean(conflict) ||
-                    designerDraftDirty
-                  }
-                  onClick={() => void undo()}
-                >
-                  <Undo2 data-icon="inline-start" />
-                  <span className="max-xl:sr-only">Undo</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  aria-label="Redo"
-                  className="max-xl:size-11 max-xl:p-0"
-                  disabled={
-                    loading ||
-                    !session?.history.future.length ||
-                    commandBusy ||
-                    Boolean(conflict) ||
-                    designerDraftDirty
-                  }
-                  onClick={() => void redo()}
-                >
-                  <Redo2 data-icon="inline-start" />
-                  <span className="max-xl:sr-only">Redo</span>
-                </Button>
-              </>
-            ) : null}
-            <DisabledReason
-              reason={
-                loading || commandBusy || testPending || triggerDraft.pending
-                  ? null
-                  : triggerDraft.dirty
-                    ? "Save trigger changes first."
-                    : triggerDraft.kept
-                      ? "Restore or discard trigger changes first."
-                      : designerDraftDirty
-                        ? "Save or cancel your edits first."
-                        : !status.publishable
-                          ? "Nothing to publish yet."
-                          : null
+                    }`,
+                short: conflict
+                  ? "Not saved"
+                  : `${status.short} · ${
+                      saving
+                        ? "Saving…"
+                        : triggerDraft.changes > 0
+                          ? `${triggerDraft.changes} unsaved`
+                          : "Saved"
+                    }`,
               }
-            >
-              <Button
-                disabled={
-                  loading ||
-                  commandBusy ||
-                  testPending ||
-                  !status.publishable ||
-                  triggerDraft.dirty ||
-                  triggerDraft.pending ||
-                  triggerDraft.kept !== null ||
-                  designerDraftDirty
-                }
-                onClick={() => setReviewOpen(true)}
-              >
-                Review &amp; Publish
-              </Button>
-            </DisabledReason>
-            <SandboxHeaderActions
-              versionsRefreshKey={versionsRefreshKey}
-              versionCapacity={versionCapacity}
-              pending={
-                loading ||
-                commandBusy ||
-                publicationPending ||
-                Boolean(conflict) ||
-                designerDraftDirty ||
-                testPending ||
-                triggerDraft.dirty ||
-                triggerDraft.pending ||
-                triggerDraft.kept !== null
-              }
-              templatesOpen={templatesOpen}
-              onTemplatesOpenChange={setTemplatesOpen}
-              checkpointOpen={checkpointOpen}
-              onCheckpointOpenChange={setCheckpointOpen}
-              canCheckpoint={
-                design.departments.length > 0 || design.modules.length > 0
-              }
-              canDiscard={status.publishable}
-              hasPublish={session?.publishedHash !== undefined}
-              onCreateCheckpoint={checkpoint}
-              onImport={importFile}
-              onApplyTemplate={applyTemplate}
-              onDiscard={discardDraftChanges}
-            />
-          </div>
-        </div>
-      </header>
+        }
+        attention={{ issues: attentionIssues, onOpen: selectIssue }}
+        history={historyButtons}
+        review={{
+          reason: reviewReason,
+          disabled: reviewDisabled,
+          open: () => setReviewOpen(true),
+        }}
+        menu={
+          <SandboxHeaderActions
+            versionsRefreshKey={versionsRefreshKey}
+            versionCapacity={versionCapacity}
+            pending={
+              loading ||
+              commandBusy ||
+              publicationPending ||
+              Boolean(conflict) ||
+              designerDraftDirty ||
+              testPending ||
+              triggerDraft.dirty ||
+              triggerDraft.pending ||
+              triggerDraft.kept !== null
+            }
+            templatesOpen={templatesOpen}
+            onTemplatesOpenChange={setTemplatesOpen}
+            checkpointOpen={checkpointOpen}
+            onCheckpointOpenChange={setCheckpointOpen}
+            canCheckpoint={
+              design.departments.length > 0 || design.modules.length > 0
+            }
+            canDiscard={status.publishable}
+            hasPublish={session?.publishedHash !== undefined}
+            onCreateCheckpoint={checkpoint}
+            onImport={importFile}
+            onApplyTemplate={applyTemplate}
+            onDiscard={discardDraftChanges}
+          />
+        }
+      />
       <LoadingRegion
         // Only the first load shows the skeleton; a refresh (after Publish,
         // Retry, or a restore) keeps the builder on screen.
@@ -1438,7 +1534,7 @@ export default function SandboxPage() {
         {triggerDraft.kept ? (
           // Edits kept from before a reload wait here until the person
           // chooses; nothing is applied on its own.
-          <Alert variant="warning" role="status">
+          <Alert variant="warning" role="status" className="slim-ui">
             <p className="font-medium">Restore unsaved trigger changes?</p>
             {triggerDraft.kept.baseChanged ? (
               <p className="mt-1">
@@ -1483,40 +1579,6 @@ export default function SandboxPage() {
             </div>
           </Alert>
         ) : null}
-        {issues.length ? (
-          <Alert variant="warning" role="status">
-            <p>
-              {issues.length === 1
-                ? "1 item needs attention."
-                : `${issues.length} items need attention.`}
-            </p>
-            {/* The fact as text, then a short button that opens it, as in
-                the review's blocker list. */}
-            <ul className="mt-2 grid gap-2">
-              {issues.slice(0, 3).map((issue, index) => (
-                <li
-                  key={`${issue.code}-${issue.targetId ?? ""}-${issue.message}`}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1"
-                >
-                  <span id={`sandbox-issue-${index}`}>{issue.message}</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-describedby={`sandbox-issue-${index}`}
-                    onClick={() => selectIssue(issue)}
-                  >
-                    {issueActionLabel(issue)}
-                  </Button>
-                </li>
-              ))}
-              {issues.length > 3 ? (
-                <li className="text-muted-foreground">
-                  {issues.length - 3} more after these.
-                </li>
-              ) : null}
-            </ul>
-          </Alert>
-        ) : null}
         {section === "Build" ? (
           <Designer
             key={`${requestedSelection}-${sandboxGeneration}`}
@@ -1548,7 +1610,23 @@ export default function SandboxPage() {
             bindings={bindingsReady ? bindingsQuery.data!.items : null}
             purgeEnabled={purgeEnabled}
             onLifecycle={requestLifecycle}
+            phoneHistory={historyButtons}
             onDraftStateChange={setDesignerDraftDirty}
+            attention={{
+              unpublished: status.publishable,
+              review: {
+                reason: reviewReason,
+                disabled: reviewDisabled,
+                open: () => setReviewOpen(true),
+              },
+              issues: attentionIssues,
+              onOpenIssue: selectIssue,
+              onShowOffTriggers: () =>
+                navigate("Triggers", false, false, (params) => {
+                  params.delete("rule");
+                  params.set("status", "off");
+                }),
+            }}
           />
         ) : null}
         {section === "Triggers" && session ? (
@@ -1559,6 +1637,7 @@ export default function SandboxPage() {
               runs={triggerRuns}
               activity={triggerActivity}
               initialSelectedId={search.get("rule") ?? undefined}
+              initialStatus={triggerStatusFromSearch(search.get("status"))}
               onRefreshActivity={refreshTriggerActivity}
             />
           </div>
@@ -1578,6 +1657,7 @@ export default function SandboxPage() {
                   run,
                   ...current.filter((item) => item.id !== run.id),
                 ]);
+                return run;
               }}
               onClear={async () => {
                 await clearSandboxTests();

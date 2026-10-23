@@ -113,6 +113,30 @@ function triggerNote(references: number): string {
   return ` ${plural(references, "trigger step")} ${references === 1 ? "uses" : "use"} it and may stop working.`;
 }
 
+/**
+ * Whether deleting a field needs a review first: a trigger step or a
+ * relationship's linked field uses it (S26). Other fields delete at once
+ * with Undo.
+ */
+export function fieldDeletionNeedsReview(
+  design: Design,
+  fieldTargetId: string,
+): boolean {
+  const match = projectedField(design, fieldTargetId);
+  if (!match) return true;
+  return (
+    relationshipMappingCountForFields(
+      design.relationships,
+      new Set([mappingFieldReference(match.moduleId, match.field.id)]),
+    ) > 0 ||
+    affectedRuleReferences(
+      design,
+      new Set(),
+      new Set([canvasFieldId(match.moduleId, match.field.id)]),
+    ) > 0
+  );
+}
+
 export function deletionImpact(
   design: Design,
   target: SandboxDesignTarget | null,

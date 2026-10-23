@@ -68,8 +68,10 @@ export interface AdvancedSectionProps {
 
 /**
  * The one place for a panel's less common controls (the Advanced Last Rule,
- * DESIGN.md): last in its panel, closed by default, remembered per viewer,
- * and counting what is set while closed so nothing changes out of sight.
+ * DESIGN.md): last in its panel, closed by default, remembered per viewer.
+ * While closed, its header counts what is set, or names what it holds
+ * (`summary`, which marks a setting with a value "(set)"), so nothing
+ * changes out of sight.
  */
 export function AdvancedSection({
   storageKey,
@@ -102,14 +104,20 @@ export function AdvancedSection({
       }}
       className={cn("border-border border-t pt-2", className)}
     >
-      <CollapsibleTrigger className="group text-muted-foreground hover:text-foreground focus-visible:outline-ring flex min-h-9 w-full items-center gap-1.5 rounded-sm text-sm font-medium transition-colors duration-(--motion-fast) outline-none focus-visible:outline-2 focus-visible:outline-offset-2">
+      <CollapsibleTrigger className="group text-muted-foreground hover:text-foreground focus-visible:outline-ring flex min-h-9 w-full items-center gap-1.5 rounded-sm text-left text-sm font-medium transition-colors duration-(--motion-fast) outline-none focus-visible:outline-2 focus-visible:outline-offset-2">
         <ChevronRight
           aria-hidden="true"
           className="size-4 shrink-0 transition-transform duration-(--motion-fast) group-data-[panel-open]:rotate-90 motion-reduce:transition-none"
         />
         <span>Advanced</span>
         {!open && summary ? (
-          <span className="text-xs font-normal"> · {summary}</span>
+          <span
+            className="min-w-0 truncate text-xs font-normal"
+            title={summary}
+          >
+            {" "}
+            · {summary}
+          </span>
         ) : !open && setCount > 0 ? (
           <span className="text-xs font-normal"> · {setCount} set</span>
         ) : null}

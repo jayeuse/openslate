@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
 import {
+  fieldDeletionNeedsReview,
   mappingFieldReference,
   pruneRelationshipMappingsForFields,
   relationshipMappingCountForFields,
 } from "../../../src/components/systems/sandbox/helpers/designer-impacts";
+import { configuredSandboxDesign } from "../../helpers/sandbox-fixtures";
 import type { Relationship } from "../../../src/components/systems/sandbox/domain/model";
 
 // Closing or deleting a field removes every relationship field mapping that
@@ -64,5 +66,36 @@ for (const row of [
       { ...uses, fieldMappings: row.remaining[0] },
       { ...lists, fieldMappings: row.remaining[1] },
     ]);
+  });
+}
+
+// S26: a field deletes at once with Undo unless a trigger step or a linked
+// field uses it; then the review shows what the delete affects.
+for (const row of [
+  {
+    name: "a field nothing uses deletes at once",
+    field: "sandbox-field:sample-customers:sample-field-Email",
+    review: false,
+  },
+  {
+    name: "a field a trigger condition uses needs review",
+    field: "sandbox-field:sample-requests:sample-field-Priority",
+    review: true,
+  },
+  {
+    name: "a field a relationship links needs review",
+    field: "sandbox-field:sample-requests:sample-field-Title",
+    review: true,
+  },
+]) {
+  test(`field delete review: ${row.name}`, () => {
+    const design = structuredClone(configuredSandboxDesign);
+    design.relationships[0]!.fieldMappings = [
+      {
+        sourceFieldId: "sample-field-Title",
+        targetFieldId: "sample-field-Name",
+      },
+    ];
+    expect(fieldDeletionNeedsReview(design, row.field)).toBe(row.review);
   });
 }

@@ -711,7 +711,7 @@ test.describe("Access", () => {
         if (sandboxPublished) {
           await page.goto("/sandbox?section=designer");
           await expect(
-            page.getByRole("heading", { name: "Sandbox", exact: true }),
+            page.getByRole("heading", { level: 1, name: "Build", exact: true }),
           ).toBeVisible();
           await publishDraft(page, runFixture.admin.password);
         }
@@ -755,7 +755,7 @@ test.describe("Access", () => {
 
     await page.goto("/sandbox?section=designer");
     await expect(
-      page.getByRole("heading", { name: "Sandbox", exact: true }),
+      page.getByRole("heading", { level: 1, name: "Build", exact: true }),
     ).toBeVisible();
     journey.sandboxTouched = true;
     await addDepartment(page, managedDepartment);

@@ -700,16 +700,16 @@ Quiet and direct. A button is text first, with a 16px icon when it helps.
 - **Focus:** the border turns `--action` and a 2px `--focus` outline sits 1px outside.
 - **Labels:** FieldLabel is 14px weight 500 (`data-slot="field-label"`); each look restyles it per the type skin places.
 - **Looks:** Whiteboard draws inputs, selects, and text areas with a 2px marker edge. Triplicate keeps a 1px form box on `--surface`.
-- **Access:** inside `access-ui`, fields follow the slim controls below.
+- **Access and Sandbox:** inside `slim-ui`, fields follow the slim controls below.
 
-### Access slim controls
+### Slim controls
 
-Access tested a slimmer, quieter control set before any other page (owner, 2026-10-23). It applies only inside the `access-ui` class: on the Access page root and on the content of every Access sheet and dialog, because they render in portals. Another page adopts it by adding the class, after the owner approves the rollout.
+Access tested a slimmer, quieter control set before any other page (owner, 2026-10-23); the Sandbox adopted it next (S1, `docs/specs/sandbox-relayout.md`). It applies only inside the `slim-ui` class: on the Access page root and the Sandbox control areas, and on the content of every sheet, dialog, popover, and menu of those pages, because they render in portals. The canvas toolbar takes the slim sizes (S16); the canvas drawing itself (nodes, lines, labels, Key content, and minimap) never carries the class. `access-ui` keeps only the Access page layout. Another page adopts the controls by adding the class, after the owner approves the rollout.
 
 - **Sizes, every look, from 1280px:** fields, selects, search, and input groups are 32px tall with 10px sides; buttons are 32px with 12px sides, icon buttons 32×32; segmented items 28px; checkboxes 14px; switches 28×16; field labels 12px weight 500; sheet tabs 32px. Text stays 14px. The primary button differs by its fill, not its height. Below 1280px nothing changes and the 44px floor holds.
 - **Slate skin (no `data-theme`):** a field is a sunken well (`--surface-sunken`) with clear sides and top and a 1px bottom rule, small top corners and a square bottom. The rule is the field's 3:1 edge: `--control-edge` in dark, `--ink-muted` in light (where `--control-edge` reaches only 2.98:1 against the well). Hover shows the full edge and keeps the rule. Focus draws a 2px `--action` rule (the rule plus an inset line) and the standard focus outline. An error draws the rule in `--danger`, with the message under the field. Disabled fields drop the fill and dash the rule. Read-only values are plain text, never a disabled field. Outline buttons become quiet buttons: no border, the sunken fill, the hover fill on hover.
 - **Other looks:** Whiteboard, Triplicate, and Stockroom keep their own field and button skins at the slim sizes.
-- **On a sunken panel:** a field inside an inline panel on the sunken fill (for example Add to group) takes the surface as its well (`--access-well: var(--surface)`, set by a data attribute on the panel), so the well still steps away from its ground. The bottom rule stays the 3:1 edge.
+- **On a sunken panel:** a field inside an inline panel on the sunken fill (for example Add to group) takes the surface as its well (`--slim-well: var(--surface)`, set by a data attribute on the panel), so the well still steps away from its ground. The bottom rule stays the 3:1 edge.
 - **Advanced in a sheet:** the closed Advanced header names what is inside instead of a set count when the block holds actions, not settings: "Advanced · Disable, Delete", "Advanced · Delete group".
 - **Layout:** in a sheet, Details uses label-left rows: a 128px muted label column and the field on the right, about 40px per row, so the tab reads as facts until someone edits it. Dialogs and toolbars keep the label above. Phones stack the label above the field. Every label is a real `<label for>`.
 
@@ -838,6 +838,18 @@ An unread count is a number, at most "99+", and the control's accessible name ca
 ### Publish status
 
 The Sandbox header has one save-state chip (`role="status"`). It names the publish state ("Nothing to publish yet", "Not published yet", "Unpublished changes", or "Published"), then what is happening to the draft ("Saving…", "Saved", or "N unsaved trigger changes"). A save conflict turns the whole chip to "Not saved". Review & Publish is available only when publishing would change something, and its disabled state says why ("Nothing to publish yet.", "Save trigger changes first."). Trigger settings that cannot publish show in the page's "need attention" list before the review, and each blocker in the review has a button that opens it. The review groups changes by kind (departments, modules, fields, relationships, triggers), with a New, Changed, Closed, or Reopened chip on each row, field changes nested under their module, and a "Show all" control on groups longer than five rows.
+
+### Sandbox sections (relayout)
+
+The Sandbox uses the Access grammar around its canvas (`docs/specs/sandbox-relayout.md`). Each section title names the section; the save-state chip and, when something needs attention, one quiet warn-ink button ("2 need attention") sit under it. The button opens a popover of rows with the same actions; a polite live region announces count changes.
+
+- **Two panes.** Triggers and History are a list and a detail; Test is Setup and Result. Lists use 40px rows with the selected row in the tint only (The One Selection Rule), search, and quick filters with counts.
+- **Triggers.** Rows show an On/Off dot and word, the name, and the event. The detail is Name and Status (a switch whose word reads On or Off) as label-left rows, then one When / If / Then rail that is the editor. The explicit Save bar stays; Undo notices close on the next edit or save.
+- **History.** Rows group by day with the kind as an icon and a word (hidden when the label already starts with it). Automatic saves fold into one row per day and show during a search. Compare lives in the version detail: Older and Newer selects, ordered older to newer, preselected to the previous version; the result reads as tagged rows. Restore is a quiet button with its confirmation.
+- **Test.** Result shows a run only when it matches the current module, event, and watched field; a mismatch asks for a run, and changed inputs say so from the run itself. Setup fields show an error only after a run on this page fails.
+- **Build.** With nothing selected, Properties is a Summary of "Needs attention" rows or "All clear"; the footer holds the counts. Settings are label-left rows and Advanced names what it holds, marking set values "(set)". The canvas opens fitted; the minimap hides while everything is in view.
+- **Dialogs.** A pinned header and footer and a named close button; on phones the dialog is the only scroller. A disabled primary says why.
+- **Phones.** Two short header rows (title with Review & Publish and the menu; then the chip and attention button); Undo and Redo sit beside the pane tabs.
 
 ### Organization look picker
 
