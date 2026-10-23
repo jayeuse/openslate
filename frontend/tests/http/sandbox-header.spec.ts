@@ -174,7 +174,10 @@ test("a trigger that cannot publish shows before the review and opens from it", 
     "Urgent request alert: notification actions can't be published yet.";
   const issue = page.getByRole("listitem").filter({ hasText: blocker });
   // The button names where it goes; the blocker describes it.
-  const open = issue.getByRole("button", { name: "Open trigger" });
+  const open = issue.getByRole("button", {
+    name: "Open trigger",
+    exact: true,
+  });
   await expect(open).toHaveAccessibleDescription(blocker);
   await open.click();
   await expect(page).toHaveURL(/section=triggers/);

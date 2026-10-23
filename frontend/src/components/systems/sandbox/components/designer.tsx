@@ -22,7 +22,6 @@ import {
   ChevronRight,
   CircleHelp,
   Grid3X3,
-  Info,
   LayoutGrid,
   Link2,
   LocateFixed,
@@ -52,7 +51,6 @@ import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field as FormField,
-  FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
@@ -83,6 +81,7 @@ import {
   type SandboxDropKind,
 } from "@/components/sandbox/sandbox-canvas";
 import { SandboxInspector } from "@/components/sandbox/sandbox-inspector";
+import { revealOutlineRow } from "@/components/sandbox/sandbox-inspector-outline";
 import {
   canvasBoxes,
   canvasOverlaps,
@@ -104,13 +103,16 @@ import {
 } from "../helpers/designer-impacts";
 import { buildField, FieldRow, FieldSettings } from "./designer-field-settings";
 import { RelationshipList, type RelationshipRow } from "./relationship-list";
+import { DesignerSummary } from "./designer-summary";
+import { LifecycleActions, ModuleSettings } from "./designer-properties";
+import {
+  buildAttentionItems,
+  propertiesAdvancedSummary,
+  type BuildAttentionIssue,
+  type BuildAttentionItem,
+} from "../domain/build-summary";
 import { AdvancedSection } from "@/components/ui/advanced-section";
 import { DisabledReason } from "@/components/ui/disabled-reason";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { DepartmentMark } from "@/components/sandbox/department-mark";
 import type {
   SandboxCanvasLayout,
@@ -139,6 +141,7 @@ import {
   type RelationshipFieldMapping,
 } from "../domain/model";
 import { SANDBOX_LIMITS } from "../domain/validation";
+import type { SandboxValidationIssue } from "../domain/validation-types";
 import {
   SandboxCommandError,
   type SandboxCommandResult,
@@ -152,16 +155,6 @@ import {
   type DesignerPane,
   type SandboxViewPreferences,
 } from "../helpers/view-preferences";
-
-const RECORD_TITLE_FIELD_TYPES = new Set([
-  "Text",
-  "Long text",
-  "Email",
-  "URL",
-  "Integer",
-  "Number",
-  "Select",
-]);
 
 function ResponsiveDesignerTabPanel({
   wide,
@@ -353,6 +346,7 @@ export function Designer({
   purgeEnabled,
   onLifecycle,
   onDraftStateChange,
+  attention,
 }: {
   initialSelected: string;
   /** A link asked for one item, so narrow screens open on its Properties. */
@@ -384,6 +378,18 @@ export function Designer({
     operation: SandboxLifecycleOperation,
   ) => Promise<SandboxCommandResult<Design>>;
   onDraftStateChange: (dirty: boolean) => void;
+  /** What Properties lists as needing attention with nothing selected. */
+  attention: {
+    /** The draft has changes to publish. */
+    unpublished: boolean;
+    /** Review & Publish, as the header button offers it. */
+    review: { reason: string | null; disabled: boolean; open: () => void };
+    /** Publish blockers, worded with the action that opens each. */
+    issues: readonly BuildAttentionIssue[];
+    onOpenIssue: (issue: SandboxValidationIssue) => void;
+    /** Opens Triggers filtered to the triggers that are off. */
+    onShowOffTriggers: () => void;
+  };
 }) {
   const { keyboardShortcuts, disabled: preferencesDisabled } =
     useUserPreferences();
@@ -406,16 +412,15 @@ export function Designer({
     });
   }, []);
   const [wide, setWide] = useState(false);
-  // Wide screens show one workbench beside the canvas. A selection opens
-  // Properties; an empty design starts on Structure.
-  const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTab>(
-    initialSelected ? "Inspector" : "Structure",
-  );
+  // Wide screens show one workbench beside the canvas. It opens on
+  // Properties: the selected item, or with nothing selected, the summary.
+  const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTab>("Inspector");
   function showPane(next: DesignerPane): void {
     setPane(next);
     if (next !== "Canvas") setWorkbenchTab(next);
   }
   const workbenchPanelRef = useRef<PanelImperativeHandle>(null);
+  const structureRef = useRef<HTMLElement>(null);
   const panelGroupElementRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<SandboxCanvasApi | null>(null);
   const canvasFrameRef = useRef<HTMLDivElement>(null);
@@ -558,6 +563,19 @@ export function Designer({
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
+  // Structure follows the selection (F8). A canvas selection switches the
+  // workbench to Properties, so the tree, kept mounted out of sight, scrolls
+  // to the item when Structure shows again.
+  const structureShown = wide
+    ? workbenchTab === "Structure" && !viewPreferences.workbenchCollapsed
+    : pane === "Structure";
+  useEffect(() => {
+    if (!structureShown) return;
+    const frame = requestAnimationFrame(() =>
+      revealOutlineRow(structureRef.current, selectedRef.current),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [structureShown]);
   const [editor, setEditor] = useState("");
   const localDraftDirty =
     dirtyFields.size > 0 || outlineEditing || editor !== "";
@@ -727,12 +745,16 @@ export function Designer({
     return () => window.removeEventListener("keydown", handleDesignerShortcut);
   }, [keyboardTarget, shortcutsEnabled, pending]);
 
-  function requestDelete(target: SandboxInspectorTarget): void {
+  function requestDelete(
+    target: SandboxInspectorTarget,
+    opener?: HTMLElement | null,
+  ): void {
     deleteFallbackId.current = null;
     const activeElement =
-      document.activeElement instanceof HTMLElement
+      opener ??
+      (document.activeElement instanceof HTMLElement
         ? document.activeElement
-        : null;
+        : null);
     const targetName = deletionTargetName(design, target);
     const stableContextTrigger =
       activeElement?.closest('[role="menuitem"]') && targetName
@@ -887,41 +909,6 @@ export function Designer({
           "Load the closed live item and save or cancel your edits before reviewing permanent deletion.",
       };
     return onLifecycle(binding, "purge");
-  }
-  function relationshipLifecycleActions(
-    id: string,
-    name: string,
-    orientation: "outgoing" | "incoming",
-  ) {
-    const target = { kind: "link" as const, id };
-    if (!bindingFor(target)) return null;
-    const state = lifecycleState(target);
-    const verb = state.closed ? "Reopen" : "Close";
-    return (
-      <>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={state.disabled}
-          aria-label={`${verb} relationship ${name}, ${orientation}`}
-          onClick={() => void toggleLifecycle(target)}
-        >
-          {verb}
-        </Button>
-        {state.canPurge ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="text-danger-text"
-            disabled={state.disabled}
-            aria-label={`Permanently delete relationship ${name}, ${orientation}`}
-            onClick={() => void purgeLifecycle(target)}
-          >
-            Permanently delete
-          </Button>
-        ) : null}
-      </>
-    );
   }
   async function renameDepartment(
     id: string,
@@ -1836,6 +1823,7 @@ export function Designer({
   });
   const structurePane = (
     <aside
+      ref={structureRef}
       tabIndex={-1}
       aria-label="Organization structure"
       className="h-full min-w-0 p-3 [&_section]:w-full [&_section]:min-w-0"
@@ -1886,34 +1874,99 @@ export function Designer({
       (item) => item.id === (selectedModule?.department ?? inspectedItem?.id),
     ),
   );
+  const relationshipRow = (
+    id: string,
+    name: string,
+    direction: RelationshipRow["direction"],
+    otherModule: string,
+    cardinality: string,
+  ): RelationshipRow => {
+    const target = { kind: "link" as const, id };
+    const state = lifecycleState(target);
+    return {
+      id,
+      name,
+      direction,
+      otherModule,
+      cardinality,
+      closed: state.closed,
+      lifecycle: bindingFor(target)
+        ? {
+            closed: state.closed,
+            canPurge: state.canPurge,
+            disabled: state.disabled,
+          }
+        : null,
+    };
+  };
   const relationshipRows: RelationshipRow[] = selectedModule
     ? [
         ...design.relationships
           .filter((r) => r.source === selectedModule.id)
-          .map((r) => ({
-            id: r.id,
-            name: r.name,
-            direction: "outgoing" as const,
-            otherModule:
+          .map((r) =>
+            relationshipRow(
+              r.id,
+              r.name,
+              "outgoing",
               design.modules.find((m) => m.id === r.target)?.name ??
-              "Missing module",
-            cardinality: r.cardinality,
-            closed: lifecycleState({ kind: "link", id: r.id }).closed,
-          })),
+                "Missing module",
+              r.cardinality,
+            ),
+          ),
         ...design.relationships
           .filter((r) => r.target === selectedModule.id)
-          .map((r) => ({
-            id: r.id,
-            name: r.name,
-            direction: "incoming" as const,
-            otherModule:
+          .map((r) =>
+            relationshipRow(
+              r.id,
+              r.name,
+              "incoming",
               design.modules.find((m) => m.id === r.source)?.name ??
-              "Missing source",
-            cardinality: r.cardinality,
-            closed: lifecycleState({ kind: "link", id: r.id }).closed,
-          })),
+                "Missing source",
+              r.cardinality,
+            ),
+          ),
       ]
     : [];
+  // With nothing selected, Properties summarizes the design (S12).
+  const attentionItems = buildAttentionItems({
+    design,
+    unpublished: attention.unpublished,
+    overlapping,
+    issues: attention.issues,
+  });
+  function runAttention(item: BuildAttentionItem): void {
+    if (item.kind === "unpublished") attention.review.open();
+    else if (item.kind === "triggersOff") attention.onShowOffTriggers();
+    else if (item.kind === "overlaps") void autoArrange();
+    else if (item.kind === "issue" && item.issue)
+      attention.onOpenIssue(item.issue);
+    else if (item.kind === "emptyModules" && item.target) {
+      // Selected, and brought into view on the canvas.
+      const moduleId = item.target;
+      setSelected(moduleId);
+      showPane("Inspector");
+      graphRef.current?.reveal(moduleId);
+    }
+  }
+  async function changeTitleField(
+    moduleId: string,
+    titleFieldId: string | null,
+  ): Promise<void> {
+    setTitleFieldError(null);
+    const result = await change((previous) => {
+      if (!previous.modules.some((item) => item.id === moduleId))
+        throw new SandboxCommandError(
+          "This module was deleted. Keep the title field setting open and try again.",
+        );
+      return {
+        ...previous,
+        modules: previous.modules.map((item) =>
+          item.id === moduleId ? { ...item, titleFieldId } : item,
+        ),
+      };
+    }, `sandbox.design.module-title:${moduleId}`);
+    if (!result.ok) setTitleFieldError({ moduleId, message: result.error });
+  }
   const inspectorPane = (
     <aside
       aria-label="Design inspector"
@@ -1950,41 +2003,21 @@ export function Designer({
           </Button>
         </div>
       ) : editor && editor !== "relationship" ? null : (
-        <div className="flex flex-col gap-2">
-          <h2 data-slot="section-title" className="text-lg font-semibold">
-            Nothing selected
-          </h2>
-          <p className="text-muted-foreground text-sm">
-            {design.departments.length === 0
-              ? "Start with a department."
-              : "Select a department or module."}
-          </p>
-          <Button
-            variant="outline"
-            className="self-start xl:hidden"
-            onClick={() => showPane("Structure")}
-          >
-            Open Structure
-          </Button>
-        </div>
+        <DesignerSummary
+          facts={counts(design)}
+          items={attentionItems}
+          review={attention.review}
+          pending={pending}
+          designIsEmpty={designIsEmpty}
+          onAction={runAttention}
+          onAddDepartment={() => open("department")}
+          onStartFromTemplate={onStartFromTemplate}
+        />
       )}
       {editor && editor !== "relationship" ? (
         editorForm
       ) : !inspectedItem || !inspectedTarget || !inspectedLifecycle ? null : (
         <>
-          {selectedModule ? null : (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={pending}
-                onClick={() => open("module")}
-              >
-                <Plus aria-hidden="true" />
-                Add module
-              </Button>
-            </div>
-          )}
           {selectedModule ? (
             <>
               <section
@@ -2004,7 +2037,8 @@ export function Designer({
                   </h3>
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="ghost"
+                    className="max-xl:min-h-11"
                     onClick={() => open("field")}
                   >
                     <Plus aria-hidden="true" />
@@ -2228,7 +2262,8 @@ export function Designer({
                   >
                     <Button
                       size="sm"
-                      variant="outline"
+                      variant="ghost"
+                      className="max-xl:min-h-11"
                       onClick={() => {
                         open("relationship");
                         setSource(selectedModule.id);
@@ -2246,257 +2281,93 @@ export function Designer({
                 </div>
                 <RelationshipList
                   rows={relationshipRows}
+                  pending={pending}
                   onEdit={editRelationship}
+                  onToggleLifecycle={(id) =>
+                    void toggleLifecycle({ kind: "link", id })
+                  }
+                  onPurge={(id) => void purgeLifecycle({ kind: "link", id })}
+                  onDelete={(id, opener) =>
+                    requestDelete({ kind: "link", id }, opener)
+                  }
                 />
               </section>
             </>
-          ) : null}
-          <AdvancedSection
-            key={inspectedKind}
-            storageKey={`sandbox.${inspectedKind}`}
-            setCount={
-              (selectedModule?.titleFieldId ? 1 : 0) +
-              (inspectedLifecycle.closed ? 1 : 0) +
-              relationshipRows.filter((row) => row.closed).length
-            }
-          >
-            {selectedModule ? (
-              <>
-                <FormField data-invalid={Boolean(shownMoveError) || undefined}>
-                  <FieldLabel htmlFor="sandbox-move-module-department">
-                    Move module to department
-                  </FieldLabel>
-                  <NativeSelect
-                    id="sandbox-move-module-department"
-                    className="w-full [&_select]:min-h-10"
-                    value={selectedModule.department}
-                    disabled={pending}
-                    aria-invalid={shownMoveError ? true : undefined}
-                    aria-describedby={
-                      shownMoveError
-                        ? "sandbox-move-module-department-error"
-                        : undefined
-                    }
-                    onChange={(event) =>
-                      void moveModule(selectedModule.id, event.target.value)
-                    }
-                  >
-                    {design.departments.map((item) => (
-                      <NativeSelectOption key={item.id} value={item.id}>
-                        {item.name}
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                  {shownMoveError ? (
-                    <FieldError
-                      id="sandbox-move-module-department-error"
-                      className="text-xs"
-                    >
-                      {shownMoveError}
-                    </FieldError>
-                  ) : null}
-                </FormField>
-                <FormField
-                  data-invalid={Boolean(shownTitleFieldError) || undefined}
-                >
-                  <div className="flex items-center gap-1">
-                    <FieldLabel htmlFor="sandbox-record-title-field">
-                      Title field
-                    </FieldLabel>
-                    <Popover>
-                      <PopoverTrigger
-                        render={
-                          <button
-                            type="button"
-                            aria-label="About the title field"
-                            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring -my-2 inline-flex size-11 items-center justify-center rounded-sm outline-none focus-visible:outline-2 xl:my-0 xl:size-6"
-                          />
-                        }
-                      >
-                        <Info aria-hidden="true" className="size-3.5" />
-                      </PopoverTrigger>
-                      <PopoverContent
-                        side="top"
-                        className="slim-ui w-auto max-w-64"
-                      >
-                        Names this module&apos;s records in Boards links.
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                  <NativeSelect
-                    id="sandbox-record-title-field"
-                    className="w-full [&_select]:min-h-10"
-                    value={selectedModule.titleFieldId ?? ""}
-                    disabled={pending}
-                    aria-invalid={shownTitleFieldError ? true : undefined}
-                    aria-describedby={
-                      shownTitleFieldError
-                        ? "sandbox-record-title-field-error sandbox-record-title-field-help"
-                        : "sandbox-record-title-field-help"
-                    }
-                    onChange={async (event) => {
-                      const moduleId = selectedModule.id;
-                      const titleFieldId = event.currentTarget.value || null;
-                      setTitleFieldError(null);
-                      const result = await change((previous) => {
-                        if (
-                          !previous.modules.some((item) => item.id === moduleId)
-                        )
-                          throw new SandboxCommandError(
-                            "This module was deleted. Keep the title field setting open and try again.",
-                          );
-                        return {
-                          ...previous,
-                          modules: previous.modules.map((item) =>
-                            item.id === moduleId
-                              ? { ...item, titleFieldId }
-                              : item,
-                          ),
-                        };
-                      }, `sandbox.design.module-title:${moduleId}`);
-                      if (!result.ok)
-                        setTitleFieldError({ moduleId, message: result.error });
-                    }}
-                  >
-                    <NativeSelectOption value="">
-                      Use the Record ID
-                    </NativeSelectOption>
-                    {selectedModule.fields
-                      .filter(
-                        (field) =>
-                          !field.closed &&
-                          RECORD_TITLE_FIELD_TYPES.has(field.type),
-                      )
-                      .map((field) => (
-                        <NativeSelectOption key={field.id} value={field.id}>
-                          {field.name}
-                        </NativeSelectOption>
-                      ))}
-                  </NativeSelect>
-                  <span
-                    id="sandbox-record-title-field-help"
-                    className="sr-only"
-                  >
-                    Names this module&apos;s records in Boards links.
-                  </span>
-                  {shownTitleFieldError ? (
-                    <FieldError
-                      id="sandbox-record-title-field-error"
-                      className="text-xs"
-                    >
-                      {shownTitleFieldError}
-                    </FieldError>
-                  ) : null}
-                </FormField>
-              </>
-            ) : null}
-            <div
-              role="group"
-              aria-label={`${selectedModule ? "Module" : "Department"} lifecycle`}
+          ) : (
+            <section
+              aria-labelledby="sandbox-modules-heading"
               className="flex flex-col gap-1.5"
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <DisabledReason
-                  reason={inspectedLifecycle.disabled ? lifecycleReason : null}
+              <div className="flex items-center justify-between gap-2">
+                <h3
+                  id="sandbox-modules-heading"
+                  data-slot="section-title"
+                  className="text-sm font-semibold"
                 >
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={inspectedLifecycle.disabled}
-                    aria-describedby="sandbox-lifecycle-note"
-                    onClick={() => void toggleLifecycle(inspectedTarget)}
-                  >
-                    {`${inspectedLifecycle.closed ? "Reopen" : "Close"} ${inspectedKind}`}
-                  </Button>
-                </DisabledReason>
+                  Modules{" "}
+                  <span className="text-muted-foreground font-normal">
+                    {
+                      design.modules.filter(
+                        (item) => item.department === inspectedItem.id,
+                      ).length
+                    }
+                  </span>
+                </h3>
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-danger-text"
+                  className="max-xl:min-h-11"
                   disabled={pending}
-                  onClick={() => requestDelete(inspectedTarget)}
+                  onClick={() => open("module")}
                 >
-                  Delete {inspectedKind}
+                  <Plus aria-hidden="true" />
+                  Add module
                 </Button>
-                {inspectedLifecycle.canPurge ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger-text"
-                    disabled={inspectedLifecycle.disabled}
-                    onClick={() => void purgeLifecycle(inspectedTarget)}
-                  >
-                    Permanently delete {inspectedKind}
-                  </Button>
-                ) : null}
               </div>
-              <p
-                id="sandbox-lifecycle-note"
-                className="text-muted-foreground text-xs"
-              >
-                {!bindingFor(inspectedTarget)
-                  ? "Applies when you publish."
-                  : inspectedLifecycle.closed
-                    ? "Reopening allows new records again."
-                    : "Stops new records. Keeps existing data."}
-              </p>
-            </div>
-            {relationshipRows.length > 0 ? (
-              <div
-                role="group"
-                aria-labelledby="sandbox-relationship-lifecycle"
-                className="flex flex-col gap-1"
-              >
-                <p
-                  id="sandbox-relationship-lifecycle"
-                  className="text-sm font-medium"
-                >
-                  Relationships
-                </p>
-                <ul className="divide-border divide-y">
-                  {relationshipRows.map((row) => (
-                    <li
-                      key={`${row.direction}:${row.id}`}
-                      className="flex flex-wrap items-center gap-x-1 gap-y-0.5 py-1"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm">{row.name}</p>
-                        <p className="text-muted-foreground truncate text-xs">
-                          <span aria-hidden="true">
-                            {row.direction === "outgoing" ? "→ " : "← "}
-                          </span>
-                          <span className="sr-only">
-                            {row.direction === "outgoing" ? "To " : "From "}
-                          </span>
-                          {row.otherModule}
-                        </p>
-                      </div>
-                      {relationshipLifecycleActions(
-                        row.id,
-                        row.name,
-                        row.direction,
-                      )}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-danger-text"
-                        disabled={pending}
-                        aria-label={`Delete relationship ${row.name}, ${row.direction}`}
-                        onClick={() =>
-                          requestDelete({ kind: "link", id: row.id })
-                        }
-                      >
-                        Delete
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+            </section>
+          )}
+          <AdvancedSection
+            key={inspectedKind}
+            storageKey={`sandbox.${inspectedKind}`}
+            summary={propertiesAdvancedSummary(
+              inspectedKind,
+              {
+                closed: inspectedLifecycle.closed,
+                canPurge: inspectedLifecycle.canPurge,
+              },
+              { titleField: Boolean(selectedModule?.titleFieldId) },
+            )}
+          >
+            {selectedModule ? (
+              <ModuleSettings
+                module={selectedModule}
+                departments={design.departments}
+                pending={pending}
+                moveError={shownMoveError}
+                titleFieldError={shownTitleFieldError}
+                onMove={(departmentId) =>
+                  void moveModule(selectedModule.id, departmentId)
+                }
+                onTitleField={(fieldId) =>
+                  void changeTitleField(selectedModule.id, fieldId)
+                }
+              />
             ) : null}
+            <LifecycleActions
+              kind={inspectedKind}
+              closed={inspectedLifecycle.closed}
+              canPurge={inspectedLifecycle.canPurge}
+              disabled={inspectedLifecycle.disabled}
+              reason={lifecycleReason}
+              bound={Boolean(bindingFor(inspectedTarget))}
+              pending={pending}
+              onToggle={() => void toggleLifecycle(inspectedTarget)}
+              onDelete={() => requestDelete(inspectedTarget)}
+              onPurge={() => void purgeLifecycle(inspectedTarget)}
+            />
           </AdvancedSection>
         </>
       )}
-      <p className="sr-only">{counts(design)}</p>
     </aside>
   );
   return (
@@ -2572,24 +2443,38 @@ export function Designer({
                   <span className="text-muted-foreground hidden text-xs font-medium sm:inline">
                     Design canvas
                   </span>
+                  {/* The toolbar takes the slim controls from 1280px (S16);
+                      the canvas below keeps its own look. */}
                   <div
                     role="toolbar"
                     aria-label="Canvas view controls"
-                    className="flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-x-auto py-1 [&>button]:shrink-0"
+                    className="slim-ui flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-x-auto py-1 [&>button]:shrink-0"
                   >
                     <CanvasZoomControls
                       zoomStore={zoomStore}
                       graphRef={graphRef}
                     />
+                    {/* On a phone, Fit and Auto-arrange show only their
+                        icons so View stays on screen; the names stay. */}
                     <Button
                       size="sm"
-                      className="min-h-11"
+                      className="min-h-11 max-sm:min-w-11 max-sm:px-0"
                       variant="outline"
                       aria-label="Fit canvas"
                       onClick={fitCanvas}
                     >
                       <Maximize2 aria-hidden="true" />
-                      Fit
+                      <span className="max-sm:sr-only">Fit</span>
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="min-h-11 max-sm:min-w-11 max-sm:px-0"
+                      variant="outline"
+                      disabled={pending}
+                      onClick={() => void autoArrange()}
+                    >
+                      <LayoutGrid aria-hidden="true" />
+                      <span className="max-sm:sr-only">Auto-arrange</span>
                     </Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger
@@ -2607,15 +2492,8 @@ export function Designer({
                       <DropdownMenuContent
                         data-sandbox-portal
                         align="end"
-                        className="min-w-52"
+                        className="slim-ui min-w-52"
                       >
-                        <DropdownMenuItem
-                          className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-                          onClick={() => void autoArrange()}
-                        >
-                          <LayoutGrid aria-hidden="true" />
-                          Auto-arrange
-                        </DropdownMenuItem>
                         <DropdownMenuItem
                           className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
                           onClick={() => {

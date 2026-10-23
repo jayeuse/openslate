@@ -54,7 +54,6 @@ import {
   type SandboxDocumentV4,
 } from "./domain/document";
 import type { SandboxOrganizationTemplate } from "./domain/templates";
-import { openingModuleId } from "./domain/opening-module";
 import { sandboxIssueDestination } from "./domain/issue-destination";
 import { summarizeTestRun, testTraceSteps } from "./domain/test-run-summary";
 import {
@@ -103,6 +102,7 @@ import {
 import { VersionsWorkspace } from "./components/versions-workspace";
 import { DISCARD_CHECKPOINT } from "./domain/version-history";
 import { TriggerStudio } from "./components/trigger-studio";
+import type { TriggerStatusFilter } from "./components/trigger-list";
 import { triggerPublicationBlockers } from "./domain/trigger-rules";
 import { useTriggerDraft } from "./components/use-trigger-draft";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
@@ -159,6 +159,13 @@ export function sectionFromSearch(
       : (LEGACY_SECTION_ALIASES[normalized] ?? "Build");
   }
   return requestedRule ? "Triggers" : "Build";
+}
+
+/** The Triggers quick filter a link asks for ("status=off"), if any. */
+function triggerStatusFromSearch(
+  value: string | null,
+): TriggerStatusFilter | undefined {
+  return value === "on" || value === "off" ? value : undefined;
 }
 
 function sectionHref(
@@ -514,9 +521,9 @@ export default function SandboxPage() {
     traceTarget ??
     search.get("module") ??
     search.get("department");
-  // With no link, open on the first module of the busiest department, the
-  // same department the canvas opens on.
-  const requestedSelection = linkedSelection ?? openingModuleId(design) ?? "";
+  // With no link, Build opens on the whole design with nothing selected, so
+  // Properties shows the summary (F8).
+  const requestedSelection = linkedSelection ?? "";
   const status = publishStatus(session, design, Boolean(conflict));
 
   const refreshVersions = useCallback(async () => {
@@ -687,9 +694,24 @@ export default function SandboxPage() {
   useEffect(() => {
     if (section === "Triggers") void refreshTriggerActivity();
   }, [refreshTriggerActivity, section]);
+  // Triggers reads a requested quick filter ("status=off") once, as it
+  // opens; the address then drops it, so the sidebar links that copy the
+  // page's parameters never bring it back.
+  const requestedStatus = search.get("status");
+  useEffect(() => {
+    if (section !== "Triggers" || requestedStatus === null) return;
+    const params = new URLSearchParams(search.toString());
+    params.delete("status");
+    router.replace(`/sandbox?${params.toString()}` as Route, { scroll: false });
+  }, [requestedStatus, router, search, section]);
 
   const navigate = useCallback(
-    (target: string, replace = false, bypassPending = false) => {
+    (
+      target: string,
+      replace = false,
+      bypassPending = false,
+      adjust?: (params: URLSearchParams) => void,
+    ) => {
       const next = Object.values(SANDBOX_SECTIONS).includes(
         target as SandboxSection,
       )
@@ -709,7 +731,12 @@ export default function SandboxPage() {
         })
       )
         return;
-      const href = sectionHref(next, new URLSearchParams(search.toString()));
+      const params = new URLSearchParams(search.toString());
+      // The Triggers quick filter is a one-time request; only the move that
+      // asks for it carries it.
+      params.delete("status");
+      adjust?.(params);
+      const href = sectionHref(next, params);
       if (replace) router.replace(href as Route, { scroll: false });
       else router.push(href as Route, { scroll: false });
     },
@@ -1321,6 +1348,29 @@ export default function SandboxPage() {
     onRetry: retryCapacity,
     onPrune: pruneVersions,
   };
+  // Why Review & Publish cannot open, when it cannot: the header button
+  // and the Build summary's Review row say the same thing.
+  const reviewReason =
+    loading || commandBusy || testPending || triggerDraft.pending
+      ? null
+      : triggerDraft.dirty
+        ? "Save trigger changes first."
+        : triggerDraft.kept
+          ? "Restore or discard trigger changes first."
+          : designerDraftDirty
+            ? "Save or cancel your edits first."
+            : !status.publishable
+              ? "Nothing to publish yet."
+              : null;
+  const reviewDisabled =
+    loading ||
+    commandBusy ||
+    testPending ||
+    !status.publishable ||
+    triggerDraft.dirty ||
+    triggerDraft.pending ||
+    triggerDraft.kept !== null ||
+    designerDraftDirty;
   return (
     <section
       data-sandbox-page
@@ -1461,32 +1511,9 @@ export default function SandboxPage() {
                 </HistoryButton>
               </>
             ) : null}
-            <DisabledReason
-              reason={
-                loading || commandBusy || testPending || triggerDraft.pending
-                  ? null
-                  : triggerDraft.dirty
-                    ? "Save trigger changes first."
-                    : triggerDraft.kept
-                      ? "Restore or discard trigger changes first."
-                      : designerDraftDirty
-                        ? "Save or cancel your edits first."
-                        : !status.publishable
-                          ? "Nothing to publish yet."
-                          : null
-              }
-            >
+            <DisabledReason reason={reviewReason}>
               <Button
-                disabled={
-                  loading ||
-                  commandBusy ||
-                  testPending ||
-                  !status.publishable ||
-                  triggerDraft.dirty ||
-                  triggerDraft.pending ||
-                  triggerDraft.kept !== null ||
-                  designerDraftDirty
-                }
+                disabled={reviewDisabled}
                 onClick={() => setReviewOpen(true)}
               >
                 Review &amp; Publish
@@ -1648,6 +1675,26 @@ export default function SandboxPage() {
             purgeEnabled={purgeEnabled}
             onLifecycle={requestLifecycle}
             onDraftStateChange={setDesignerDraftDirty}
+            attention={{
+              unpublished: status.publishable,
+              review: {
+                reason: reviewReason,
+                disabled: reviewDisabled,
+                open: () => setReviewOpen(true),
+              },
+              issues: issues.map((issue) => ({
+                key: `${issue.code}:${issue.targetId ?? ""}:${issue.message}`,
+                message: issue.message,
+                verb: issueActionLabel(issue),
+                issue,
+              })),
+              onOpenIssue: selectIssue,
+              onShowOffTriggers: () =>
+                navigate("Triggers", false, false, (params) => {
+                  params.delete("rule");
+                  params.set("status", "off");
+                }),
+            }}
           />
         ) : null}
         {section === "Triggers" && session ? (
@@ -1658,6 +1705,7 @@ export default function SandboxPage() {
               runs={triggerRuns}
               activity={triggerActivity}
               initialSelectedId={search.get("rule") ?? undefined}
+              initialStatus={triggerStatusFromSearch(search.get("status"))}
               onRefreshActivity={refreshTriggerActivity}
             />
           </div>

@@ -3,6 +3,7 @@
 import "@xyflow/react/dist/base.css";
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -52,6 +53,7 @@ import {
   snapSandboxPosition,
   type CanvasBox,
   type SandboxDropKind,
+  designInView,
 } from "@/lib/sandbox/canvas-geometry";
 import type { SandboxCommandResult } from "@/components/systems/sandbox/state/commands";
 import {
@@ -124,12 +126,11 @@ export interface SandboxCanvasApi {
   /** Fits the design; false when it is larger than the view at the floor. */
   fit: () => boolean;
   /**
-   * The opening view: 100% zoom on one department, 24px in, so table and
-   * field names are readable. The minimap and Fit show the rest. With a
-   * focus id, it opens on that module's (or department's) department and
-   * keeps the module in view; with `trace`, it also pins the module's
-   * connections, for "Show on canvas". Without one, it opens on the
-   * busiest department.
+   * The opening view. With a focus id, 100% zoom on that module's (or
+   * department's) department, 24px in, so table and field names are
+   * readable, keeping the module in view; with `trace`, it also pins the
+   * module's connections, for "Show on canvas". Without one (or with an id
+   * the design no longer has), it fits the whole design, as Fit does.
    */
   start: (options?: { focusId?: string | null; trace?: boolean }) => void;
   /** Clears a trace pinned by `start({ trace: true })`, and its field marks. */
@@ -137,6 +138,11 @@ export interface SandboxCanvasApi {
   /** Marks field rows (canvas field id → "trigger" | "changed") for a Test run. */
   markFields: (marks: Readonly<Record<string, string>> | null) => void;
   center: () => void;
+  /**
+   * Pans, at the current zoom, so a department or module is in view, centred;
+   * one already in view stays where it is.
+   */
+  reveal: (nodeId: string) => void;
   /** Places a newly-created node, or queues its position until it is rendered. */
   placeNode: (nodeId: string, position: { x: number; y: number }) => void;
 }
@@ -271,6 +277,7 @@ function SandboxFlowCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const flowRootRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const minimapRef = useRef<HTMLDivElement | null>(null);
 
   // The nodes on screen. The ref is the synchronous truth for the view API
   // (the Designer reads getLayout in the frame after a change); the state
@@ -694,6 +701,30 @@ function SandboxFlowCanvas({
     ...nodeActions,
   }));
 
+  // The minimap shows only while part of the design is out of view (F14):
+  // with everything in view it would cover content and add nothing. A ref,
+  // not state, so a pan or zoom step re-renders nothing.
+  // The design's bounds, measured when the nodes change, not on every pan
+  // frame. The minimap keeps its state while the pointer is on it or drags
+  // it, so it never vanishes under the hand that uses it.
+  const designBoundsRef = useRef<CanvasBox | null>(null);
+  const minimapHeldRef = useRef({ hover: false, drag: false });
+  const updateMinimap = useCallback(() => {
+    const minimap = minimapRef.current;
+    const container = containerRef.current;
+    const held = minimapHeldRef.current;
+    if (minimap === null || container === null || held.hover || held.drag)
+      return;
+    const [x, y, zoom] = flowStore.getState().transform;
+    const inView = designInView(
+      designBoundsRef.current,
+      { x, y, zoom },
+      { width: container.clientWidth, height: container.clientHeight },
+      minimap.hasAttribute("data-in-view"),
+    );
+    minimap.toggleAttribute("data-in-view", inView);
+  }, [flowStore]);
+
   // The view: the dot grid follows pan and zoom, the zoom is reported, and
   // an open inline editor stays on its text.
   useEffect(() => {
@@ -721,16 +752,44 @@ function SandboxFlowCanvas({
     };
     let shown = flowStore.getState().transform;
     updateView(shown);
+    updateMinimap();
     callbacksRef.current.onZoomChange?.(shown[2]);
-    return flowStore.subscribe((next) => {
+    // A resized panel can bring the whole design into view, or push part
+    // of it out.
+    const resize = new ResizeObserver(updateMinimap);
+    if (containerRef.current !== null) resize.observe(containerRef.current);
+    const unsubscribe = flowStore.subscribe((next) => {
       const transform = next.transform;
       if (transform === shown) return;
       const zoomed = transform[2] !== shown[2];
       shown = transform;
       updateView(transform);
+      updateMinimap();
       if (zoomed) callbacksRef.current.onZoomChange?.(transform[2]);
     });
-  }, [flowStore]);
+    return () => {
+      unsubscribe();
+      resize.disconnect();
+    };
+  }, [flowStore, updateMinimap]);
+  // Moved, added, or removed frames and tables change what is in view.
+  useLayoutEffect(() => {
+    designBoundsRef.current = boundsOf(absoluteBoxes(nodes).values());
+    updateMinimap();
+  }, [nodes, updateMinimap]);
+  useEffect(() => {
+    const release = () => {
+      if (!minimapHeldRef.current.drag) return;
+      minimapHeldRef.current.drag = false;
+      updateMinimap();
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+  }, [updateMinimap]);
 
   // Line labels move off shared corridors, tables, and each other whenever the
   // geometry settles, before paint; never during a drag
@@ -806,6 +865,44 @@ function SandboxFlowCanvas({
       );
       if (next !== zoom) void flow.zoomTo(next);
     };
+    const fit = (): boolean => {
+      const current = nodesRef.current;
+      const boxes = absoluteBoxes(current);
+      const bounds = boundsOf(boxes.values());
+      if (bounds === null) return true;
+      const view = viewSize();
+      const padding = 24;
+      const zoom = Math.min(
+        1,
+        Math.max(
+          SANDBOX_ZOOM.fitMin,
+          Math.min(
+            (view.width - padding * 2) / bounds.width,
+            (view.height - padding * 2) / bounds.height,
+          ),
+        ),
+      );
+      if (zoom > SANDBOX_ZOOM.fitMin + 0.001) {
+        viewAt(
+          (view.width - bounds.width * zoom) / 2 - bounds.x * zoom,
+          (view.height - bounds.height * zoom) / 2 - bounds.y * zoom,
+          zoom,
+        );
+        return true;
+      }
+      // At the floor the design is larger than the view: show its start,
+      // 24px in from the top-left, measured from the department frames.
+      const frames =
+        boundsOf(
+          current.flatMap((node) => {
+            const item =
+              node.type === "department" ? boxes.get(node.id) : undefined;
+            return item ? [item] : [];
+          }),
+        ) ?? bounds;
+      viewAt(24 - frames.x * zoom, 24 - frames.y * zoom, zoom);
+      return false;
+    };
     graphRef.current = {
       getLayout: () => readCanvasLayout(nodesRef.current),
       getViewState: () => ({
@@ -821,10 +918,19 @@ function SandboxFlowCanvas({
         const boxes = absoluteBoxes(current);
         const view = viewSize();
         const byId = new Map(current.map((node) => [node.id, node]));
+        // A field opens on its module, as a link to the module does.
+        const focusId = options?.focusId ?? null;
         const focus =
-          options?.focusId != null ? byId.get(options.focusId) : undefined;
+          focusId === null
+            ? undefined
+            : (byId.get(focusId) ??
+              current.find(
+                (node) =>
+                  node.type === "module" &&
+                  node.data.rows.some((row) => row.id === focusId),
+              ));
         const focusModule = focus?.type === "module" ? focus : undefined;
-        const focusDepartment =
+        const anchor =
           focusModule?.parentId !== undefined
             ? byId.get(focusModule.parentId)
             : focus?.type === "department"
@@ -833,34 +939,14 @@ function SandboxFlowCanvas({
         trace.pin(
           options?.trace && focusModule !== undefined ? focusModule.id : null,
         );
-        const departments = current.filter(
-          (node) => node.type === "department",
-        );
+        const box = anchor ? boxes.get(anchor.id) : undefined;
+        if (anchor === undefined || box === undefined) {
+          fit();
+          return;
+        }
         const modulesOf = (departmentId: string) =>
           current.filter((node) => node.parentId === departmentId);
-        // Open on the busiest department, so the first view shows tables
-        // and the lines between them rather than one card in a frame.
-        const busyness = (departmentId: string) => {
-          const ids = new Set(modulesOf(departmentId).map((item) => item.id));
-          const lines = edgesRef.current.filter(
-            (edge) => ids.has(edge.source) || ids.has(edge.target),
-          ).length;
-          return ids.size + lines;
-        };
-        const anchor =
-          focusDepartment ??
-          departments.reduce<SandboxFlowNode | null>(
-            (best, department) =>
-              best === null || busyness(department.id) > busyness(best.id)
-                ? department
-                : best,
-            null,
-          );
-        const box =
-          (anchor ? boxes.get(anchor.id) : undefined) ??
-          boundsOf(boxes.values());
-        if (box == null) return;
-        if (anchor == null || box.width + 48 <= view.width) {
+        if (box.width + 48 <= view.width) {
           // Keep a focused module in view: when it sits below the fold,
           // lift the department so the module's top is 72px down.
           const moduleBox = focusModule ? boxes.get(focusModule.id) : undefined;
@@ -894,43 +980,26 @@ function SandboxFlowCanvas({
           target.x + target.width - box.x + 32 <= view.width ? box.x : target.x;
         viewAt(16 - left, 16 - top, 1);
       },
-      fit: () => {
-        const current = nodesRef.current;
-        const boxes = absoluteBoxes(current);
-        const bounds = boundsOf(boxes.values());
-        if (bounds === null) return true;
+      fit,
+      reveal: (nodeId) => {
+        const box = absoluteBoxes(nodesRef.current).get(nodeId);
+        if (box === undefined) return;
         const view = viewSize();
-        const padding = 24;
-        const zoom = Math.min(
-          1,
-          Math.max(
-            SANDBOX_ZOOM.fitMin,
-            Math.min(
-              (view.width - padding * 2) / bounds.width,
-              (view.height - padding * 2) / bounds.height,
-            ),
-          ),
+        const { x, y, zoom } = flow.getViewport();
+        const left = box.x * zoom + x;
+        const top = box.y * zoom + y;
+        if (
+          left >= 0 &&
+          top >= 0 &&
+          left + box.width * zoom <= view.width &&
+          top + box.height * zoom <= view.height
+        )
+          return;
+        viewAt(
+          view.width / 2 - (box.x + box.width / 2) * zoom,
+          view.height / 2 - (box.y + box.height / 2) * zoom,
+          zoom,
         );
-        if (zoom > SANDBOX_ZOOM.fitMin + 0.001) {
-          viewAt(
-            (view.width - bounds.width * zoom) / 2 - bounds.x * zoom,
-            (view.height - bounds.height * zoom) / 2 - bounds.y * zoom,
-            zoom,
-          );
-          return true;
-        }
-        // At the floor the design is larger than the view: show its start,
-        // 24px in from the top-left, measured from the department frames.
-        const frames =
-          boundsOf(
-            current.flatMap((node) => {
-              const item =
-                node.type === "department" ? boxes.get(node.id) : undefined;
-              return item ? [item] : [];
-            }),
-          ) ?? bounds;
-        viewAt(24 - frames.x * zoom, 24 - frames.y * zoom, zoom);
-        return false;
       },
       center: () => {
         const bounds = boundsOf(absoluteBoxes(nodesRef.current).values());
@@ -1321,8 +1390,19 @@ function SandboxFlowCanvas({
       {/* Pointer navigation aid; Fit and the Structure tab are the keyboard
           equivalents, so the minimap stays out of the accessibility tree. */}
       <div
+        ref={minimapRef}
         aria-hidden="true"
-        className="sandbox-minimap border-border bg-card pointer-events-auto absolute right-3 bottom-3 z-10 hidden overflow-hidden rounded-md border shadow-sm sm:block"
+        onPointerEnter={() => {
+          minimapHeldRef.current.hover = true;
+        }}
+        onPointerLeave={() => {
+          minimapHeldRef.current.hover = false;
+          updateMinimap();
+        }}
+        onPointerDown={() => {
+          minimapHeldRef.current.drag = true;
+        }}
+        className="sandbox-minimap border-border bg-card pointer-events-auto absolute right-3 bottom-3 z-10 hidden overflow-hidden rounded-md border shadow-sm data-in-view:invisible sm:block"
       >
         <MiniMap<SandboxFlowNode>
           pannable
@@ -1339,7 +1419,9 @@ function SandboxFlowCanvas({
       {state.modules.length > 0 ? (
         // Closed by default so the key never covers tables; it opens upward.
         <details className="group absolute bottom-3 left-3 z-10">
-          <summary className="border-border bg-card text-muted-foreground hover:text-foreground flex min-h-6 cursor-pointer list-none items-center rounded-md border px-2.5 text-xs shadow-sm [&::-webkit-details-marker]:hidden">
+          {/* A slim control from 1280px, with the 44px floor below (S16);
+              the Key itself keeps the canvas look. */}
+          <summary className="border-border bg-card text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer list-none items-center rounded-md border px-2.5 text-xs shadow-sm xl:min-h-8 [&::-webkit-details-marker]:hidden">
             Key
           </summary>
           <ul

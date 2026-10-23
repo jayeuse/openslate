@@ -31,7 +31,12 @@ import {
   triggerStepErrors,
 } from "../domain/trigger-rules";
 import { reportUndoable } from "@/lib/feedback";
-import { TriggerList, triggerDisplayName } from "./trigger-list";
+import {
+  filterTriggers,
+  TriggerList,
+  triggerDisplayName,
+  type TriggerStatusFilter,
+} from "./trigger-list";
 import { TriggerRail } from "./trigger-rail";
 
 // Triggers (docs/specs/sandbox-relayout.md S5): two panes, the list and the
@@ -46,6 +51,8 @@ export type TriggerStudioProps = {
   runs: readonly SandboxTriggerRun[];
   activity: { loading: boolean; error: string };
   initialSelectedId?: string;
+  /** The list's first quick filter, from a link ("Show" on Build's triggers that are off). */
+  initialStatus?: TriggerStatusFilter;
   onRefreshActivity: () => Promise<void>;
 };
 
@@ -76,6 +83,7 @@ export function TriggerStudio({
   runs,
   activity,
   initialSelectedId,
+  initialStatus = "all",
   onRefreshActivity,
 }: TriggerStudioProps) {
   const { draft, dirty, pending, error } = triggerDraft;
@@ -105,10 +113,23 @@ export function TriggerStudio({
     return () => observer.disconnect();
   }, []);
   const detailBodyRef = useRef<HTMLDivElement>(null);
+  // A link that asks for a filter opens on the first trigger it shows.
   const [selectedId, setSelectedId] = useState(
     initialSelectedId && draft.some((item) => item.id === initialSelectedId)
       ? initialSelectedId
-      : (draft[0]?.id ?? ""),
+      : (filterTriggers(draft, { query: "", status: initialStatus })[0]?.id ??
+          draft[0]?.id ??
+          ""),
+  );
+  // The list's quick filter. It never hides the trigger a link opens: such
+  // a link starts it, or sets it back, on All.
+  const hides = (status: TriggerStatusFilter, id: string | undefined) =>
+    Boolean(id) &&
+    !filterTriggers(draft, { query: "", status }).some(
+      (item) => item.id === id,
+    );
+  const [listStatus, setListStatus] = useState<TriggerStatusFilter>(() =>
+    hides(initialStatus, selectedId) ? "all" : initialStatus,
   );
   const requestedSelection = useRef(initialSelectedId);
   useEffect(() => {
@@ -121,8 +142,12 @@ export function TriggerStudio({
     if (
       initialSelectedId &&
       draft.some((item) => item.id === initialSelectedId)
-    )
+    ) {
       setSelectedId(initialSelectedId);
+      setListStatus((status) =>
+        hides(status, initialSelectedId) ? "all" : status,
+      );
+    }
   }, [draft, initialSelectedId]);
   // Another trigger opens at its top, not at the last one's scroll (F10).
   useEffect(() => {
@@ -328,6 +353,8 @@ export function TriggerStudio({
             >
               <TriggerList
                 listRef={listRef}
+                status={listStatus}
+                onStatusChange={setListStatus}
                 triggers={draft}
                 selectedId={selectedId}
                 unsaved={triggerDraft.unsaved}

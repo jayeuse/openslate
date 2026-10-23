@@ -80,6 +80,8 @@ function TriggerStatusMark({ enabled }: { enabled: boolean }) {
 
 export function TriggerList({
   listRef,
+  status,
+  onStatusChange,
   triggers,
   selectedId,
   unsaved,
@@ -89,6 +91,9 @@ export function TriggerList({
   onCreate,
 }: {
   listRef: Ref<HTMLElement>;
+  /** The quick filter; the studio owns it, so a link can set it back. */
+  status: TriggerStatusFilter;
+  onStatusChange: (status: TriggerStatusFilter) => void;
   triggers: readonly SandboxTrigger[];
   selectedId: string;
   /** Ids of triggers that Save will write (new or changed). */
@@ -99,7 +104,6 @@ export function TriggerList({
   onCreate: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<TriggerStatusFilter>("all");
   const counts = triggerStatusCounts(triggers);
   const rows = filterTriggers(triggers, { query, status });
   return (
@@ -126,7 +130,7 @@ export function TriggerList({
             // A new trigger is On and unnamed, so it shows whatever the
             // search and filter were.
             setQuery("");
-            setStatus("all");
+            onStatusChange("all");
             onCreate();
           }}
           disabled={!canCreate}
@@ -160,7 +164,7 @@ export function TriggerList({
             const next = statusFilters.find(
               (filter) => filter.value === selection[0],
             );
-            if (next) setStatus(next.value);
+            if (next) onStatusChange(next.value);
           }}
         >
           {statusFilters.map((filter) => (

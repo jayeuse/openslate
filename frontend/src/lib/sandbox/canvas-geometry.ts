@@ -59,6 +59,39 @@ export interface CanvasBox extends CanvasPosition {
 
 export type CanvasFeedback = "drop" | "moving" | null;
 
+/** How far past the view edge a design must be before the minimap changes. */
+const MINIMAP_MARGIN = 16;
+
+/**
+ * Whether the whole design shows in the canvas view: the minimap shows only
+ * while it does not, because then it covers content and adds nothing
+ * (docs/specs/sandbox-relayout.md, F14). With the `previous` answer, it keeps
+ * that answer near the edge: the design must be in view by a margin before
+ * the minimap hides, and out of view by the same margin before it shows, so
+ * a pan along the edge does not make it flicker.
+ */
+export function designInView(
+  bounds: CanvasBox | null,
+  viewport: { x: number; y: number; zoom: number },
+  view: { width: number; height: number },
+  previous?: boolean,
+): boolean {
+  // Nothing drawn, or a canvas not measured yet: nothing to find.
+  if (bounds === null || view.width <= 0 || view.height <= 0) return true;
+  const left = bounds.x * viewport.zoom + viewport.x;
+  const top = bounds.y * viewport.zoom + viewport.y;
+  const right = left + bounds.width * viewport.zoom;
+  const bottom = top + bounds.height * viewport.zoom;
+  // The view edges moved in (a positive margin) or out (a negative one).
+  const inside = (margin: number) =>
+    left >= margin &&
+    top >= margin &&
+    right <= view.width - margin &&
+    bottom <= view.height - margin;
+  if (previous === undefined) return inside(-0.5);
+  return previous ? inside(-MINIMAP_MARGIN) : inside(MINIMAP_MARGIN);
+}
+
 export type SandboxDropKind = "department" | "module" | "field";
 
 const DROP_KINDS: readonly SandboxDropKind[] = [

@@ -68,8 +68,10 @@ export interface AdvancedSectionProps {
 
 /**
  * The one place for a panel's less common controls (the Advanced Last Rule,
- * DESIGN.md): last in its panel, closed by default, remembered per viewer,
- * and counting what is set while closed so nothing changes out of sight.
+ * DESIGN.md): last in its panel, closed by default, remembered per viewer.
+ * While closed, its header counts what is set, or names what it holds
+ * (`summary`, which marks a setting with a value "(set)"), so nothing
+ * changes out of sight.
  */
 export function AdvancedSection({
   storageKey,

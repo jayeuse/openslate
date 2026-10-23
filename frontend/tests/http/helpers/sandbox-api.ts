@@ -64,6 +64,8 @@ export type SandboxOptions = {
   }>;
   bindingFailure?: number;
   bindingRevision?: number;
+  /** The page the journey opens on; Build with nothing selected by default. */
+  path?: string;
 };
 
 export async function openAuthenticatedSandbox(
@@ -392,7 +394,7 @@ export async function openAuthenticatedSandbox(
       }),
     });
   });
-  await page.goto("/sandbox");
+  await page.goto(options.path ?? "/sandbox");
   await expect(
     page.getByRole("heading", { level: 1, name: "Build", exact: true }),
   ).toBeVisible();

@@ -33,6 +33,25 @@ import {
   sandboxDocumentFromDesign,
 } from "../helpers/sandbox-fixtures";
 
+/**
+ * A relationship row's action in the module's Properties: it sits in the
+ * row's ⋯ menu (Sandbox relayout S12), so this opens the menu first.
+ */
+async function relationshipMenuItem(
+  page: Page,
+  relationship: string,
+  direction: "outgoing" | "incoming",
+  item: string,
+) {
+  await page
+    .getByRole("button", {
+      name: `Actions for relationship ${relationship}, ${direction}`,
+      exact: true,
+    })
+    .click();
+  return page.getByRole("menuitem", { name: item, exact: true });
+}
+
 // These journeys exercise lifecycle and settings, not disclosure, so they
 // start as a viewer who left every Advanced block open. The closed default
 // and its memory are covered in sandbox-inspector.spec.ts.
@@ -148,12 +167,14 @@ for (const theme of ["light", "dark"] as const) {
         bindings: [liveBinding("relationship", relationship.id, liveId)],
       });
       await page.goto(`/sandbox?module=${relationship.target}`);
-      await page
-        .getByRole("button", {
-          name: `Close relationship ${relationship.name}, incoming`,
-          exact: true,
-        })
-        .click();
+      await (
+        await relationshipMenuItem(
+          page,
+          relationship.name,
+          "incoming",
+          `Close relationship ${relationship.name}, incoming`,
+        )
+      ).click();
       const close = page.getByRole("dialog", {
         name: "Close relationship",
         exact: true,
@@ -338,6 +359,7 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
     },
   );
   const sandbox = await openAuthenticatedSandbox(page, design, {
+    path: "/sandbox?module=sample-requests",
     bindings: [binding],
   });
   await page.route("**/api/sandbox/document", (route) => {
@@ -350,8 +372,10 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
     }
     return route.fallback();
   });
-  await page.getByRole("button", { name: "View canvas" }).click();
-  await page.getByRole("menuitem", { name: "Auto-arrange" }).click();
+  await page
+    .getByRole("toolbar", { name: "Canvas view controls" })
+    .getByRole("button", { name: "Auto-arrange" })
+    .click();
   await expect(
     page.getByRole("button", { name: "Undo", exact: true }),
   ).toBeEnabled();
@@ -475,7 +499,7 @@ test("a 403 bindings read never becomes a draft-only lifecycle action", async ({
   const sandbox = await openAuthenticatedSandbox(
     page,
     configuredSandboxDesign,
-    { bindingFailure: 403 },
+    { bindingFailure: 403, path: "/sandbox?module=sample-requests" },
   );
   await expect(
     page.getByRole("alert").filter({ hasText: "Live state" }),
@@ -510,7 +534,7 @@ test("mismatched binding revisions require a confirmed reload before lifecycle e
   const sandbox = await openAuthenticatedSandbox(
     page,
     configuredSandboxDesign,
-    { bindingRevision: 99 },
+    { bindingRevision: 99, path: "/sandbox?module=sample-requests" },
   );
   await expect(
     page.getByRole("alert").filter({ hasText: "Live state" }),
@@ -559,6 +583,7 @@ test("cancelling a pending lifecycle preview ignores its late response and prote
     page,
     configuredSandboxDesign,
     {
+      path: "/sandbox?module=sample-requests",
       bindings: [liveBinding("module", targetModule.id, liveId)],
     },
   );
@@ -642,11 +667,13 @@ for (const orientation of ["outgoing", "incoming"] as const) {
       `/sandbox?module=${orientation === "outgoing" ? relationship.source : relationship.target}`,
     );
     const action = (verb: string) =>
-      page.getByRole("button", {
-        name: `${verb} relationship ${relationship.name}, ${orientation}`,
-        exact: true,
-      });
-    await action("Close").click();
+      relationshipMenuItem(
+        page,
+        relationship.name,
+        orientation,
+        `${verb} relationship ${relationship.name}, ${orientation}`,
+      );
+    await (await action("Close")).click();
     const close = page.getByRole("dialog", {
       name: "Close relationship",
       exact: true,
@@ -673,13 +700,14 @@ for (const orientation of ["outgoing", "incoming"] as const) {
       .getByRole("button", { name: "Close relationship", exact: true })
       .click();
     await expect(close).toBeHidden();
-    await action("Reopen").click();
+    await (await action("Reopen")).click();
     await page
       .getByRole("dialog", { name: "Reopen relationship", exact: true })
       .getByRole("button", { name: "Reopen relationship", exact: true })
       .click();
-    await expect(action("Close")).toBeVisible();
-    await action("Close").click();
+    const closeAgain = await action("Close");
+    await expect(closeAgain).toBeVisible();
+    await closeAgain.click();
     await close
       .getByLabel("Type the relationship name")
       .fill("Live equipment link");
@@ -690,7 +718,7 @@ for (const orientation of ["outgoing", "incoming"] as const) {
       .getByRole("button", { name: "Close relationship", exact: true })
       .click();
     await expect(close).toBeHidden();
-    await action("Permanently delete").click();
+    await (await action("Permanently delete")).click();
     const purge = page.getByRole("dialog", {
       name: "Permanently delete relationship",
       exact: true,
@@ -701,7 +729,7 @@ for (const orientation of ["outgoing", "incoming"] as const) {
       "reopen",
       "close",
     ]);
-    await action("Permanently delete").click();
+    await (await action("Permanently delete")).click();
     await purge
       .getByLabel("Type the relationship name")
       .fill("Live equipment link");
@@ -712,7 +740,12 @@ for (const orientation of ["outgoing", "incoming"] as const) {
       .getByRole("button", { name: "Permanently delete", exact: true })
       .click();
     await expect(purge).toBeHidden();
-    await expect(action("Close")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", {
+        name: `Actions for relationship ${relationship.name}, ${orientation}`,
+        exact: true,
+      }),
+    ).toHaveCount(0);
     expect(requests).toEqual([
       {
         operation: "close",
@@ -780,12 +813,14 @@ test("relationship mismatched Field preview refuses confirmation", async ({
     bindings: [liveBinding("relationship", relationship.id, liveId)],
   });
   await page.goto(`/sandbox?module=${relationship.source}`);
-  await page
-    .getByRole("button", {
-      name: `Close relationship ${relationship.name}, outgoing`,
-      exact: true,
-    })
-    .click();
+  await (
+    await relationshipMenuItem(
+      page,
+      relationship.name,
+      "outgoing",
+      `Close relationship ${relationship.name}, outgoing`,
+    )
+  ).click();
   const dialog = page.getByRole("dialog", {
     name: "Close relationship",
     exact: true,
@@ -819,12 +854,14 @@ test("bound draft deletion explains retained live data while unbound copy remain
     ],
   });
   await page.goto(`/sandbox?module=${relationship.source}`);
-  await page
-    .getByRole("button", {
-      name: `Delete relationship ${relationship.name}, outgoing`,
-      exact: true,
-    })
-    .click();
+  await (
+    await relationshipMenuItem(
+      page,
+      relationship.name,
+      "outgoing",
+      `Delete relationship ${relationship.name}, outgoing`,
+    )
+  ).click();
   const deletion = page.getByRole("alertdialog");
   await expect(deletion).toContainText(
     "On publish, the live item closes. Its data is kept.",
@@ -931,6 +968,7 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
     },
   );
   const sandbox = await openAuthenticatedSandbox(page, design, {
+    path: "/sandbox?module=sample-requests",
     bindings: [
       {
         ...binding,
@@ -987,12 +1025,14 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
   ]);
   expect(sandbox.documentWrites()).toBe(0);
   // The refreshed relationship no longer lists the closed field's mapping.
-  await page
-    .getByRole("button", {
-      name: "Edit outgoing relationship Uses equipment",
-      exact: true,
-    })
-    .click();
+  await (
+    await relationshipMenuItem(
+      page,
+      "Uses equipment",
+      "outgoing",
+      "Edit outgoing relationship Uses equipment",
+    )
+  ).click();
   await expect(
     page.getByRole("dialog").getByText("Older linked fields"),
   ).toHaveCount(0);
@@ -1046,6 +1086,7 @@ test("bound module purge reviews stale challenges and refreshes removal without 
     },
   );
   const sandbox = await openAuthenticatedSandbox(page, design, {
+    path: "/sandbox?module=sample-requests",
     bindings: [binding],
   });
   await page
@@ -1142,6 +1183,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     department.closed = true;
     field.closed = true;
     const sandbox = await openAuthenticatedSandbox(page, design, {
+      path: "/sandbox?module=sample-requests",
       bindings: [
         liveBinding(
           "department",
@@ -1325,6 +1367,7 @@ test("a retained saved Chart query blocks bound field purge until repaired", asy
     },
   );
   const sandbox = await openAuthenticatedSandbox(page, design, {
+    path: "/sandbox?module=sample-requests",
     bindings: [binding],
   });
   const settings = page.getByLabel(`${field.name} field settings`, {
@@ -1806,6 +1849,10 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
   await expect(
     canvas.getByRole("heading", { name: "Design your organization" }),
   ).toBeVisible();
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
   await expect(
     page.getByRole("searchbox", { name: "Search structure" }),
   ).toBeDisabled();
@@ -1956,6 +2003,7 @@ test("creating a Select field saves a typed default as its choice ID", async ({
   const sandbox = await openAuthenticatedSandbox(
     page,
     structuredClone(configuredSandboxDesign),
+    { path: "/sandbox?module=sample-requests" },
   );
   await page.getByRole("button", { name: "Add field", exact: true }).click();
   await page
@@ -2106,7 +2154,7 @@ test("a trigger issue opens the trigger it identifies", async ({ page }) => {
   await page
     .getByRole("listitem")
     .filter({ hasText: "Review the follow-up trigger" })
-    .getByRole("button", { name: "Open trigger" })
+    .getByRole("button", { name: "Open trigger", exact: true })
     .click();
 
   await expect(page.getByLabel("Trigger name")).toHaveValue(
@@ -2127,8 +2175,10 @@ test("designer commands are ignored while a design save is pending", async ({
     { saveDelay },
   );
 
-  await page.getByRole("button", { name: "View canvas" }).click();
-  await page.getByRole("menuitem", { name: "Auto-arrange" }).click();
+  await page
+    .getByRole("toolbar", { name: "Canvas view controls" })
+    .getByRole("button", { name: "Auto-arrange" })
+    .click();
   await expect.poll(sandbox.documentWrites).toBe(1);
 
   try {
@@ -2144,8 +2194,10 @@ test("Build undo preserves a trigger that was saved afterward", async ({
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
 
-  await page.getByRole("button", { name: "View canvas" }).click();
-  await page.getByRole("menuitem", { name: "Auto-arrange" }).click();
+  await page
+    .getByRole("toolbar", { name: "Canvas view controls" })
+    .getByRole("button", { name: "Auto-arrange" })
+    .click();
   await expect(page.getByText("Canvas automatically arranged.")).toBeVisible();
 
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
@@ -2656,17 +2708,17 @@ test("Escape cancels the checkpoint label edit without saving", async ({
 test("legacy relationship mappings can be removed before publishing", async ({
   page,
 }) => {
-  await openAuthenticatedSandbox(page, configuredDesignWithLegacyMapping());
-  await expect(
-    page.getByRole("button", {
-      name: "Edit outgoing relationship Uses equipment",
-    }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", {
-      name: "Edit outgoing relationship Uses equipment",
-    })
-    .click();
+  await openAuthenticatedSandbox(page, configuredDesignWithLegacyMapping(), {
+    path: "/sandbox?module=sample-requests",
+  });
+  const edit = await relationshipMenuItem(
+    page,
+    "Uses equipment",
+    "outgoing",
+    "Edit outgoing relationship Uses equipment",
+  );
+  await expect(edit).toBeVisible();
+  await edit.click();
 
   const dialog = page.getByRole("dialog");
   await expect(dialog).toHaveAccessibleName("Relationship settings");
@@ -2677,18 +2729,23 @@ test("legacy relationship mappings can be removed before publishing", async ({
   await dialog.getByRole("button", { name: "Remove mapping" }).click();
   await dialog.getByRole("button", { name: "Save relationship" }).click();
   await expect(dialog).toBeHidden();
-  await page
-    .getByRole("button", {
-      name: "Edit outgoing relationship Uses equipment",
-    })
-    .click();
+  await (
+    await relationshipMenuItem(
+      page,
+      "Uses equipment",
+      "outgoing",
+      "Edit outgoing relationship Uses equipment",
+    )
+  ).click();
   await expect(dialog.getByText("Older linked fields")).toHaveCount(0);
 });
 
 test("closing a mapped field removes its relationship mappings", async ({
   page,
 }) => {
-  await openAuthenticatedSandbox(page, configuredDesignWithLegacyMapping());
+  await openAuthenticatedSandbox(page, configuredDesignWithLegacyMapping(), {
+    path: "/sandbox?module=sample-requests",
+  });
 
   await fieldRowTrigger(
     page.getByLabel("Request number field settings"),
@@ -2704,11 +2761,14 @@ test("closing a mapped field removes its relationship mappings", async ({
     }),
   ).toBeVisible();
 
-  await page
-    .getByRole("button", {
-      name: "Edit outgoing relationship Uses equipment",
-    })
-    .click();
+  await (
+    await relationshipMenuItem(
+      page,
+      "Uses equipment",
+      "outgoing",
+      "Edit outgoing relationship Uses equipment",
+    )
+  ).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Older linked fields")).toHaveCount(0);
 });
@@ -2719,6 +2779,7 @@ test("the Designer saves offset Date/Time bounds in chronological order", async 
   const sandbox = await openAuthenticatedSandbox(
     page,
     configuredDesignWithOffsetDateTimeBounds(),
+    { path: "/sandbox?module=sample-requests" },
   );
 
   await fieldRowTrigger(
@@ -2755,7 +2816,10 @@ test("a failed structural save remains visibly unsaved until the shared draft is
     .getByRole("tablist", { name: "Workbench view" })
     .getByRole("tab", { name: "Structure" })
     .click();
-  await page.getByRole("button", { name: "Add department" }).click();
+  await page
+    .getByRole("complementary", { name: "Organization structure" })
+    .getByRole("button", { name: "Add department" })
+    .click();
   await page.getByLabel("Department name").fill("Operations");
   await page.getByRole("button", { name: "Create department" }).click();
 
@@ -3136,7 +3200,9 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   );
   if (!statusField) throw new Error("The Status select field is required");
   statusField.value = "Open";
-  const sandbox = await openAuthenticatedSandbox(page, design);
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    path: "/sandbox?module=sample-requests",
+  });
   const readStatusField = () => {
     const raw: unknown = JSON.parse(JSON.stringify(sandbox.document()));
     const document = raw as {
@@ -3287,7 +3353,9 @@ test("removing an unsaved selected choice requires an explicit new default", asy
   page,
 }) => {
   const design = structuredClone(configuredSandboxDesign);
-  const sandbox = await openAuthenticatedSandbox(page, design);
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    path: "/sandbox?module=sample-requests",
+  });
   await fieldRowTrigger(
     page.getByLabel("Status field settings"),
     "Status",
@@ -3327,7 +3395,9 @@ test("the Designer saves a module record title field in the current v4 draft", a
   );
   if (!targetModule || !titleField)
     throw new Error("A module with a title field is required");
-  const sandbox = await openAuthenticatedSandbox(page, design);
+  const sandbox = await openAuthenticatedSandbox(page, design, {
+    path: "/sandbox?module=sample-requests",
+  });
 
   await page
     .getByLabel("Title field", { exact: true })
@@ -3398,6 +3468,7 @@ test("a failed record title field change shows its error under the select", asyn
   );
   if (!titleField) throw new Error("A module with a title field is required");
   await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    path: "/sandbox?module=sample-requests",
     saveFailure: "Sandbox storage is unavailable.",
   });
   const titleSelector = page.getByLabel("Title field", { exact: true });
@@ -4673,7 +4744,7 @@ test("empty canvas text and actions stay at their canvas baseline when page text
     name: "Design your organization",
   });
   await expect(heading).toBeVisible();
-  const start = page.getByRole("button", {
+  const start = page.getByLabel("Module design canvas").getByRole("button", {
     name: "Start from a template",
     exact: true,
   });
@@ -4866,9 +4937,9 @@ test("registered shortcuts preserve native text editing modal guards and standar
     }),
   );
   const sandbox = await openAuthenticatedSandbox(page);
-  await page.getByRole("button", { name: "View canvas", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Auto-arrange", exact: true })
+    .getByRole("toolbar", { name: "Canvas view controls" })
+    .getByRole("button", { name: "Auto-arrange", exact: true })
     .click();
   await expect(
     page.getByText("Canvas automatically arranged.", { exact: true }),

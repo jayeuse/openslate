@@ -6,6 +6,7 @@ import type {
 } from "../../../src/lib/sandbox/model";
 import {
   DEPARTMENT_MIN,
+  designInView,
   MODULE_TABLE,
   moduleTableHeight,
   resizeFrame,
@@ -238,4 +239,35 @@ test("a line between departments is a handoff and keeps its label", () => {
     targetHandle: "in",
   });
   expect(MODULE_TABLE.width).toBe(232);
+});
+
+test("the whole design is in view only when every edge shows", () => {
+  const bounds = { x: 100, y: 50, width: 400, height: 300 };
+  const view = { width: 600, height: 400 };
+  for (const [viewport, inView, reason] of [
+    [{ x: -50, y: 0, zoom: 1 }, true, "fitted inside the view"],
+    [{ x: -100, y: -50, zoom: 1 }, true, "edges touch the view edges"],
+    [{ x: -101, y: 0, zoom: 1 }, false, "panned past the left edge"],
+    [{ x: 0, y: 51, zoom: 1 }, false, "panned past the bottom edge"],
+    [{ x: -100, y: -50, zoom: 1.5 }, false, "zoomed in"],
+    [{ x: 0, y: 0, zoom: 0.5 }, true, "zoomed out"],
+  ] as const)
+    expect(designInView(bounds, viewport, view), reason).toBe(inView);
+  // An empty design and a canvas that has not measured yet need no minimap.
+  expect(designInView(null, { x: 0, y: 0, zoom: 1 }, view)).toBe(true);
+  expect(
+    designInView(bounds, { x: 0, y: 0, zoom: 1 }, { width: 0, height: 0 }),
+  ).toBe(true);
+});
+
+test("the minimap state holds near the view edge until a clear margin", () => {
+  const bounds = { x: 0, y: 0, width: 400, height: 300 };
+  const view = { width: 600, height: 400 };
+  for (const [viewport, previous, inView, reason] of [
+    [{ x: 4, y: 4, zoom: 1 }, false, false, "just inside: stays shown"],
+    [{ x: 100, y: 50, zoom: 1 }, false, true, "well inside: hides"],
+    [{ x: -4, y: 4, zoom: 1 }, true, true, "just past an edge: stays hidden"],
+    [{ x: -40, y: 4, zoom: 1 }, true, false, "well past an edge: shows"],
+  ] as const)
+    expect(designInView(bounds, viewport, view, previous), reason).toBe(inView);
 });
