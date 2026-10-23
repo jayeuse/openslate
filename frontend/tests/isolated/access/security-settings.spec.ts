@@ -60,17 +60,17 @@ const fields: SecuritySettingsFormFields = {
 
 const lifetime = "Lifetime must be a whole number from 1 to 43200.";
 const sessions = "Maximum sessions must be a whole number from 1 to 100.";
-const grace = "Enrollment grace must be a whole number from 0 to 30.";
+const grace = "Days to set up two-step must be a whole number from 0 to 30.";
 const attempts = "Failed attempts must be a whole number from 1 to 100.";
-const attemptWindow = "Attempt window must be a whole number from 1 to 1440.";
-const lockout = "Lockout duration must be a whole number from 1 to 1440.";
+const attemptWindow = "Within (minutes) must be a whole number from 1 to 1440.";
+const lockout = "Lock for (minutes) must be a whole number from 1 to 1440.";
 const sessionRetention =
-  "Session retention must be a whole number from 1 to 3650.";
+  "Keep session history (days) must be a whole number from 1 to 3650.";
 const eventRetention =
-  "Security event retention must be a whole number from 1 to 3650.";
+  "Keep security events (days) must be a whole number from 1 to 3650.";
 const passwordLength =
   "Minimum password length must be a whole number from 12 to 128.";
-const networks = "Use valid IP addresses or CIDR ranges, up to 100 entries.";
+const networks = "Use valid addresses or ranges, up to 100 entries.";
 
 // Valid siblings for the retention rows: the values the http journey saved.
 const validLimits: Partial<SecuritySettingsFormFields> = {
@@ -214,7 +214,7 @@ const formRows: {
   {
     name: "an invalid address in the entry is named",
     change: { ipEntry: "198.51.100" },
-    errors: { ipEntry: "Enter a valid IP address or CIDR range." },
+    errors: { ipEntry: "Enter a valid address or range." },
   },
   {
     name: "a blank entry is ignored",

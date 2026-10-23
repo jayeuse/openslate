@@ -11,109 +11,140 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 
-type DraftState = {
-  dirty: boolean;
-  pending?: boolean;
-  discard: () => boolean | void;
-};
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
-type DraftStateRef = { current: DraftState };
+import {
+  discardDraftsIn,
+  everyDraft,
+  type DraftScope,
+  type RegisteredDraft,
+} from "./draft-registry";
+import { removeSingleSlotDrafts } from "./draft-journal-storage";
+
+type DraftStateRef = { current: RegisteredDraft };
+type DraftFlags = Pick<RegisteredDraft, "dirty" | "pending">;
 
 type DraftRegistry = {
   register: (id: string, state: DraftStateRef) => () => void;
-  update: (
-    id: string,
-    state: DraftStateRef,
-    dirty: boolean,
-    pending: boolean,
-  ) => void;
+  update: (id: string, state: DraftStateRef) => void;
 };
 
 type DraftNavigation = {
   hasUnsavedDraft: boolean;
   hasPendingOperation: boolean;
-  discardUnsavedDrafts: () => boolean;
+  unsavedIn: (scope: DraftScope) => boolean;
+  pendingIn: (scope: DraftScope) => boolean;
+  /** Discards the drafts in `scope` (every draft when omitted). */
+  discardUnsavedDrafts: (scope?: DraftScope) => boolean;
 };
 
 const DraftRegistryContext = createContext<DraftRegistry | null>(null);
 const DraftNavigationContext = createContext<DraftNavigation | null>(null);
+const AccessVerifyingContext = createContext(false);
+
+/** Why a submit waits while the page checks the role again. */
+export const verifyingReason = "Checking your access.";
+
+/**
+ * True while Access checks the signed-in role again after a window return.
+ * The page content is inert then, but sheets and dialogs render in portals
+ * outside it, so their submit buttons read this and wait.
+ */
+export function AccessVerifyingProvider({
+  verifying,
+  children,
+}: {
+  verifying: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <AccessVerifyingContext.Provider value={verifying}>
+      {children}
+    </AccessVerifyingContext.Provider>
+  );
+}
+
+export function useAccessVerifying(): boolean {
+  return useContext(AccessVerifyingContext);
+}
+
+function flagsOf(draft: RegisteredDraft): DraftFlags {
+  return { dirty: draft.dirty, pending: draft.pending };
+}
+
+function sameFlags(left: DraftFlags | undefined, right: DraftFlags) {
+  return (
+    left !== undefined &&
+    left.dirty === right.dirty &&
+    left.pending === right.pending
+  );
+}
 
 export function AccessDraftNavigationProvider({
   children,
 }: {
   children: ReactNode;
 }) {
+  const userId = useVerifiedWorkspaceUserId();
+  // The earlier journal kept one person and one group draft per account;
+  // per-target slots replaced it, so its records are removed.
+  useEffect(() => removeSingleSlotDrafts(userId), [userId]);
   const drafts = useRef(new Map<string, DraftStateRef>());
-  const [dirtyDraftIds, setDirtyDraftIds] = useState<Set<string>>(
-    () => new Set(),
+  const [flags, setFlags] = useState<ReadonlyMap<string, DraftFlags>>(
+    () => new Map(),
   );
-  const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
+  const publish = useCallback((id: string, next: DraftFlags | null) => {
+    setFlags((current) => {
+      if (next === null ? !current.has(id) : sameFlags(current.get(id), next))
+        return current;
+      const copy = new Map(current);
+      if (next === null) copy.delete(id);
+      else copy.set(id, next);
+      return copy;
+    });
+  }, []);
   const update = useCallback(
-    (id: string, state: DraftStateRef, dirty: boolean, pending: boolean) => {
+    (id: string, state: DraftStateRef) => {
       if (drafts.current.get(id) !== state) return;
-      setPendingIds((current) => {
-        if (current.has(id) === pending) return current;
-        const next = new Set(current);
-        if (pending) next.add(id);
-        else next.delete(id);
-        return next;
-      });
-      setDirtyDraftIds((current) => {
-        if (current.has(id) === dirty) return current;
-        const next = new Set(current);
-        if (dirty) next.add(id);
-        else next.delete(id);
-        return next;
-      });
+      publish(id, flagsOf(state.current));
     },
+    [publish],
+  );
+  const register = useCallback(
+    (id: string, state: DraftStateRef) => {
+      drafts.current.set(id, state);
+      publish(id, flagsOf(state.current));
+      return () => {
+        if (drafts.current.get(id) !== state) return;
+        drafts.current.delete(id);
+        publish(id, null);
+      };
+    },
+    [publish],
+  );
+  const registry = useMemo(() => ({ register, update }), [register, update]);
+  const discardUnsavedDrafts = useCallback(
+    (scope: DraftScope = everyDraft) =>
+      discardDraftsIn(
+        [...drafts.current].map(([id, state]) => [id, state.current] as const),
+        scope,
+      ),
     [],
   );
-  const register = useCallback((id: string, state: DraftStateRef) => {
-    drafts.current.set(id, state);
-    setPendingIds((current) => {
-      const next = new Set(current);
-      if (state.current.pending) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-    setDirtyDraftIds((current) => {
-      if (current.has(id) === state.current.dirty) return current;
-      const next = new Set(current);
-      if (state.current.dirty) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-    return () => {
-      if (drafts.current.get(id) !== state) return;
-      drafts.current.delete(id);
-      setPendingIds((current) => {
-        const next = new Set(current);
-        next.delete(id);
-        return next;
-      });
-      setDirtyDraftIds((current) => {
-        if (!current.has(id)) return current;
-        const next = new Set(current);
-        next.delete(id);
-        return next;
-      });
+  const navigation = useMemo<DraftNavigation>(() => {
+    const entries = [...flags];
+    const unsavedIn = (scope: DraftScope) =>
+      entries.some(([id, draft]) => scope(id) && draft.dirty);
+    const pendingIn = (scope: DraftScope) =>
+      entries.some(([id, draft]) => scope(id) && draft.pending);
+    return {
+      hasUnsavedDraft: unsavedIn(everyDraft),
+      hasPendingOperation: pendingIn(everyDraft),
+      unsavedIn,
+      pendingIn,
+      discardUnsavedDrafts,
     };
-  }, []);
-  const registry = useMemo(() => ({ register, update }), [register, update]);
-  const hasUnsavedDraft = dirtyDraftIds.size > 0;
-  const hasPendingOperation = pendingIds.size > 0;
-  const discardUnsavedDrafts = useCallback(() => {
-    for (const draft of drafts.current.values()) {
-      if (draft.current.pending) return false;
-      if (draft.current.dirty && draft.current.discard() === false)
-        return false;
-    }
-    return true;
-  }, []);
-  const navigation = useMemo(
-    () => ({ hasUnsavedDraft, hasPendingOperation, discardUnsavedDrafts }),
-    [discardUnsavedDrafts, hasUnsavedDraft, hasPendingOperation],
-  );
+  }, [flags, discardUnsavedDrafts]);
 
   return (
     <DraftRegistryContext.Provider value={registry}>
@@ -134,11 +165,21 @@ export function useAccessDraftNavigation(): DraftNavigation {
   return navigation;
 }
 
+/**
+ * Registers one editor's draft with the page guards. `dirty` edits can be
+ * discarded; a `pending` save holds every guard until it ends.
+ */
 export function useAccessDraftRegistration(
   id: string,
-  dirty: boolean,
-  discard: () => boolean | void,
-  pending = false,
+  {
+    dirty,
+    discard,
+    pending = false,
+  }: {
+    dirty: boolean;
+    discard: () => boolean | void;
+    pending?: boolean;
+  },
 ) {
   const registry = useContext(DraftRegistryContext);
   if (!registry) {
@@ -147,20 +188,11 @@ export function useAccessDraftRegistration(
     );
   }
 
-  const state = useRef({ dirty, discard, pending });
-  const previousDirty = useRef(dirty);
-  const previousPending = useRef(pending);
+  const state = useRef<RegisteredDraft>({ dirty, discard, pending });
 
   useEffect(() => registry.register(id, state), [id, registry]);
   useEffect(() => {
     state.current = { dirty, discard, pending };
-    if (
-      previousDirty.current !== dirty ||
-      previousPending.current !== pending
-    ) {
-      previousDirty.current = dirty;
-      previousPending.current = pending;
-      registry.update(id, state, dirty, pending);
-    }
-  }, [dirty, discard, id, registry, state, pending]);
+    registry.update(id, state);
+  }, [dirty, discard, id, registry, pending]);
 }

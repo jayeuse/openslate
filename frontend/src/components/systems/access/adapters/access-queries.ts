@@ -9,6 +9,7 @@ import { getMfaStatus } from "@/lib/mfa-api";
 import { INACTIVE_DAYS_DEFAULT } from "../state/api-contracts";
 import { ApiError } from "@/lib/api";
 import {
+  defaultAccessSessionsRequest,
   getAccessSecurityPolicy,
   getPersonSecurity,
   listAccessSessions,
@@ -26,15 +27,17 @@ import {
   type AccessDeletedFilter,
   type AccessInvitationSettings,
   type AccessGroupListOptions,
-  type AccessDepartmentListOptions,
   type AccessSessionListOptions,
   type AccessUserListOptions,
 } from "../state/api";
 import {
+  defaultSecurityEventsRequest,
   getAccessSecurityEvent,
   listAccessSecurityEvents,
   type AccessSecurityEventsRequest,
 } from "./security-events-api";
+import type { SignInCursor } from "../helpers/overview-dashboard";
+import { accessKeys } from "./access-keys";
 
 // Section-level Access reads share the per-account client cache. Every key
 // starts with "access", so one prefix marks the area stale. Access lists are
@@ -47,46 +50,7 @@ import {
 // The signed-in identity (`authMeOptions`, key ["auth", "me"]) is shared with
 // OpenView and the navigation; Access does not define a second identity key.
 
-export const accessKeys = {
-  security: () => ["access", "security"] as const,
-  securityEvents: () => ["access", "security-events"] as const,
-  securityEventList: (request: AccessSecurityEventsRequest) =>
-    ["access", "security-events", request] as const,
-  adminSessions: () => ["access", "admin-sessions"] as const,
-  adminSessionList: (request: AccessSessionsRequest) =>
-    ["access", "admin-sessions", request] as const,
-  users: ["access", "users"] as const,
-  userList: (
-    deleted: AccessDeletedFilter,
-    request: AccessUserListOptions = {},
-  ) => ["access", "users", "list", deleted, request] as const,
-  directory: () => ["access", "users", "directory"] as const,
-  directoryPage: (request: AccessUserListOptions) =>
-    ["access", "users", "directory", request] as const,
-  userSummary: () => ["access", "users", "summary"] as const,
-  userSummaryForDays: (inactiveDays: number) =>
-    ["access", "users", "summary", inactiveDays] as const,
-  userAccessAll: ["access", "users", "access"] as const,
-  userAccess: (userId: string) =>
-    ["access", "users", "access", userId] as const,
-  personSecurity: (userId: string) =>
-    ["access", "users", "security", userId] as const,
-  userSessions: (userId: string) =>
-    ["access", "users", "sessions", userId] as const,
-  userSessionPage: (userId: string, request: AccessSessionListOptions) =>
-    ["access", "users", "sessions", userId, request] as const,
-  groups: ["access", "groups"] as const,
-  groupList: (
-    deleted: AccessDeletedFilter,
-    request: AccessGroupListOptions = {},
-  ) => ["access", "groups", "list", deleted, request] as const,
-  memberCandidates: () => ["access", "member-candidates"] as const,
-  departments: (
-    deleted: AccessDeletedFilter,
-    request: AccessDepartmentListOptions = {},
-  ) => ["access", "catalog", "departments", deleted, request] as const,
-  invitationSettings: () => ["access", "invitation-settings"] as const,
-};
+export { accessKeys };
 
 /** One bounded directory page, administrators included. Administrator only. */
 export const userListOptions = (
@@ -106,6 +70,15 @@ export const userListOptions = (
       }),
   });
 
+/** The status quick filters' totals: one one-row read per status, shared
+ * with the Overview counts that use the same request. */
+export const statusCountOptions = (status: AccessUserListOptions["status"]) =>
+  userListOptions("exclude", {
+    ...(status ? { status } : {}),
+    limit: 1,
+    offset: 0,
+  });
+
 export const directoryPageOptions = (request: AccessUserListOptions) =>
   queryOptions({
     queryKey: accessKeys.directoryPage(request),
@@ -120,13 +93,49 @@ export const userSummaryOptions = (inactiveDays = INACTIVE_DAYS_DEFAULT) =>
   });
 
 /** Observation writes do not emit a User ORM invalidation. Never refresh the
- * person-security query here: its accepted read calls this follow-up. */
-export function afterAccessMfaObservation(client: QueryClient) {
-  return invalidateAll(client, [
-    accessKeys.directory(),
-    accessKeys.userSummary(),
-  ]);
+ * person-security query here: its accepted read calls this follow-up. The
+ * person's recorded status also shows in any cached list read that holds
+ * their row (the open sheet reads them by id), so those are read again. */
+export function afterAccessMfaObservation(client: QueryClient, userId: string) {
+  const lists = ["access", "users", "list"] as const;
+  const holding = new Set(
+    client
+      .getQueryCache()
+      .findAll({ queryKey: lists })
+      .filter((query) => {
+        // Every read under this key is a page of `/api/users` rows.
+        const page = query.state.data as
+          { items: readonly { id: string }[] } | undefined;
+        return page?.items.some((item) => item.id === userId) ?? false;
+      }),
+  );
+  return Promise.all([
+    invalidateAll(client, [
+      accessKeys.directory(),
+      accessKeys.userSummary(),
+      accessKeys.ownMfa(),
+    ]),
+    client.invalidateQueries({
+      queryKey: lists,
+      predicate: (query) => holding.has(query),
+    }),
+  ]).then(() => undefined);
 }
+
+/**
+ * The viewer's own two-step status for the Security page line. A status for
+ * another account (a late answer after an account change) is refused.
+ */
+export const accessOwnMfaOptions = (userId: string) =>
+  queryOptions({
+    queryKey: accessKeys.ownMfaFor(userId),
+    queryFn: async ({ signal }) => {
+      const status = await getMfaStatus(signal);
+      if (status.user_id !== userId)
+        throw new Error("Security identity changed.");
+      return status;
+    },
+  });
 
 /** One person's effective access and the groups that give it. */
 export const userAccessOptions = (userId: string) =>
@@ -320,6 +329,77 @@ export function readAccessSecurityEvent(
     getAccessSecurityEvent(eventId, signal),
   );
 }
+// The Overview dashboard's own reads. Its counts reuse the one-row status
+// reads of People and the default user summary; these add the activity
+// windows, who is signed in now, recent sign-ins and the group access.
+
+/** Active sessions, newest first: one page counts who is signed in now. */
+export const overviewSessionsRequest: AccessSessionsRequest = {
+  ...defaultAccessSessionsRequest,
+  limit: 100,
+};
+/**
+ * Every other session in the organization, for the End all remote sessions
+ * count: the total is the session count, and the distinct people on this
+ * page are the people (a lower bound when more pages exist).
+ */
+export const remoteSessionsCountRequest: AccessSessionsRequest = {
+  ...defaultAccessSessionsRequest,
+  limit: 100,
+  status: "remote",
+};
+/**
+ * Events each feed read asks for. A page shows at most
+ * `OVERVIEW_FEED_MAX_ROWS`; the rest leaves room for events that share the
+ * cursor's instant and for the one event that says another page exists. The
+ * limit does not follow the page size, so a resize reads nothing again.
+ */
+export const OVERVIEW_SIGN_IN_ROWS = 50;
+export const OVERVIEW_FEED_MAX_ROWS = 44;
+/**
+ * `event_type` filters one exact type, so two reads cover the feed: the
+ * search matches `identity.sign_in` and `identity.sign_in_failure` (the
+ * server searches event types by substring), and lockouts have their own.
+ * A cursor reads the events before it, or the events after it oldest
+ * first, so the nearest come back within the limit. The server compares
+ * `occurred_before` strictly and stores microseconds; a lockout and its
+ * failed sign-in share one instant. So both windows take in the cursor's
+ * whole millisecond, and `signInPage` drops what sits on the cursor's side.
+ */
+export function overviewSignInRequests(
+  cursor: SignInCursor,
+): readonly AccessSecurityEventsRequest[] {
+  const millisecond = cursor ? Date.parse(cursor.at) : 0;
+  const window: Partial<AccessSecurityEventsRequest> = !cursor
+    ? {}
+    : cursor.direction === "older"
+      ? { occurred_before: new Date(millisecond + 1).toISOString() }
+      : {
+          occurred_after: new Date(millisecond).toISOString(),
+          sort_order: "asc",
+        };
+  return [
+    {
+      ...defaultSecurityEventsRequest,
+      limit: OVERVIEW_SIGN_IN_ROWS,
+      search: "identity.sign_in",
+      ...window,
+    },
+    {
+      ...defaultSecurityEventsRequest,
+      limit: OVERVIEW_SIGN_IN_ROWS,
+      event_type: "identity.lockout",
+      ...window,
+    },
+  ];
+}
+/** The groups whose access entries and members give access by department. */
+export const OVERVIEW_GROUP_LIMIT = 100;
+export const overviewGroupsOptions = () =>
+  groupListOptions("exclude", { limit: OVERVIEW_GROUP_LIMIT, offset: 0 });
+/** The activity windows of the last-sign-in bar, in days. */
+export const OVERVIEW_WINDOWS = [1, 7, 30] as const;
+
 export function afterAccessSecurityChange(
   client: QueryClient,
   policy: AccessSecurityPolicy,
@@ -343,7 +423,7 @@ export const personSecurityOptions = (userId: string, actorId: string) =>
       ]);
       if (actor.user_id !== actorId)
         throw new Error("Security identity changed.");
-      if (!signal.aborted) await afterAccessMfaObservation(client);
+      if (!signal.aborted) await afterAccessMfaObservation(client, userId);
       return { status, assurance: actor.assurance_level };
     },
   });
@@ -360,7 +440,7 @@ export async function afterPersonSecurityChange(
   return Promise.all([
     client.fetchQuery({ ...userSessionsOptions(userId), staleTime: 0 }),
     client.invalidateQueries({ queryKey: accessKeys.adminSessions() }),
-    afterAccessMfaObservation(client),
+    afterAccessMfaObservation(client, userId),
     client.invalidateQueries({
       queryKey: accessKeys.personSecurity(userId),
       refetchType: "none",

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/combobox";
 import { Field, FieldLabel, FieldError } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export interface SearchSelectOption {
   value: string;
@@ -47,6 +48,8 @@ export interface SearchSelectProps {
   hasMore?: boolean;
   onLoadMore?: () => void;
   loadingMore?: boolean;
+  /** Classes for the option popup's positioner (a scope class such as `access-ui`). */
+  popupClassName?: string;
 }
 
 /**
@@ -76,6 +79,7 @@ export function SearchSelect({
   hasMore = false,
   onLoadMore,
   loadingMore = false,
+  popupClassName,
 }: SearchSelectProps) {
   const generatedId = useId();
   const controlId = id ?? generatedId;
@@ -158,7 +162,7 @@ export function SearchSelect({
         >
           <span className="truncate">{selected?.label ?? placeholder}</span>
         </ComboboxTrigger>
-        <ComboboxContent positionerClassName="z-[60]">
+        <ComboboxContent positionerClassName={cn("z-[60]", popupClassName)}>
           {/* The field label would otherwise name the search box too, so the
               trigger and the search box would read the same. */}
           <span id={searchLabelId} className="sr-only">
@@ -200,7 +204,7 @@ export function SearchSelect({
               ) : null}
             </div>
           ) : (
-            <ComboboxEmpty className="text-muted-foreground p-3 text-sm">
+            <ComboboxEmpty className="text-muted-foreground p-3 text-sm empty:p-0">
               {emptyMessage}
             </ComboboxEmpty>
           )}

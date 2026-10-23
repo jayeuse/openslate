@@ -1067,7 +1067,6 @@ test("retries failed organization date settings without disabling session contro
 test("accepted Account remote-session end refreshes the cached People count", async ({
   page,
 }) => {
-  // The People count column shows from the 2xl breakpoint.
   await page.setViewportSize({ width: 1600, height: 900 });
   // No stream event may refresh the directory instead of the session end.
   await quietEventSource(page);
@@ -1114,19 +1113,28 @@ test("accepted Account remote-session end refreshes the cached People count", as
         query.get("sort_by") === "name" &&
         query.get("deleted") === "exclude",
     );
-  await page.goto("/access?view=people");
-  const table = page.getByRole("table", { name: "People", exact: true });
-  await expect(table).toBeVisible();
-  const row = table.getByRole("row", {
-    name: new RegExp(actor.display_name!),
+  // The count is a recorded fact in the person sheet (Access rows keep one
+  // line); the sheet reads it from the cached directory row.
+  const sheet = page.getByRole("dialog", {
+    name: actor.display_name!,
+    exact: true,
   });
-  const headings = await table.getByRole("columnheader").allTextContents();
-  const countColumn = headings.findIndex(
-    (label) => label.trim() === "Active sessions",
-  );
-  expect(countColumn).toBeGreaterThanOrEqual(0);
-  const count = row.getByRole("cell").nth(countColumn);
+  const count = sheet
+    .getByLabel("Recorded activity", { exact: true })
+    .locator("dt", { hasText: "Active sessions" })
+    .locator("xpath=following-sibling::dd[1]");
+  async function openActor() {
+    await page
+      .getByRole("table", { name: "People", exact: true })
+      .getByRole("button", { name: `Manage ${actor.display_name!}` })
+      .click();
+    await expect(sheet).toBeVisible();
+  }
+  await page.goto("/access?view=people");
+  await openActor();
   await expect(count).toHaveText("2");
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(sheet).toBeHidden();
   const directoryReadsBefore = directoryReads().length;
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
@@ -1155,6 +1163,7 @@ test("accepted Account remote-session end refreshes the cached People count", as
     .getByRole("link", { name: "People", exact: true })
     .click();
   await expect(page).toHaveURL(/\/access\?view=people$/);
+  await openActor();
   await expect(count).toHaveText("1");
   await expect
     .poll(() => directoryReads().length)

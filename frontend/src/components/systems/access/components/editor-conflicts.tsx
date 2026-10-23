@@ -1,5 +1,6 @@
 "use client";
 
+import type { Ref } from "react";
 import { AlertCircle, ShieldCheck } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -159,7 +160,7 @@ export function ConflictDialog({
   const resolved = conflicts.every((conflict) => Boolean(choices[conflict.id]));
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="access-ui max-w-xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
@@ -224,15 +225,55 @@ export function ConflictDialog({
   );
 }
 
-export function ActionError({ message }: { message: string }) {
+/** A failed action's reason; `title` null shows the reason alone. */
+export function ActionError({
+  message,
+  title = "Could not apply the change",
+}: {
+  message: string;
+  title?: string | null;
+}) {
   if (!message) return null;
   return (
     <Alert variant="destructive" role="alert">
       <AlertCircle />
       <div className="mt-2">
-        <p className="font-medium">Could not apply the change</p>
-        <p className="mt-1">{message}</p>
+        {title ? <p className="font-medium">{title}</p> : null}
+        <p className={title ? "mt-1" : undefined}>{message}</p>
       </div>
     </Alert>
+  );
+}
+
+/**
+ * After Discard in a sheet editor: the result in place, with Undo. A toast
+ * would sit behind the open sheet, out of reach, so the Undo stays inline
+ * (the Four Moments Rule: inline when the result is visible).
+ */
+export function DiscardedNotice({
+  onUndo,
+  undoRef,
+}: {
+  onUndo: () => void;
+  /** Focus moves here after Discard, so it never falls to the sheet. */
+  undoRef?: Ref<HTMLButtonElement>;
+}) {
+  return (
+    <p
+      role="status"
+      className="text-muted-foreground flex items-center justify-end gap-1 text-sm"
+    >
+      Changes discarded
+      <Button
+        ref={undoRef}
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="min-h-11 px-2"
+        onClick={onUndo}
+      >
+        Undo
+      </Button>
+    </p>
   );
 }

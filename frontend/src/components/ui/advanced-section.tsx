@@ -14,15 +14,20 @@ const STORAGE_PREFIX = "openslate:advanced:";
 
 type OpenStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
+/** The given store, else this browser's local storage (call inside a try). */
+function defaultStore(storage: OpenStore | null | undefined) {
+  if (storage !== undefined) return storage;
+  return typeof window === "undefined" ? null : window.localStorage;
+}
+
 /** Whether this viewer left the Advanced block open; storage may be absent. */
 export function readAdvancedOpen(
   key: string,
-  storage: OpenStore | null = typeof window === "undefined"
-    ? null
-    : window.localStorage,
+  storage?: OpenStore | null,
 ): boolean {
   try {
-    return storage?.getItem(STORAGE_PREFIX + key) === "open";
+    // Reading window.localStorage itself throws when storage is blocked.
+    return defaultStore(storage)?.getItem(STORAGE_PREFIX + key) === "open";
   } catch {
     return false;
   }
@@ -31,13 +36,12 @@ export function readAdvancedOpen(
 export function writeAdvancedOpen(
   key: string,
   open: boolean,
-  storage: OpenStore | null = typeof window === "undefined"
-    ? null
-    : window.localStorage,
+  storage?: OpenStore | null,
 ): void {
   try {
-    if (open) storage?.setItem(STORAGE_PREFIX + key, "open");
-    else storage?.removeItem(STORAGE_PREFIX + key);
+    const store = defaultStore(storage);
+    if (open) store?.setItem(STORAGE_PREFIX + key, "open");
+    else store?.removeItem(STORAGE_PREFIX + key);
   } catch {
     // Private windows and blocked storage keep the default (closed).
   }
@@ -48,6 +52,16 @@ export interface AdvancedSectionProps {
   storageKey: string;
   /** Controls inside whose value differs from the default. */
   setCount?: number;
+  /**
+   * Opens the block while true (an error inside it must be visible); the
+   * viewer can still close it, and nothing is remembered for it.
+   */
+  forceOpen?: boolean;
+  /**
+   * What the closed block holds, when that says more than a count (a
+   * panel's lifecycle actions: "Disable, Delete"). It replaces the count.
+   */
+  summary?: string;
   children: ReactNode;
   className?: string;
 }
@@ -60,12 +74,23 @@ export interface AdvancedSectionProps {
 export function AdvancedSection({
   storageKey,
   setCount = 0,
+  summary,
+  forceOpen = false,
   children,
   className,
 }: AdvancedSectionProps) {
   // Signed-in pages render in the browser, so the remembered state applies
   // on the first render and an expanded row never flashes closed.
-  const [open, setOpen] = useState(() => readAdvancedOpen(storageKey));
+  const [open, setOpen] = useState(
+    () => forceOpen || readAdvancedOpen(storageKey),
+  );
+  // forceOpen turning on opens the block in the same render (React's
+  // adjust-state-while-rendering pattern), so a field inside can take focus.
+  const [forced, setForced] = useState(forceOpen);
+  if (forced !== forceOpen) {
+    setForced(forceOpen);
+    if (forceOpen) setOpen(true);
+  }
 
   return (
     <Collapsible
@@ -83,7 +108,9 @@ export function AdvancedSection({
           className="size-4 shrink-0 transition-transform duration-(--motion-fast) group-data-[panel-open]:rotate-90 motion-reduce:transition-none"
         />
         <span>Advanced</span>
-        {!open && setCount > 0 ? (
+        {!open && summary ? (
+          <span className="text-xs font-normal"> · {summary}</span>
+        ) : !open && setCount > 0 ? (
           <span className="text-xs font-normal"> · {setCount} set</span>
         ) : null}
       </CollapsibleTrigger>

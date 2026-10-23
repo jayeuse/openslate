@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { X } from "lucide-react";
 
@@ -19,17 +19,24 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { formatDate, roleLabels, type DirectoryRow } from "../helpers/people";
-import type { AccessUser } from "../state/api";
+import type { AccessDirectoryUser, AccessUser } from "../state/api";
 import type { PersonMemberships } from "../hooks/use-people-memberships";
 import { useAccessDraftNavigation } from "../state/draft-navigation";
+import type { DraftScope } from "../state/draft-registry";
 import { DiscardChangesDialog } from "./people-fields";
 import { PersonAccess } from "./person-access";
 import { PersonAccount } from "./person-account";
 import { PersonDetails } from "./person-details";
+import { PersonFacts } from "./person-facts";
+import { PersonGroups } from "./person-groups";
 import { PersonSecurity } from "./person-security";
 import { PersonSessions } from "./person-sessions";
 
 type PanelTab = "details" | "access" | "sessions" | "security";
+
+/** The drafts this sheet owns; other Access drafts stay as they are. */
+const personSheet: DraftScope = (id) =>
+  id === "person-editor" || id.startsWith("person-security-");
 
 /**
  * One person, opened from the directory. On a phone it fills the screen.
@@ -38,23 +45,37 @@ type PanelTab = "details" | "access" | "sessions" | "security";
 export function PersonPanel({
   row,
   membership,
+  recorded,
   people,
   listFresh,
+  searchId,
   onClose,
 }: {
-  row: DirectoryRow | null;
+  row: DirectoryRow<AccessDirectoryUser> | null;
+  /**
+   * The person's directory row when it is on the current page: the read a
+   * session change refreshes, so its recorded facts are the newest.
+   */
+  recorded?: AccessDirectoryUser;
   membership?: PersonMemberships;
   people: readonly AccessUser[];
   listFresh: boolean;
+  /** The directory search, where focus goes when the person is deleted. */
+  searchId: string;
   onClose: () => void;
 }) {
   const signedInId = useVerifiedWorkspaceUserId();
   const region = useWorkspaceDisplayRegion();
-  const { hasUnsavedDraft, hasPendingOperation, discardUnsavedDrafts } =
+  const { unsavedIn, pendingIn, discardUnsavedDrafts } =
     useAccessDraftNavigation();
+  const hasUnsavedDraft = unsavedIn(personSheet);
+  const hasPendingOperation = pendingIn(personSheet);
   const [blocked, setBlocked] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [discardError, setDiscardError] = useState("");
   const [tab, setTab] = useState<PanelTab>("details");
+  // A deleted person's row leaves the directory, so focus goes to search.
+  const deleted = useRef(false);
   const person = row?.user ?? null;
 
   function requestClose() {
@@ -62,8 +83,10 @@ export function PersonPanel({
       setBlocked(true);
       return;
     }
-    if (hasUnsavedDraft) setConfirmClose(true);
-    else {
+    if (hasUnsavedDraft) {
+      setDiscardError("");
+      setConfirmClose(true);
+    } else {
       setTab("details");
       onClose();
     }
@@ -77,10 +100,17 @@ export function PersonPanel({
           if (!open) requestClose();
         }}
       >
-        <SheetContent className="w-full max-w-none gap-0 p-0 sm:w-[min(92vw,42rem)]">
+        <SheetContent
+          className="access-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,42rem)]"
+          finalFocus={() => {
+            if (!deleted.current) return true;
+            deleted.current = false;
+            return document.getElementById(searchId) ?? true;
+          }}
+        >
           {row && person ? (
             <>
-              <SheetHeader className="border-b p-5 pr-16">
+              <SheetHeader className="shrink-0 border-b p-5 pr-16">
                 <SheetTitle className="text-lg break-words">
                   {row.name}
                 </SheetTitle>
@@ -112,7 +142,7 @@ export function PersonPanel({
                 <X aria-hidden="true" />
               </SheetClose>
               {blocked && hasPendingOperation ? (
-                <Alert className="m-5 mb-0">
+                <Alert className="m-5 mb-0 shrink-0">
                   Finish the current change before closing or switching tabs.
                 </Alert>
               ) : null}
@@ -131,14 +161,17 @@ export function PersonPanel({
                   )
                     setTab(value);
                 }}
-                className="gap-0"
+                className="min-h-0 flex-1 gap-0"
               >
-                <div className="border-b px-5 py-3">
+                <div className="shrink-0 border-b px-5 py-3">
                   <TabsList
                     aria-label="Person"
                     className="grid w-full grid-cols-4 sm:w-fit"
                   >
-                    <TabsTrigger className="min-h-9" value="details">
+                    <TabsTrigger
+                      className="min-h-11 xl:min-h-8"
+                      value="details"
+                    >
                       Details
                       {hasUnsavedDraft ? (
                         <>
@@ -150,20 +183,30 @@ export function PersonPanel({
                         </>
                       ) : null}
                     </TabsTrigger>
-                    <TabsTrigger className="min-h-9" value="access">
+                    <TabsTrigger className="min-h-11 xl:min-h-8" value="access">
                       Access
                     </TabsTrigger>
-                    <TabsTrigger className="min-h-9" value="sessions">
+                    <TabsTrigger
+                      className="min-h-11 xl:min-h-8"
+                      value="sessions"
+                    >
                       Sessions
                     </TabsTrigger>
-                    <TabsTrigger className="min-h-11" value="security">
+                    <TabsTrigger
+                      className="min-h-11 xl:min-h-8"
+                      value="security"
+                    >
                       Security
                     </TabsTrigger>
                   </TabsList>
                 </div>
                 {/* The editor stays mounted while other tabs show, so a
                     draft survives a look at Access or Sessions. */}
-                <TabsContent value="details" keepMounted className="p-5">
+                <TabsContent
+                  value="details"
+                  keepMounted
+                  className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+                >
                   <div className="flex flex-col gap-6">
                     <PersonDetails
                       key={person.id}
@@ -171,25 +214,49 @@ export function PersonPanel({
                       people={people}
                       listFresh={listFresh}
                     />
+                    <PersonGroups
+                      key={`groups-${person.id}`}
+                      person={person}
+                      membership={membership}
+                    />
                     <PersonAccount
                       key={`account-${person.id}`}
                       person={person}
-                      groups={row.groups}
-                      membership={membership}
                       self={person.id === signedInId}
-                    />
+                      onDeleted={() => {
+                        // The person's unsaved details go with them.
+                        discardUnsavedDrafts(personSheet);
+                        deleted.current = true;
+                        setTab("details");
+                        onClose();
+                      }}
+                    >
+                      <PersonFacts
+                        person={recorded?.id === person.id ? recorded : person}
+                        membership={membership}
+                      />
+                    </PersonAccount>
                   </div>
                 </TabsContent>
-                <TabsContent value="access" className="p-5">
+                <TabsContent
+                  value="access"
+                  className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+                >
                   <PersonAccess person={person} />
                 </TabsContent>
-                <TabsContent value="sessions" className="p-5">
+                <TabsContent
+                  value="sessions"
+                  className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+                >
                   <PersonSessions
                     person={person}
                     self={person.id === signedInId}
                   />
                 </TabsContent>
-                <TabsContent value="security" className="p-5">
+                <TabsContent
+                  value="security"
+                  className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+                >
                   <PersonSecurity
                     key={`${signedInId}-${person.id}`}
                     person={person}
@@ -204,9 +271,15 @@ export function PersonPanel({
         open={confirmClose}
         title="Discard unsaved changes?"
         description="Your changes to this person have not been saved."
+        error={discardError}
         onKeep={() => setConfirmClose(false)}
         onDiscard={() => {
-          if (!discardUnsavedDrafts()) return;
+          if (!discardUnsavedDrafts(personSheet)) {
+            setDiscardError(
+              "Your draft could not be cleared from this browser. Keep editing, or try again.",
+            );
+            return;
+          }
           setConfirmClose(false);
           setTab("details");
           onClose();

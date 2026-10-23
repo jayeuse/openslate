@@ -12,16 +12,17 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LockKeyhole, X } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { requestSessionRecheck } from "@/lib/auth-api";
+import { reportDone } from "@/lib/feedback";
 import { useMfaFlow } from "@/components/mfa-flow";
 import {
   registerWorkspaceSessionClear,
@@ -32,13 +33,20 @@ import { useAccessDraftRegistration } from "../state/draft-navigation";
 import {
   accessAdminSessionsOptions,
   accessKeys,
+  accessOwnMfaOptions,
   accessSecurityOptions,
   afterAccessAdminSessionsChange,
   afterAccessMfaObservation,
   afterAccessSecurityChange,
   isAccessSecurityDenied,
+  remoteSessionsCountRequest,
   setAccessSecurityDenied,
 } from "../adapters/access-queries";
+import {
+  endAllSessionsSentence,
+  policySummaryParts,
+  sessionDeviceWords,
+} from "../helpers/security-policy";
 import {
   defaultAccessSessionsRequest,
   endAccessSession,
@@ -61,31 +69,14 @@ import {
   AccessMfaDialog,
   type ConfirmState,
 } from "./security-dialogs";
-import { SecurityPanel, SecurityPolicyForm } from "./security-panel";
+import { SecurityPanel } from "./security-panel";
+import { SecurityPolicyForm } from "./security-policy-form";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 
-function policySummary(
-  fields: SecuritySettingsFormFields,
-  requiredRoles: string,
-) {
-  const [amount, unit = ""] = fields.timeout.split(" ");
-  return [
-    `${fields.minimumLength}-character password minimum`,
-    requiredRoles
-      ? `Two-step verification required for ${requiredRoles}`
-      : "Two-step verification optional",
-    `${amount}-${unit.replace(/s$/, "")} timeout`,
-    fields.absoluteLifetime !== "Off"
-      ? `${fields.absoluteLifetime}-minute session lifetime`
-      : null,
-    fields.concurrentLimit !== "Off"
-      ? `Up to ${fields.concurrentLimit} sessions`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
+// Mapped from the refusal's code (mfa_enrollment_required); the alert's
+// button beside it opens the setup.
+const MFA_REQUIRED_MESSAGE = "Set up your own two-step verification first.";
 
 type SecurityViewProps = {
   active: boolean;
@@ -121,9 +112,23 @@ export function SecurityView({
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [draftAcknowledged, setDraftAcknowledged] = useState(false);
   const [error, setError] = useState("");
+  // A save refused until the viewer sets up their own two-step: the alert
+  // offers that setup.
+  const mfaRequiredError = error === MFA_REQUIRED_MESSAGE;
   const [formErrors, setFormErrors] = useState<SecuritySettingsFormErrors>({});
   const [addressNotice, setAddressNotice] = useState("");
   const [notice, setNotice] = useState("");
+  // The policy dialog's footer chip says "Account policy saved" until the
+  // next edit, inside the dialog where the person is looking.
+  const [justSaved, setJustSaved] = useState(false);
+  const [policySaving, setPolicySaving] = useState(false);
+  // The draft the dialog's Discard removed, for its Undo in the footer
+  // (until the next edit, a save, or closing the dialog).
+  const [discardedDraft, setDiscardedDraft] = useState<{
+    draft: SecuritySettingsFormDraft;
+    /** The stale-revision warning the draft had, restored with it. */
+    stale: boolean;
+  } | null>(null);
   const mounted = useRef(false);
   const epoch = useRef(0);
   const operation = useRef<Operation | null>(null);
@@ -161,19 +166,35 @@ export function SecurityView({
     ...accessAdminSessionsOptions(queryClient, sessionRequest),
     enabled: active && admitted && !sessionsDenied,
   });
+  // End all remote sessions states how many sessions and people it signs
+  // out; the count is read fresh each time its confirmation opens.
+  const endingAll = confirm?.kind === "end-all";
+  const remoteCount = useQuery({
+    ...accessAdminSessionsOptions(queryClient, remoteSessionsCountRequest),
+    enabled: active && admitted && !sessionsDenied && endingAll,
+    staleTime: 0,
+  });
+  // The viewer's own two-step status: the flow's when it has read one for
+  // this account, otherwise one read for the Security page line.
+  const ownMfaQuery = useQuery({
+    ...accessOwnMfaOptions(userId),
+    enabled: active && admitted,
+  });
+  const ownMfa =
+    mfa.status?.user_id === userId ? mfa.status : (ownMfaQuery.data ?? null);
+  const ownMfaOn = ownMfa
+    ? ownMfa.factors.some(
+        (factor) =>
+          factor.factor_type === "totp" && factor.status === "verified",
+      )
+    : null;
+  // The policy requires two-step of the viewer and it is not set up yet.
+  const ownMfaRequiredOff =
+    ownMfaOn === false && Boolean(ownMfa?.policy_required);
   const securityFields =
     securityQuery.data && !securityDenied
       ? securitySettingsFormFields(securityQuery.data)
       : null;
-  const requiredMfaRoles = securityFields
-    ? [
-        securityFields.requireMfaAdmin ? "administrators" : null,
-        securityFields.requireMfaMember ? "members" : null,
-        securityFields.requireMfaGuest ? "guests" : null,
-      ]
-        .filter(Boolean)
-        .join(", ")
-    : "";
   const securityPatch = securityQuery.data
     ? securitySettingsPatch(securityQuery.data, securityDraft)
     : null;
@@ -210,7 +231,7 @@ export function SecurityView({
       mfaFactorId === null &&
       mfa.status === null;
     if (acceptedStatus || acceptedEnrollment || acceptedVerification)
-      void afterAccessMfaObservation(queryClient);
+      void afterAccessMfaObservation(queryClient, userId);
   }, [active, admitted, mfa.status, mfaFactorId, queryClient, userId]);
   useEffect(
     () =>
@@ -305,7 +326,7 @@ export function SecurityView({
     queryClient,
   ]);
 
-  function clearDraft() {
+  function clearDraft({ inDialog = false }: { inDialog?: boolean } = {}) {
     if (operation.current) return false;
     setSecurityDraft({});
     setSecurityStale(false);
@@ -313,10 +334,31 @@ export function SecurityView({
     setError("");
     setFormErrors({});
     setAddressNotice("");
-    setNotice("Unsaved changes discarded.");
+    setJustSaved(false);
+    setDiscardedDraft(null);
+    // The dialog says it in its footer, with Undo; a discard from the page
+    // guard (the dialog closed) leaves this notice.
+    setNotice(inDialog ? "" : "Unsaved changes discarded.");
     return true;
   }
-  useAccessDraftRegistration("security-policy", securityDirty, clearDraft);
+  function discardInDialog() {
+    const removed = { draft: securityDraft, stale: securityStale };
+    if (clearDraft({ inDialog: true })) setDiscardedDraft(removed);
+  }
+  function undoDiscard() {
+    if (!discardedDraft || securityDirty || operation.current) return;
+    setSecurityDraft(discardedDraft.draft);
+    setSecurityStale(discardedDraft.stale);
+    setDiscardedDraft(null);
+  }
+  function closePolicy() {
+    setDiscardedDraft(null);
+    setPolicyOpen(false);
+  }
+  useAccessDraftRegistration("security-policy", {
+    dirty: securityDirty,
+    discard: () => clearDraft(),
+  });
 
   const begin = useCallback(
     (writing: boolean) => {
@@ -379,6 +421,8 @@ export function SecurityView({
       return next;
     });
     setNotice("");
+    setJustSaved(false);
+    setDiscardedDraft(null);
     setError("");
     setFormErrors((errors) => ({ ...errors, [key]: undefined }));
     setAddressNotice("");
@@ -396,7 +440,7 @@ export function SecurityView({
     if (!validSecurityNetwork(address)) {
       setFormErrors((errors) => ({
         ...errors,
-        ipEntry: "Enter a valid IP address or CIDR range.",
+        ipEntry: "Enter a valid address or range.",
       }));
       return;
     }
@@ -407,7 +451,7 @@ export function SecurityView({
     if (!duplicate && ips.length >= 100) {
       setFormErrors((errors) => ({
         ...errors,
-        ipEntry: "You can add up to 100 addresses or ranges.",
+        ipEntry: "The list is full. Remove an address to add another.",
       }));
       return;
     }
@@ -438,9 +482,7 @@ export function SecurityView({
         (value) => securityNetworkKey(value) === securityNetworkKey(address),
       );
       if (!duplicate && ips.length >= 100) {
-        setError(
-          "You can add up to 100 addresses or ranges. Remove one before adding your address.",
-        );
+        setError("The list is full. Remove an address to add another.");
         return;
       }
       if (!duplicate) {
@@ -568,6 +610,9 @@ export function SecurityView({
     if (!next) return;
     setError("");
     setNotice("");
+    setJustSaved(false);
+    setDiscardedDraft(null);
+    setPolicySaving(true);
     try {
       // Consuming the query signal makes cancellation definitive: an older GET
       // cannot replace the confirmed revision/draft after this PATCH.
@@ -585,7 +630,7 @@ export function SecurityView({
       setAddressNotice("");
       setSecurityStale(false);
       setSecurityRefreshRequired(false);
-      setNotice("Account policy saved.");
+      setJustSaved(true);
       requestSessionRecheck();
     } catch (caught) {
       if (!owns(next)) return;
@@ -623,11 +668,11 @@ export function SecurityView({
           caught instanceof ApiError &&
             caught.status === 409 &&
             caught.code === "mfa_enrollment_required"
-            ? "Set up two-step verification for your own account before you require it for every role. Your changes are still here. Choose Manage two-step verification, then save again."
+            ? MFA_REQUIRED_MESSAGE
             : caught instanceof ApiError && caught.code === "ip_lockout"
-              ? "The IP allow list would block your current address. Include your current address before saving."
+              ? "These allowed addresses would block your current address. Include your current address before saving."
               : caught instanceof ApiError && caught.status === 422
-                ? "Check the policy values and IP addresses. Your changes are still here."
+                ? "Check the policy values and addresses. Your changes are still here."
                 : caught instanceof ApiError && caught.status === 403
                   ? "Only administrators can change account policy. Reload the page to check your access."
                   : "The policy could not be saved. Try again.",
@@ -644,6 +689,7 @@ export function SecurityView({
         }
       }
     } finally {
+      setPolicySaving(false);
       finish(next);
     }
   }
@@ -662,10 +708,30 @@ export function SecurityView({
       await afterAccessAdminSessionsChange(queryClient);
       if (!owns(next)) return false;
       setSessionRequest((request) => ({ ...request, offset: 0 }));
-      setNotice(
-        all
-          ? "Remote sessions ended. Your current session stays active."
-          : "Session ended.",
+      if (!all) {
+        reportDone("Session ended");
+        return true;
+      }
+      // The list reloads: say if any remote session is still active (one
+      // started meanwhile, or one the server kept).
+      let remaining: number | null = null;
+      try {
+        const remote = await queryClient.fetchQuery({
+          ...accessAdminSessionsOptions(
+            queryClient,
+            remoteSessionsCountRequest,
+          ),
+          staleTime: 0,
+        });
+        remaining = remote.pagination.total;
+      } catch {
+        remaining = null;
+      }
+      if (!owns(next)) return true;
+      reportDone(
+        remaining
+          ? `Remote sessions ended · ${remaining} still active`
+          : "Remote sessions ended",
       );
       return true;
     } catch (caught) {
@@ -712,8 +778,9 @@ export function SecurityView({
       {
         origin: "admin-sessions",
         title: "End session",
-        description: `${session.person_name}'s ${session.device} ${session.browser} session will be signed out. Your current session stays active.`,
-        confirmLabel: "Confirm end session",
+        description: `Signs out ${session.person_name}'s ${sessionDeviceWords(session)} session. Your current session stays.`,
+        confirmLabel: "End session",
+        pendingLabel: "Ending…",
         action: () =>
           runSessionEnd((signal) => endAccessSession(session, signal), false),
       },
@@ -724,23 +791,72 @@ export function SecurityView({
     requestConfirm(
       {
         origin: "admin-sessions",
+        kind: "end-all",
         title: "End all remote sessions",
-        description:
-          "End all other active sessions across the organization? Your current session stays active.",
-        confirmLabel: "Confirm end all remote sessions",
+        // Replaced at render by the count, read when the dialog opens.
+        description: "",
+        confirmLabel: "End all remote sessions",
+        pendingLabel: "Ending…",
         action: () => runSessionEnd(endAllAccessRemoteSessions, true),
       },
       event,
     );
   }
-  function openMfa() {
+  function openMfa(event: MouseEvent<HTMLButtonElement>) {
+    mfaOpener.current = event.currentTarget;
     ownsMfa.current = true;
     mfa.openManage();
   }
+  const remoteSessions = remoteCount.data;
+  const shownConfirm: ConfirmState | null =
+    confirm && endingAll
+      ? {
+          ...confirm,
+          // A reopened confirmation reads again, so no old count shows.
+          description: remoteCount.isFetching
+            ? "Counting sessions…"
+            : endAllSessionsSentence(
+                remoteSessions && !remoteCount.isError
+                  ? {
+                      sessions: remoteSessions.pagination.total,
+                      people: new Set(
+                        remoteSessions.items.map((session) => session.user_id),
+                      ).size,
+                      more: remoteSessions.pagination.has_more,
+                    }
+                  : null,
+              ),
+        }
+      : confirm;
   if (!active || !admitted) return null;
+  const summary = securityFields ? policySummaryParts(securityFields) : null;
+  const errorAlert = (
+    <Alert role="alert" variant="destructive">
+      <p>{error}</p>
+      {mfaRequiredError ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-2 min-h-11"
+          onClick={(event) => {
+            closePolicy();
+            openMfa(event);
+            mfaOpener.current = policyOpener.current;
+          }}
+        >
+          {ownMfaOn === false
+            ? "Set up two-step verification"
+            : "Manage two-step verification"}
+        </Button>
+      ) : null}
+    </Alert>
+  );
   return (
-    <section aria-label="Security workspace" className="min-w-0 space-y-5">
-      {notice ? (
+    <section
+      aria-label="Security workspace"
+      className="access-fill flex min-w-0 flex-col gap-5"
+    >
+      {notice && !policyOpen ? (
         <Alert role="status" variant="success">
           {notice}
         </Alert>
@@ -750,13 +866,16 @@ export function SecurityView({
           {error}
         </Alert>
       ) : null}
-      <fieldset disabled={livePending} className="min-w-0 space-y-5">
-        <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
+      <fieldset
+        disabled={livePending}
+        className="access-fill flex min-w-0 flex-col gap-5"
+      >
+        <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-3 rounded-lg border px-5 py-4">
           <LockKeyhole
             aria-hidden="true"
-            className="text-muted-foreground size-6 shrink-0"
+            className="text-muted-foreground hidden size-6 shrink-0 sm:block"
           />
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 basis-64">
             <div className="flex flex-wrap items-center gap-2">
               <h2
                 ref={headingRef}
@@ -770,12 +889,52 @@ export function SecurityView({
                 <Badge variant="warning">Unsaved changes</Badge>
               ) : null}
             </div>
-            <p className="text-muted-foreground mt-1 text-sm">
-              {securityFields
-                ? policySummary(securityFields, requiredMfaRoles)
+            <p className="text-muted-foreground mt-1 text-sm tabular-nums">
+              {summary
+                ? summary.map((part, index) => (
+                    // Each part stays whole, so a phone wraps between parts.
+                    <span key={part}>
+                      {index > 0 ? " · " : null}
+                      <span className="whitespace-nowrap">{part}</span>
+                    </span>
+                  ))
                 : securityQuery.isPending && !securityDenied
                   ? "Loading policy…"
                   : "Account policy unavailable"}
+            </p>
+            {/* Inline text, so a phone wraps between words and keeps the
+                action with its separator. */}
+            <p className="text-muted-foreground mt-0.5 text-sm">
+              <span
+                className={cn(
+                  ownMfaRequiredOff && "text-warn-text font-medium",
+                )}
+              >
+                Your two-step verification
+                {ownMfaOn === null ? "" : `: ${ownMfaOn ? "On" : "Off"}`}
+                {ownMfaRequiredOff ? " · required for your role" : ""}
+              </span>
+              {/* Below md the action takes its own line: phones keep every
+                  button at 44px, which would stretch a wrapped text line. */}
+              <span className="block whitespace-nowrap md:inline">
+                <span aria-hidden="true" className="hidden md:inline">
+                  {" · "}
+                </span>
+                <button
+                  type="button"
+                  aria-label={
+                    ownMfaOn === false
+                      ? "Set up two-step verification"
+                      : "Manage two-step verification"
+                  }
+                  // From md a 44px hit area from a pseudo-element, so the line
+                  // keeps its normal height.
+                  className="text-action-text focus-visible:outline-ring relative min-w-11 rounded-sm text-left font-medium underline-offset-4 after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  onClick={openMfa}
+                >
+                  {ownMfaOn === false ? "Set up" : "Manage"}
+                </button>
+              </span>
             </p>
           </div>
           <Button
@@ -783,7 +942,11 @@ export function SecurityView({
             variant="outline"
             className="min-h-11"
             onClick={() => {
+              // Page notices (a session ended) stay with the page; the dialog
+              // starts with only its own state.
               setError("");
+              setNotice("");
+              setJustSaved(false);
               setPolicyOpen(true);
             }}
           >
@@ -816,7 +979,7 @@ export function SecurityView({
         />
         <GuardedWorkspaceLink
           href="/manage?view=audit&audit=security-events"
-          className="text-primary focus-visible:outline-ring inline-flex min-h-11 items-center text-sm underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2"
+          className="text-action-text focus-visible:outline-ring inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2"
           aria-disabled={livePending}
           onClick={(event) => {
             if (livePending) event.preventDefault();
@@ -828,43 +991,43 @@ export function SecurityView({
       <Dialog
         open={policyOpen}
         onOpenChange={(open) => {
-          if (!livePending) setPolicyOpen(open);
+          if (livePending) return;
+          if (open) setPolicyOpen(true);
+          else closePolicy();
         }}
         dismissible={!livePending}
       >
         <DialogContent
-          className="max-w-3xl"
+          className="access-ui max-w-3xl"
           finalFocus={() => policyOpener.current}
         >
-          <DialogHeader className="mb-5">
+          {/* The header stays while the policy scrolls, like its footer:
+              a long Advanced block never cuts a heading at the top edge. */}
+          <DialogHeader className="bg-card sticky -top-5 z-10 -mx-5 -mt-5 mb-4 border-b px-5 pt-5 pb-3">
             <div className="flex items-center justify-between gap-3">
               <DialogTitle>Account policy</DialogTitle>
+              {/* size-11 keeps a 44px target below 1280px; the Access
+                  icon-button rule makes it 32px from there. */}
               <Button
                 variant="ghost"
                 size="icon"
+                className="size-11"
                 aria-label="Close account policy"
                 disabled={livePending}
-                onClick={() => setPolicyOpen(false)}
+                onClick={closePolicy}
               >
                 <X aria-hidden="true" />
               </Button>
             </div>
-            <DialogDescription>
-              {editable.organization
-                ? "Set the account policy enforced by your organization. Closing keeps your unsaved changes."
-                : "Review the account policy enforced by your organization."}
-            </DialogDescription>
           </DialogHeader>
           <fieldset
             disabled={livePending}
             aria-busy={livePending}
             className="min-w-0 space-y-4"
           >
-            {error ? (
-              <Alert role="alert" variant="destructive">
-                {error}
-              </Alert>
-            ) : null}
+            {/* With the form shown, a save error sits in its fixed footer,
+                above the buttons; otherwise it leads the dialog. */}
+            {error && !securityFields ? errorAlert : null}
             {securityStale ? (
               <Alert role="note" variant="warning">
                 Policy changed since you opened it. Your draft is kept; review
@@ -896,6 +1059,8 @@ export function SecurityView({
               <SecurityPolicyForm
                 form={{
                   dirty: securityDirty,
+                  justSaved,
+                  saving: policySaving,
                   saved: securityFields,
                   current: {
                     ...securityFields,
@@ -906,15 +1071,14 @@ export function SecurityView({
                   addMyAddress,
                   addressNotice,
                   saveSection,
-                  clearDraft,
+                  discard: discardInDialog,
+                  discarded: discardedDraft !== null,
+                  undoDiscard,
                   changeSetting,
                 }}
                 editable={editable}
-                onManageMfa={() => {
-                  setPolicyOpen(false);
-                  openMfa();
-                  mfaOpener.current = policyOpener.current;
-                }}
+                footerAlert={error ? errorAlert : null}
+                onCancel={closePolicy}
               />
             ) : null}
           </fieldset>
@@ -922,9 +1086,13 @@ export function SecurityView({
       </Dialog>
       <AccessMfaDialog opener={mfaOpener} />
       <AccessConfirmationDialog
-        confirm={sessionsDenied ? null : confirm}
+        confirm={sessionsDenied ? null : shownConfirm}
         pending={livePending}
-        actionsDisabled={sessionsDenied || sessionsQuery.isError}
+        actionsDisabled={
+          sessionsDenied ||
+          sessionsQuery.isError ||
+          (endingAll && remoteCount.isFetching)
+        }
         error={error}
         draftAcknowledged={draftAcknowledged}
         confirmOpener={confirmOpener}

@@ -313,6 +313,14 @@
   color: var(--ink);
 }
 
+/* A shared save-state chip (the Access policy footer) takes the same light
+   tape: it is status, not a label. */
+[data-theme="stockroom"]
+  [data-slot="badge"][data-save-state][data-variant="outline"] {
+  background-color: var(--sr-steel-lite);
+  color: var(--ink);
+}
+
 [data-theme="stockroom"] [data-slot="button"] {
   font-stretch: 88%;
   font-weight: 700;

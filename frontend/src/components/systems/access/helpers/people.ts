@@ -66,7 +66,7 @@ export type PersonState = {
 };
 
 const stateLabels: Record<PersonStateId, string> = {
-  pending: "Pending",
+  pending: "Invited",
   active: "Active",
   disabled: "Disabled",
   expired: "Expired",
@@ -258,15 +258,136 @@ export function directoryFiltersFromParams(
   };
 }
 
+/** The status quick filters beside the People search, in order. */
+export const quickStatusFilters: readonly {
+  label: string;
+  status: DirectoryStatusFilter;
+}[] = [
+  { label: "All", status: "current" },
+  { label: "Active", status: "active" },
+  { label: "Invited", status: "pending" },
+  { label: "Ending soon", status: "ending" },
+  { label: "Disabled", status: "disabled" },
+];
+
+/** The rare statuses under the strip's More menu, in order. */
+export const rareStatusFilters: readonly {
+  label: string;
+  status: DirectoryStatusFilter;
+}[] = [
+  { label: "Expired", status: "expired" },
+  { label: "Deleted", status: "deleted" },
+  { label: "Everyone, including deleted", status: "all" },
+];
+
+/**
+ * The URL parameters that keep the directory filters, defaults left out.
+ * The inverse of `directoryFiltersFromParams`; the search text stays out.
+ */
+export function directoryParams(filters: DirectoryFilters): [string, string][] {
+  const history = filters.history ?? "all";
+  const days = filters.inactiveDays ?? INACTIVE_DAYS_DEFAULT;
+  const params: [string, string | null][] = [
+    ["role", filters.role === "all" ? null : filters.role],
+    ["status", filters.status === "current" ? null : filters.status],
+    ["group", filters.groupId === "all" ? null : filters.groupId],
+    [
+      "department",
+      filters.departmentId === "all" ? null : filters.departmentId,
+    ],
+    ["sort", filters.sort === "name" ? null : filters.sort],
+    ["mfa", !filters.mfa || filters.mfa === "all" ? null : filters.mfa],
+    ["history", history === "all" ? null : history],
+    ["inactive_days", history === "inactive" ? String(days) : null],
+  ];
+  return params.filter((entry): entry is [string, string] => entry[1] !== null);
+}
+
+const inactiveFor = (days: number) =>
+  `Inactive ${days} ${days === 1 ? "day" : "days"}`;
+
+/** One removable chip for an active Filters filter. */
+export type DirectoryFilterChip = {
+  key: "role" | "group" | "department" | "mfa" | "history";
+  label: string;
+  value: string;
+  /** The patch that clears this filter only. */
+  clear: Partial<DirectoryFilters>;
+};
+
+/**
+ * The active Filters filters as chips, in the order of the Filters rows.
+ * The search and the strip's status are not chips. `names` holds the group
+ * and department names once they are read.
+ */
+export function directoryFilterChips(
+  filters: DirectoryFilters,
+  names: { group?: string; department?: string },
+): DirectoryFilterChip[] {
+  const chips: DirectoryFilterChip[] = [];
+  if (filters.role !== "all")
+    chips.push({
+      key: "role",
+      label: "Role",
+      value: roleLabels[filters.role],
+      clear: { role: "all" },
+    });
+  if (filters.groupId !== "all")
+    chips.push({
+      key: "group",
+      label: "Group",
+      value:
+        filters.groupId === "none"
+          ? "In no group"
+          : (names.group ?? "Selected group"),
+      clear: { groupId: "all" },
+    });
+  if (filters.departmentId !== "all")
+    chips.push({
+      key: "department",
+      label: "Department",
+      value: names.department ?? "Selected department",
+      clear: { departmentId: "all" },
+    });
+  if (filters.mfa && filters.mfa !== "all")
+    chips.push({
+      key: "mfa",
+      label: "Two-step",
+      // The filter finds administrators only, as its select says.
+      value:
+        filters.mfa === "without"
+          ? "Off (administrators)"
+          : "Unknown (administrators)",
+      clear: { mfa: "all" },
+    });
+  if (filters.history && filters.history !== "all")
+    chips.push({
+      key: "history",
+      label: "Activity",
+      value:
+        filters.history === "no-recorded-sign-in"
+          ? "No recorded sign-in"
+          : inactiveFor(filters.inactiveDays ?? INACTIVE_DAYS_DEFAULT),
+      clear: { history: "all" },
+    });
+  return chips;
+}
+
+/** The number on the Filters button: one per chip. */
 export function activeFilterCount(filters: DirectoryFilters): number {
-  return [
-    filters.role !== "all",
-    filters.status !== "current",
-    filters.groupId !== "all",
-    filters.departmentId !== "all",
-    Boolean(filters.mfa && filters.mfa !== "all"),
-    Boolean(filters.history && filters.history !== "all"),
-  ].filter(Boolean).length;
+  return directoryFilterChips(filters, {}).length;
+}
+
+/** Clear all: every Filters filter; the search, status and sort stay. */
+export function clearedDirectoryFilters(
+  filters: DirectoryFilters,
+): DirectoryFilters {
+  return {
+    ...defaultDirectoryFilters,
+    query: filters.query,
+    status: filters.status,
+    sort: filters.sort,
+  };
 }
 
 /** Predicates belong to the server, before its total and page window. */
@@ -309,6 +430,53 @@ export function directoryRequest(
           : filters.sort,
     sort_order: filters.sort === "newest" ? "desc" : "asc",
   };
+}
+
+// Row words
+
+const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+const capitalize = (text: string) =>
+  text.charAt(0).toUpperCase() + text.slice(1);
+
+/** The later of a person's recorded sign-in and recorded activity. */
+export function lastSeenAt(person: {
+  last_active_at: string | null;
+  last_sign_in_at: string | null;
+}): string | null {
+  const { last_active_at: active, last_sign_in_at: signIn } = person;
+  if (!active || !signIn) return active ?? signIn;
+  return Date.parse(active) >= Date.parse(signIn) ? active : signIn;
+}
+
+/**
+ * Relative last activity ("3 hours ago"). No record says so; it never
+ * claims that a person has not signed in.
+ */
+export function lastActiveLabel(value: string | null, now: number): string {
+  const time = value === null ? Number.NaN : Date.parse(value);
+  if (!Number.isFinite(time)) return "Not recorded";
+  const seconds = Math.max(0, (now - time) / 1000);
+  if (seconds < 60) return "Just now";
+  const steps: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["minute", 60],
+    ["hour", 3600],
+    ["day", 86_400],
+    ["week", 604_800],
+    ["month", 2_629_800],
+    ["year", 31_557_600],
+  ];
+  const limits = [3600, 86_400, 604_800, 2_629_800, 31_557_600, Infinity];
+  const index = limits.findIndex((limit) => seconds < limit);
+  const [unit, size] = steps[index]!;
+  return capitalize(relative.format(-Math.round(seconds / size), unit));
+}
+
+/** The whole days left before a guest's access ends. */
+export function endsInLabel(expiresAt: string, now: number): string {
+  const left = Date.parse(expiresAt) - now;
+  if (left < DAY_MS) return "Ends today";
+  const days = Math.ceil(left / DAY_MS);
+  return `Ends in ${days} ${days === 1 ? "day" : "days"}`;
 }
 
 // Guest expiry
@@ -524,6 +692,7 @@ export type AccessSource = {
 };
 export type AccessRow = {
   key: string;
+  departmentId: string;
   departmentName: string;
   /** Null for an entry that covers the whole department. */
   moduleName: string | null;
@@ -572,6 +741,7 @@ export function presentAccess(
       .sort(byName);
     return {
       key: `${entry.department_id}:${entry.module_id ?? "*"}`,
+      departmentId: entry.department_id,
       departmentName:
         departmentNames.get(entry.department_id) ?? "Unavailable department",
       moduleName:
@@ -644,7 +814,7 @@ export const usernameHint =
   "3 to 100 letters, numbers, hyphens, or underscores.";
 
 export function usernameError(value: string): string | null {
-  if (!value.trim()) return "Enter a username.";
+  if (!value.trim()) return `Enter a username of ${usernameHint}`;
   return USERNAME_PATTERN.test(value.trim()) ? null : `Use ${usernameHint}`;
 }
 
@@ -666,4 +836,22 @@ export function sponsorOptions(users: readonly AccessUser[], now: number) {
     .sort((left, right) =>
       left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
     );
+}
+
+/**
+ * After an invitation that got no answer, the pending person it made for
+ * this email address, if any. Email addresses compare without case.
+ */
+export function invitationMadeByLostInvite<
+  Person extends Pick<AccessUser, "email" | "status" | "is_deleted">,
+>(people: readonly Person[], email: string): Person | null {
+  const wanted = email.trim().toLowerCase();
+  return (
+    people.find(
+      (person) =>
+        !person.is_deleted &&
+        person.status === "pending" &&
+        person.email.trim().toLowerCase() === wanted,
+    ) ?? null
+  );
 }

@@ -35,10 +35,11 @@ export const PAGE_GUIDES = {
   access: {
     title: "Access",
     entries: [
-      "Access describes who can see and change the organization's information. The available sections depend on your role.",
-      "Administrators use People to invite people and manage their accounts. A person's name opens their permitted profile card.",
-      "Groups give people read, write, or manage access to departments and records. Group managers only manage the groups assigned to them.",
-      "Administrators use Security to manage sign-in policies. Your own sign-in settings are in your profile.",
+      "Access shows who can see and change your organization's information. The sections you see depend on your role.",
+      "Overview shows who is signed in, recent sign-ins, what needs attention and access by department. Its links open the matching list.",
+      "People lists everyone in the organization, and Invite person sends an invitation. The status buttons and Filters narrow the list; open a person to change their details, groups and security.",
+      "Groups give access to departments. Read opens and views, Write adds and changes records, and Manage also changes settings and who has access. Department managers change only the members of their groups.",
+      "Security shows a summary of the account policy and the active sessions. Administrators change the policy in Edit policy. Your own sign-in settings are in your profile.",
     ],
   },
   openview: {

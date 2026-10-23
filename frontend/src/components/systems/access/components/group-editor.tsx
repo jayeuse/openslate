@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useId, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/ui/alert";
@@ -12,7 +19,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -51,12 +60,18 @@ import {
   type AccessGroupAccessEntry,
   type AccessVersioned,
 } from "../state/api";
-import { accessDraftSubmissionNeedsReload } from "../state/draft-journal-storage";
-import { useAccessDraftRegistration } from "../state/draft-navigation";
+import { accessDraftJournalGeneration } from "../state/draft-journal-storage";
+import {
+  useAccessDraftRegistration,
+  useAccessVerifying,
+  verifyingReason,
+} from "../state/draft-navigation";
 import {
   beginGroupSubmission,
   clearGroupDraft,
+  discardGroupDraft,
   finishGroupSubmission,
+  groupSubmissionNeedsReload,
   readGroupDraft,
   writeGroupDraft,
   type GroupSection,
@@ -65,6 +80,7 @@ import {
 import {
   ActionError,
   ConflictDialog,
+  DiscardedNotice,
   UncertainDraftWarning,
   type DraftReviewValues,
 } from "./editor-conflicts";
@@ -76,7 +92,11 @@ import {
   catalogModules,
 } from "../hooks/use-access-catalog";
 import { GroupMemberPicker } from "./group-member-picker";
-import { TextField } from "./people-fields";
+import {
+  detailLabelClassName,
+  detailRowClassName,
+  TextField,
+} from "./people-fields";
 
 type Edit<Value> = { baseline: Value; draft: Value };
 type Edits = {
@@ -166,8 +186,8 @@ export function GroupEditor({
   const client = useQueryClient();
   const signedInId = useVerifiedWorkspaceUserId();
   const admin = mode === "admin";
-  const [stored] = useState(() => readGroupDraft(signedInId));
-  const ownRecord = stored.value?.groupId === group.id ? stored.value : null;
+  const [stored] = useState(() => readGroupDraft(signedInId, group.id));
+  const ownRecord = stored.value;
   const [edits, setEdits] = useState<Edits>(() =>
     ownRecord && stored.status === "ready"
       ? {
@@ -183,9 +203,7 @@ export function GroupEditor({
   const [journalIssue, setJournalIssue] = useState(() =>
     stored.status === "invalid"
       ? "A saved draft could not be restored safely, so it was not used."
-      : stored.status === "uncertain" && !ownRecord
-        ? "A change to another group may not have been saved. Open that group to review it before you edit here."
-        : "",
+      : "",
   );
   const [latest, setLatest] = useState<AccessGroup | null>(null);
   const [errors, setErrors] = useState<Partial<Record<GroupSection, string>>>(
@@ -196,6 +214,50 @@ export function GroupEditor({
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  // The last edit each section's Discard removed, for its inline Undo.
+  const [discardedEdits, setDiscardedEdits] = useState<Partial<Edits>>({});
+  // Where focus goes once the bar under a section changes: the Undo after
+  // Discard, Save after Undo, and the last edited field (or the open tab)
+  // after a save, so focus never falls back to the sheet.
+  const saveButtons = useRef(new Map<GroupSection, HTMLButtonElement>());
+  const undoButtons = useRef(new Map<GroupSection, HTMLButtonElement>());
+  const tabRail = useRef<HTMLDivElement>(null);
+  const lastField = useRef<string | null>(null);
+  const focusNext = useRef<{
+    section: GroupSection;
+    target: "undo" | "save" | "field";
+  } | null>(null);
+  useEffect(() => {
+    const next = focusNext.current;
+    // A save's field focus waits until the save has fully ended.
+    if (!next || (next.target === "field" && pending !== null)) return;
+    const element =
+      next.target === "undo"
+        ? undoButtons.current.get(next.section)
+        : next.target === "save"
+          ? saveButtons.current.get(next.section)
+          : ((next.section === "details" && lastField.current
+              ? document.getElementById(lastField.current)
+              : null) ??
+            tabRail.current?.querySelector<HTMLElement>(
+              '[role="tab"][aria-selected="true"]',
+            ));
+    if (!element?.isConnected) return;
+    focusNext.current = null;
+    element.focus();
+  });
+  // Advances when the person discards the drafts; a save that answers
+  // afterwards writes nothing back.
+  const discarded = useRef(0);
+  // A save that answers after the editor closed (Back, a section switch)
+  // keeps its draft in the journal for the return.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   // A save answers with the new group before the list is read again.
   const shown =
@@ -230,40 +292,44 @@ export function GroupEditor({
   const departments = catalogDepartments(departmentSearch.combined);
   const modules = catalogModules(moduleSearch.combined);
   const dirty = Boolean(edits.details || edits.members || edits.access);
+  const verifying = useAccessVerifying();
   const locked = uncertain !== null || pending !== null;
 
   const persist = useCallback(
     (next: Edits) => {
       const kept = next.details || next.members || next.access;
       if (!kept) {
-        clearGroupDraft(signedInId);
+        clearGroupDraft(signedInId, group.id);
         return;
       }
-      // An unresolved save of another group blocks the journal; keep that
-      // notice rather than replacing it.
       if (
         !writeGroupDraft(signedInId, {
           groupId: group.id,
           ...next,
           sending: null,
-        }) &&
-        stored.status !== "uncertain"
+        })
       )
         setJournalIssue(
           "This browser cannot keep your draft, so unsaved changes will be lost if the page reloads.",
         );
     },
-    [group.id, signedInId, stored.status],
+    [group.id, signedInId],
   );
 
   const discard = useCallback(() => {
-    clearGroupDraft(signedInId);
+    if (!discardGroupDraft(signedInId, group.id)) return false;
+    discarded.current += 1;
     setEdits(noEdits);
+    setDiscardedEdits({});
     setErrors({});
     setNameError(null);
     return true;
-  }, [signedInId]);
-  useAccessDraftRegistration("group-editor", dirty && !uncertain, discard);
+  }, [signedInId, group.id]);
+  useAccessDraftRegistration("group-editor", {
+    dirty: dirty && !uncertain,
+    discard,
+    pending: pending !== null,
+  });
 
   function commitEdits(next: Edits) {
     setEdits(next);
@@ -276,6 +342,7 @@ export function GroupEditor({
     const baseline = current?.baseline ?? valueOf(shown, section);
     setErrors((value) => ({ ...value, [section]: "" }));
     if (section === "details") setNameError(null);
+    setDiscardedEdits((value) => ({ ...value, [section]: null }));
     commitEdits({
       ...edits,
       [section]: same(section, draft, baseline) ? null : { baseline, draft },
@@ -283,9 +350,20 @@ export function GroupEditor({
   }
 
   function discardSection(section: GroupSection) {
+    focusNext.current = { section, target: "undo" };
+    setDiscardedEdits((value) => ({ ...value, [section]: edits[section] }));
     commitEdits({ ...edits, [section]: null });
     setErrors((value) => ({ ...value, [section]: "" }));
     if (section === "details") setNameError(null);
+  }
+
+  /** Brings back what Discard removed, unless the section has newer edits. */
+  function undoDiscard(section: GroupSection) {
+    const kept = discardedEdits[section];
+    setDiscardedEdits((value) => ({ ...value, [section]: null }));
+    if (!kept || edits[section] || locked) return;
+    focusNext.current = { section, target: "save" };
+    commitEdits({ ...edits, [section]: kept });
   }
 
   function request<S extends GroupSection>(
@@ -347,11 +425,19 @@ export function GroupEditor({
       sending: section,
     };
     const journaled = beginGroupSubmission(signedInId, record);
+    const run = discarded.current;
+    const journal = accessDraftJournalGeneration();
+    // A discard, a sign-out or an organization switch since the save began
+    // wins; otherwise the drafts go back to the journal.
+    const keepsJournal = () =>
+      discarded.current === run && accessDraftJournalGeneration() === journal;
     let result: AccessVersioned<AccessGroup>;
     try {
       result = await request(section, fresh, resolved);
     } catch (caught) {
       if (isUnansweredRequest(caught)) {
+        // The journal keeps the unanswered save for review on return.
+        if (discarded.current !== run || !mounted.current) return;
         if (journaled) {
           setEdits(noEdits);
           setUncertain(record);
@@ -368,7 +454,12 @@ export function GroupEditor({
         void afterAccessGroupChange(client);
         return;
       }
-      finishGroupSubmission(signedInId, true);
+      finishGroupSubmission(signedInId, group.id, true);
+      if (!keepsJournal()) return;
+      if (!mounted.current) {
+        persist(withEdit);
+        return;
+      }
       commitEdits(withEdit);
       if (caught instanceof ApiError && caught.status === 412 && retry) {
         // Someone changed this group between the read and the save.
@@ -385,9 +476,16 @@ export function GroupEditor({
       void afterAccessGroupChange(client);
       return;
     }
-    finishGroupSubmission(signedInId, true);
+    finishGroupSubmission(signedInId, group.id, true);
+    if (!keepsJournal()) return;
+    if (!mounted.current) {
+      // The other sections' drafts stay for the return.
+      persist({ ...others, [section]: null });
+      return;
+    }
     commitEdits({ ...others, [section]: null });
     setLatest(result.data);
+    focusNext.current = { section, target: "field" };
     toast.add({ title: savedCopy[section], type: "success" });
     void afterAccessGroupChange(client);
   }
@@ -455,7 +553,7 @@ export function GroupEditor({
 
   async function save(section: GroupSection) {
     const edit = edits[section];
-    if (!edit || locked) return;
+    if (!edit || locked || verifying) return;
     if (section === "details") {
       const found = groupNameError((edit.draft as GroupDetails).name);
       setNameError(found);
@@ -529,7 +627,7 @@ export function GroupEditor({
   }
 
   async function confirmDelete() {
-    if (pending) return;
+    if (pending || verifying) return;
     setPending("delete");
     setDeleteError("");
     try {
@@ -542,7 +640,7 @@ export function GroupEditor({
         return;
       }
       await deleteAccessGroup(group.id, { etag: fresh.etag });
-      clearGroupDraft(signedInId);
+      clearGroupDraft(signedInId, group.id);
       setEdits(noEdits);
       setDeleting(false);
       toast.add({ title: `${fresh.data.name} is deleted`, type: "success" });
@@ -634,13 +732,13 @@ export function GroupEditor({
           entriesLabel={section === "access" ? "Access" : "Members"}
           canResolve={
             listFresh &&
-            !accessDraftSubmissionNeedsReload(signedInId, "group") &&
+            !groupSubmissionNeedsReload(signedInId, group.id) &&
             (section !== "members" ||
               (!peopleSearch.error && !peopleSearch.selectedLoading))
           }
           pending={pending !== null}
           onResolve={() => {
-            if (!finishGroupSubmission(signedInId, false)) {
+            if (!finishGroupSubmission(signedInId, group.id, false)) {
               setJournalIssue(
                 "The saved change could not be cleared from this browser. Try again.",
               );
@@ -660,6 +758,8 @@ export function GroupEditor({
     );
   }
 
+  const memberCount = shown.member_ids.length;
+  const blockedDelete = `Remove its ${memberCount} ${memberCount === 1 ? "member" : "members"} first.`;
   const details = edits.details?.draft ?? detailsOf(shown);
   const members = edits.members?.draft ?? shown.member_ids;
   const access = edits.access?.draft ?? shown.access;
@@ -671,36 +771,58 @@ export function GroupEditor({
 
   function footer(section: GroupSection, label: string) {
     const changed = Boolean(edits[section]);
-    // Members and Access can outgrow the sheet, so their save stays in reach.
+    const undo = changed ? null : discardedEdits[section];
+    // Members and Access can outgrow the sheet, so their bar, and the Undo
+    // that replaces it, stay in reach.
     const sticky = section !== "details";
     return (
       <>
         <ActionError message={errors[section] ?? ""} />
-        <div
-          className={cn(
-            "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
-            sticky && "bg-card sticky bottom-0 -mx-5 -mb-5 border-t px-5 py-3",
-          )}
-        >
-          {changed ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              disabled={pending !== null}
-              onClick={() => discardSection(section)}
-            >
-              Discard changes
-            </Button>
-          ) : null}
-          <Button
-            type="submit"
-            className="min-h-11"
-            disabled={!changed || pending !== null}
+        {changed || undo ? (
+          <div
+            className={cn(
+              sticky &&
+                "bg-card sticky bottom-0 -mx-5 -mb-5 border-t px-5 py-3",
+            )}
           >
-            {pending === section ? "Saving…" : label}
-          </Button>
-        </div>
+            {changed ? (
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={pending !== null}
+                  onClick={() => discardSection(section)}
+                >
+                  Discard changes
+                </Button>
+                <DisabledReason reason={verifying ? verifyingReason : null}>
+                  <Button
+                    ref={(element) => {
+                      if (element) saveButtons.current.set(section, element);
+                      else saveButtons.current.delete(section);
+                    }}
+                    type="submit"
+                    className="min-h-11"
+                    disabled={pending !== null && pending !== section}
+                    pending={pending === section}
+                    pendingLabel="Saving…"
+                  >
+                    {label}
+                  </Button>
+                </DisabledReason>
+              </div>
+            ) : (
+              <DiscardedNotice
+                undoRef={(element) => {
+                  if (element) undoButtons.current.set(section, element);
+                  else undoButtons.current.delete(section);
+                }}
+                onUndo={() => undoDiscard(section)}
+              />
+            )}
+          </div>
+        ) : null}
       </>
     );
   }
@@ -715,7 +837,7 @@ export function GroupEditor({
   return (
     <>
       {journalIssue ? (
-        <Alert variant="warning" role="status" className="m-5 mb-0">
+        <Alert variant="warning" role="status" className="m-5 mb-0 shrink-0">
           {journalIssue}
         </Alert>
       ) : null}
@@ -725,9 +847,9 @@ export function GroupEditor({
           if (value === "details" || value === "members" || value === "access")
             onTabChange(value);
         }}
-        className="gap-0"
+        className="min-h-0 flex-1 gap-0"
       >
-        <div className="border-b px-5 py-3">
+        <div ref={tabRail} className="shrink-0 border-b px-5 py-3">
           <TabsList
             aria-label="Group"
             className="grid w-full grid-cols-3 sm:w-fit"
@@ -735,7 +857,7 @@ export function GroupEditor({
             {tabs.map((item) => (
               <TabsTrigger
                 key={item.value}
-                className="min-h-9"
+                className="min-h-11 xl:min-h-8"
                 value={item.value}
               >
                 {item.label}
@@ -753,7 +875,10 @@ export function GroupEditor({
           </TabsList>
         </div>
 
-        <TabsContent value="details" className="p-5">
+        <TabsContent
+          value="details"
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+        >
           {admin ? (
             <div className="flex flex-col gap-6">
               <form
@@ -763,6 +888,7 @@ export function GroupEditor({
                 onSubmit={submit("details")}
               >
                 <TextField
+                  layout="row"
                   id={`${id}-name`}
                   label="Name"
                   autoComplete="off"
@@ -770,10 +896,22 @@ export function GroupEditor({
                   value={details.name}
                   disabled={locked}
                   error={nameError}
-                  onChange={(name) => update("details", { ...details, name })}
+                  onChange={(name) => {
+                    lastField.current = `${id}-name`;
+                    update("details", { ...details, name });
+                  }}
                 />
-                <Field className="min-w-0">
-                  <FieldLabel htmlFor={`${id}-description`}>
+                <Field
+                  className={cn(
+                    "min-w-0",
+                    detailRowClassName,
+                    "md:items-start",
+                  )}
+                >
+                  <FieldLabel
+                    htmlFor={`${id}-description`}
+                    className={cn(detailLabelClassName, "md:pt-2")}
+                  >
                     Description
                   </FieldLabel>
                   <Textarea
@@ -782,52 +920,61 @@ export function GroupEditor({
                     rows={3}
                     value={details.description}
                     disabled={locked}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      lastField.current = `${id}-description`;
                       update("details", {
                         ...details,
                         description: event.target.value,
-                      })
-                    }
+                      });
+                    }}
                   />
                 </Field>
                 {footer("details", "Save details")}
               </form>
-              <section
-                aria-labelledby={`${id}-delete`}
-                className="space-y-2 border-t pt-5"
-              >
-                <h3 id={`${id}-delete`} className="font-semibold">
-                  Delete group
-                </h3>
-                <p className="text-muted-foreground text-sm">
-                  {shown.member_ids.length
-                    ? "Remove every member first. A group with members cannot be deleted."
-                    : "The group and its access settings are removed."}
-                </p>
-                {shown.member_ids.length ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11 w-full sm:w-auto"
-                    onClick={() => onTabChange("members")}
+              <AdvancedSection storageKey="access.group" summary="Delete group">
+                <div className="flex flex-col gap-2 sm:-ml-3 sm:flex-row sm:flex-wrap sm:items-center">
+                  <DisabledReason
+                    reason={
+                      memberCount
+                        ? blockedDelete
+                        : pending !== null
+                          ? "Wait for the save to finish."
+                          : null
+                    }
+                    reasonId={memberCount ? `${id}-delete-reason` : undefined}
                   >
-                    Go to Members
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11 w-full sm:w-auto"
-                    disabled={pending !== null}
-                    onClick={() => {
-                      setDeleteError("");
-                      setDeleting(true);
-                    }}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="text-danger-text min-h-11 w-full sm:w-auto"
+                      onClick={() => {
+                        setDeleteError("");
+                        setDeleting(true);
+                      }}
+                    >
+                      Delete group
+                    </Button>
+                  </DisabledReason>
+                  {memberCount ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 w-full sm:w-auto"
+                      onClick={() => onTabChange("members")}
+                    >
+                      Go to Members
+                    </Button>
+                  ) : null}
+                </div>
+                {memberCount ? (
+                  <p
+                    id={`${id}-delete-reason`}
+                    className="text-muted-foreground text-sm"
                   >
-                    Delete group
-                  </Button>
-                )}
-              </section>
+                    {blockedDelete}
+                  </p>
+                ) : null}
+              </AdvancedSection>
             </div>
           ) : (
             <div className="space-y-4 text-sm">
@@ -850,7 +997,10 @@ export function GroupEditor({
           )}
         </TabsContent>
 
-        <TabsContent value="members" className="p-5">
+        <TabsContent
+          value="members"
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+        >
           <form
             noValidate
             aria-label="Members"
@@ -858,7 +1008,7 @@ export function GroupEditor({
             onSubmit={submit("members")}
           >
             <p className="text-muted-foreground text-sm">
-              Members get the access this group gives. Guests can only read.
+              Guests can only read.
             </p>
             <GroupMemberPicker
               source={admin ? "users" : "candidates"}
@@ -871,7 +1021,10 @@ export function GroupEditor({
           </form>
         </TabsContent>
 
-        <TabsContent value="access" className="p-5">
+        <TabsContent
+          value="access"
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+        >
           {admin ? (
             <form
               noValidate
@@ -879,10 +1032,6 @@ export function GroupEditor({
               className="flex flex-col gap-4"
               onSubmit={submit("access")}
             >
-              <p className="text-muted-foreground text-sm">
-                Choose a level for each department. Open a department to give
-                one of its modules its own level.
-              </p>
               <GroupAccessEditor
                 entries={access}
                 departmentSearch={departmentSearch}
@@ -918,6 +1067,7 @@ export function GroupEditor({
                 departments={departments}
                 modules={modules}
                 empty="No access."
+                marks={false}
               />
               <p className="text-muted-foreground text-sm">
                 Only administrators can change a group&apos;s access.
@@ -947,7 +1097,7 @@ export function GroupEditor({
         open={deleting}
         onOpenChange={(open) => !open && pending === null && setDeleting(false)}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="access-ui">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {shown.name}?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -965,14 +1115,18 @@ export function GroupEditor({
             >
               Cancel
             </Button>
-            <Button
-              variant="destructive"
-              className="min-h-11"
-              disabled={pending !== null}
-              onClick={() => void confirmDelete()}
-            >
-              {pending === "delete" ? "Deleting…" : "Delete"}
-            </Button>
+            <DisabledReason reason={verifying ? verifyingReason : null}>
+              <Button
+                variant="destructive"
+                className="min-h-11"
+                disabled={pending !== null && pending !== "delete"}
+                pending={pending === "delete"}
+                pendingLabel="Deleting…"
+                onClick={() => void confirmDelete()}
+              >
+                Delete
+              </Button>
+            </DisabledReason>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

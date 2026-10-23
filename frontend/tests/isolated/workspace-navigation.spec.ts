@@ -6,6 +6,7 @@ import {
   getWorkspaceNavigation,
   isWorkspaceNavigationItemActive,
   currentNavigationKey,
+  organizationLinkExit,
 } from "../../src/components/workspace-navigation";
 
 function item(
@@ -427,4 +428,15 @@ test("the current navigation key follows the route and its section", () => {
   expect(key("/settings/appearance")).toBe("profile");
   expect(key("/profile")).toBe("profile");
   expect(key("/login")).toBeNull();
+});
+
+test("a link leaves the organization only when it names another one", () => {
+  const current = "00000000-0000-4000-8000-000000000102";
+  const other = "00000000-0000-4000-8000-000000000199";
+  // A notification in the current organization is ordinary navigation.
+  expect(organizationLinkExit(current, current)).toBeUndefined();
+  expect(organizationLinkExit(undefined, current)).toBeUndefined();
+  expect(organizationLinkExit(other, current)).toBe("organization");
+  // Without a current organization any named one is a switch.
+  expect(organizationLinkExit(other, null)).toBe("organization");
 });

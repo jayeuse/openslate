@@ -68,9 +68,19 @@ test("Groups pages and server search preserve enriched reach without catalog cra
   await expect(
     page.getByText("Showing 1–1 of 1", { exact: true }),
   ).toBeVisible();
-  expect(reads.at(-1)?.searchParams.get("search")).toBe("Remote department");
-  expect(reads.at(-1)?.searchParams.get("offset")).toBe("0");
-  expect(api.sent("GET", "/api/departments")).toHaveLength(0);
+  // A search adds one one-row read for the header's organization total,
+  // which still counts every group.
+  await expect(page.getByText("31 groups", { exact: true })).toBeVisible();
+  const pageReads = reads.filter(
+    (url) => url.searchParams.get("limit") !== "1",
+  );
+  expect(pageReads.at(-1)?.searchParams.get("search")).toBe(
+    "Remote department",
+  );
+  expect(pageReads.at(-1)?.searchParams.get("offset")).toBe("0");
+  // Department marks read one first catalog page; paging and search never
+  // crawl the catalog.
+  await expect.poll(() => api.sent("GET", "/api/departments").length).toBe(1);
   expect(api.sent("GET", "/api/modules")).toHaveLength(0);
 });
 
@@ -158,6 +168,8 @@ test("session pages expose later devices and retain global revocation", async ({
   await expect(
     sheet.getByText("No active sessions.", { exact: true }),
   ).toBeVisible();
+  // The empty state says it once; no "0 active sessions" line above it.
+  await expect(sheet.getByText(/^0 active sessions$/)).toHaveCount(0);
   expect(api.sent("DELETE", `/api/users/${ids.ben}/sessions`)).toHaveLength(1);
 });
 
@@ -353,7 +365,7 @@ test("a selected-person refusal survives reopening a cached group", async ({
   });
   await page
     .getByRole("table", { name: "Groups", exact: true })
-    .getByRole("button", { name: "Finance readers", exact: true })
+    .getByRole("button", { name: "Manage Finance readers", exact: true })
     .click();
   sheet = page.getByRole("dialog", { name: "Finance readers", exact: true });
   await sheet.getByRole("tab", { name: "Members", exact: true }).click();
@@ -363,7 +375,7 @@ test("a selected-person refusal survives reopening a cached group", async ({
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await page
     .getByRole("table", { name: "Groups", exact: true })
-    .getByRole("button", { name: "Inventory clerks", exact: true })
+    .getByRole("button", { name: "Manage Inventory clerks", exact: true })
     .click();
   sheet = page.getByRole("dialog", { name: "Inventory clerks", exact: true });
   await sheet.getByRole("tab", { name: "Members", exact: true }).click();

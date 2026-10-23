@@ -188,7 +188,7 @@ export function accessSummary(
     .sort(compareNames);
 }
 
-function moduleCount(count: number): string {
+export function moduleCount(count: number): string {
   return `${count} ${count === 1 ? "module" : "modules"}`;
 }
 
@@ -198,6 +198,20 @@ export function summaryLabel(summary: DepartmentSummary): string {
   if (!summary.level) return `${summary.name} · ${moduleCount(count)}`;
   const level = `${summary.name} · ${levelLabels[summary.level]}`;
   return count ? `${level} + ${moduleCount(count)}` : level;
+}
+
+/** The strongest level a group gives anywhere, module rows included. */
+export function strongestLevel(
+  reach: readonly DepartmentSummary[],
+): AccessLevel | null {
+  let strongest = -1;
+  for (const summary of reach)
+    for (const level of [
+      summary.level,
+      ...summary.modules.map((item) => item.level),
+    ])
+      if (level) strongest = Math.max(strongest, accessLevels.indexOf(level));
+  return accessLevels[strongest] ?? null;
 }
 
 // The group list
@@ -274,7 +288,7 @@ export function memberOptionsFromUsers(
         email: user.email,
         role: user.role === "guest" ? ("guest" as const) : ("member" as const),
         blocked,
-        statusLabel: blocked ?? (state.id === "pending" ? "Pending" : null),
+        statusLabel: blocked ?? (state.id === "pending" ? "Invited" : null),
       };
     })
     .sort(compareNames);
@@ -301,7 +315,7 @@ export function memberOptionsFromCandidates(
         role: candidate.role,
         blocked,
         statusLabel:
-          blocked ?? (candidate.status === "pending" ? "Pending" : null),
+          blocked ?? (candidate.status === "pending" ? "Invited" : null),
       };
     })
     .sort(compareNames);
@@ -510,4 +524,24 @@ export function groupErrorMessage(error: unknown, fallback: string): string {
       return "This group changed while you were saving. Check it and save again.";
   }
   return fallback;
+}
+
+/**
+ * After a create that got no answer, the group it made: a group with the
+ * same name whose ID was not among the same-name groups read before the
+ * request. Group names are not unique, and the server's clock may differ
+ * from the browser's, so only the IDs tell the new group apart.
+ */
+export function groupMadeByLostCreate(
+  groups: readonly AccessGroup[],
+  name: string,
+  before: ReadonlySet<string>,
+): AccessGroup | null {
+  const wanted = name.trim();
+  return (
+    groups.find(
+      (group) =>
+        !group.is_deleted && group.name === wanted && !before.has(group.id),
+    ) ?? null
+  );
 }

@@ -3,21 +3,22 @@ import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
 import { useCallback, useId, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Send } from "lucide-react";
+import { Send, X } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { FieldLegend, FieldSet } from "@/components/ui/field";
 import { toast } from "@/components/ui/toast";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import {
   afterAccessUserChange,
@@ -31,37 +32,33 @@ import {
   GUEST_DAYS_MIN,
   guestDaysError,
   guestExpiryFromDays,
+  invitationMadeByLostInvite,
+  isUnansweredRequest,
   peopleErrorMessage,
   roleLabels,
   usernameError,
   usernameFromEmail,
-  usernameHint,
 } from "../helpers/people";
 import { ApiError } from "@/lib/api";
 import {
   inviteAccessUser,
+  listAccessUsers,
   type AccessInvitationCreate,
   type AccessUserRole,
 } from "../state/api";
-import { useAccessDraftRegistration } from "../state/draft-navigation";
+import {
+  useAccessDraftRegistration,
+  useAccessVerifying,
+  verifyingReason,
+} from "../state/draft-navigation";
+import { inviteDraftJournal, type InviteDraft } from "../state/form-drafts";
 import { SponsorSearchSelect } from "./person-search-select";
 import { useAccessCatalog, catalogGroups } from "../hooks/use-access-catalog";
 import { Input } from "@/components/ui/input";
 import { ActionError } from "./editor-conflicts";
 import { DiscardChangesDialog, SelectField, TextField } from "./people-fields";
 
-type InviteForm = {
-  email: string;
-  /** Null until edited: the username follows the email address. */
-  username: string | null;
-  display_name: string;
-  job_title: string;
-  role: AccessUserRole;
-  group_ids: string[];
-  sponsor_user_id: string;
-  /** Null until edited: the days follow the invitation settings. */
-  days: string | null;
-};
+type InviteForm = InviteDraft;
 
 const emptyForm: InviteForm = {
   email: "",
@@ -74,12 +71,31 @@ const emptyForm: InviteForm = {
   days: null,
 };
 
+function isEmpty(form: InviteForm): boolean {
+  return (
+    form.email === "" &&
+    form.username === null &&
+    form.display_name === "" &&
+    form.job_title === "" &&
+    form.role === "member" &&
+    form.group_ids.length === 0 &&
+    form.sponsor_user_id === "" &&
+    form.days === null
+  );
+}
+
+/** Whether an unsent invitation is kept in this tab's journal. */
+export function hasKeptInvitation(userId: string): boolean {
+  return inviteDraftJournal.read(userId) !== null;
+}
+
 type FieldErrors = Partial<
   Record<"email" | "username" | "sponsor" | "days", string>
 >;
 
 const roleDescriptions: Record<AccessUserRole, string> = {
-  member: "Gets the access of the groups you choose.",
+  // A member's access comes from the groups below, which say so.
+  member: "",
   guest: "Can only read, for a limited time, with a sponsor.",
   admin: "Has full access everywhere and can change people and groups.",
 };
@@ -87,15 +103,25 @@ const roleDescriptions: Record<AccessUserRole, string> = {
 export function InvitePersonDialog({
   open,
   onOpenChange,
+  onFound,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Opens the person an invitation made when its answer was lost. */
+  onFound: (userId: string) => void;
 }) {
   const id = useId();
   const region = useWorkspaceDisplayRegion();
   const client = useQueryClient();
+  const signedInId = useVerifiedWorkspaceUserId();
   const settings = useQuery({ ...invitationSettingsOptions(), enabled: open });
-  const [form, setForm] = useState<InviteForm>(emptyForm);
+  // An unsent invitation comes back from the journal, for example after
+  // Back and Forward.
+  const [form, setForm] = useState<InviteForm>(
+    () => inviteDraftJournal.read(signedInId) ?? emptyForm,
+  );
+  const [discardError, setDiscardError] = useState("");
+  const verifying = useAccessVerifying();
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState("");
   const [pending, setPending] = useState(false);
@@ -104,15 +130,7 @@ export function InvitePersonDialog({
 
   const username = form.username ?? usernameFromEmail(form.email);
   const days = form.days ?? defaultGuestDays(settings.data);
-  const dirty =
-    form.email !== "" ||
-    form.username !== null ||
-    form.display_name !== "" ||
-    form.job_title !== "" ||
-    form.role !== "member" ||
-    form.group_ids.length > 0 ||
-    form.sponsor_user_id !== "" ||
-    form.days !== null;
+  const dirty = !isEmpty(form);
   const groupSearch = useAccessCatalog({
     kind: "groups",
     selectedIds: form.group_ids,
@@ -125,23 +143,64 @@ export function InvitePersonDialog({
     setForm(emptyForm);
     setErrors({});
     setSubmitError("");
+    setDiscardError("");
     setConfirmDiscard(false);
   }, []);
   const discard = useCallback(() => {
+    if (!inviteDraftJournal.discard(signedInId)) return false;
     reset();
     onOpenChange(false);
-  }, [onOpenChange, reset]);
-  useAccessDraftRegistration("person-invite", open && dirty, discard);
+    return true;
+  }, [onOpenChange, reset, signedInId]);
+  useAccessDraftRegistration("person-invite", {
+    dirty: open && dirty,
+    discard,
+    pending,
+  });
 
   function update(patch: Partial<InviteForm>) {
-    setForm((current) => ({ ...current, ...patch }));
+    const next = { ...form, ...patch };
+    setForm(next);
     setSubmitError("");
+    if (isEmpty(next)) inviteDraftJournal.discard(signedInId);
+    else inviteDraftJournal.write(signedInId, next);
   }
 
   function requestClose() {
     if (pending) return;
-    if (dirty) setConfirmDiscard(true);
-    else discard();
+    if (dirty) {
+      setDiscardError("");
+      setConfirmDiscard(true);
+    } else discard();
+  }
+
+  /**
+   * After a lost answer, the invitation may exist. Opens it when it does;
+   * otherwise the person may try again.
+   */
+  async function findLostInvitation(email: string): Promise<string> {
+    try {
+      const page = await listAccessUsers({
+        search: email,
+        status: "pending",
+        limit: 25,
+        offset: 0,
+      });
+      const made = invitationMadeByLostInvite(page.items, email);
+      if (!made) return "The invitation could not be sent. Try again.";
+      inviteDraftJournal.discard(signedInId);
+      toast.add({
+        title: "Invitation found. It was sent before the connection dropped.",
+        type: "info",
+      });
+      reset();
+      onOpenChange(false);
+      onFound(made.id);
+      void afterAccessUserChange(client);
+      return "";
+    } catch {
+      return "The invitation may have been sent. Check People before you try again.";
+    }
   }
 
   function validate(): FieldErrors {
@@ -160,7 +219,7 @@ export function InvitePersonDialog({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
+    if (pending || verifying) return;
     const found = validate();
     setErrors(found);
     if (Object.keys(found).length) return;
@@ -194,10 +253,15 @@ export function InvitePersonDialog({
             : `An invitation email is on its way to ${response.user.email}.`,
         type: "success",
       });
+      inviteDraftJournal.discard(signedInId);
       reset();
       onOpenChange(false);
       void afterAccessUserChange(client);
     } catch (error) {
+      if (isUnansweredRequest(error)) {
+        setSubmitError(await findLostInvitation(request.email));
+        return;
+      }
       setSubmitError(
         error instanceof ApiError && error.status === 502
           ? "The invitation email could not be sent. Try again."
@@ -217,13 +281,20 @@ export function InvitePersonDialog({
         open={open}
         onOpenChange={(next) => (next ? onOpenChange(true) : requestClose())}
       >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="access-ui max-w-2xl">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute top-3 right-3 z-10 size-11"
+            aria-label="Close invitation"
+            disabled={pending}
+            onClick={requestClose}
+          >
+            <X aria-hidden="true" />
+          </Button>
+          <DialogHeader className="pr-12">
             <DialogTitle>Invite a person</DialogTitle>
-            <DialogDescription>
-              Existing accounts accept when signed in. New accounts get an email
-              to set up their account.
-            </DialogDescription>
           </DialogHeader>
           <form
             noValidate
@@ -248,7 +319,6 @@ export function InvitePersonDialog({
                 autoComplete="off"
                 required
                 value={username}
-                description={usernameHint}
                 error={errors.username}
                 onChange={(value) => update({ username: value })}
               />
@@ -334,12 +404,13 @@ export function InvitePersonDialog({
               ) : (
                 <>
                   <p className="text-muted-foreground text-sm">
-                    Groups give access to departments and modules.
+                    Access comes from groups.
                     {form.role === "guest" ? " Guests can only read." : ""}
                   </p>
                   <Input
                     type="search"
                     aria-label="Search invitation groups"
+                    placeholder="Search groups"
                     className="min-h-11"
                     value={groupSearch.search}
                     onChange={(event) =>
@@ -421,10 +492,17 @@ export function InvitePersonDialog({
               >
                 Cancel
               </Button>
-              <Button type="submit" className="min-h-11" disabled={pending}>
-                <Send aria-hidden="true" />
-                {pending ? "Sending…" : "Send invitation"}
-              </Button>
+              <DisabledReason reason={verifying ? verifyingReason : null}>
+                <Button
+                  type="submit"
+                  className="min-h-11"
+                  pending={pending}
+                  pendingLabel="Sending…"
+                >
+                  <Send aria-hidden="true" />
+                  Send invitation
+                </Button>
+              </DisabledReason>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -433,8 +511,14 @@ export function InvitePersonDialog({
         open={confirmDiscard}
         title="Discard this invitation?"
         description="The details you entered will be lost."
+        error={discardError}
         onKeep={() => setConfirmDiscard(false)}
-        onDiscard={discard}
+        onDiscard={() => {
+          if (!discard())
+            setDiscardError(
+              "Your draft could not be cleared from this browser. Keep editing, or try again.",
+            );
+        }}
       />
     </>
   );

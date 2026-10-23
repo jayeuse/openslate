@@ -91,7 +91,7 @@ export function OrganizationMenu({
         )
         .finally(() => setSwitching(false));
     };
-    if (requestNavigation(WORKSPACE_HOME, resume)) resume();
+    if (requestNavigation(WORKSPACE_HOME, resume, "organization")) resume();
   }
 
   return (

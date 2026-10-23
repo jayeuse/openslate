@@ -637,7 +637,10 @@ test("Access security links to Audit through the existing draft guard", async ({
   const state = await mockSecurityEvents(page);
   await page.goto("/access?view=security");
   await expect(
-    page.getByRole("button", { name: "End session for Eli", exact: true }),
+    page.getByRole("button", {
+      name: "End session for Eli, Mobile Chrome",
+      exact: true,
+    }),
   ).toBeEnabled();
   await expect(feed(page)).toHaveCount(0);
   expect(state.reads).toEqual([]);
@@ -1431,7 +1434,10 @@ for (const [width, height] of [
       );
       await page.goto("/access?view=security");
       await expect(
-        page.getByRole("button", { name: "End session for Eli", exact: true }),
+        page.getByRole("button", {
+          name: "End session for Eli, Mobile Chrome",
+          exact: true,
+        }),
       ).toBeEnabled();
       await expect(
         page.getByRole("link", {

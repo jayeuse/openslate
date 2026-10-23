@@ -44,11 +44,11 @@ async function installSurface(
   surface: CardSurface,
   primaryUser: boolean,
 ) {
-  if (surface === "access") {
-    await mockAccessApi(page);
-    return "/access?view=people";
-  }
-  if (surface === "platform") {
+  // Access People rows have no person card (DESIGN.md, Access rows); the card
+  // reaches Access through workspace search, whose Open link opens the
+  // person's Access sheet, so the "access" surface adds the Access API.
+  if (surface === "access") await mockAccessApi(page);
+  if (surface === "platform" || surface === "access") {
     await page.route("**/api/search?*", (route) => {
       const url = new URL(route.request().url());
       const second = url.searchParams.get("search")?.includes("Ben");

@@ -29,6 +29,7 @@ import {
   type AccessUser,
 } from "../state/api";
 import { ActionError } from "./editor-conflicts";
+import { ReadError } from "./read-error";
 
 type Revoke = { kind: "one"; session: AccessSession } | { kind: "all" };
 
@@ -101,11 +102,14 @@ export function PersonSessions({
           <h3 id="person-sessions-title" className="font-semibold">
             Sessions
           </h3>
-          <p className="text-muted-foreground text-sm tabular-nums">
-            {sessions.data
-              ? `${total} active ${total === 1 ? "session" : "sessions"}`
-              : "Devices where this person is signed in."}
-          </p>
+          {/* With no sessions the empty state below says it once. */}
+          {sessions.data && total === 0 ? null : (
+            <p className="text-muted-foreground text-sm tabular-nums">
+              {sessions.data
+                ? `${total} active ${total === 1 ? "session" : "sessions"}`
+                : "Devices where this person is signed in."}
+            </p>
+          )}
         </div>
         {(
           self
@@ -126,16 +130,10 @@ export function PersonSessions({
         ) : null}
       </div>
       {sessions.isError ? (
-        <div role="alert" className="space-y-3 rounded-lg border p-4">
-          <p className="text-sm">Sessions could not be loaded.</p>
-          <Button
-            variant="outline"
-            className="min-h-11"
-            onClick={() => void sessions.refetch()}
-          >
-            Retry
-          </Button>
-        </div>
+        <ReadError
+          message="Sessions could not be loaded."
+          retry={() => void sessions.refetch()}
+        />
       ) : (
         <LoadingRegion
           loading={sessions.isPending}
@@ -166,7 +164,7 @@ export function PersonSessions({
                       ) : null}
                     </p>
                     <p className="text-muted-foreground text-sm break-all">
-                      Sign-in IP: {session.ip_address ?? "Unknown"}
+                      Sign-in address: {session.ip_address ?? "Unknown"}
                     </p>
                     <p className="text-muted-foreground text-sm">
                       Last active {formatDateTime(session.refreshed_at, region)}{" "}
@@ -208,7 +206,7 @@ export function PersonSessions({
         open={revoke !== null}
         onOpenChange={(open) => !open && !pending && setRevoke(null)}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="access-ui">
           <AlertDialogHeader>
             <AlertDialogTitle>
               {revoke?.kind === "one"
@@ -238,10 +236,11 @@ export function PersonSessions({
             <Button
               variant="destructive"
               className="min-h-11"
-              disabled={pending}
+              pending={pending}
+              pendingLabel="Signing out…"
               onClick={() => void confirm()}
             >
-              {pending ? "Signing out…" : "Sign out"}
+              Sign out
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

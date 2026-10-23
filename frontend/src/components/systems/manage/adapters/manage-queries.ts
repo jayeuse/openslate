@@ -1,7 +1,7 @@
 "use client";
 
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
-import { accessKeys } from "../../access/adapters/access-queries";
+import { accessKeys } from "../../access/adapters/access-keys";
 
 import {
   getManageWorkspace,

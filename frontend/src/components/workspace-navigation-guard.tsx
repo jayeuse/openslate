@@ -1,21 +1,47 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
-import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ComponentProps, ReactNode } from "react";
+
+import {
+  abandonUncertainDrafts,
+  accessDraftsHoldUncertainSave,
+} from "@/components/systems/access/state/draft-journal-session";
+import {
+  organizationLinkExit,
+  type WorkspaceNavigationExit,
+} from "@/components/workspace-navigation";
 import { reportError } from "@/lib/feedback";
+
+export type { WorkspaceNavigationExit };
 
 export type WorkspaceNavigationGuard = (
   href: string,
   resume: () => void,
+  exit?: WorkspaceNavigationExit,
 ) => boolean;
 
 type WorkspaceNavigationGuardContextValue = {
-  requestNavigation: (href: string, resume: () => void) => boolean;
+  requestNavigation: (
+    href: string,
+    resume: () => void,
+    exit?: WorkspaceNavigationExit,
+  ) => boolean;
   registerGuard: (guard: WorkspaceNavigationGuard) => () => void;
   openOrganization?: (orgId: string) => Promise<void>;
+  /** The open organization, so a link can tell a switch from a visit. */
+  organizationId: string | null;
 };
 
 const WorkspaceNavigationGuardContext =
@@ -23,34 +49,81 @@ const WorkspaceNavigationGuardContext =
 
 const acceptNavigation: WorkspaceNavigationGuard = () => true;
 
+// Every signed-in page mounts this provider, and the question rarely shows,
+// so its dialog loads on first use instead of with each page.
+const WorkspaceUncertainSaveDialog = dynamic(() =>
+  import("@/components/workspace-uncertain-save-dialog").then(
+    (module) => module.WorkspaceUncertainSaveDialog,
+  ),
+);
+
 export function WorkspaceNavigationGuardProvider({
   children,
   onAcceptedNavigation,
   onOpenOrganization,
+  userId = null,
+  organizationId = null,
 }: {
   children: ReactNode;
   onAcceptedNavigation: () => void;
   onOpenOrganization?: (orgId: string) => Promise<void>;
+  /** The signed-in account whose saved Access drafts a sign-out or switch clears. */
+  userId?: string | null;
+  organizationId?: string | null;
 }) {
   const guardRef = useRef<{ token: symbol; guard: WorkspaceNavigationGuard }>({
     token: Symbol("default-workspace-navigation-guard"),
     guard: acceptNavigation,
   });
+  // A sign-out or an organization switch waiting on the question about an
+  // Access save that may have completed.
+  const [unresolvedExit, setUnresolvedExit] = useState<{
+    proceed: () => void;
+  } | null>(null);
+  const [discardFailed, setDiscardFailed] = useState(false);
+  // Once asked, the dialog stays mounted, so it closes like any other dialog.
+  const [dialogUsed, setDialogUsed] = useState(false);
 
-  const value = useMemo<WorkspaceNavigationGuardContextValue>(
-    () => ({
+  const value = useMemo<WorkspaceNavigationGuardContextValue>(() => {
+    // An Access save that may have completed stays in the tab's journal on
+    // every page, and a sign-out or an organization switch clears that
+    // journal. The shell asks, so the question comes whatever page is open.
+    const asksFirst = (exit: WorkspaceNavigationExit | undefined) =>
+      exit !== undefined &&
+      userId !== null &&
+      accessDraftsHoldUncertainSave(userId);
+    const ask = (proceed: () => void) => {
+      setDiscardFailed(false);
+      setDialogUsed(true);
+      setUnresolvedExit({ proceed });
+    };
+    return {
       openOrganization: onOpenOrganization,
-      requestNavigation: (href, resume) => {
+      organizationId,
+      requestNavigation: (href, resume, exit) => {
         let resumed = false;
-        const guardedResume = () => {
+        const finish = () => {
           if (resumed) return;
           resumed = true;
           onAcceptedNavigation();
           resume();
         };
-        const accepted = guardRef.current.guard(href, guardedResume);
-        if (accepted) onAcceptedNavigation();
-        return accepted;
+        // The page asks about its open edits first; a page that discards
+        // them also forgets the Access saves, so only one question shows.
+        const afterPage = () => {
+          if (!asksFirst(exit)) {
+            finish();
+            return;
+          }
+          ask(finish);
+        };
+        if (!guardRef.current.guard(href, afterPage, exit)) return false;
+        if (asksFirst(exit)) {
+          ask(finish);
+          return false;
+        }
+        onAcceptedNavigation();
+        return true;
       },
       registerGuard: (guard) => {
         const token = Symbol("workspace-navigation-guard");
@@ -63,13 +136,29 @@ export function WorkspaceNavigationGuardProvider({
           };
         };
       },
-    }),
-    [onAcceptedNavigation, onOpenOrganization],
-  );
+    };
+  }, [onAcceptedNavigation, onOpenOrganization, organizationId, userId]);
 
   return (
     <WorkspaceNavigationGuardContext.Provider value={value}>
       {children}
+      {dialogUsed ? (
+        <WorkspaceUncertainSaveDialog
+          open={unresolvedExit !== null}
+          discardFailed={discardFailed}
+          onKeepEditing={() => setUnresolvedExit(null)}
+          onDiscard={() => {
+            const next = unresolvedExit;
+            if (!next || userId === null) return;
+            if (!abandonUncertainDrafts(userId)) {
+              setDiscardFailed(true);
+              return;
+            }
+            setUnresolvedExit(null);
+            next.proceed();
+          }}
+        />
+      ) : null}
     </WorkspaceNavigationGuardContext.Provider>
   );
 }
@@ -148,7 +237,11 @@ export function GuardedWorkspaceLink({
               }
             })();
           };
-          if (requestNavigation(href, resume)) resume();
+          const exit = organizationLinkExit(
+            organizationId,
+            context?.organizationId ?? null,
+          );
+          if (requestNavigation(href, resume, exit)) resume();
           return;
         }
         const resume = () => {

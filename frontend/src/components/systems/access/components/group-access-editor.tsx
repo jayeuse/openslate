@@ -1,8 +1,9 @@
 "use client";
 
 import { useId, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Search } from "lucide-react";
 
+import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { Button } from "@/components/ui/button";
 import {
   NativeSelect,
@@ -22,11 +23,14 @@ import {
   accessSummary,
   entriesFromAccessDraft,
   isAccessLevel,
+  moduleCount,
   setDepartmentLevel,
   setModuleLevel,
-  summaryLabel,
+  type DepartmentSummary,
 } from "../helpers/groups";
 import { levelLabels } from "../helpers/people";
+import { AccessLevelBadge } from "./access-level-badge";
+import { useDepartmentOrder } from "./people-row-parts";
 import type {
   AccessDepartment,
   AccessGroupAccessEntry,
@@ -84,39 +88,121 @@ function departmentRows(
     .sort(byName);
 }
 
-/** What the group gives, in one short line per department. */
+/**
+ * One department a group reaches: its mark, its name, the level chip, and
+ * the modules with their own level. The text reads as the summary line
+ * ("Inventory · Write + 1 module"), so a screen reader hears one phrase.
+ */
+function DepartmentReach({
+  summary,
+  position,
+}: {
+  summary: DepartmentSummary;
+  position: (id: string) => number | null;
+}) {
+  const index = position(summary.departmentId);
+  const count = summary.modules.length;
+  return (
+    <span className="inline-flex max-w-full min-w-0 items-center gap-1.5">
+      {index === null ? null : <DepartmentMark departmentIndex={index} />}
+      <span className="min-w-0 truncate">{summary.name}</span>
+      {summary.level ? (
+        <>
+          <span className="sr-only"> · </span>
+          <AccessLevelBadge level={summary.level} />
+        </>
+      ) : null}
+      {count ? (
+        <span className="text-muted-foreground shrink-0">
+          {summary.level ? " + " : " · "}
+          {moduleCount(count)}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** What the group gives, one line per department with its modules. */
 export function AccessSummary({
   entries,
   departments,
   modules,
   empty,
+  marks = true,
 }: {
   entries: readonly AccessGroupAccessEntry[];
   departments: readonly AccessDepartment[];
   modules: readonly AccessModule[];
   empty: string;
+  /** Administrators see department marks; other viewers see names. */
+  marks?: boolean;
 }) {
+  const position = useDepartmentOrder(marks);
   const summary = accessSummary(entries, departments, modules);
   if (!summary.length)
     return <p className="text-muted-foreground text-sm">{empty}</p>;
   return (
-    <ul className="space-y-1 text-sm">
+    <ul className="space-y-1.5 text-sm">
       {summary.map((item) => (
-        <li key={item.departmentId} className="break-words">
-          <span className="font-medium">{summaryLabel(item)}</span>
+        <li
+          key={item.departmentId}
+          className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span className="font-medium">
+            <DepartmentReach summary={item} position={position} />
+          </span>
           {item.modules.length ? (
-            <span className="text-muted-foreground">
-              {" "}
-              (
-              {item.modules
-                .map((module) => `${module.name} · ${module.levelLabel}`)
-                .join(", ")}
-              )
+            <span className="text-muted-foreground inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="sr-only"> (</span>
+              {item.modules.map((module, moduleIndex) => (
+                <span
+                  key={module.id}
+                  className="inline-flex min-w-0 items-center gap-1.5"
+                >
+                  <span className="break-words">{module.name}</span>
+                  <span className="sr-only"> · </span>
+                  <AccessLevelBadge level={module.level} />
+                  {moduleIndex < item.modules.length - 1 ? (
+                    <span className="sr-only">, </span>
+                  ) : null}
+                </span>
+              ))}
+              <span className="sr-only">)</span>
             </span>
           ) : null}
         </li>
       ))}
     </ul>
+  );
+}
+
+/** A search box with its icon and a visible placeholder, like the toolbars. */
+function SearchField({
+  label,
+  placeholder,
+  value,
+  onChange,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <Search
+        aria-hidden="true"
+        className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+      />
+      <Input
+        type="search"
+        aria-label={label}
+        placeholder={placeholder}
+        className="min-h-11 pl-9"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
   );
 }
 
@@ -180,6 +266,7 @@ export function GroupAccessEditor({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const position = useDepartmentOrder();
   const draft = accessDraftFromEntries(entries);
   const rows = departmentRows(entries, departments, modules);
 
@@ -194,14 +281,11 @@ export function GroupAccessEditor({
 
   return (
     <div className="space-y-3">
-      <Input
-        type="search"
-        aria-label="Search departments"
-        className="min-h-11"
+      <SearchField
+        label="Search departments"
+        placeholder="Search departments"
         value={departmentSearch.search}
-        onChange={(event) =>
-          departmentSearch.onSearchChange(event.target.value)
-        }
+        onChange={departmentSearch.onSearchChange}
       />
       {departmentSearch.loading ? (
         <p role="status" className="text-muted-foreground text-sm">
@@ -233,6 +317,7 @@ export function GroupAccessEditor({
           const department = draft[row.id] ?? { level: null, modules: {} };
           const overrides = Object.keys(department.modules).length;
           const open = expanded.has(row.id);
+          const mark = position(row.id);
           const inherited = department.level
             ? `Same as department (${levelLabels[department.level]})`
             : "Same as department (None)";
@@ -242,9 +327,12 @@ export function GroupAccessEditor({
                 <div className="min-w-0 flex-1">
                   <p
                     id={`${id}-${row.id}-name`}
-                    className="text-sm font-medium break-words"
+                    className="flex min-w-0 items-center gap-1.5 text-sm font-medium"
                   >
-                    {row.name}
+                    {mark === null ? null : (
+                      <DepartmentMark departmentIndex={mark} />
+                    )}
+                    <span className="min-w-0 break-words">{row.name}</span>
                   </p>
                   <p className="text-muted-foreground text-xs">
                     {overrides === 0
@@ -351,12 +439,11 @@ function DepartmentModules({
   const department = draft[departmentId] ?? { level: null, modules: {} };
   return (
     <div className="bg-muted/40 space-y-3 border-t p-3 sm:pl-6">
-      <Input
-        type="search"
-        aria-label={`Search modules in ${departmentName}`}
-        className="min-h-11"
+      <SearchField
+        label={`Search modules in ${departmentName}`}
+        placeholder="Search modules"
         value={search.search}
-        onChange={(event) => search.onSearchChange(event.target.value)}
+        onChange={search.onSearchChange}
       />
       {search.loading ? (
         <p role="status" className="text-muted-foreground text-sm">

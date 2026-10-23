@@ -3,9 +3,11 @@ import { z } from "zod";
 import type { GroupDetails } from "../helpers/groups";
 import type { AccessGroupAccessEntry } from "./api-contracts";
 import {
+  accessDraftSubmissionNeedsReload,
   beginDraftSubmission,
   browserStorage,
   clearDraft,
+  discardDraft,
   finishUncertainDraft,
   readDraft,
   writeDraft,
@@ -14,7 +16,7 @@ import {
 } from "./draft-journal-storage";
 
 // The group editor's drafts in the per-tab journal ("group" owner): one
-// record for the open group with a draft per section. A save marks the
+// record per group with a draft per section. A save marks the
 // record uncertain with the section it sent, so a save that got no answer
 // is reviewed instead of being sent twice.
 
@@ -61,12 +63,15 @@ const storedSchema: z.ZodType<StoredGroupDraft> = z.strictObject({
 
 const target = (value: StoredGroupDraft) => `group:${value.groupId}`;
 const OWNER = "group";
+/** One journal slot per group, so a kept draft of one never replaces another's. */
+const slot = (groupId: string) => ({ owner: OWNER, id: groupId }) as const;
 
 export function readGroupDraft(
   userId: string,
+  groupId: string,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): ReadResult<StoredGroupDraft> {
-  return readDraft(userId, OWNER, storedSchema, target, storage);
+  return readDraft(userId, slot(groupId), storedSchema, target, storage);
 }
 
 export function writeGroupDraft(
@@ -74,14 +79,31 @@ export function writeGroupDraft(
   value: StoredGroupDraft,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
-  return writeDraft(userId, OWNER, value, storedSchema, target, storage);
+  return writeDraft(
+    userId,
+    slot(value.groupId),
+    value,
+    storedSchema,
+    target,
+    storage,
+  );
 }
 
 export function clearGroupDraft(
   userId: string,
+  groupId: string,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
-  return clearDraft(userId, OWNER, storedSchema, target, storage);
+  return clearDraft(userId, slot(groupId), storedSchema, target, storage);
+}
+
+/** Discard the editable draft; false while the browser still keeps it. */
+export function discardGroupDraft(
+  userId: string,
+  groupId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return discardDraft(userId, slot(groupId), storedSchema, target, storage);
 }
 
 export function beginGroupSubmission(
@@ -91,12 +113,20 @@ export function beginGroupSubmission(
 ): boolean {
   return beginDraftSubmission(
     userId,
-    OWNER,
+    slot(value.groupId),
     value,
     storedSchema,
     target,
     storage,
   );
+}
+
+/** A save of this target was sent from this page and may still land. */
+export function groupSubmissionNeedsReload(
+  userId: string,
+  groupId: string,
+): boolean {
+  return accessDraftSubmissionNeedsReload(userId, slot(groupId));
 }
 
 /**
@@ -105,12 +135,13 @@ export function beginGroupSubmission(
  */
 export function finishGroupSubmission(
   userId: string,
+  groupId: string,
   confirmed: boolean,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
   return finishUncertainDraft(
     userId,
-    OWNER,
+    slot(groupId),
     storedSchema,
     target,
     storage,

@@ -12,9 +12,10 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, ShieldCheck } from "lucide-react";
 
+import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -25,8 +26,8 @@ import {
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  GuardedWorkspaceLink,
   useWorkspaceNavigationGuard,
+  type WorkspaceNavigationExit,
 } from "@/components/workspace-navigation-guard";
 import {
   accessNavigationFor,
@@ -38,37 +39,49 @@ import {
 } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { authMeOptions } from "./adapters/access-queries";
+import { AccessHeaderSlot } from "./components/access-header-actions";
 import { DiscardChangesDialog } from "./components/people-fields";
+import {
+  abandonUncertainDrafts,
+  accessDraftsHoldUncertainSave,
+} from "./state/draft-journal-storage";
 import { GroupsView } from "./components/groups-view";
-import { OverviewView } from "./components/overview-view";
+import { blockedSectionNotice } from "./helpers/blocked-section";
+import { OverviewView, useOverviewMeta } from "./components/overview-view";
 import { SecurityView } from "./components/security-view";
 import { PeopleView } from "./components/people-view";
 import {
   AccessDraftNavigationProvider,
+  AccessVerifyingProvider,
   useAccessDraftNavigation,
 } from "./state/draft-navigation";
 
 const accessViews = {
   security: {
     title: "Security",
-    description:
-      "Review account policy, sign-in sessions and recorded security events across your organization.",
+    // Security events live in Manage › Audit; the page links there.
+    description: "Account policy and sign-in sessions.",
   },
   overview: {
     title: "Access overview",
-    description: "See who has access and where it needs attention.",
+    // The Overview shows its group and department totals instead.
+    description: "",
   },
+  // The title and the controls say what People and Groups do.
   people: {
     title: "People",
-    description: "Invite people, set their role, and review their sessions.",
+    description: "",
   },
   groups: {
     title: "Groups",
-    description: "Give groups read, write, or manage access to departments.",
+    description: "",
   },
 } as const;
 
 type AccessView = keyof typeof accessViews;
+
+/** Where a department manager's Access page always lands. */
+const managerSearch = "view=groups";
 
 function isAccessView(value: string | null): value is AccessView {
   return value !== null && Object.hasOwn(accessViews, value);
@@ -150,19 +163,59 @@ function AccessControlCenter() {
       ? identity.data
       : null;
   const access = trustedIdentity ? accessNavigationFor(trustedIdentity) : null;
+  // A window return checks the session and the role again. Until that check
+  // ends, the last trusted view stays mounted, so open forms, dialogs, tabs
+  // and filters survive it. The page content is inert meanwhile; sheets and
+  // dialogs render in portals outside it and disable their submit buttons
+  // through AccessVerifyingProvider. Another account or organization
+  // remounts the page in the shell.
+  const verifying = suspended || roleAwaitingVerification;
+  const [lastAccess, setLastAccess] = useState<AccessNavigation | null>(null);
+  if (access !== null && access !== lastAccess) setLastAccess(access);
+  const shownAccess =
+    access ?? (verifying && !identity.isError ? lastAccess : null);
+  const [blocked, setBlocked] = useState<{
+    notice: string;
+    from: string;
+  } | null>(null);
   const requestedView = searchParams.get("view");
-  const navigationBlock = useUnsavedDraftGuard(securityBusy);
+  // Any accepted workspace navigation clears the manager's section line,
+  // also a click on the section they are already on.
+  const clearBlocked = useCallback(() => setBlocked(null), []);
+  const navigationBlock = useUnsavedDraftGuard(
+    userId,
+    securityBusy,
+    clearBlocked,
+  );
   useEffect(() => {
     if (access === "groups" && requestedView !== "groups")
-      router.replace(`${pathname}?view=groups` as Route);
+      router.replace(`${pathname}?${managerSearch}` as Route);
   }, [access, pathname, requestedView, router]);
+  // A manager's link to another section lands on Groups with one line that
+  // names the section. The landing keeps it; the next navigation clears it.
+  const search = searchParams.toString();
+  const asked = access === "groups" ? blockedSectionNotice(searchParams) : null;
+  if (asked !== null && blocked?.from !== search)
+    setBlocked({ notice: asked, from: search });
+  else if (
+    asked === null &&
+    blocked !== null &&
+    search !== blocked.from &&
+    search !== managerSearch
+  )
+    setBlocked(null);
   const view =
-    access === null || access === "none" ? null : viewFor(access, searchParams);
+    shownAccess === null || shownAccess === "none"
+      ? null
+      : viewFor(shownAccess, searchParams);
   const copy = view === null ? null : accessViews[view];
+  const overviewMeta = useOverviewMeta(view === "overview");
   const description =
-    access === "groups"
+    shownAccess === "groups"
       ? "Change who is in the groups you manage."
-      : (copy?.description ?? "");
+      : view === "overview"
+        ? overviewMeta
+        : (copy?.description ?? "");
   const identityMismatch =
     !suspended &&
     !roleAwaitingVerification &&
@@ -191,7 +244,7 @@ function AccessControlCenter() {
           Retry
         </Button>
       </div>
-    ) : access === "none" ? (
+    ) : shownAccess === "none" ? (
       <Empty className="border">
         <EmptyHeader>
           <EmptyTitle>Access is managed by administrators</EmptyTitle>
@@ -202,26 +255,39 @@ function AccessControlCenter() {
       </Empty>
     ) : (
       <LoadingRegion
-        loading={identity.isPending || roleAwaitingVerification || suspended}
+        loading={shownAccess === null}
         label="Loading Access…"
         skeleton={<Skeleton className="h-40 w-full" />}
+        className={view === "security" ? undefined : "access-fill"}
       >
-        {view === "people" ? (
-          <PeopleView />
-        ) : view === "groups" ? (
-          <GroupsView mode={access === "all" ? "admin" : "manager"} />
-        ) : view === "overview" ? (
-          <OverviewView />
-        ) : null}
+        <div
+          inert={verifying}
+          aria-busy={verifying}
+          className={view === "security" ? undefined : "access-fill"}
+        >
+          {view === "groups" && blocked ? (
+            <Alert className="mb-3 shrink-0">{blocked.notice}</Alert>
+          ) : null}
+          {view === "people" ? (
+            <PeopleView />
+          ) : view === "groups" ? (
+            <GroupsView mode={shownAccess === "all" ? "admin" : "manager"} />
+          ) : view === "overview" ? (
+            <OverviewView />
+          ) : null}
+        </div>
       </LoadingRegion>
     );
   return (
     <AccessFrame
       title={copy?.title ?? "Access"}
       description={description}
-      showSecurityLink={access === "all" && view === "overview"}
+      still={view !== null}
+      verifying={verifying}
     >
-      {body}
+      <AccessVerifyingProvider verifying={verifying}>
+        {body}
+      </AccessVerifyingProvider>
       <SecurityView
         active={requestedView === "security"}
         admitted={access === "all"}
@@ -232,33 +298,62 @@ function AccessControlCenter() {
   );
 }
 
-type PendingNavigation = { resume: () => void };
+type PendingNavigation = {
+  resume: () => void;
+  /** Saves that may have completed would be cleared by this exit. */
+  unresolved: boolean;
+};
+
+const finishFirst = "Finish the current change before leaving this page.";
+const discardFailed =
+  "Your draft could not be cleared from this browser. Keep editing, or try again.";
 
 /**
  * Holds workspace navigation while an Access editor has unsaved changes and
  * asks before discarding them. A reload or tab close gets the browser's own
- * warning.
+ * warning. The shell asks about a save that may have completed before a
+ * sign-out or an organization switch; when this page asks first, its
+ * Discard forgets those saves too, so only one question shows.
  */
-function useUnsavedDraftGuard(securityBusy: boolean): ReactNode {
+function useUnsavedDraftGuard(
+  userId: string,
+  securityBusy: boolean,
+  onAccepted: () => void,
+): ReactNode {
   const { hasUnsavedDraft, hasPendingOperation, discardUnsavedDrafts } =
     useAccessDraftNavigation();
   const [pending, setPending] = useState<PendingNavigation | null>(null);
   const [notice, setNotice] = useState("");
+  const [discardError, setDiscardError] = useState("");
+  // The wait notice ends with the change it waited for.
+  if (notice === finishFirst && !securityBusy && !hasPendingOperation)
+    setNotice("");
 
   const guard = useCallback(
-    (href: string, resume: () => void) => {
+    (href: string, resume: () => void, exit?: WorkspaceNavigationExit) => {
       if (securityBusy || hasPendingOperation) {
-        setNotice("Finish the current change before leaving this page.");
+        setNotice(finishFirst);
         return false;
       }
-      if (!hasUnsavedDraft) return true;
-      if (new URL(href, window.location.origin).href === window.location.href)
+      if (
+        !hasUnsavedDraft ||
+        new URL(href, window.location.origin).href === window.location.href
+      ) {
+        onAccepted();
         return true;
+      }
       setNotice("");
-      setPending({ resume });
+      setDiscardError("");
+      setPending({
+        resume: () => {
+          onAccepted();
+          resume();
+        },
+        unresolved: exit !== undefined && accessDraftsHoldUncertainSave(userId),
+      });
       return false;
     },
-    [hasUnsavedDraft, securityBusy, hasPendingOperation],
+    [hasUnsavedDraft, securityBusy, hasPendingOperation, userId, onAccepted],
   );
   useWorkspaceNavigationGuard(guard);
 
@@ -283,20 +378,21 @@ function useUnsavedDraftGuard(securityBusy: boolean): ReactNode {
         open={pending !== null}
         title="Discard unsaved changes?"
         description="You have changes in Access that are not saved. Leaving this page discards them."
+        error={discardError}
         onKeep={() => setPending(null)}
         onDiscard={() => {
           const next = pending;
           if (!next) return;
           if (hasPendingOperation) {
-            setNotice("Finish the current change before leaving this page.");
+            setNotice(finishFirst);
             setPending(null);
             return;
           }
-          if (!discardUnsavedDrafts()) {
-            setNotice(
-              "Your draft could not be cleared from this browser. Keep editing, or try again.",
-            );
-            setPending(null);
+          if (
+            !discardUnsavedDrafts() ||
+            (next.unresolved && !abandonUncertainDrafts(userId))
+          ) {
+            setDiscardError(discardFailed);
             return;
           }
           setPending(null);
@@ -307,49 +403,51 @@ function useUnsavedDraftGuard(securityBusy: boolean): ReactNode {
   );
 }
 
+/**
+ * The Access page. `access-ui` scopes the slim controls (globals.css). A
+ * still view (every view) never scrolls from 1280px: the header stays, its
+ * body shrinks to the viewport, and only its panels or table scroll.
+ * Narrower screens scroll the whole frame, so the header scrolls away with
+ * the content. The title is the shared PageHeader; its margin is the gap.
+ */
 function AccessFrame({
   title,
   description,
-  showSecurityLink = false,
+  still = false,
+  verifying = false,
   children,
 }: {
   title: string;
   description: string;
-  showSecurityLink?: boolean;
+  still?: boolean;
+  /** Header actions wait, like the page content, while the role is checked. */
+  verifying?: boolean;
   children?: ReactNode;
 }) {
+  const [actions, setActions] = useState<HTMLDivElement | null>(null);
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-3 sm:px-5 sm:py-4">
-      <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h1
-            data-slot="page-title"
-            className="text-2xl font-semibold tracking-tight sm:text-3xl"
-          >
-            {title}
-          </h1>
-          {description ? (
-            <p className="text-muted-foreground mt-1 max-w-3xl text-sm">
-              {description}
-            </p>
-          ) : null}
-        </div>
-        {showSecurityLink ? (
-          <Button
-            asChild
-            variant="outline"
-            className="min-h-11 w-full shrink-0 px-3 sm:w-auto"
-          >
-            <GuardedWorkspaceLink href="/access?view=security">
-              <ShieldCheck aria-hidden="true" />
-              Security
-              <ArrowUpRight aria-hidden="true" />
-            </GuardedWorkspaceLink>
-          </Button>
-        ) : null}
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {children}
+    <div className="access-ui flex h-full min-h-0 min-w-0 flex-col overflow-y-auto overscroll-contain p-3 sm:px-5 sm:py-4 xl:overflow-hidden">
+      <div className="shrink-0">
+        <PageHeader
+          title={title}
+          description={description}
+          actions={
+            <div
+              ref={setActions}
+              inert={verifying}
+              aria-busy={verifying || undefined}
+              className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2 empty:hidden sm:w-auto sm:justify-end"
+            />
+          }
+        />
+      </div>
+      <div
+        className={cn(
+          "xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:overscroll-contain",
+          still && "xl:flex xl:flex-col xl:gap-3 xl:overflow-hidden",
+        )}
+      >
+        <AccessHeaderSlot value={actions}>{children}</AccessHeaderSlot>
       </div>
     </div>
   );

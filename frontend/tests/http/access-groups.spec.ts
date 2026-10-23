@@ -1,6 +1,7 @@
 import {
   expect,
   expectNoHorizontalScroll,
+  heldResponse,
   test,
   type Page,
 } from "./helpers/test";
@@ -12,6 +13,7 @@ import {
   ids,
   listPage,
   mockAccessApi,
+  openAdvanced,
   person,
   type AccessEntry,
 } from "./helpers/access-api";
@@ -69,9 +71,14 @@ test("the list shows members and the departments each group reaches", async ({
   await expect(clerks).toContainText("Inventory · Write");
   const auditors = table.getByRole("row", { name: /Auditors/ });
   await expect(auditors).toContainText("Year-end review");
+  // One line: the marks, a count and the strongest level; every department
+  // with its level is in the row's text for screen readers.
+  await expect(auditors).toContainText("3 departments");
+  await expect(auditors.locator('[data-slot="badge"]')).toHaveText(["Read"]);
   await expect(auditors).toContainText("Finance · Read");
   await expect(auditors).toContainText("Inventory · 1 module");
-  await expect(auditors).toContainText("+1 more");
+  await expect(auditors).toContainText("Unavailable department · Read");
+  await expect(auditors).not.toContainText("more");
 
   // A click anywhere on the row opens the group.
   // The open button's hit area covers the row, so click the row where the
@@ -79,7 +86,7 @@ test("the list shows members and the departments each group reaches", async ({
   await expect(clerks).toBeVisible();
   const clerkRow = (await clerks.boundingBox())!;
   const clerkAccess = (await clerks
-    .getByText("Inventory · Write")
+    .getByText("1 department", { exact: true })
     .boundingBox())!;
   await clerks.click({
     position: {
@@ -108,7 +115,18 @@ test("creating a group sends its first members and opens its access", async ({
   await expect(
     dialog.getByRole("button", { name: "Add Rosa Reyes" }),
   ).toHaveCount(0);
+  // Add and Remove are words, each named for its person.
+  await expect(dialog.getByRole("button", { name: "Add Ben Cruz" })).toHaveText(
+    "Add",
+  );
   await dialog.getByRole("button", { name: "Add Ben Cruz" }).click();
+  await expect(
+    dialog.getByRole("button", { name: "Remove Ben Cruz" }),
+  ).toHaveText("Remove");
+  // Create adds the members, so the announcement asks for no Save.
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "Ben Cruz" }),
+  ).toHaveText("Ben Cruz added.");
   await dialog.getByRole("button", { name: "Create group" }).click();
 
   await expect(dialog).toBeHidden();
@@ -160,10 +178,10 @@ test("a rename that meets a newer save asks which name to keep", async ({
   expect(patches[1]?.body).toEqual({ name: "Stock clerks" });
   expect(api.groups.get(ids.clerks)?.name).toBe("Stock clerks");
   await expect(
-    page.getByRole("dialog", { name: "Stock clerks" }).getByRole("button", {
-      name: "Save details",
-    }),
-  ).toBeDisabled();
+    page
+      .getByRole("dialog", { name: "Stock clerks" })
+      .getByRole("button", { name: /^(Save details|Saving…)$/ }),
+  ).toHaveCount(0);
 });
 
 test("an administrator replaces members from the directory, merged onto newer members", async ({
@@ -208,8 +226,8 @@ test("an administrator replaces members from the directory, merged onto newer me
   await sheet.getByRole("button", { name: "Save members" }).click();
 
   await expect(
-    sheet.getByRole("button", { name: "Save members" }),
-  ).toBeDisabled();
+    sheet.getByRole("button", { name: /^(Save members|Saving…)$/ }),
+  ).toHaveCount(0);
   const put = api.sent("PUT", `/api/access/groups/${ids.readers}/members`);
   expect(put).toHaveLength(1);
   expect(
@@ -239,11 +257,19 @@ test("a department manager changes members only, from the candidates list", asyn
       ),
     }),
   );
-  await page.goto("/access?view=groups");
+  // A person link lands on Groups and says why; the next step clears it.
+  await page.goto(`/access?view=people&user=${ids.ana}`);
+  await expect(page).toHaveURL(/\/access\?view=groups$/);
+  const notice = page.getByText("People is not available to your account.", {
+    exact: true,
+  });
+  await expect(notice).toBeVisible();
   await expect(page.getByRole("button", { name: "Create group" })).toHaveCount(
     0,
   );
   await openGroup(page, "Inventory clerks");
+  await expect(page).toHaveURL(/group=/);
+  await expect(notice).toHaveCount(0);
   const sheet = panel(page, "Inventory clerks");
 
   await expect(sheet.getByRole("tab", { name: "Members" })).toHaveAttribute(
@@ -253,8 +279,8 @@ test("a department manager changes members only, from the candidates list", asyn
   await sheet.getByRole("button", { name: "Add cy" }).click();
   await sheet.getByRole("button", { name: "Save members" }).click();
   await expect(
-    sheet.getByRole("button", { name: "Save members" }),
-  ).toBeDisabled();
+    sheet.getByRole("button", { name: /^(Save members|Saving…)$/ }),
+  ).toHaveCount(0);
   expect(
     api.sent("PUT", `/api/access/groups/${ids.clerks}/members`)[0]?.body,
   ).toEqual({ member_ids: [ids.ana, ids.ben, ids.cy] });
@@ -298,8 +324,8 @@ test("the access editor sends every department and module level as one replaceme
 
   await sheet.getByRole("button", { name: "Save access" }).click();
   await expect(
-    sheet.getByRole("button", { name: "Save access" }),
-  ).toBeDisabled();
+    sheet.getByRole("button", { name: /^(Save access|Saving…)$/ }),
+  ).toHaveCount(0);
   const put = api.sent("PUT", `/api/access/groups/${ids.readers}/access`);
   expect(put).toHaveLength(1);
   expect(byKey((put[0]?.body as { access: AccessEntry[] }).access)).toEqual(
@@ -315,14 +341,28 @@ test("a group with members cannot be deleted; an empty one can", async ({
 }) => {
   const api = await mockAccessApi(page);
   api.groups.set(empty, group(empty, "New hires", [], []));
+  const deletion = heldResponse();
+  api.on("DELETE", `/api/access/groups/${empty}`, async () => {
+    deletion.enter();
+    await deletion.released;
+    return "next" as const;
+  });
   await page.goto(`/access?view=groups&group=${ids.clerks}`);
   let sheet = panel(page, "Inventory clerks");
-  // A group with members offers the way to empty it, not a delete.
-  await expect(sheet.getByRole("button", { name: "Delete group" })).toHaveCount(
-    0,
+  // Delete waits in Advanced and says why it cannot act; the way to empty
+  // the group sits beside it.
+  await openAdvanced(sheet);
+  const blocked = sheet.getByRole("button", { name: "Delete group" });
+  await expect(blocked).toHaveAttribute("aria-disabled", "true");
+  // The reason is visible beside the button, and is its description.
+  await expect(sheet.getByText("Remove its 2 members first.")).toBeVisible();
+  await expect(blocked).toHaveAccessibleDescription(
+    "Remove its 2 members first.",
   );
-  await sheet.getByRole("button", { name: "Go to Members" }).click();
+  await blocked.focus();
+  await page.keyboard.press("Enter");
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await sheet.getByRole("button", { name: "Go to Members" }).click();
   await expect(sheet.getByRole("tab", { name: "Members" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -334,8 +374,17 @@ test("a group with members cannot be deleted; an empty one can", async ({
   await sheet.getByRole("button", { name: "Delete group" }).click();
   const confirm = page.getByRole("alertdialog", { name: "Delete New hires?" });
   await confirm.getByRole("button", { name: "Delete" }).click();
+  await deletion.entered;
+  await expect(
+    confirm.getByRole("button", { name: "Deleting…", exact: true }),
+  ).toHaveAttribute("aria-busy", "true");
+  deletion.release();
   await expect(confirm).toBeHidden();
   await expect(sheet).toBeHidden();
+  // The deleted group's row is gone, so focus returns to the search.
+  await expect(
+    page.getByRole("searchbox", { name: "Search groups", exact: true }),
+  ).toBeFocused();
   expect(api.sent("DELETE", `/api/access/groups/${empty}`)).toHaveLength(1);
   expect(api.sent("DELETE", `/api/access/groups/${ids.clerks}`)).toHaveLength(
     0,
@@ -460,7 +509,7 @@ for (const width of [1440, 390])
     await expectNoHorizontalScroll(page);
 
     await page
-      .getByRole("button", { name: /^Inventory clerks/ })
+      .getByRole("button", { name: /^Manage Inventory clerks/ })
       .filter({ visible: true })
       .click();
     const sheet = panel(page, "Inventory clerks");
@@ -519,15 +568,19 @@ test("group members retain the complete later-page catalog and refresh paged mem
     .getByRole("button", { name: "Save members", exact: true })
     .click();
   await expect(
-    sheet.getByRole("button", { name: "Save members", exact: true }),
-  ).toBeDisabled();
+    sheet.getByRole("button", { name: /^(Save members|Saving…)$/ }),
+  ).toHaveCount(0);
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("link", { name: "People", exact: true }).click();
   await expect(page).toHaveURL(/\/access\?view=people(?:&|$)/);
   const people = page.getByRole("table", { name: "People", exact: true });
   await expect(people).toBeVisible();
-  await page.getByRole("button", { name: "More filters", exact: true }).click();
-  await page.getByLabel("Group", { exact: true }).selectOption(ids.readers);
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Filters", exact: true })
+    .getByRole("combobox", { name: "Group", exact: true })
+    .click();
+  await page.getByRole("option", { name: /Finance readers/ }).click();
   await expect(people.getByRole("row", { name: /Zzz Member/ })).toBeVisible();
   expect(
     api.sent("PUT", `/api/access/groups/${ids.readers}/members`)[0]?.body,

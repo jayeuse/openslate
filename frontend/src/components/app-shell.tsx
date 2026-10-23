@@ -354,6 +354,8 @@ export function AppShell({
     <WorkspaceNavigationGuardProvider
       onAcceptedNavigation={closeMobileNavigation}
       onOpenOrganization={onSwitchOrganization}
+      userId={verifiedUserId}
+      organizationId={organizationId}
     >
       <WorkspaceSignOutProvider complete={finishSignOut}>
         <SidebarProvider
@@ -812,7 +814,7 @@ function AppHeaderActions({
       onAccountOpenChange(false);
       void onLogout();
     };
-    if (requestNavigation("/login", logout)) logout();
+    if (requestNavigation("/login", logout, "session")) logout();
   }
 
   return (

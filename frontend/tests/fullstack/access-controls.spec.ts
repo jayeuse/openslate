@@ -886,7 +886,7 @@ test.describe("Access", () => {
       page
         .getByRole("table", { name: "People" })
         .getByRole("row", { name: new RegExp(pendingName, "u") }),
-    ).toContainText("Pending");
+    ).toContainText("Invited");
     await expect
       .poll(() => hasMailpitRecipient(request, mailpitOrigin, pendingEmail), {
         timeout: 10_000,

@@ -23,9 +23,10 @@ function requirementStatus(required = false) {
 
 async function openMfa(page: Page) {
   await page.goto("/access?view=security");
-  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  // The viewer's own setup sits on the Security page, not in the policy.
   await page
-    .getByRole("button", { name: "Manage two-step verification", exact: true })
+    .getByRole("region", { name: "Security workspace", exact: true })
+    .getByRole("button", { name: /^(Set up|Manage) two-step verification$/ })
     .click();
   return page.getByRole("dialog", {
     name: "Two-step verification",

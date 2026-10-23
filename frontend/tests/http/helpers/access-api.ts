@@ -1,6 +1,8 @@
-import { expect, type Page, type Route } from "@playwright/test";
+import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { authMeBody, isEventStream } from "./test";
 import { pageOf } from "../../helpers/pagination";
+import type { AccessSecurityEvent } from "../../../src/components/systems/access/adapters/security-events-api";
+import type { AccessAdminSession } from "../../../src/components/systems/access/adapters/security-api";
 
 // A mocked Access API for the People, Groups and Overview HTTP specs. Every
 // response matches the strict frontend contracts, and every list answers
@@ -175,7 +177,13 @@ const unknownMonitoring: Monitoring = {
 export type Api = {
   monitoring: Map<string, Monitoring>;
   sessions: Session[];
+  /** Every active session in the organization (`/api/auth/admin-sessions`). */
+  adminSessions: AccessAdminSession[];
+  /** The organization's security events (`/api/security-events`). */
+  securityEvents: AccessSecurityEvent[];
   listReads: URLSearchParams[];
+  /** One-row `/api/users` reads that only need a total. */
+  countReads: URLSearchParams[];
   summaryReads: number;
   summaryQueries: URLSearchParams[];
   users: Map<string, User>;
@@ -341,12 +349,44 @@ export async function mockAccessApi(
       },
     ],
   ]);
+  const adminSessions: AccessAdminSession[] = [
+    adminSession(0, ids.rosa, "Rosa Reyes", { current: true }),
+    adminSession(1, ids.ben, "Ben Cruz", { device: "Mobile" }),
+    adminSession(2, ids.ben, "Ben Cruz"),
+  ];
+  const securityEvents: AccessSecurityEvent[] = [
+    signInEvent(0, -10 * MINUTE, { actor_id: ids.rosa, subject_id: ids.rosa }),
+    signInEvent(1, -30 * MINUTE, {
+      event_type: "identity.sign_in_failure",
+      outcome: "failure",
+      metadata: { ip_address: "203.0.113.9" },
+    }),
+    signInEvent(2, -2 * 60 * MINUTE, {
+      actor_id: ids.ben,
+      subject_id: ids.ben,
+    }),
+    signInEvent(3, -3 * 60 * MINUTE, {
+      event_type: "identity.lockout",
+      outcome: "denied",
+      subject_id: ids.ana,
+      metadata: {},
+    }),
+    // Not a sign-in: the feed never shows it.
+    signInEvent(4, -4 * 60 * MINUTE, {
+      event_type: "identity.mfa.enrolled",
+      actor_id: ids.dee,
+      subject_id: ids.dee,
+    }),
+  ];
   const calls: Call[] = [];
   const handlers = new Map<string, Handler>();
   const api: Api = {
     monitoring,
     sessions,
+    adminSessions,
+    securityEvents,
     listReads: [],
+    countReads: [],
     summaryReads: 0,
     summaryQueries: [],
     users,
@@ -377,8 +417,13 @@ export async function mockAccessApi(
     }
     const call = { method, path, body };
     calls.push(call);
+    // A one-row read with no ID list is a count (Overview cards, the People
+    // status filters); directory pages and ID lookups stay in listReads.
     if (method === "GET" && path === "/api/users")
-      api.listReads.push(new URLSearchParams(url.searchParams));
+      (url.searchParams.get("limit") === "1" && !url.searchParams.has("ids")
+        ? api.countReads
+        : api.listReads
+      ).push(new URLSearchParams(url.searchParams));
     if (method === "GET" && path === "/api/users/summary") {
       api.summaryReads += 1;
       api.summaryQueries.push(new URLSearchParams(url.searchParams));
@@ -439,6 +484,52 @@ export async function mockAccessApi(
           as_of: new Date(capturedAt).toISOString(),
           inactive_days: inactiveDays,
         },
+      });
+    }
+    if (path === "/api/auth/admin-sessions" && method === "GET")
+      return route.fulfill({
+        json: listPage(
+          [...api.adminSessions].sort((left, right) =>
+            right.refreshed_at.localeCompare(left.refreshed_at),
+          ),
+          url,
+        ),
+      });
+    if (path === "/api/security-events" && method === "GET") {
+      const query = url.searchParams;
+      const search = (query.get("search") ?? "").toLowerCase();
+      const type = query.get("event_type");
+      // As the server: `occurred_after` inclusive, `occurred_before`
+      // exclusive, then time and id in the requested order.
+      const after = query.get("occurred_after");
+      const before = query.get("occurred_before");
+      const direction = query.get("sort_order") === "asc" ? 1 : -1;
+      return route.fulfill({
+        json: listPage(
+          api.securityEvents
+            .filter(
+              (event) =>
+                (!type || event.event_type === type) &&
+                (!after ||
+                  Date.parse(event.occurred_at) >= Date.parse(after)) &&
+                (!before ||
+                  Date.parse(event.occurred_at) < Date.parse(before)) &&
+                (!search ||
+                  [
+                    event.event_type,
+                    event.source,
+                    event.reason ?? "",
+                    event.request_path ?? "",
+                  ].some((value) => value.toLowerCase().includes(search))),
+            )
+            .sort(
+              (left, right) =>
+                direction *
+                (Date.parse(left.occurred_at) - Date.parse(right.occurred_at) ||
+                  left.id.localeCompare(right.id)),
+            ),
+          url,
+        ),
       });
     }
     if (path === "/api/users" && method === "GET") {
@@ -808,6 +899,15 @@ export async function mockAccessApi(
         return user.is_deleted
           ? route.fulfill({ status: 404, json: { detail: "User not found" } })
           : route.fulfill({ json: user });
+      if (rest === "" && method === "DELETE") {
+        users.set(user.id, {
+          ...user,
+          is_deleted: true,
+          deleted_at: at(0),
+          updated_at: at(0),
+        });
+        return route.fulfill({ status: 204, body: "" });
+      }
       if (rest === "/restore" && method === "POST") {
         const restored = {
           ...user,
@@ -866,6 +966,57 @@ export async function mockAccessApi(
   return api;
 }
 
+export const MINUTE = 60_000;
+
+/** An active session, refreshed `index` minutes ago. */
+export function adminSession(
+  index: number,
+  userId: string,
+  personName: string,
+  fields: Partial<AccessAdminSession> = {},
+): AccessAdminSession {
+  return {
+    id: fixtureId(1500 + index),
+    user_id: userId,
+    person_name: personName,
+    user_agent: "Mozilla/5.0",
+    device: "Desktop",
+    browser: "Chrome",
+    created_at: created,
+    refreshed_at: at(-index * MINUTE),
+    expires_at: at(DAY),
+    current: false,
+    ip_address: "198.51.100.10",
+    ...fields,
+  };
+}
+
+/** A sign-in event `offset` ms from now; no person unless given. */
+export function signInEvent(
+  index: number,
+  offset: number,
+  fields: Partial<AccessSecurityEvent> = {},
+): AccessSecurityEvent {
+  return {
+    id: fixtureId(1700 + index),
+    occurred_at: at(offset),
+    event_type: "identity.sign_in",
+    outcome: "success",
+    source: "identity.login",
+    operation_id: fixtureId(1800 + index),
+    actor_id: null,
+    subject_id: null,
+    labels: {},
+    fingerprint: null,
+    reason: null,
+    request_id: null,
+    request_method: null,
+    request_path: null,
+    metadata: { ip_address: "198.51.100.7" },
+    ...fields,
+  };
+}
+
 export function etag(item: { id: string; revision: number }): string {
   return `"${item.id}:${item.revision}"`;
 }
@@ -892,4 +1043,16 @@ export function addPeople(api: Api, count: number, start: number): void {
 /** The journey sent no create, update or delete request to the Access API. */
 export function expectNoWrites(api: Api): void {
   expect(api.calls.filter((call) => call.method !== "GET")).toEqual([]);
+}
+
+/**
+ * Opens a person or group sheet's Advanced block, where lifecycle actions
+ * wait. It stays open for this viewer, so a later sheet may already show it.
+ */
+export async function openAdvanced(sheet: Locator): Promise<void> {
+  const trigger = sheet.getByRole("button", { name: /^Advanced/ });
+  await expect(trigger).toBeVisible();
+  if ((await trigger.getAttribute("aria-expanded")) !== "true")
+    await trigger.click();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
 }

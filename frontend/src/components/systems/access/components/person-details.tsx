@@ -1,13 +1,30 @@
 "use client";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
-import { useCallback, useId, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { toast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { afterAccessUserChange } from "../adapters/access-queries";
@@ -26,17 +43,22 @@ import {
   roleLabels,
   samePersonDraft,
   usernameError,
-  usernameHint,
   type PersonDraft,
   type PersonDraftField,
 } from "../helpers/people";
 import { getAccessUser, updateAccessUser, type AccessUser } from "../state/api";
-import { accessDraftSubmissionNeedsReload } from "../state/draft-journal-storage";
-import { useAccessDraftRegistration } from "../state/draft-navigation";
+import { accessDraftJournalGeneration } from "../state/draft-journal-storage";
+import {
+  useAccessDraftRegistration,
+  useAccessVerifying,
+  verifyingReason,
+} from "../state/draft-navigation";
 import {
   beginPersonSubmission,
   clearPersonDraft,
+  discardPersonDraft,
   finishPersonSubmission,
+  personSubmissionNeedsReload,
   readPersonDraft,
   writePersonDraft,
   type StoredPersonDraft,
@@ -44,11 +66,12 @@ import {
 import {
   ActionError,
   ConflictDialog,
+  DiscardedNotice,
   UncertainDraftWarning,
   type DraftReviewValues,
 } from "./editor-conflicts";
 import { SponsorSearchSelect } from "./person-search-select";
-import { SelectField, TextField } from "./people-fields";
+import { detailRowClassName, SelectField, TextField } from "./people-fields";
 
 type Edit = { baseline: PersonDraft; draft: PersonDraft };
 type Conflict = {
@@ -56,7 +79,9 @@ type Conflict = {
   conflicts: FieldConflict[];
   choices: Record<string, ConflictChoice | undefined>;
 };
-type Errors = Partial<Record<"username" | "sponsor" | "expires", string>>;
+type Errors = Partial<
+  Record<"username" | "role" | "sponsor" | "expires", string>
+>;
 
 function today(): string {
   return dateInputValue(new Date().toISOString());
@@ -95,8 +120,8 @@ export function PersonDetails({
   const region = useWorkspaceDisplayRegion();
   const client = useQueryClient();
   const signedInId = useVerifiedWorkspaceUserId();
-  const [stored] = useState(() => readPersonDraft(signedInId));
-  const ownRecord = stored.value?.personId === person.id ? stored.value : null;
+  const [stored] = useState(() => readPersonDraft(signedInId, person.id));
+  const ownRecord = stored.value;
   const [edit, setEdit] = useState<Edit | null>(() =>
     ownRecord && stored.status === "ready"
       ? { baseline: ownRecord.baseline, draft: ownRecord.draft }
@@ -108,52 +133,112 @@ export function PersonDetails({
   const [journalIssue, setJournalIssue] = useState(() =>
     stored.status === "invalid"
       ? "A saved draft could not be restored safely, so it was not used."
-      : stored.status === "uncertain" && !ownRecord
-        ? "A change to another person may not have been saved. Open that person to review it before you edit here."
-        : "",
+      : "",
   );
   const [errors, setErrors] = useState<Errors>({});
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [confirmOwnRole, setConfirmOwnRole] = useState(false);
+  const [discardIssue, setDiscardIssue] = useState("");
+  // The edit the Discard button removed, for its inline Undo.
+  const [discardedEdit, setDiscardedEdit] = useState<Edit | null>(null);
+  // Where focus goes once the bar under the form changes: the Undo after
+  // Discard, Save after Undo, and the last edited field after a save, so
+  // focus never falls back to the sheet.
+  const saveButton = useRef<HTMLButtonElement>(null);
+  const undoButton = useRef<HTMLButtonElement>(null);
+  const lastField = useRef<string | null>(null);
+  const focusNext = useRef<"undo" | "save" | "field" | null>(null);
+  useEffect(() => {
+    const next = focusNext.current;
+    // A save's field focus waits until the save has fully ended.
+    if (!next || (next === "field" && pending)) return;
+    const element =
+      next === "undo"
+        ? undoButton.current
+        : next === "save"
+          ? saveButton.current
+          : lastField.current
+            ? document.getElementById(lastField.current)
+            : null;
+    if (!element?.isConnected) return;
+    focusNext.current = null;
+    element.focus();
+  });
+  const verifying = useAccessVerifying();
+  // After "Change my role", focus returns to Role once the save ends (Role
+  // is disabled while it runs) and the confirmation has finished closing, so
+  // a fast answer cannot lose focus to the closing dialog.
+  const focusRoleAfterSave = useRef(false);
+  const closeKeepsFocus = useRef(false);
+  const [confirmSettled, setConfirmSettled] = useState(true);
+  useEffect(() => {
+    if (pending || !confirmSettled || !focusRoleAfterSave.current) return;
+    focusRoleAfterSave.current = false;
+    document.getElementById(`${id}-role`)?.focus();
+  }, [pending, confirmSettled, id]);
+  // Advances when the person discards the draft; a save that answers
+  // afterwards writes nothing back.
+  const discarded = useRef(0);
+  // A save that answers after the editor closed (Back, a section switch)
+  // keeps its draft in the journal for the return.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const current = draftFromUser(person);
   const values = edit?.draft ?? current;
   const dirty = edit !== null;
   const guest = person.role === "guest";
+  const self = person.id === signedInId;
   const peopleById = new Map(people.map((item) => [item.id, item]));
 
   const discard = useCallback(() => {
-    clearPersonDraft(signedInId);
+    if (!discardPersonDraft(signedInId, person.id)) return false;
+    discarded.current += 1;
     setEdit(null);
+    setDiscardedEdit(null);
     setErrors({});
     setError("");
     return true;
-  }, [signedInId]);
-  useAccessDraftRegistration(
-    "person-editor",
-    dirty && uncertain === null,
+  }, [signedInId, person.id]);
+  useAccessDraftRegistration("person-editor", {
+    dirty: dirty && uncertain === null,
     discard,
-  );
+    pending,
+  });
+
+  const fieldIds: Record<PersonDraftField, string> = {
+    display_name: `${id}-name`,
+    username: `${id}-username`,
+    job_title: `${id}-title`,
+    role: `${id}-role`,
+    sponsor_user_id: `${id}-sponsor`,
+    expires_on: `${id}-expires`,
+  };
 
   function update(patch: Partial<PersonDraft>) {
     if (uncertain || pending) return;
+    const field = Object.keys(patch)[0] as PersonDraftField | undefined;
+    if (field) lastField.current = fieldIds[field];
     const baseline = edit?.baseline ?? current;
     const draft = { ...values, ...patch };
     setError("");
+    setDiscardIssue("");
+    setDiscardedEdit(null);
     setErrors({});
     if (samePersonDraft(draft, baseline)) {
-      clearPersonDraft(signedInId);
+      clearPersonDraft(signedInId, person.id);
       setEdit(null);
       return;
     }
     setEdit({ baseline, draft });
-    // An unresolved save of another person blocks the journal; keep that
-    // notice rather than replacing it.
-    if (
-      !writePersonDraft(signedInId, { personId: person.id, baseline, draft }) &&
-      stored.status !== "uncertain"
-    )
+    if (!writePersonDraft(signedInId, { personId: person.id, baseline, draft }))
       setJournalIssue(
         "This browser cannot keep your draft, so unsaved changes will be lost if the page reloads.",
       );
@@ -180,7 +265,7 @@ export function PersonDetails({
   ): Promise<void> {
     const patch = personPatch(baseline, resolved);
     if (!Object.keys(patch).length) {
-      clearPersonDraft(signedInId);
+      clearPersonDraft(signedInId, person.id);
       setEdit(null);
       toast.add({ title: "Already up to date", type: "info" });
       void afterAccessUserChange(client);
@@ -188,10 +273,14 @@ export function PersonDetails({
     }
     const record = { personId: person.id, baseline, draft: resolved };
     const journaled = beginPersonSubmission(signedInId, record);
+    const run = discarded.current;
+    const journal = accessDraftJournalGeneration();
     try {
       await updateAccessUser(person.id, patch);
     } catch (caught) {
       if (isUnansweredRequest(caught)) {
+        // The journal keeps the unanswered save for review on return.
+        if (discarded.current !== run || !mounted.current) return;
         if (journaled) {
           setEdit(null);
           setUncertain(record);
@@ -205,27 +294,47 @@ export function PersonDetails({
         }
         return;
       }
-      finishPersonSubmission(signedInId, true);
+      finishPersonSubmission(signedInId, person.id, true);
+      // A discard, a sign-out or an organization switch since the save began
+      // wins; otherwise the draft goes back to the journal.
+      if (
+        discarded.current !== run ||
+        accessDraftJournalGeneration() !== journal
+      )
+        return;
       writePersonDraft(signedInId, record);
+      if (!mounted.current) return;
       setEdit({ baseline, draft: resolved });
       if (caught instanceof ApiError && caught.status === 412 && retry) {
         // Someone changed this person between the check and the save.
         await review({ baseline, draft: resolved }, false);
         return;
       }
-      setError(
+      const message =
         caught instanceof ApiError && caught.status === 412
           ? "This person changed while you were saving. Check the details and save again."
           : peopleErrorMessage(
               caught,
               "The changes could not be saved. Try again.",
-            ),
-      );
+            );
+      // A refused role change (the last administrator, the owner) shows
+      // beside Role. A username in use is the other conflict a save meets.
+      if (
+        caught instanceof ApiError &&
+        caught.status === 409 &&
+        "role" in patch &&
+        !("username" in patch)
+      )
+        setErrors({ role: message });
+      else setError(message);
       void afterAccessUserChange(client);
       return;
     }
-    finishPersonSubmission(signedInId, true);
+    finishPersonSubmission(signedInId, person.id, true);
+    if (discarded.current !== run) return;
     setEdit(null);
+    if (mounted.current && !focusRoleAfterSave.current)
+      focusNext.current = "field";
     toast.add({ title: "Changes saved", type: "success" });
     void afterAccessUserChange(client);
   }
@@ -253,14 +362,23 @@ export function PersonDetails({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!edit || pending || uncertain) return;
+    if (!edit || pending || uncertain || verifying) return;
     const found = validate(edit.draft);
     setErrors(found);
     if (Object.keys(found).length) return;
+    // Changing one's own role can end one's own access, so it asks first.
+    if (self && edit.draft.role !== current.role) {
+      setConfirmOwnRole(true);
+      return;
+    }
+    await save(edit);
+  }
+
+  async function save(target: Edit) {
     setPending(true);
     setError("");
     try {
-      await review(edit, true);
+      await review(target, true);
     } catch (caught) {
       setError(
         peopleErrorMessage(
@@ -329,12 +447,12 @@ export function PersonDetails({
           currentValues={reviewValues(current)}
           entriesLabel="Details"
           canResolve={
-            listFresh &&
-            !accessDraftSubmissionNeedsReload(signedInId, "identity")
+            listFresh && !personSubmissionNeedsReload(signedInId, person.id)
           }
           pending={pending}
           onResolve={() => {
-            if (finishPersonSubmission(signedInId, false)) setUncertain(null);
+            if (finishPersonSubmission(signedInId, person.id, false))
+              setUncertain(null);
             else
               setJournalIssue(
                 "The saved change could not be cleared from this browser. Try again.",
@@ -356,8 +474,9 @@ export function PersonDetails({
           {journalIssue}
         </Alert>
       ) : null}
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="flex flex-col gap-4 md:gap-2">
         <TextField
+          layout="row"
           id={`${id}-name`}
           label="Name"
           autoComplete="off"
@@ -367,16 +486,17 @@ export function PersonDetails({
           onChange={(display_name) => update({ display_name })}
         />
         <TextField
+          layout="row"
           id={`${id}-username`}
           label="Username"
           autoComplete="off"
           value={values.username}
           disabled={pending}
-          description={usernameHint}
           error={errors.username}
           onChange={(username) => update({ username })}
         />
         <TextField
+          layout="row"
           id={`${id}-title`}
           label="Job title"
           autoComplete="off"
@@ -386,22 +506,33 @@ export function PersonDetails({
           onChange={(job_title) => update({ job_title })}
         />
         {guest ? (
-          <div className="flex min-w-0 flex-col gap-2">
-            <p className="text-sm font-medium">Role</p>
-            <p className="flex min-h-11 items-center text-sm">
+          <div
+            className={cn("flex min-w-0 flex-col gap-2", detailRowClassName)}
+          >
+            {/* Read-only, so plain text; it takes the field-label type hook
+                so it reads like the other labels in the column. */}
+            <p
+              data-slot="field-label"
+              className="md:text-muted-foreground text-sm font-medium"
+            >
+              Role
+            </p>
+            <p className="flex min-h-11 items-center text-sm md:min-h-10">
               {roleLabels.guest}
             </p>
-            <p className="text-muted-foreground text-sm">
+            <p className="text-muted-foreground text-sm md:col-start-2">
               A guest stays a guest. To give more access, invite them as a
               member.
             </p>
           </div>
         ) : (
           <SelectField
+            layout="row"
             id={`${id}-role`}
             label="Role"
             value={values.role}
             disabled={pending}
+            error={errors.role}
             options={[
               { value: "member", label: roleLabels.member },
               { value: "admin", label: roleLabels.admin },
@@ -421,6 +552,7 @@ export function PersonDetails({
         {guest ? (
           <>
             <SponsorSearchSelect
+              layout="row"
               id={`${id}-sponsor`}
               value={values.sponsor_user_id}
               disabled={pending}
@@ -428,6 +560,7 @@ export function PersonDetails({
               onChange={(sponsor_user_id) => update({ sponsor_user_id })}
             />
             <TextField
+              layout="row"
               id={`${id}-expires`}
               label="Access ends"
               type="date"
@@ -441,22 +574,62 @@ export function PersonDetails({
         ) : null}
       </div>
       <ActionError message={error} />
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        {dirty ? (
+      <ActionError message={discardIssue} title={null} />
+      {dirty ? (
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button
             type="button"
             variant="outline"
             className="min-h-11"
             disabled={pending}
-            onClick={discard}
+            onClick={() => {
+              const removed = edit;
+              if (!discard()) {
+                setDiscardIssue(
+                  "Your draft could not be cleared from this browser. Keep editing, or try again.",
+                );
+                return;
+              }
+              setDiscardIssue("");
+              setDiscardedEdit(removed);
+              focusNext.current = "undo";
+            }}
           >
             Discard changes
           </Button>
-        ) : null}
-        <Button type="submit" className="min-h-11" disabled={!dirty || pending}>
-          {pending ? "Saving…" : "Save changes"}
-        </Button>
-      </div>
+          <DisabledReason reason={verifying ? verifyingReason : null}>
+            <Button
+              ref={saveButton}
+              type="submit"
+              className="min-h-11"
+              pending={pending}
+              pendingLabel="Saving…"
+            >
+              Save changes
+            </Button>
+          </DisabledReason>
+        </div>
+      ) : discardedEdit ? (
+        <DiscardedNotice
+          undoRef={undoButton}
+          onUndo={() => {
+            const kept = discardedEdit;
+            setDiscardedEdit(null);
+            if (edit || pending || uncertain) return;
+            focusNext.current = "save";
+            setEdit(kept);
+            if (
+              !writePersonDraft(signedInId, {
+                personId: person.id,
+                ...kept,
+              })
+            )
+              setJournalIssue(
+                "This browser cannot keep your draft, so unsaved changes will be lost if the page reloads.",
+              );
+          }}
+        />
+      ) : null}
       <ConflictDialog
         open={conflict !== null}
         title="This person changed"
@@ -472,6 +645,49 @@ export function PersonDetails({
         onCancel={() => setConflict(null)}
         onContinue={() => void continueAfterConflict()}
       />
+      <AlertDialog
+        open={confirmOwnRole}
+        onOpenChange={(open) => !open && setConfirmOwnRole(false)}
+        onOpenChangeComplete={(open) => {
+          if (open) closeKeepsFocus.current = false;
+          setConfirmSettled(!open);
+        }}
+      >
+        <AlertDialogContent
+          className="access-ui"
+          finalFocus={() => !closeKeepsFocus.current}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change your own role?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You will lose access to Access.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setConfirmOwnRole(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="min-h-11"
+              onClick={() => {
+                if (!edit || verifying) return;
+                focusRoleAfterSave.current = true;
+                closeKeepsFocus.current = true;
+                setConfirmSettled(false);
+                setConfirmOwnRole(false);
+                void save(edit);
+              }}
+            >
+              Change my role
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </form>
   );
 }

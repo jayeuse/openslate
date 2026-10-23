@@ -134,12 +134,12 @@ export function securitySettingsFormErrors(
   const bounds = {
     absoluteLifetime: [1, 43200, "Lifetime"],
     concurrentLimit: [1, 100, "Maximum sessions"],
-    sessionRetention: [1, 3650, "Session retention"],
-    eventRetention: [1, 3650, "Security event retention"],
-    mfaGrace: [0, 30, "Enrollment grace"],
+    sessionRetention: [1, 3650, "Keep session history (days)"],
+    eventRetention: [1, 3650, "Keep security events (days)"],
+    mfaGrace: [0, 30, "Days to set up two-step"],
     loginThreshold: [1, 100, "Failed attempts"],
-    loginWindow: [1, 1440, "Attempt window"],
-    loginCooldown: [1, 1440, "Lockout duration"],
+    loginWindow: [1, 1440, "Within (minutes)"],
+    loginCooldown: [1, 1440, "Lock for (minutes)"],
   } as const;
   for (const key of Object.keys(bounds) as (keyof typeof bounds)[]) {
     const value = fields[key];
@@ -161,11 +161,11 @@ export function securitySettingsFormErrors(
     fields.ips.length > 100 ||
     fields.ips.some((value) => !validSecurityNetwork(value))
   )
-    errors.ips = "Use valid IP addresses or CIDR ranges, up to 100 entries.";
+    errors.ips = "Use valid addresses or ranges, up to 100 entries.";
   if (fields.ipEntry.trim())
     errors.ipEntry = validSecurityNetwork(fields.ipEntry.trim())
       ? "Add or clear the address before saving."
-      : "Enter a valid IP address or CIDR range.";
+      : "Enter a valid address or range.";
   return errors;
 }
 
@@ -333,7 +333,7 @@ export type AccessSessionsRequest = {
   device: "all" | z.output<typeof sessionDeviceSchema>;
 };
 export const defaultAccessSessionsRequest: AccessSessionsRequest = {
-  limit: 4,
+  limit: 10,
   offset: 0,
   search: "",
   sort_by: "refreshed_at",

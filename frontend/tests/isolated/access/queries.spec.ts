@@ -4,6 +4,7 @@ import { QueryClient } from "@tanstack/react-query";
 import {
   accessKeys,
   afterAccessGroupChange,
+  afterAccessMfaObservation,
   afterAccessUserChange,
   afterInvitationSettingsChange,
   authMeOptions,
@@ -114,6 +115,40 @@ test("confirmed commands mark only the reads they change as stale", async () => 
   await afterAccessUserChange(queries);
   expect(stale()).toHaveLength(5);
   expect(stale()).not.toContainEqual(accessKeys.departments("include"));
+});
+
+test("a two-step observation marks stale every cached read that shows the person's recorded status", async () => {
+  const queries = client();
+  const other = {
+    ...directoryUser,
+    id: "00000000-0000-4000-8000-0000000000f2",
+  };
+  const page = (items: object[]) => ({ items, pagination });
+  // The sheet's own read of the person, a directory page, and the Overview
+  // summary all show the recorded status; a list without the person does not.
+  const sheet = accessKeys.userList("include", {
+    ids: [user.id],
+    limit: 1,
+    offset: 0,
+  });
+  const directory = accessKeys.directoryPage({ limit: 25, offset: 0 });
+  const summary = accessKeys.userSummaryForDays(30);
+  const guests = accessKeys.userList("exclude", { role: "guest" });
+  queries.setQueryData(sheet, page([directoryUser]));
+  queries.setQueryData(directory, page([other]));
+  queries.setQueryData(summary, {});
+  queries.setQueryData(guests, page([other]));
+  queries.setQueryData(accessKeys.groupList("exclude"), page([]));
+
+  await afterAccessMfaObservation(queries, user.id);
+
+  expect(
+    queries
+      .getQueryCache()
+      .findAll()
+      .filter((query) => query.state.isInvalidated)
+      .map((query) => query.queryKey),
+  ).toEqual([sheet, directory, summary]);
 });
 
 test("saved invitation settings replace the cached settings at once", () => {

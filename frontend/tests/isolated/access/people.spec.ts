@@ -97,7 +97,7 @@ test("a department the caller cannot name is left out rather than shown as an id
 
 test("status shows pending, disabled, deleted, expired and flags guests expiring soon", () => {
   expect(personState({ ...member, status: "pending" }, now).label).toBe(
-    "Pending",
+    "Invited",
   );
   expect(personState({ ...member, status: "disabled" }, now).label).toBe(
     "Disabled",

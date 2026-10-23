@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { Search, UserRoundMinus, UserRoundPlus } from "lucide-react";
+import { Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,12 +48,15 @@ export function GroupMemberPicker({
   peopleSearch,
   selected,
   disabled,
+  creating = false,
   onChange,
 }: {
   source?: AccessPeopleSource;
   peopleSearch?: ReturnType<typeof usePeopleSearch>;
   selected: readonly string[];
   disabled: boolean;
+  /** In Create group, Create adds the members; there is no Save members. */
+  creating?: boolean;
   onChange: (memberIds: string[]) => void;
 }) {
   const id = useId();
@@ -141,9 +144,11 @@ export function GroupMemberPicker({
     (target ?? searchRef.current?.querySelector("input"))?.focus();
   });
 
+  const saveHint = creating ? "" : " Save members to apply.";
+
   function add(option: MemberOption) {
     onChange([...selected, option.id]);
-    setAnnouncement(`${option.name} added. Save members to apply.`);
+    setAnnouncement(`${option.name} added.${saveHint}`);
     focusRequest.current = null;
   }
 
@@ -151,7 +156,7 @@ export function GroupMemberPicker({
     const index = members.findIndex((item) => item.id === member.id);
     const neighbour = members[index + 1] ?? members[index - 1] ?? null;
     onChange(selected.filter((item) => item !== member.id));
-    setAnnouncement(`${member.name} removed. Save members to apply.`);
+    setAnnouncement(`${member.name} removed.${saveHint}`);
     focusRequest.current = neighbour?.id ?? null;
   }
 
@@ -185,14 +190,14 @@ export function GroupMemberPicker({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
-                  className="size-11 shrink-0"
+                  size="sm"
+                  className="min-h-11 shrink-0 px-2"
                   aria-label={`Remove ${member.name}`}
                   data-member-id={member.id}
                   disabled={disabled || remote.error !== ""}
                   onClick={() => remove(member)}
                 >
-                  <UserRoundMinus aria-hidden="true" />
+                  Remove
                 </Button>
               </li>
             ))}
@@ -238,8 +243,8 @@ export function GroupMemberPicker({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
-                  className="size-11 shrink-0"
+                  size="sm"
+                  className="min-h-11 shrink-0 px-2"
                   aria-label={`Add ${option.name}`}
                   disabled={
                     disabled ||
@@ -249,7 +254,7 @@ export function GroupMemberPicker({
                   }
                   onClick={() => add(option)}
                 >
-                  <UserRoundPlus aria-hidden="true" />
+                  Add
                 </Button>
               </li>
             ))}

@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, Search, UsersRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Empty,
   EmptyContent,
@@ -17,12 +16,21 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   DEFAULT_TABLE_PAGE_SIZE,
   TablePagination,
 } from "@/components/ui/table-pagination";
 import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { groupListOptions } from "../adapters/access-queries";
 import { getAccessGroup } from "../state/api";
@@ -30,18 +38,28 @@ import {
   defaultGroupFilters,
   groupFiltersFromParams,
   groupRows,
+  strongestLevel,
   summaryLabel,
   type GroupFilters,
   type GroupGapFilter,
   type GroupRow,
   type GroupSort,
 } from "../helpers/groups";
-import { AccessSearchToolbar } from "./access-search-toolbar";
-import { CreateGroupDialog } from "./create-group-dialog";
+import { AccessHeaderActions } from "./access-header-actions";
+import { AccessToolbar, FilterSelect } from "./access-toolbar";
+import { TableSkeleton } from "./table-skeleton";
+import { CreateGroupDialog, hasKeptNewGroup } from "./create-group-dialog";
+import { DepartmentMark } from "@/components/sandbox/department-mark";
+import { AccessLevelBadge } from "./access-level-badge";
 import type { GroupEditorTab } from "./group-editor";
 import { GroupPanel } from "./group-panel";
-import { SelectField } from "./people-fields";
-import { openRowClassName, RowOpenButton } from "./row-open-button";
+import { ReadError } from "./read-error";
+import { orderedDepartments, useDepartmentOrder } from "./people-row-parts";
+import {
+  openRowClassName,
+  RowOpenButton,
+  tintRowClassName,
+} from "./row-open-button";
 
 const sortOptions: readonly { value: GroupSort; label: string }[] = [
   { value: "name", label: "Name" },
@@ -50,13 +68,13 @@ const sortOptions: readonly { value: GroupSort; label: string }[] = [
 ];
 
 const gapOptions: readonly { value: GroupGapFilter; label: string }[] = [
-  { value: "all", label: "All groups" },
+  { value: "all", label: "Any group" },
   { value: "no-access", label: "Without access" },
   { value: "no-members", label: "Without members" },
 ];
 
-/** A reach list shows this many departments, then "+N more". */
-const REACH_SHOWN = 2;
+/** A reach cell shows at most this many department marks, like People. */
+const MARKS_SHOWN = 4;
 
 const editorTabs: readonly GroupEditorTab[] = ["details", "members", "access"];
 
@@ -82,41 +100,73 @@ function replaceGroupParam(groupId: string | null) {
   );
 }
 
+/**
+ * Keep the gap filter in the URL, so a removed chip stays removed after a
+ * reload and an Overview link's filter can be cleared.
+ */
+function replaceGapParam(filter: GroupGapFilter) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", "groups");
+  if (filter === "all") url.searchParams.delete("filter");
+  else url.searchParams.set("filter", filter);
+  window.history.replaceState(
+    null,
+    "",
+    `${url.pathname}${url.search}${url.hash}`,
+  );
+}
+
 function memberCount(count: number) {
   return `${count} ${count === 1 ? "member" : "members"}`;
 }
 
-function Reach({ row }: { row: GroupRow }) {
+/**
+ * Departments a group reaches, in the Access row grammar People uses: at
+ * most four marks, a count, and the strongest level as one chip, on one
+ * line. Screen readers hear every department with its level; the sheet's
+ * Access tab keeps the full list.
+ */
+function Reach({
+  row,
+  position,
+}: {
+  row: GroupRow;
+  position: (id: string) => number | null;
+}) {
   if (!row.reach.length)
     return <span className="text-muted-foreground">No access</span>;
-  const more = row.reach.length - REACH_SHOWN;
+  const strongest = strongestLevel(row.reach);
+  const count = `${row.reach.length} ${row.reach.length === 1 ? "department" : "departments"}`;
+  const names = row.reach.map(summaryLabel).join(", ");
+  const marks = orderedDepartments(
+    row.reach.map((item) => ({ id: item.departmentId, name: item.name })),
+    position,
+  ).slice(0, MARKS_SHOWN);
   return (
-    <ul className="space-y-0.5">
-      {row.reach.slice(0, REACH_SHOWN).map((item) => (
-        <li key={item.departmentId} className="break-words">
-          {summaryLabel(item)}
-        </li>
-      ))}
-      {more > 0 ? (
-        <li className="text-muted-foreground">+{more} more</li>
-      ) : null}
-    </ul>
-  );
-}
-
-function GroupsSkeleton() {
-  return (
-    <div className="overflow-hidden rounded-md border">
-      <Skeleton className="h-10 w-full rounded-none" />
-      {Array.from({ length: 5 }, (_, index) => (
-        <div key={index} className="flex items-center gap-4 border-t p-3">
-          <Skeleton className="h-9 w-40" />
-          <Skeleton className="hidden h-5 w-48 md:block" />
-          <Skeleton className="h-5 w-20" />
-          <Skeleton className="hidden h-5 w-36 md:block" />
-        </div>
-      ))}
-    </div>
+    <span className="flex min-w-0 items-center overflow-hidden" title={names}>
+      <span
+        aria-hidden="true"
+        className="flex min-w-0 items-center gap-2 whitespace-nowrap"
+      >
+        <span className="inline-flex shrink-0 items-center gap-[3px]">
+          {marks.map((department) =>
+            department.index === null ? null : (
+              <DepartmentMark
+                key={department.id}
+                departmentIndex={department.index}
+              />
+            ),
+          )}
+        </span>
+        <span className="text-muted-foreground min-w-0 truncate tabular-nums">
+          {count}
+        </span>
+        {strongest ? <AccessLevelBadge level={strongest} /> : null}
+      </span>
+      <span className="sr-only">
+        {count}: {names}
+      </span>
+    </span>
   );
 }
 
@@ -127,13 +177,21 @@ function GroupsSkeleton() {
  */
 export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
   const admin = mode === "admin";
+  const searchId = useId();
   const searchParams = useSearchParams();
+  // Marks follow the whole department catalog, which administrators read.
+  const position = useDepartmentOrder(admin);
   const [filters, setFilters] = useState<GroupFilters>(() =>
     groupFiltersFromParams(searchParams),
   );
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
-  const [createOpen, setCreateOpen] = useState(false);
+  const signedInId = useVerifiedWorkspaceUserId();
+  // A new group's unsaved form in the journal opens again on return, unless
+  // the link opens a group.
+  const [createOpen, setCreateOpen] = useState(
+    () => admin && !searchParams.get("group") && hasKeptNewGroup(signedInId),
+  );
   const [openTab, setOpenTab] = useState<GroupEditorTab | null>(null);
   const [appliedSearch, setAppliedSearch] = useState(filters.query.trim());
   useEffect(() => {
@@ -155,6 +213,16 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
     ...(filters.filter === "no-members" ? { without_members: true } : {}),
   };
   const groups = useQuery(groupListOptions("exclude", request));
+  // The header counts every group the viewer can see, like People; the
+  // table footer counts the filter. An unfiltered page already has it.
+  const listNarrowed = filters.filter !== "all" || appliedSearch !== "";
+  const allGroups = useQuery({
+    ...groupListOptions("exclude", { limit: 1, offset: 0, search: "" }),
+    enabled: listNarrowed,
+  });
+  const groupTotal = listNarrowed
+    ? allGroups.data?.pagination.total
+    : groups.data?.pagination.total;
   const rows = useMemo(
     () => (groups.data ? groupRows(groups.data.items) : null),
     [groups.data],
@@ -196,6 +264,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
   function changeFilters(patch: Partial<GroupFilters>) {
     setFilters((current) => ({ ...current, ...patch }));
     setPageIndex(0);
+    if (patch.filter) replaceGapParam(patch.filter);
   }
 
   function openGroup(groupId: string, tab: GroupEditorTab | null = null) {
@@ -211,45 +280,65 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
   };
   const narrowed = filters.filter !== "all" || filters.query.trim() !== "";
 
-  const columns: DataTableColumn<GroupRow>[] = [
+  // Description shows only when a group on this page has one.
+  const described = page.items.some((row) => row.group.description.trim());
+  const columns: {
+    id: string;
+    header: string;
+    width?: string;
+    cell: (row: GroupRow) => ReactNode;
+  }[] = [
     {
       id: "name",
       header: "Name",
-      cell: ({ row }) => (
+      // Without Description, Name keeps a fixed share and Departments
+      // reached takes the rest.
+      width: described ? undefined : "w-[28%]",
+      cell: (row) => (
         <RowOpenButton
-          title={row.original.group.name}
-          onOpen={() => openGroup(row.original.group.id)}
+          title={row.group.name}
+          label={`Manage ${row.group.name}`}
+          inline
+          onOpen={() => openGroup(row.group.id)}
         />
       ),
     },
-    {
-      id: "description",
-      header: "Description",
-      cell: ({ row }) =>
-        row.original.group.description ? (
-          <span className="line-clamp-2 break-words">
-            {row.original.group.description}
-          </span>
-        ) : (
-          <span className="text-muted-foreground">
-            <span aria-hidden="true">—</span>
-            <span className="sr-only">No description</span>
-          </span>
-        ),
-    },
+    ...(described
+      ? [
+          {
+            id: "description",
+            header: "Description",
+            width: "w-[30%]",
+            cell: (row: GroupRow) =>
+              row.group.description ? (
+                <span
+                  className="text-muted-foreground block truncate"
+                  title={row.group.description}
+                >
+                  {row.group.description}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">
+                  <span aria-hidden="true">—</span>
+                  <span className="sr-only">No description</span>
+                </span>
+              ),
+          },
+        ]
+      : []),
     {
       id: "members",
       header: "Members",
-      cell: ({ row }) => (
-        <span className="tabular-nums">
-          {row.original.group.member_ids.length}
-        </span>
+      width: "w-28",
+      cell: (row) => (
+        <span className="tabular-nums">{row.group.member_ids.length}</span>
       ),
     },
     {
       id: "departments",
       header: "Departments reached",
-      cell: ({ row }) => <Reach row={row.original} />,
+      width: described ? "w-72" : undefined,
+      cell: (row) => <Reach row={row} position={position} />,
     },
   ];
 
@@ -268,74 +357,73 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
 
   if (failed)
     return (
-      <div role="alert" className="max-w-lg space-y-4 rounded-lg border p-6">
-        <div>
-          <h2 className="text-base font-semibold">
-            Groups could not be loaded
-          </h2>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Check your connection and try again.
-          </p>
-        </div>
-        <Button
-          className="min-h-11"
-          onClick={() => {
-            if (groups.isError) void groups.refetch();
-          }}
-        >
-          Retry
-        </Button>
-      </div>
+      <ReadError
+        className="max-w-lg"
+        message="Groups could not be loaded."
+        retry={() => {
+          if (groups.isError) void groups.refetch();
+        }}
+      />
     );
 
   return (
-    <div className="flex min-w-0 flex-col gap-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="sr-only">Group list</h2>
+    <div className="access-fill flex min-w-0 flex-col gap-3">
+      <h2 className="sr-only">Group list</h2>
+      <AccessHeaderActions>
         <p className="text-muted-foreground text-sm" aria-live="polite">
-          {rows
-            ? `${page.total} ${page.total === 1 ? "group" : "groups"}`
-            : " "}
+          {groupTotal === undefined
+            ? " "
+            : `${groupTotal} ${groupTotal === 1 ? "group" : "groups"}`}
         </p>
         {admin ? (
-          <Button
-            className="min-h-11 w-full sm:w-auto"
-            disabled={rows === null}
-            onClick={() => setCreateOpen(true)}
-          >
-            <Plus aria-hidden="true" />
-            Create group
-          </Button>
+          <DisabledReason reason={rows === null ? "Loading groups…" : null}>
+            <Button className="min-h-11" onClick={() => setCreateOpen(true)}>
+              <Plus aria-hidden="true" />
+              Create group
+            </Button>
+          </DisabledReason>
         ) : null}
-      </div>
-
-      <AccessSearchToolbar
+      </AccessHeaderActions>
+      <AccessToolbar
         searchLabel="Search groups"
-        placeholder="Name, description, or department"
+        searchId={searchId}
+        placeholder="Name or department"
         query={filters.query}
         onQueryChange={(query) => changeFilters({ query })}
         sort={filters.sort}
         sortOptions={sortOptions}
         onSortChange={(sort) => changeFilters({ sort })}
-        activeFilterCount={filters.filter === "all" ? 0 : 1}
+        chips={
+          filters.filter === "all"
+            ? []
+            : [
+                {
+                  key: "filter",
+                  label: "Show",
+                  value:
+                    gapOptions.find((item) => item.value === filters.filter)
+                      ?.label ?? "",
+                  onRemove: () => changeFilters({ filter: "all" }),
+                },
+              ]
+        }
+        onClearFilters={() => changeFilters({ filter: "all" })}
         sortInFiltersBelowMd
       >
-        <SelectField
+        <FilterSelect
           id="groups-gap-filter"
           label="Show"
           value={filters.filter}
           options={gapOptions}
-          onChange={(value) => {
-            const option = gapOptions.find((item) => item.value === value);
-            if (option) changeFilters({ filter: option.value });
-          }}
+          onChange={(filter) => changeFilters({ filter })}
         />
-      </AccessSearchToolbar>
+      </AccessToolbar>
 
       <LoadingRegion
         loading={loading}
         label="Loading groups…"
-        skeleton={<GroupsSkeleton />}
+        skeleton={<TableSkeleton columns={3} />}
+        className="access-fill"
       >
         {filtered.length === 0 ? (
           <Empty className="min-h-64 border">
@@ -384,47 +472,79 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
             ) : null}
           </Empty>
         ) : (
-          <div className="overflow-hidden rounded-md border">
-            <div className="hidden md:block">
-              <DataTable
-                ariaLabel="Groups"
-                columns={columns}
-                data={[...page.items]}
-                cellClassName="py-2 align-top whitespace-normal"
-                getRowId={(row) => row.group.id}
-                rowClassName={() => openRowClassName}
-              />
+          <div className="access-fill access-hug bg-card flex min-w-0 flex-col overflow-hidden rounded-md border">
+            <div className="access-fill access-scroll-table hidden md:block">
+              <Table aria-label="Groups" className="table-fixed">
+                <colgroup>
+                  {columns.map((column) => (
+                    <col key={column.id} className={column.width} />
+                  ))}
+                </colgroup>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    {columns.map((column) => (
+                      <TableHead
+                        key={column.id}
+                        className="text-muted-foreground h-9 px-3 text-xs"
+                      >
+                        {column.header}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {page.items.map((row) => (
+                    <TableRow
+                      key={row.group.id}
+                      data-state={
+                        row.group.id === selectedId ? "selected" : undefined
+                      }
+                      className={cn(openRowClassName, tintRowClassName, "h-10")}
+                    >
+                      {columns.map((column) => (
+                        <TableCell
+                          key={column.id}
+                          className="h-10 overflow-hidden px-3 py-0 align-middle whitespace-nowrap"
+                        >
+                          {column.cell(row)}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
             <ul
               aria-label="Groups"
-              className="grid min-w-0 gap-3 p-3 md:hidden"
+              className="divide-border min-w-0 divide-y md:hidden"
             >
               {page.items.map((row) => (
-                <li key={row.group.id} className="min-w-0">
-                  <Card className={`min-w-0 ${openRowClassName}`}>
-                    <CardContent className="min-w-0 space-y-3 p-4">
-                      <RowOpenButton
-                        title={row.group.name}
-                        subtitle={row.group.description || null}
-                        onOpen={() => openGroup(row.group.id)}
-                      />
-                      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
-                        <dt className="text-muted-foreground">Members</dt>
-                        <dd className="tabular-nums">
-                          {memberCount(row.group.member_ids.length)}
-                        </dd>
-                        <dt className="text-muted-foreground">Departments</dt>
-                        <dd className="min-w-0">
-                          <Reach row={row} />
-                        </dd>
-                      </dl>
-                    </CardContent>
-                  </Card>
+                <li
+                  key={row.group.id}
+                  data-state={
+                    row.group.id === selectedId ? "selected" : undefined
+                  }
+                  className={cn(
+                    openRowClassName,
+                    tintRowClassName,
+                    "flex min-h-14 min-w-0 items-center justify-between gap-3 px-3 py-1.5",
+                  )}
+                >
+                  <RowOpenButton
+                    title={row.group.name}
+                    label={`Manage ${row.group.name}`}
+                    subtitle={<Reach row={row} position={position} />}
+                    onOpen={() => openGroup(row.group.id)}
+                  />
+                  <span className="text-muted-foreground shrink-0 text-sm tabular-nums">
+                    {memberCount(row.group.member_ids.length)}
+                  </span>
                 </li>
               ))}
             </ul>
             <TablePagination
               ariaLabel="Group pages"
+              className="shrink-0 px-3 py-2 lg:py-2"
               total={page.total}
               offset={page.offset}
               rowCount={page.items.length}
@@ -444,6 +564,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
         mode={mode}
         listFresh={!groups.isFetching && !groups.isError}
         initialTab={openTab ?? linkedTab}
+        searchId={searchId}
         onClose={() => {
           setOpenTab(null);
           replaceGroupParam(null);

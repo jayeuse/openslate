@@ -55,6 +55,7 @@ async function prepare(
     at: number;
     status?: number;
     completedAt?: number;
+    failedAt?: number;
   }[] = [];
   const requests = new WeakMap<Request, (typeof calls)[number]>();
   const warnings: string[] = [];
@@ -81,12 +82,43 @@ async function prepare(
       value.completedAt = Date.now();
     }
   });
+  page.on("requestfailed", (request) => {
+    const value = requests.get(request);
+    if (value) value.failedAt = Date.now();
+  });
   const server = await installCommsLiveApi(page, {
     role,
     messageStore,
     runtime,
   });
   return { server, calls, warnings };
+}
+
+/**
+ * A first connection that lands after the initial read repairs the read
+ * model (every thread root and its quote are read again), and nothing on
+ * screen waits for it. A test that counts later reads marks its baseline only
+ * once no Comms read has been open for a moment.
+ */
+async function commsQuiet(
+  calls: readonly {
+    path: string;
+    at: number;
+    completedAt?: number;
+    failedAt?: number;
+  }[],
+) {
+  await expect
+    .poll(() => {
+      const comms = calls.filter((call) => call.path.startsWith("/api/comms/"));
+      if (comms.some((call) => !call.completedAt && !call.failedAt))
+        return false;
+      const last = Math.max(
+        ...comms.map((call) => call.completedAt ?? call.failedAt ?? call.at),
+      );
+      return Date.now() - last > 300;
+    })
+    .toBe(true);
 }
 
 async function ready(page: Page, lastMessage = "Live message 59") {
@@ -387,6 +419,7 @@ test("an incoming message and a presence change reread no workspace metadata", a
   try {
     await page.goto("/comms");
     await ready(page);
+    await commsQuiet(api.calls);
     const before = api.calls.length;
     api.server.appendGap();
     await expect(
@@ -716,6 +749,7 @@ test("a thread reply reads the thread lists again and no other workspace data", 
       page,
       "Two vans are loaded. The spare tool kit is beside dispatch.",
     );
+    await commsQuiet(api.calls);
     const before = api.calls.length;
     await world.runtime.controls
       .clientFor(world.peer.user_id)
@@ -997,6 +1031,7 @@ test("a thread event reads no quoted message again", async ({
     await expect(
       page.getByText("Refreshing conversations…", { exact: true }),
     ).toBeHidden();
+    await commsQuiet(api.calls);
     await settleReact(page);
     const before = api.calls.length;
     await api.server.runtime.controls
@@ -1119,6 +1154,7 @@ test("two quick thread replies read no thread root again", async ({
   try {
     await page.goto("/comms");
     await ready(page, world.root.body);
+    await commsQuiet(api.calls);
     const before = api.calls.length;
     await page.route("**/api/comms/threads?**", async (route) => {
       lists.enter();

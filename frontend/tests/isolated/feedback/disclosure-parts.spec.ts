@@ -73,6 +73,35 @@ test("blocked storage keeps an Advanced block closed", () => {
   ).not.toThrow();
 });
 
+test("a browser whose storage access throws reads an Advanced block closed", () => {
+  // Blocked site data makes reading window.localStorage itself throw.
+  const globals = globalThis as { window?: unknown };
+  const previous = globals.window;
+  globals.window = {
+    get localStorage(): Storage {
+      throw new Error("blocked");
+    },
+  };
+  try {
+    expect(readAdvancedOpen("access.policy")).toBe(false);
+    expect(() => writeAdvancedOpen("access.policy", true)).not.toThrow();
+  } finally {
+    globals.window = previous;
+  }
+});
+
+test("a forced Advanced block renders open with its content shown", () => {
+  const markup = staticMarkup(AdvancedSection, {
+    storageKey: "access.policy",
+    setCount: 1,
+    forceOpen: true,
+    children: "Address list",
+  });
+  expect(markup).toContain('aria-expanded="true"');
+  expect(markup).not.toContain("· 1 set");
+  expect(markup).not.toMatch(/hidden=""[^>]*>Address list</);
+});
+
 test("a pending button locks, says what it is doing, and keeps its name", () => {
   const idle = staticMarkup(Button, {
     pendingLabel: "Saving…",

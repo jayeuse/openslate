@@ -9,9 +9,11 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck } from "lucide-react";
+import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog,
@@ -54,18 +56,21 @@ const copies = {
   email: {
     title: "Send recovery email?",
     confirm: "Send email",
+    pending: "Sending…",
     description:
       "A recovery link goes to their sign-in email. We cannot confirm the email arrived. They stay signed in on their devices.",
   },
   revoke: {
     title: "Send recovery and sign out everywhere?",
     confirm: "Send and sign out",
+    pending: "Sending…",
     description:
       "This signs them out on every device, then sends a recovery link to their sign-in email. If the email does not send, they stay signed out. They can sign in again.",
   },
   reset: {
     title: "Reset two-step verification?",
     confirm: "Reset two-step verification",
+    pending: "Resetting…",
     description:
       "This removes their authenticator app and signs them out everywhere. They can set up two-step verification again after they sign in.",
   },
@@ -84,6 +89,8 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
   const [readAccepted, setReadAccepted] = useState(false);
   const [pending, setPending] = useState(false);
   const [action, setAction] = useState<Action | null>(null);
+  // The action whose result and errors show beside its own buttons.
+  const [ran, setRan] = useState<Action | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const alive = useRef(false);
@@ -91,12 +98,11 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
   const operation = useRef<AbortController | null>(null);
   const curtain = useRef(suspended);
   const self = actorId === person.id;
-  useAccessDraftRegistration(
-    `person-security-${person.id}`,
-    false,
-    () => !operation.current,
+  useAccessDraftRegistration(`person-security-${person.id}`, {
+    dirty: false,
+    discard: () => !operation.current,
     pending,
-  );
+  });
   useLayoutEffect(() => {
     alive.current = true;
     return () => {
@@ -163,7 +169,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
     const generation = epoch.current;
     operation.current = controller;
     setPending(true);
-    setAction(null);
+    setRan(selected);
     setError("");
     setNotice("");
     try {
@@ -176,6 +182,8 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
           controller.signal,
         );
       if (!current(controller, generation)) return;
+      // The dialog keeps its pending label until the request answers.
+      setAction(null);
       setNotice(personSecuritySuccess(selected, person.email));
       if (self && selected !== "email") {
         await completeSignOut();
@@ -193,6 +201,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
       if (current(controller, generation)) await refresh();
     } catch (caught) {
       if (!current(controller, generation)) return;
+      setAction(null);
       const partial = personSecurityPartial(caught);
       setReadAccepted(false);
       if (partial) {
@@ -242,6 +251,46 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
     }
   }
 
+  /**
+   * Why an action cannot run, or null. Only lasting states lock a button: a
+   * running action or a fresh read is shown in the dialog instead, so the
+   * button never changes under the focus it gets back.
+   */
+  function reasonFor(kind: Action): string | null {
+    if (!data?.status.target_eligible)
+      return "This person is not eligible for security actions.";
+    if (kind !== "reset" && !data.status.smtp_configured)
+      return "Recovery email is not turned on.";
+    if (kind === "reset" && data.assurance !== "aal2")
+      return "Complete your own two-step verification first.";
+    return null;
+  }
+
+  // Two-step as recorded by the last read: Off has nothing to reset.
+  const resettable = (data?.status.verified_factor_count ?? 0) > 0;
+  const outcome = (
+    <>
+      {notice ? (
+        <Alert role="status" variant="success" className="mt-3">
+          {notice}
+        </Alert>
+      ) : null}
+      {error ? (
+        <Alert variant="destructive" className="mt-3">
+          <p>{error}</p>
+          <Button
+            variant="outline"
+            className="mt-3 flex min-h-11 w-fit"
+            disabled={pending}
+            onClick={() => void refresh()}
+          >
+            Reload security
+          </Button>
+        </Alert>
+      ) : null}
+    </>
+  );
+
   return (
     <section aria-labelledby="person-security-title" className="space-y-5">
       <div className="flex items-start gap-3">
@@ -253,10 +302,6 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
           <h3 id="person-security-title" className="font-semibold">
             Sign-in security
           </h3>
-          <p className="text-muted-foreground text-sm">
-            Review this person&apos;s two-step verification and recovery
-            options.
-          </p>
         </div>
       </div>
       {query.isError ? (
@@ -294,17 +339,22 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
         <>
           <Badge variant="secondary">
             {data.status.verified_factor_count === 0
-              ? "Two-step verification not set up"
-              : "Two-step verification is set up"}
+              ? "Two-step verification: Off"
+              : "Two-step verification: On"}
           </Badge>
           {!data.status.target_eligible ? (
             <Alert variant="warning">
-              This person is not eligible for security actions. Pending
-              invitations use the invitation actions in Details.
+              This person is not eligible for security actions. Invited people
+              use the invitation actions in Details.
             </Alert>
           ) : null}
-          <div className="border-t pt-4">
-            <h4 className="font-medium">Recovery email</h4>
+          <section
+            aria-labelledby={`${person.id}-recovery-title`}
+            className="border-t pt-4"
+          >
+            <h4 id={`${person.id}-recovery-title`} className="font-medium">
+              Recovery email
+            </h4>
             <p className="text-muted-foreground mt-1 text-sm">
               Sends a recovery link to their sign-in email. We cannot confirm
               the email arrived.
@@ -316,82 +366,104 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
                 Sessions.
               </p>
             ) : null}
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-              <Button
-                className="min-h-11"
-                variant="outline"
-                disabled={!ready || !data.status.smtp_configured}
-                onClick={() => setAction("email")}
-              >
-                Send recovery email
-              </Button>
-              <Button
-                className="min-h-11"
-                variant="outline"
-                disabled={!ready || !data.status.smtp_configured}
-                onClick={() => setAction("revoke")}
-              >
-                Send recovery and sign out
-              </Button>
-            </div>
-          </div>
-          <div className="border-t pt-4">
-            <h4 className="font-medium">Two-step verification</h4>
-            <p className="text-muted-foreground mt-1 text-sm">
-              Reset only after you confirm the person needs recovery. This
-              removes their authenticator app and signs them out everywhere.
-            </p>
-            {data.assurance !== "aal2" ? (
-              <p className="mt-3 text-sm">
-                Complete your own two-step verification in{" "}
-                <GuardedWorkspaceLink
-                  href="/access?view=security"
-                  className="text-primary underline underline-offset-4"
+            <div className="mt-3">
+              <DisabledReason reason={reasonFor("email")}>
+                <Button
+                  className="min-h-11 w-full sm:w-auto"
+                  variant="outline"
+                  onClick={() => setAction("email")}
                 >
-                  Security
-                </GuardedWorkspaceLink>{" "}
-                before you reset it for someone else.
+                  Send recovery email
+                </Button>
+              </DisabledReason>
+            </div>
+            {ran === "email" ? outcome : null}
+          </section>
+          {/* Rare and risky: last, closed, in danger ink (the Advanced Last
+              Rule); each result stays beside its own action. */}
+          <AdvancedSection
+            storageKey="access.person-security"
+            summary={
+              resettable
+                ? "Recovery and sign out, Reset two-step"
+                : "Recovery and sign out"
+            }
+          >
+            <section aria-labelledby={`${person.id}-signout-title`}>
+              <h4 id={`${person.id}-signout-title`} className="font-medium">
+                Recovery and sign out
+              </h4>
+              <p className="text-muted-foreground mt-1 text-sm">
+                Signs them out on every device, then sends a recovery link.
               </p>
+              <div className="mt-2 sm:-ml-3">
+                <DisabledReason reason={reasonFor("revoke")}>
+                  <Button
+                    className="text-danger-text min-h-11 w-full sm:w-auto"
+                    variant="ghost"
+                    onClick={() => setAction("revoke")}
+                  >
+                    Send recovery and sign out
+                  </Button>
+                </DisabledReason>
+              </div>
+              {ran === "revoke" ? outcome : null}
+            </section>
+            {/* Reset only while two-step is on: there is nothing to reset
+                when the person has no authenticator. */}
+            {resettable ? (
+              <section aria-labelledby={`${person.id}-mfa-title`}>
+                <h4 id={`${person.id}-mfa-title`} className="font-medium">
+                  Two-step verification
+                </h4>
+                {data.assurance !== "aal2" ? (
+                  <p id={`${person.id}-mfa-reason`} className="mt-3 text-sm">
+                    Complete your own two-step verification in{" "}
+                    <GuardedWorkspaceLink
+                      href="/access?view=security"
+                      className="text-action-text underline underline-offset-4"
+                    >
+                      Security
+                    </GuardedWorkspaceLink>{" "}
+                    before you reset it for someone else.
+                  </p>
+                ) : null}
+                <div className="mt-2 sm:-ml-3">
+                  <DisabledReason
+                    reason={reasonFor("reset")}
+                    // The visible line says why, so it is announced once.
+                    reasonId={
+                      data.status.target_eligible && data.assurance !== "aal2"
+                        ? `${person.id}-mfa-reason`
+                        : undefined
+                    }
+                  >
+                    <Button
+                      className="text-danger-text min-h-11 w-full sm:w-auto"
+                      variant="ghost"
+                      onClick={() => setAction("reset")}
+                    >
+                      Reset two-step verification
+                    </Button>
+                  </DisabledReason>
+                </div>
+                {ran === "reset" ? outcome : null}
+              </section>
             ) : null}
-            <Button
-              className="mt-3 min-h-11 w-full sm:w-auto"
-              variant="outline"
-              disabled={!ready || data.assurance !== "aal2"}
-              onClick={() => setAction("reset")}
-            >
-              Reset two-step verification
-            </Button>
-          </div>
+          </AdvancedSection>
+          {/* A reset's result stays after the next read hides its block. */}
+          {ran === "reset" && !resettable ? outcome : null}
         </>
       )}
-      {pending ? (
-        <Alert role="status">Waiting for the security action to finish…</Alert>
-      ) : null}
-      {notice ? (
-        <Alert role="status" variant="success">
-          {notice}
-        </Alert>
-      ) : null}
-      {error ? (
-        <Alert variant="destructive">
-          <p>{error}</p>
-          <Button
-            variant="outline"
-            className="mt-3 flex min-h-11 w-fit"
-            disabled={pending}
-            onClick={() => void refresh()}
-          >
-            Reload security
-          </Button>
-        </Alert>
-      ) : null}
+      {/* A result whose action block is gone (the read failed) stays here. */}
+      {!data && ran ? outcome : null}
       <AlertDialog
         open={action !== null}
         onOpenChange={(open) => {
           if (!open && !pending) setAction(null);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="access-ui">
           <AlertDialogHeader>
             <AlertDialogTitle>
               {action ? copies[action].title : "Confirm security action"}
@@ -407,18 +479,24 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
             <Button
               variant="outline"
               className="min-h-11"
+              disabled={pending}
               onClick={() => setAction(null)}
             >
               Cancel
             </Button>
-            <Button
-              variant={action === "email" ? "default" : "destructive"}
-              className="min-h-11"
-              disabled={!ready}
-              onClick={() => void confirm()}
+            <DisabledReason
+              reason={!pending && !ready ? "Checking security…" : null}
             >
-              {action ? copies[action].confirm : "Confirm"}
-            </Button>
+              <Button
+                variant={action === "email" ? "default" : "destructive"}
+                className="min-h-11"
+                pending={pending}
+                pendingLabel={action ? copies[action].pending : undefined}
+                onClick={() => void confirm()}
+              >
+                {action ? copies[action].confirm : "Confirm"}
+              </Button>
+            </DisabledReason>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -1,163 +1,166 @@
 "use client";
-import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
-import { useId, useState, type FormEvent, type ReactNode } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { Route } from "next";
-import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import {
-  ArrowRight,
-  Clock3,
-  KeyRound,
-  MailQuestion,
-  ShieldCheck,
-  UserRoundX,
-  UsersRound,
-} from "lucide-react";
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
+import { Plus, UserRoundPlus } from "lucide-react";
 
-import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { LoadingRegion } from "@/components/ui/loading-region";
-import { Skeleton } from "@/components/ui/skeleton";
-import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { ApiError } from "@/lib/api";
+import { formatWorkspaceDateTime } from "@/lib/date-time-display";
 
 import {
+  accessAdminSessionsOptions,
+  accessSecurityEventsOptions,
+  OVERVIEW_FEED_MAX_ROWS,
+  overviewGroupsOptions,
+  overviewSessionsRequest,
+  overviewSignInRequests,
   groupListOptions,
+  statusCountOptions,
   userListOptions,
   userSummaryOptions,
 } from "../adapters/access-queries";
+import { accessCatalogOptions } from "../hooks/use-access-catalog";
 import {
-  EXPIRING_SOON_DAYS,
-  formatDateTime,
-  inactiveDaysError,
-  parseInactiveDays,
-} from "../helpers/people";
+  attentionItems,
+  departmentAccess,
+  lastSignInSegments,
+  signedInNow,
+  signInPage,
+  signInWhen,
+  type SignInCursor,
+  type SignInRow,
+} from "../helpers/overview-dashboard";
+import { personName } from "../helpers/people";
+import { catalogDepartments } from "../hooks/use-access-catalog";
+import { useScrollCue } from "../hooks/use-scroll-cue";
+import { AccessHeaderActions } from "./access-header-actions";
+import { CreateGroupDialog, hasKeptNewGroup } from "./create-group-dialog";
+import { hasKeptInvitation, InvitePersonDialog } from "./invite-person-dialog";
 import {
-  INACTIVE_DAYS_DEFAULT,
-  INACTIVE_DAYS_MIN,
-  INACTIVE_DAYS_MAX,
-} from "../state/api-contracts";
-import { type OverviewHealth } from "../helpers/overview";
-import { InvitationSettings } from "./invitation-settings";
-import { TextField } from "./people-fields";
+  AccessByDepartment,
+  NeedsAttention,
+  RecentSignIns,
+  WhoIsHere,
+  type BlockState,
+  type FeedRow,
+} from "./overview-blocks";
 
-type HealthCard = {
-  id: keyof OverviewHealth;
-  title: string;
-  icon: ReactNode;
-  count: number;
-  /** True when the count asks for attention. */
-  attention: boolean;
-  description: string;
-  href: string;
-  linkLabel: string;
-};
+/** From 1280px the page is still and the feed shows the rows that fit. */
+const stillQuery = "(min-width: 80rem)";
+function subscribeStill(notify: () => void) {
+  const query = window.matchMedia(stillQuery);
+  query.addEventListener("change", notify);
+  return () => query.removeEventListener("change", notify);
+}
+/** A feed row from 1280px; the body height divided by it is the page. */
+const FEED_ROW_PX = 40;
+/** Below 1280px the page scrolls, so the feed shows a fixed page. */
+const FEED_PHONE_ROWS = 10;
+
+/** The people one names lookup covers: the feed page and the first chips. */
+function lookupIds(
+  rows: readonly SignInRow[],
+  roster: readonly { id: string }[] | null,
+) {
+  return [
+    ...new Set([
+      ...rows.flatMap((row) => (row.personId ? [row.personId] : [])),
+      ...(roster ?? []).slice(0, 3).map((person) => person.id),
+    ]),
+  ].sort();
+}
+const namesOptions = (ids: string[]) =>
+  userListOptions("include", {
+    ids,
+    limit: Math.max(1, ids.length),
+    offset: 0,
+  });
+
+/** The department catalog page People rows use for their marks. */
+const overviewDepartmentsOptions = () =>
+  accessCatalogOptions("departments", {
+    limit: 25,
+    offset: 0,
+    search: "",
+    deleted: "exclude",
+  });
 
 function plural(count: number, one: string, many: string) {
-  return count === 1 ? one : many;
-}
-
-function healthCards(health: OverviewHealth): HealthCard[] {
-  const icon = "size-4";
-  return [
-    {
-      id: "administrators",
-      title: "Administrators",
-      icon: <ShieldCheck aria-hidden="true" className={icon} />,
-      count: health.administrators,
-      attention: health.administrators <= 1,
-      description:
-        health.administrators <= 1
-          ? "If this person loses access, no one can change people or groups. Make a second person an administrator."
-          : "Active people who can change people, groups, and settings.",
-      href: "/access?view=people&role=admin&status=active",
-      linkLabel: "Show administrators",
-    },
-    {
-      id: "withoutGroup",
-      title: "People without a group",
-      icon: <UserRoundX aria-hidden="true" className={icon} />,
-      count: health.withoutGroup,
-      attention: health.withoutGroup > 0,
-      description:
-        "Members and guests in no group have no access to any department.",
-      href: "/access?view=people&group=none",
-      linkLabel: "Show these people",
-    },
-    {
-      id: "groupsWithoutAccess",
-      title: "Groups without access",
-      icon: <KeyRound aria-hidden="true" className={icon} />,
-      count: health.groupsWithoutAccess,
-      attention: health.groupsWithoutAccess > 0,
-      description:
-        "Their members get nothing from them until you choose a level.",
-      href: "/access?view=groups&filter=no-access",
-      linkLabel: "Show these groups",
-    },
-    {
-      id: "groupsWithoutMembers",
-      title: "Groups without members",
-      icon: <UsersRound aria-hidden="true" className={icon} />,
-      count: health.groupsWithoutMembers,
-      attention: health.groupsWithoutMembers > 0,
-      description: "They give their access to no one.",
-      href: "/access?view=groups&filter=no-members",
-      linkLabel: "Show these groups",
-    },
-    {
-      id: "guestsEndingSoon",
-      title: "Access ending soon",
-      icon: <Clock3 aria-hidden="true" className={icon} />,
-      count: health.guestsEndingSoon,
-      attention: health.guestsEndingSoon > 0,
-      description: `Guests whose access ends within ${EXPIRING_SOON_DAYS} days.`,
-      href: "/access?view=people&status=ending",
-      linkLabel: "Show these guests",
-    },
-    {
-      id: "pendingInvitations",
-      title: "Pending invitations",
-      icon: <MailQuestion aria-hidden="true" className={icon} />,
-      count: health.pendingInvitations,
-      attention: false,
-      description: `${plural(health.pendingInvitations, "Invitation", "Invitations")} sent and not accepted yet.`,
-      href: "/access?view=people&status=pending",
-      linkLabel: "Show invitations",
-    },
-  ];
-}
-
-function HealthSkeleton() {
-  return (
-    <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {Array.from({ length: 6 }, (_, index) => (
-        <li key={index} className="space-y-3 rounded-lg border p-4">
-          <Skeleton className="h-5 w-40" />
-          <Skeleton className="h-8 w-12" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-11 w-36" />
-        </li>
-      ))}
-    </ul>
-  );
+  return `${count} ${count === 1 ? one : many}`;
 }
 
 /**
- * The administrator's overview: what needs attention in people and groups,
- * each linked to the filtered list, and the invitation settings.
+ * The Overview's line under the title: its group and department totals.
+ * The reads are the Overview's own, so the line costs no request. A space
+ * holds the line while they load, so nothing below it moves.
+ */
+export function useOverviewMeta(enabled: boolean): string {
+  const groups = useQuery({ ...overviewGroupsOptions(), enabled });
+  const departments = useQuery({ ...overviewDepartmentsOptions(), enabled });
+  if (!enabled) return "";
+  if (!groups.data || !departments.data) return " ";
+  return `${plural(groups.data.pagination.total, "group", "groups")} · ${plural(
+    departments.data.pagination.total,
+    "department",
+    "departments",
+  )}`;
+}
+
+/** Retry only the reads of a block that failed. */
+function retryFailed(queries: readonly UseQueryResult[]) {
+  return () => {
+    for (const query of queries) if (query.isError) void query.refetch();
+  };
+}
+
+function blockState<Data>(
+  queries: readonly UseQueryResult[],
+  build: () => Data | null,
+): BlockState<Data> {
+  if (queries.some((query) => query.isError))
+    return { status: "error", retry: retryFailed(queries) };
+  const data = queries.every((query) => query.data !== undefined)
+    ? build()
+    : null;
+  return data === null ? { status: "loading" } : { status: "ready", data };
+}
+
+/**
+ * The administrator's dashboard: who is here, recent sign-ins, what needs
+ * attention, and access by department. Every count comes from an existing
+ * read; each block loads, fails and retries on its own.
  */
 export function OverviewView() {
+  const client = useQueryClient();
+  const router = useRouter();
   const region = useWorkspaceDisplayRegion();
-  const settingsTitleId = useId();
+  const viewerId = useVerifiedWorkspaceUserId();
+  const [now] = useState(() => Date.now());
+  // A kept invitation or new group opens again on return (Back, Forward),
+  // as it does on People and Groups; the invitation goes first.
+  const [inviteOpen, setInviteOpen] = useState(() =>
+    hasKeptInvitation(viewerId),
+  );
+  const [createOpen, setCreateOpen] = useState(
+    () => !hasKeptInvitation(viewerId) && hasKeptNewGroup(viewerId),
+  );
+
+  // One-row totals, shared with the People status filters.
   const administrators = useQuery(
     userListOptions("exclude", {
       role: "admin",
@@ -175,71 +178,255 @@ export function OverviewView() {
   const noMembers = useQuery(
     groupListOptions("exclude", { without_members: true, limit: 1, offset: 0 }),
   );
-  const ending = useQuery(
-    userListOptions("exclude", { status: "ending", limit: 1, offset: 0 }),
+  const ending = useQuery(statusCountOptions("ending"));
+  const pending = useQuery(statusCountOptions("pending"));
+  const active = useQuery(statusCountOptions("active"));
+  // Who's here leaves disabled people out and says how many (People's
+  // Disabled total, the same one-row read).
+  const disabled = useQuery(statusCountOptions("disabled"));
+  // The activity windows: active people inactive for more than 1, 7, 30 days.
+  const day = useQuery(userSummaryOptions(1));
+  const week = useQuery(userSummaryOptions(7));
+  const month = useQuery(userSummaryOptions(30));
+  const sessions = useQuery(
+    accessAdminSessionsOptions(client, overviewSessionsRequest),
   );
-  const pending = useQuery(
-    userListOptions("exclude", { status: "pending", limit: 1, offset: 0 }),
+  // The sign-in feed pages by time from a cursor; each page's reads are
+  // cached under their cursor.
+  const still = useSyncExternalStore(
+    subscribeStill,
+    () => window.matchMedia(stillQuery).matches,
+    () => false,
   );
-  const counts = [
+  const [feedBody, feedCue] = useScrollCue();
+  const pageSize = !still
+    ? FEED_PHONE_ROWS
+    : feedCue.height === null
+      ? null
+      : Math.min(
+          OVERVIEW_FEED_MAX_ROWS,
+          Math.max(1, Math.floor(feedCue.height / FEED_ROW_PX)),
+        );
+  const [cursor, setCursor] = useState<SignInCursor>(null);
+  const [turning, setTurning] = useState(false);
+  const [signInRequest, lockoutRequest] = overviewSignInRequests(cursor);
+  const signIns = useQuery(accessSecurityEventsOptions(client, signInRequest));
+  const lockouts = useQuery(
+    accessSecurityEventsOptions(client, lockoutRequest),
+  );
+  const groups = useQuery(overviewGroupsOptions());
+  const departments = useQuery(overviewDepartmentsOptions());
+  // Guests are capped at Read; group members carry no role, so one bounded
+  // read of the guests applies the cap.
+  const guests = useQuery(
+    userListOptions("exclude", { role: "guest", limit: 100, offset: 0 }),
+  );
+
+  // The viewer's own chip goes last, after the other people signed in.
+  const signedIn = sessions.data ? signedInNow(sessions.data.items) : null;
+  const roster = signedIn
+    ? [
+        ...signedIn.filter((person) => person.id !== viewerId),
+        ...signedIn.filter((person) => person.id === viewerId),
+      ]
+    : null;
+  const page =
+    signIns.data && lockouts.data && pageSize !== null
+      ? signInPage([signIns.data.items, lockouts.data.items], cursor, pageSize)
+      : null;
+  const feed = page?.rows ?? null;
+  // One lookup names the people the feed and the roster show; it waits for
+  // both reads to settle, so it runs once per page.
+  const ids = lookupIds(feed ?? [], roster);
+  const names = useQuery({
+    ...namesOptions(ids),
+    enabled: feed !== null && !sessions.isPending && ids.length > 0,
+  });
+
+  /**
+   * Turn the feed a page. The next page's reads and names load first while
+   * the current page stays, so no row shows without its name. Newer that
+   * reaches the newest events lands on the first page.
+   */
+  async function turn(direction: "older" | "newer") {
+    if (!page || turning || pageSize === null) return;
+    const edge = direction === "older" ? page.rows.at(-1) : page.rows[0];
+    if (!edge) return;
+    const read = async (next: SignInCursor) => {
+      const [events, locks] = await Promise.all(
+        overviewSignInRequests(next).map((request) =>
+          client.fetchQuery(accessSecurityEventsOptions(client, request)),
+        ),
+      );
+      return signInPage([events.items, locks.items], next, pageSize);
+    };
+    let next: SignInCursor = { direction, at: edge.occurredAt, id: edge.id };
+    setTurning(true);
+    try {
+      let target = await read(next);
+      if (direction === "newer" && !target.hasNewer) {
+        next = null;
+        target = await read(next);
+      }
+      const named = lookupIds(target.rows, roster);
+      if (named.length && !sessions.isPending)
+        await client.fetchQuery(namesOptions(named));
+    } catch {
+      // The block shows the failed read with Retry.
+    } finally {
+      setCursor(next);
+      setTurning(false);
+    }
+  }
+  const people = new Map(
+    (names.data?.items ?? []).map((user) => [user.id, user]),
+  );
+
+  const all = [
     administrators,
     unassigned,
     noAccess,
     noMembers,
     ending,
     pending,
+    active,
+    disabled,
+    day,
+    week,
+    month,
+    sessions,
+    signIns,
+    lockouts,
+    groups,
+    departments,
+    guests,
   ];
-  const [inactiveDays, setInactiveDays] = useState(INACTIVE_DAYS_DEFAULT);
-  const [inactiveDraft, setInactiveDraft] = useState(
-    String(INACTIVE_DAYS_DEFAULT),
-  );
-  const [inactiveError, setInactiveError] = useState<string | null>(null);
-  const summary = useQuery(userSummaryOptions(inactiveDays));
-  const health: OverviewHealth | null = counts.every((query) => query.data)
-    ? {
-        administrators: administrators.data!.pagination.total,
-        withoutGroup: unassigned.data!.pagination.total,
-        groupsWithoutAccess: noAccess.data!.pagination.total,
-        groupsWithoutMembers: noMembers.data!.pagination.total,
-        guestsEndingSoon: ending.data!.pagination.total,
-        pendingInvitations: pending.data!.pagination.total,
-      }
-    : null;
-  const denied = [...counts, summary].some(
+  const denied = all.some(
     (query) =>
       query.error instanceof ApiError &&
       [401, 403].includes(query.error.status),
   );
-  const failed = counts.some((query) => query.isError);
-  const historyCards = [
-    {
-      id: "sign-in",
-      title: "No recorded sign-in",
-      count: summary.data?.no_recorded_sign_in,
-      description:
-        "Active people with no recorded sign-in. Sign-ins before this feature was added are not counted.",
-      href: "/access?view=people&history=no-recorded-sign-in",
-    },
-    {
-      id: "activity",
-      title: "Known inactive people",
-      count: summary.data?.inactive_people,
-      description: `Active people with recorded activity older than ${summary.data?.inactive_days ?? inactiveDays} days. People with no recorded activity are excluded.`,
-      href: `/access?view=people&history=inactive&inactive_days=${summary.data?.inactive_days ?? inactiveDays}`,
-    },
-  ];
 
-  function applyInactiveDays(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const error = inactiveDaysError(inactiveDraft);
-    setInactiveError(error);
-    if (error) return;
-    const days = parseInactiveDays(inactiveDraft);
-    if (days !== null) {
-      setInactiveDays(days);
-      setInactiveDraft(String(days));
-    }
-  }
+  const presence = blockState(
+    [day, week, month, active, pending, disabled, sessions],
+    () =>
+      day.data &&
+      week.data &&
+      month.data &&
+      active.data &&
+      pending.data &&
+      disabled.data &&
+      roster
+        ? {
+            bar: lastSignInSegments({
+              active: active.data.pagination.total,
+              pending: pending.data.pagination.total,
+              signedInNow: roster.length,
+              inactive: {
+                1: day.data.inactive_people,
+                7: week.data.inactive_people,
+                30: month.data.inactive_people,
+              },
+              neverSignedIn: month.data.no_recorded_sign_in,
+            }),
+            disabled: disabled.data.pagination.total,
+            roster: roster.map((person) => ({
+              id: person.id,
+              label: person.id === viewerId ? "You" : person.name,
+              name: person.name,
+              avatarUrl: people.get(person.id)?.avatar_url ?? null,
+            })),
+            partial: sessions.data?.pagination.has_more ?? false,
+          }
+        : null,
+  );
+
+  const feedState = blockState<FeedRow[]>(
+    [signIns, lockouts, ...(ids.length ? [names] : [])],
+    () => {
+      if (!feed) return null;
+      const online = new Set((roster ?? []).map((person) => person.id));
+      return feed.map((row) => {
+        const user = row.personId ? people.get(row.personId) : undefined;
+        const name = user
+          ? personName(user)
+          : row.personId
+            ? "Former member"
+            : "Unknown account";
+        return {
+          id: row.id,
+          ...signInWhen(row.occurredAt, now, region),
+          dateTime: row.occurredAt,
+          label: row.personId === viewerId ? "You" : name,
+          name,
+          person: row.personId
+            ? {
+                avatarUrl: user?.avatar_url ?? null,
+                online: online.has(row.personId),
+              }
+            : null,
+          address: row.address,
+          result: row.result,
+        };
+      });
+    },
+  );
+
+  const counts = [
+    administrators,
+    month,
+    pending,
+    unassigned,
+    noAccess,
+    noMembers,
+    ending,
+  ];
+  const attention = blockState(counts, () =>
+    administrators.data &&
+    month.data &&
+    pending.data &&
+    unassigned.data &&
+    noAccess.data &&
+    noMembers.data &&
+    ending.data
+      ? attentionItems({
+          administrators: administrators.data.pagination.total,
+          adminsWithoutTwoStep: month.data.admins_without_mfa,
+          adminsTwoStepUnknown: month.data.admins_mfa_unknown,
+          pendingInvitations: pending.data.pagination.total,
+          withoutGroup: unassigned.data.pagination.total,
+          groupsWithoutAccess: noAccess.data.pagination.total,
+          groupsWithoutMembers: noMembers.data.pagination.total,
+          guestsEndingSoon: ending.data.pagination.total,
+        })
+      : null,
+  );
+
+  const byDepartment = blockState([groups, departments, guests], () => {
+    if (!groups.data || !departments.data || !guests.data) return null;
+    const catalog = catalogDepartments(departments.data.items).map(
+      (department) => ({ id: department.id, name: department.department_name }),
+    );
+    const rows = departmentAccess(
+      catalog,
+      groups.data.items,
+      new Set(guests.data.items.map((guest) => guest.id)),
+    ).map((row, index) => ({ ...row, index }));
+    const groupTotal = groups.data.pagination.total;
+    const departmentTotal = departments.data.pagination.total;
+    return {
+      rows,
+      administrators: administrators.data?.pagination.total ?? null,
+      partial:
+        groupTotal > groups.data.items.length
+          ? `Counts from the first ${groups.data.items.length} of ${groupTotal} groups.`
+          : departmentTotal > rows.length
+            ? `Showing the first ${rows.length} of ${departmentTotal} departments.`
+            : guests.data.pagination.total > guests.data.items.length
+              ? `Guests capped at Read from the first ${guests.data.items.length} guests.`
+              : null,
+    };
+  });
 
   if (denied)
     return (
@@ -254,288 +441,74 @@ export function OverviewView() {
     );
 
   return (
-    <div className="flex min-w-0 flex-col gap-6">
-      <section aria-labelledby="access-health" className="space-y-3">
-        <h2
-          id="access-health"
-          data-slot="section-title"
-          className="text-base font-semibold"
+    <div className="access-overview flex min-w-0 flex-col gap-4">
+      <AccessHeaderActions>
+        <Button
+          variant="outline"
+          className="min-h-11"
+          onClick={() => setCreateOpen(true)}
         >
-          What needs attention
-        </h2>
-        {failed ? (
-          <div
-            role="alert"
-            className="max-w-lg space-y-4 rounded-lg border p-6"
-          >
-            <div>
-              <h3 className="text-base font-semibold">
-                The overview could not be loaded
-              </h3>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Check your connection and try again.
-              </p>
-            </div>
-            <Button
-              className="min-h-11"
-              onClick={() => {
-                for (const query of counts)
-                  if (query.isError) void query.refetch();
-              }}
-            >
-              Retry
-            </Button>
-          </div>
-        ) : (
-          <LoadingRegion
-            loading={health === null}
-            label="Loading the overview…"
-            skeleton={<HealthSkeleton />}
-          >
-            {health ? (
-              <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                <li className="flex min-w-0">
-                  <Card
-                    aria-labelledby={`${settingsTitleId}-mfa`}
-                    className="flex w-full min-w-0 flex-col gap-2 self-stretch p-4"
-                  >
-                    <h3
-                      id={`${settingsTitleId}-mfa`}
-                      data-slot="card-title"
-                      className="flex items-center gap-2 text-sm font-semibold"
-                    >
-                      <ShieldCheck
-                        aria-hidden="true"
-                        className="text-muted-foreground size-4 shrink-0"
-                      />
-                      Administrator two-step verification
-                    </h3>
-                    {summary.isError ? (
-                      <Alert variant="destructive" className="space-y-3">
-                        <p>Two-step verification status could not load.</p>
-                        <Button
-                          variant="outline"
-                          className="min-h-11"
-                          onClick={() => void summary.refetch()}
-                        >
-                          Try again
-                        </Button>
-                      </Alert>
-                    ) : (
-                      <LoadingRegion
-                        loading={summary.isPending}
-                        label="Loading two-step verification status…"
-                        skeleton={<Skeleton className="h-24 w-full" />}
-                      >
-                        {summary.data ? (
-                          <div className="flex flex-col gap-3">
-                            <p className="text-lg font-semibold tabular-nums">
-                              {summary.data.admins_without_mfa} without two-step
-                              verification
-                            </p>
-                            <p className="text-muted-foreground text-sm tabular-nums">
-                              {summary.data.admins_mfa_unknown} unknown
-                            </p>
-                            {summary.data.admins_without_mfa > 0 ? (
-                              <Button
-                                asChild
-                                variant="outline"
-                                className="min-h-11 w-full justify-between"
-                              >
-                                <GuardedWorkspaceLink href="/access?view=people&role=admin&mfa=without">
-                                  Show administrators without two-step
-                                  verification
-                                  <ArrowRight aria-hidden="true" />
-                                </GuardedWorkspaceLink>
-                              </Button>
-                            ) : null}
-                            {summary.data.admins_mfa_unknown > 0 ? (
-                              <Button
-                                asChild
-                                variant="outline"
-                                className="min-h-11 w-full justify-between"
-                              >
-                                <GuardedWorkspaceLink href="/access?view=people&role=admin&mfa=unknown">
-                                  Show administrators with unknown status
-                                  <ArrowRight aria-hidden="true" />
-                                </GuardedWorkspaceLink>
-                              </Button>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </LoadingRegion>
-                    )}
-                  </Card>
-                </li>
-                {historyCards.map((card) => (
-                  <li key={card.id} className="flex min-w-0">
-                    <Card
-                      aria-labelledby={`${settingsTitleId}-${card.id}`}
-                      className="flex w-full min-w-0 flex-col gap-3 self-stretch p-4"
-                    >
-                      <h3
-                        id={`${settingsTitleId}-${card.id}`}
-                        data-slot="card-title"
-                        className="flex items-center gap-2 text-sm font-semibold"
-                      >
-                        <Clock3
-                          aria-hidden="true"
-                          className="text-muted-foreground size-4 shrink-0"
-                        />
-                        {card.title}
-                      </h3>
-                      {summary.isError ? (
-                        <Alert variant="destructive" className="space-y-3">
-                          <p className="text-sm">
-                            Recorded history could not be loaded.
-                          </p>
-                          <Button
-                            variant="outline"
-                            className="min-h-11"
-                            onClick={() => void summary.refetch()}
-                          >
-                            Retry recorded history
-                          </Button>
-                        </Alert>
-                      ) : (
-                        <LoadingRegion
-                          loading={summary.isPending}
-                          label="Loading recorded history…"
-                          skeleton={<Skeleton className="h-24 w-full" />}
-                        >
-                          {card.count !== undefined && summary.data ? (
-                            <div className="space-y-3">
-                              <p className="text-3xl font-semibold tabular-nums">
-                                {card.count}
-                              </p>
-                              <p className="text-muted-foreground text-sm">
-                                {card.description}
-                              </p>
-                              <p className="text-muted-foreground text-xs">
-                                As of{" "}
-                                <time dateTime={summary.data.as_of}>
-                                  {formatDateTime(summary.data.as_of, region)}
-                                </time>
-                              </p>
-                              {card.count > 0 ? (
-                                <Button
-                                  asChild
-                                  variant="outline"
-                                  className="min-h-11 w-full justify-between"
-                                >
-                                  <GuardedWorkspaceLink
-                                    href={card.href as Route}
-                                  >
-                                    Show these people
-                                    <ArrowRight aria-hidden="true" />
-                                  </GuardedWorkspaceLink>
-                                </Button>
-                              ) : (
-                                <p className="text-muted-foreground flex min-h-11 items-center text-sm">
-                                  Nothing to review
-                                </p>
-                              )}
-                            </div>
-                          ) : null}
-                        </LoadingRegion>
-                      )}
-                      {card.id === "activity" ? (
-                        <form
-                          onSubmit={applyInactiveDays}
-                          className="mt-auto space-y-3 border-t pt-3"
-                          noValidate
-                        >
-                          <TextField
-                            id={`${settingsTitleId}-inactive-days`}
-                            label="Inactive for (days)"
-                            inputMode="numeric"
-                            value={inactiveDraft}
-                            onChange={(value) => {
-                              setInactiveDraft(value);
-                              setInactiveError(null);
-                            }}
-                            description={`Whole days from ${INACTIVE_DAYS_MIN} to ${INACTIVE_DAYS_MAX}.`}
-                            error={inactiveError}
-                          />
-                          <Button
-                            type="submit"
-                            variant="outline"
-                            className="min-h-11 w-full"
-                          >
-                            Apply inactivity period
-                          </Button>
-                        </form>
-                      ) : null}
-                    </Card>
-                  </li>
-                ))}
-                {healthCards(health).map((card) => (
-                  <li key={card.id} className="flex min-w-0">
-                    <Card
-                      aria-labelledby={`${settingsTitleId}-${card.id}`}
-                      className="flex w-full min-w-0 flex-col gap-2 self-stretch p-4"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <h3
-                          id={`${settingsTitleId}-${card.id}`}
-                          data-slot="card-title"
-                          className="flex min-w-0 items-center gap-2 text-sm font-semibold"
-                        >
-                          <span className="text-muted-foreground shrink-0">
-                            {card.icon}
-                          </span>
-                          {card.title}
-                        </h3>
-                        {card.attention ? (
-                          <Badge variant="warning">Review</Badge>
-                        ) : null}
-                      </div>
-                      <p className="text-3xl font-semibold tabular-nums">
-                        {card.count}
-                      </p>
-                      <p className="text-muted-foreground flex-1 text-sm">
-                        {card.description}
-                      </p>
-                      {card.count > 0 ? (
-                        <Button
-                          asChild
-                          variant="outline"
-                          className="min-h-11 w-full justify-between sm:w-fit"
-                        >
-                          <GuardedWorkspaceLink href={card.href as Route}>
-                            {card.linkLabel}
-                            <ArrowRight aria-hidden="true" />
-                          </GuardedWorkspaceLink>
-                        </Button>
-                      ) : (
-                        <p className="text-muted-foreground flex min-h-11 items-center text-sm">
-                          Nothing to review
-                        </p>
-                      )}
-                    </Card>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </LoadingRegion>
-        )}
-      </section>
-
-      <Card aria-labelledby={settingsTitleId} className="w-full p-5">
-        <div className="mb-4 space-y-1">
-          <h2
-            id={settingsTitleId}
-            data-slot="card-title"
-            className="text-base font-semibold"
-          >
-            Invitation settings
-          </h2>
-          <p className="text-muted-foreground text-sm">
-            These apply to the invitations you send from now on.
-          </p>
-        </div>
-        <InvitationSettings titleId={settingsTitleId} />
-      </Card>
+          <Plus aria-hidden="true" />
+          Create group
+        </Button>
+        <Button className="min-h-11" onClick={() => setInviteOpen(true)}>
+          <UserRoundPlus aria-hidden="true" />
+          Invite person
+        </Button>
+      </AccessHeaderActions>
+      <WhoIsHere
+        state={presence}
+        asOf={
+          month.data ? (
+            <span className="text-muted-foreground text-sm tabular-nums">
+              As of{" "}
+              <time dateTime={month.data.as_of}>
+                {region
+                  ? formatWorkspaceDateTime(month.data.as_of, region, {
+                      timeStyle: "short",
+                    })
+                  : new Intl.DateTimeFormat(undefined, {
+                      timeStyle: "short",
+                    }).format(new Date(month.data.as_of))}
+              </time>
+            </span>
+          ) : null
+        }
+      />
+      {/* Needs attention comes first on a phone; from 1280px the grid
+          areas place it beside the feed. */}
+      <NeedsAttention state={attention} />
+      <RecentSignIns
+        state={feedState}
+        bodyRef={feedBody}
+        rows={pageSize ?? FEED_PHONE_ROWS}
+        pager={
+          page
+            ? {
+                hasNewer: page.hasNewer,
+                hasOlder: page.hasOlder,
+                turning,
+                onNewer: () => void turn("newer"),
+                onOlder: () => void turn("older"),
+              }
+            : null
+        }
+      />
+      <AccessByDepartment state={byDepartment} />
+      <InvitePersonDialog
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+        onFound={(userId) =>
+          router.push(`/access?view=people&user=${userId}` as Route)
+        }
+      />
+      <CreateGroupDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(group) =>
+          router.push(`/access?view=groups&group=${group.id}` as Route)
+        }
+      />
     </div>
   );
 }

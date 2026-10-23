@@ -13,6 +13,7 @@ import {
   sameMembers,
   setDepartmentLevel,
   setModuleLevel,
+  strongestLevel,
   summaryLabel,
 } from "../../../src/components/systems/access/helpers/groups";
 import type {
@@ -158,6 +159,26 @@ test.describe("access summary", () => {
     expect(summary[1]?.modules).toEqual([
       { id: prices, name: "Prices", level: "read", levelLabel: "Read" },
     ]);
+  });
+
+  test("a group's strongest level counts module rows as well as departments", () => {
+    for (const [label, entries, expected] of [
+      ["no access", [], null],
+      [
+        "department rows",
+        [entry(inventory, null, "read"), entry(finance, null, "write")],
+        "write",
+      ],
+      [
+        "a module above its department",
+        [entry(inventory, null, "read"), entry(finance, ledger, "manage")],
+        "manage",
+      ],
+    ] as const)
+      expect(
+        strongestLevel(accessSummary(entries, departments, modules)),
+        label,
+      ).toBe(expected);
   });
 });
 
