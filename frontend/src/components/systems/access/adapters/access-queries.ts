@@ -106,6 +106,15 @@ export const userListOptions = (
       }),
   });
 
+/** The status quick filters' totals: one one-row read per status, shared
+ * with the Overview counts that use the same request. */
+export const statusCountOptions = (status: AccessUserListOptions["status"]) =>
+  userListOptions("exclude", {
+    ...(status ? { status } : {}),
+    limit: 1,
+    offset: 0,
+  });
+
 export const directoryPageOptions = (request: AccessUserListOptions) =>
   queryOptions({
     queryKey: accessKeys.directoryPage(request),

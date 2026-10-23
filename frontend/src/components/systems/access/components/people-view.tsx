@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Search, UserRoundPlus, UsersRound } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import {
   Empty,
   EmptyContent,
@@ -18,41 +20,51 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   DEFAULT_TABLE_PAGE_SIZE,
   TablePagination,
 } from "@/components/ui/table-pagination";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ApiError } from "@/lib/api";
-import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
+import { cn } from "@/lib/utils";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import {
   directoryPageOptions,
+  statusCountOptions,
   userListOptions,
 } from "../adapters/access-queries";
 import {
   activeFilterCount,
   defaultDirectoryFilters,
   directoryFiltersFromParams,
+  directoryParams,
   directoryRows,
   directoryRequest,
-  formatDate,
-  formatDateTime,
+  inactiveDaysError,
+  parseInactiveDays,
+  quickStatusFilters,
   roleLabels,
   type DirectoryFilters,
-  type DirectoryRow,
   type DirectorySort,
 } from "../helpers/people";
+import { INACTIVE_DAYS_MAX, INACTIVE_DAYS_MIN } from "../state/api-contracts";
 import type { AccessDirectoryUser } from "../state/api";
-import { AccessSearchToolbar } from "./access-search-toolbar";
+import { AccessHeaderActions } from "./access-header-actions";
+import { AccessToolbar } from "./access-toolbar";
+import { TableSkeleton } from "./table-skeleton";
 import { hasKeptInvitation, InvitePersonDialog } from "./invite-person-dialog";
-import { SelectField } from "./people-fields";
+import { SelectField, TextField } from "./people-fields";
 import { usePeopleSearch } from "../hooks/use-people-search";
-import {
-  usePeopleMemberships,
-  type PersonMemberships,
-} from "../hooks/use-people-memberships";
+import { usePeopleMemberships } from "../hooks/use-people-memberships";
 import {
   useAccessCatalog,
   catalogDepartments,
@@ -60,9 +72,22 @@ import {
 } from "../hooks/use-access-catalog";
 import { Input } from "@/components/ui/input";
 import { PersonPanel } from "./person-panel";
-import { openRowClassName } from "./row-open-button";
+import {
+  DepartmentMarks,
+  GroupChips,
+  LastActive,
+  RoleWord,
+  StatusWord,
+  TwoStepWord,
+  useDepartmentOrder,
+  type PeopleRow,
+} from "./people-row-parts";
+import {
+  openRowClassName,
+  RowOpenButton,
+  tintRowClassName,
+} from "./row-open-button";
 import { PersonAvatar } from "@/components/person-avatar";
-import { PersonCardPopover } from "@/components/person-card";
 
 const sortOptions: readonly { value: DirectorySort; label: string }[] = [
   { value: "name", label: "Name" },
@@ -96,216 +121,115 @@ function replaceUserParam(userId: string | null) {
   );
 }
 
-// Below 2xl the table drops the session count (the person panel shows it) and
-// merges sign-in and activity, so names and emails keep whole words.
-const wideQuery = "(min-width: 96rem)";
-function subscribeWide(notify: () => void) {
-  const query = window.matchMedia(wideQuery);
-  query.addEventListener("change", notify);
-  return () => query.removeEventListener("change", notify);
-}
-
-function lastSeen(person: AccessDirectoryUser) {
-  const { last_active_at: active, last_sign_in_at: signIn } = person;
-  if (!active || !signIn) return active ?? signIn;
-  return Date.parse(active) >= Date.parse(signIn) ? active : signIn;
-}
-
-function StatusBadges({ row }: { row: DirectoryRow }) {
-  const region = useWorkspaceDisplayRegion();
-  return (
-    <span className="flex flex-wrap items-center gap-1.5">
-      <Badge variant={row.state.tone}>{row.state.label}</Badge>
-      {row.state.expiresSoon ? (
-        <Badge variant="warning">
-          Ends {formatDate(row.user.expires_at, region)}
-        </Badge>
-      ) : null}
-    </span>
+/** Keep the directory filters in the URL, so a reload or a link keeps them. */
+function replaceDirectoryParams(filters: DirectoryFilters) {
+  const url = new URL(window.location.href);
+  for (const key of [
+    "role",
+    "status",
+    "group",
+    "department",
+    "sort",
+    "mfa",
+    "history",
+    "inactive_days",
+  ])
+    url.searchParams.delete(key);
+  url.searchParams.set("view", "people");
+  for (const [key, value] of directoryParams(filters))
+    url.searchParams.set(key, value);
+  window.history.replaceState(
+    null,
+    "",
+    `${url.pathname}${url.search}${url.hash}`,
   );
 }
 
-function MfaObservation({ person }: { person: AccessDirectoryUser }) {
-  const region = useWorkspaceDisplayRegion();
-  return (
-    <span className="flex min-w-0 flex-col items-start gap-1">
-      <Badge
-        variant={person.mfa_verified_totp === true ? "success" : "outline"}
-      >
-        {person.mfa_verified_totp === null
-          ? "Unknown"
-          : person.mfa_verified_totp
-            ? "Verified"
-            : "Not verified"}
-      </Badge>
-      {person.mfa_observed_at ? (
-        <span className="text-muted-foreground text-xs">
-          Recorded{" "}
-          <time dateTime={person.mfa_observed_at}>
-            {formatDateTime(person.mfa_observed_at, region)}
-          </time>
-        </span>
-      ) : null}
-    </span>
-  );
+// From 1440px the table shows every column; from 1280px it leaves out
+// Departments so names keep their room; from 768px it keeps Person, Role,
+// Status and Last active. The person sheet holds the rest.
+const fullQuery = "(min-width: 80rem)";
+const wideQuery = "(min-width: 90rem)";
+function subscribeQuery(media: string) {
+  return (notify: () => void) => {
+    const query = window.matchMedia(media);
+    query.addEventListener("change", notify);
+    return () => query.removeEventListener("change", notify);
+  };
 }
+const subscribeFull = subscribeQuery(fullQuery);
+const subscribeWide = subscribeQuery(wideQuery);
 
-function RecordedHistory({
-  value,
-  empty,
-}: {
-  value: string | null;
-  empty: string;
-}) {
-  const region = useWorkspaceDisplayRegion();
-  return value === null ? (
-    <span className="text-muted-foreground">{empty}</span>
-  ) : (
-    <time dateTime={value}>{formatDateTime(value, region)}</time>
-  );
-}
-
-function NameList({
-  items,
-  empty,
-}: {
-  items: readonly { id: string; name: string }[];
-  empty: string;
-}) {
-  if (!items.length)
-    return <span className="text-muted-foreground">{empty}</span>;
-  return (
-    <span className="break-words">
-      {items.map((item) => item.name).join(", ")}
-    </span>
-  );
-}
-
-type PeopleRow = DirectoryRow<AccessDirectoryUser> & {
-  membership?: PersonMemberships;
+type Column = {
+  id: string;
+  header: string;
+  /** A fixed width from the Tailwind scale; the Person column takes the rest. */
+  width?: string;
+  full?: boolean;
+  /** Shown only from 1440px. */
+  wide?: boolean;
+  cell: (row: PeopleRow) => ReactNode;
 };
 
-function MembershipList({
-  membership,
-  departments = false,
-}: {
-  membership?: PersonMemberships;
-  departments?: boolean;
-}) {
-  if (!membership || membership.loading)
-    return (
-      <span role="status" className="text-muted-foreground">
-        Loading {departments ? "departments" : "groups"}…
-      </span>
-    );
-  const partial = membership.hasMore || membership.loaded < membership.total;
-  return (
-    <div className="space-y-1">
-      {!membership.denied && !(membership.error && !membership.loaded) ? (
-        <>
-          {departments && partial && !membership.departments.length ? null : (
-            <NameList
-              items={departments ? membership.departments : membership.groups}
-              empty="None"
-            />
-          )}
-          {partial ? (
-            <p className="text-muted-foreground text-xs">
-              {departments
-                ? "Departments not fully loaded"
-                : `${membership.loaded} of ${membership.total} groups`}
-            </p>
-          ) : null}
-        </>
-      ) : null}
-      {membership.error ? (
-        <p role="alert" className="text-muted-foreground text-sm">
-          {membership.error}
-        </p>
-      ) : null}
-      {!departments && membership.retryFirstPage ? (
-        <Button
-          type="button"
-          variant="outline"
-          className="relative z-10 min-h-11"
-          disabled={membership.recovering}
-          onClick={() => void membership.retry()}
-        >
-          Retry groups
-        </Button>
-      ) : null}
-      {!departments && membership.hasMore ? (
-        <Button
-          type="button"
-          variant="ghost"
-          className="relative z-10 min-h-11 px-0"
-          disabled={membership.loadingMore}
-          onClick={() => void membership.loadMore()}
-        >
-          {membership.loadingMore ? "Loading more groups…" : "Load more groups"}
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
-function DepartmentList({ row }: { row: PeopleRow }) {
-  if (row.allDepartments) return <span>All departments</span>;
-  return <MembershipList membership={row.membership} departments />;
-}
-
-function OpenPersonButton({
+function OpenPerson({
   row,
+  inline,
   onOpen,
 }: {
-  row: DirectoryRow<AccessDirectoryUser>;
+  row: PeopleRow;
+  inline: boolean;
   onOpen: (id: string) => void;
 }) {
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-3">
-      <PersonAvatar name={row.name} avatarUrl={row.user.avatar_url} />
-      <div className="relative z-10 min-w-0">
-        <PersonCardPopover
-          personId={row.user.id}
-          label={row.name}
-          className="text-foreground font-medium"
-          decoration="none"
+    <RowOpenButton
+      title={row.name}
+      subtitle={row.user.email}
+      label={`Manage ${row.name}`}
+      inline={inline}
+      leading={
+        <PersonAvatar
+          name={row.name}
+          avatarUrl={row.user.avatar_url}
+          size={inline ? "sm" : "default"}
         />
-        <p className="text-muted-foreground text-xs break-words">
-          {row.user.username}
-        </p>
-      </div>
-      <button
-        type="button"
-        aria-label={`Manage ${row.name}`}
-        className="text-primary focus-visible:outline-ring inline-flex min-h-11 items-center rounded-sm px-1 underline underline-offset-4 after:absolute after:inset-0 after:content-[''] focus-visible:outline-2"
-        onClick={() => onOpen(row.user.id)}
-      >
-        Manage
-      </button>
-    </div>
+      }
+      onOpen={() => onOpen(row.user.id)}
+    />
   );
 }
 
-function DirectorySkeleton() {
+/** The inactivity period of the history filter, applied once it is valid. */
+function InactiveDaysField({
+  days,
+  onApply,
+}: {
+  days: number;
+  onApply: (days: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(days));
+  const [error, setError] = useState<string | null>(null);
   return (
-    <div className="overflow-hidden rounded-md border">
-      <Skeleton className="h-10 w-full rounded-none" />
-      {Array.from({ length: 6 }, (_, index) => (
-        <div key={index} className="flex items-center gap-4 border-t p-3">
-          <Skeleton className="h-9 w-40" />
-          <Skeleton className="hidden h-5 w-48 md:block" />
-          <Skeleton className="h-5 w-20" />
-          <Skeleton className="hidden h-5 w-32 md:block" />
-        </div>
-      ))}
-    </div>
+    <TextField
+      id="people-inactive-days"
+      label="Inactive for (days)"
+      inputMode="numeric"
+      value={draft}
+      description={`Whole days from ${INACTIVE_DAYS_MIN} to ${INACTIVE_DAYS_MAX}.`}
+      error={error}
+      onChange={(value) => {
+        setDraft(value);
+        const problem = inactiveDaysError(value);
+        setError(problem);
+        const parsed = parseInactiveDays(value);
+        if (!problem && parsed !== null) onApply(parsed);
+      }}
+    />
   );
 }
 
 export function PeopleView() {
   const searchParams = useSearchParams();
-  // An Overview link can open the directory already filtered.
+  // An Overview link, a reload or a shared link opens the directory filtered.
   const [filters, setFilters] = useState<DirectoryFilters>(() =>
     directoryFiltersFromParams(searchParams),
   );
@@ -318,14 +242,28 @@ export function PeopleView() {
     () => !searchParams.get("user") && hasKeptInvitation(signedInId),
   );
   const [now] = useState(() => Date.now());
+  const full = useSyncExternalStore(
+    subscribeFull,
+    () => window.matchMedia(fullQuery).matches,
+    () => false,
+  );
   const wide = useSyncExternalStore(
     subscribeWide,
     () => window.matchMedia(wideQuery).matches,
     () => false,
   );
+  const position = useDepartmentOrder();
   const selectedId = searchParams.get("user");
   const request = directoryRequest(filters, pageSize, pageIndex * pageSize);
   const users = useQuery(directoryPageOptions(request));
+  // The status quick filters show totals that do not follow the search.
+  const counts = {
+    current: useQuery(statusCountOptions(undefined)),
+    active: useQuery(statusCountOptions("active")),
+    pending: useQuery(statusCountOptions("pending")),
+    ending: useQuery(statusCountOptions("ending")),
+    disabled: useQuery(statusCountOptions("disabled")),
+  };
   // Existing person/invitation editors need the complete sponsor catalog.
   // The closed directory never loads this collection to mask server paging.
   const catalogRequested = Boolean(selectedId);
@@ -397,9 +335,13 @@ export function PeopleView() {
   const failed = users.isError || (catalogRequested && catalog.isError);
   const loading = !failed && rows === null;
 
-  function changeFilters(patch: Partial<DirectoryFilters>) {
-    setFilters((current) => ({ ...current, ...patch }));
+  function applyFilters(next: DirectoryFilters) {
+    setFilters(next);
     setPageIndex(0);
+    replaceDirectoryParams(next);
+  }
+  function changeFilters(patch: Partial<DirectoryFilters>) {
+    applyFilters({ ...filters, ...patch });
   }
 
   const page = {
@@ -408,100 +350,60 @@ export function PeopleView() {
     offset: users.data?.pagination.offset ?? request.offset ?? 0,
   };
   const filterCount = activeFilterCount(filters);
-  const narrowed = filterCount > 0 || filters.query.trim() !== "";
+  const narrowed =
+    filterCount > 0 ||
+    filters.status !== "current" ||
+    filters.query.trim() !== "";
 
-  const columns = useMemo<DataTableColumn<PeopleRow>[]>(
-    () => [
-      {
-        id: "name",
-        header: "Name",
-        cell: ({ row }) => (
-          <OpenPersonButton row={row.original} onOpen={replaceUserParam} />
-        ),
-      },
-      {
-        id: "email",
-        header: "Email",
-        cell: ({ row }) => (
-          <span className="whitespace-nowrap">{row.original.user.email}</span>
-        ),
-      },
-      {
-        id: "role",
-        header: "Role",
-        cell: ({ row }) => roleLabels[row.original.user.role],
-      },
-      {
-        id: "status",
-        header: "Status",
-        cell: ({ row }) => <StatusBadges row={row.original} />,
-      },
-      {
-        id: "groups",
-        header: "Groups",
-        cell: ({ row }) =>
-          row.original.user.role === "admin" ? (
-            <span className="text-muted-foreground">Not needed</span>
-          ) : (
-            <MembershipList membership={row.original.membership} />
-          ),
-      },
-      {
-        id: "departments",
-        header: "Departments",
-        cell: ({ row }) => <DepartmentList row={row.original} />,
-      },
-      {
-        id: "mfa",
-        header: "Two-step verification",
-        cell: ({ row }) => <MfaObservation person={row.original.user} />,
-      },
-      ...(wide
-        ? ([
-            {
-              id: "sessions",
-              header: "Active sessions",
-              cell: ({ row }) => (
-                <span className="tabular-nums">
-                  {row.original.user.active_session_count}
-                </span>
-              ),
-            },
-            {
-              id: "last-sign-in",
-              header: "Last sign-in",
-              cell: ({ row }) => (
-                <RecordedHistory
-                  value={row.original.user.last_sign_in_at}
-                  empty="No recorded sign-in"
-                />
-              ),
-            },
-            {
-              id: "last-activity",
-              header: "Last activity",
-              cell: ({ row }) => (
-                <RecordedHistory
-                  value={row.original.user.last_active_at}
-                  empty="No recorded activity"
-                />
-              ),
-            },
-          ] satisfies DataTableColumn<PeopleRow>[])
-        : ([
-            {
-              id: "last-seen",
-              header: "Last seen",
-              cell: ({ row }) => (
-                <RecordedHistory
-                  value={lastSeen(row.original.user)}
-                  empty="No recorded sign-in"
-                />
-              ),
-            },
-          ] satisfies DataTableColumn<PeopleRow>[])),
-    ],
-    [wide],
+  const allColumns: Column[] = [
+    {
+      id: "person",
+      header: "Person",
+      cell: (row) => <OpenPerson row={row} inline onOpen={replaceUserParam} />,
+    },
+    {
+      id: "role",
+      header: "Role",
+      width: "w-36",
+      cell: (row) => <RoleWord role={row.user.role} />,
+    },
+    {
+      id: "status",
+      header: "Status",
+      width: "w-36",
+      cell: (row) => <StatusWord row={row} now={now} />,
+    },
+    {
+      id: "groups",
+      header: "Groups",
+      width: "w-48",
+      full: true,
+      cell: (row) => <GroupChips row={row} />,
+    },
+    {
+      id: "departments",
+      header: "Departments",
+      width: "w-32",
+      full: true,
+      wide: true,
+      cell: (row) => <DepartmentMarks row={row} position={position} />,
+    },
+    {
+      id: "mfa",
+      header: "Two-step",
+      width: "w-24",
+      full: true,
+      cell: (row) => <TwoStepWord person={row.user} />,
+    },
+    {
+      id: "last-active",
+      header: "Last active",
+      width: "w-32",
+      cell: (row) => <LastActive person={row.user} now={now} />,
+    },
+  ];
+  const columns = allColumns.filter(
+    (column) => (full || !column.full) && (wide || !column.wide),
   );
 
   if (denied)
@@ -540,53 +442,74 @@ export function PeopleView() {
     );
 
   return (
-    <div className="flex min-w-0 flex-col gap-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 id="people-directory" className="sr-only">
-          People directory
-        </h2>
+    <div className="access-fill flex min-w-0 flex-col gap-3">
+      <h2 id="people-directory" className="sr-only">
+        People directory
+      </h2>
+      <AccessHeaderActions>
         <p className="text-muted-foreground text-sm" aria-live="polite">
-          {users.data
-            ? `${users.data.pagination.total} ${users.data.pagination.total === 1 ? "person" : "people"}`
+          {/* The organization total; the table footer counts the filter. */}
+          {counts.current.data
+            ? `${counts.current.data.pagination.total} ${counts.current.data.pagination.total === 1 ? "person" : "people"}`
             : " "}
         </p>
         <Button
-          className="min-h-11 w-full sm:w-auto"
+          className="min-h-11"
           disabled={rows === null}
           onClick={() => setInviteOpen(true)}
         >
           <UserRoundPlus aria-hidden="true" />
           Invite person
         </Button>
-      </div>
-
-      {filters.history && filters.history !== "all" ? (
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <p className="text-muted-foreground">
-            {filters.history === "no-recorded-sign-in"
-              ? "Showing active people with no recorded sign-in."
-              : `Showing active people with recorded activity older than ${filters.inactiveDays} days.`}
-          </p>
-          <Button
-            variant="ghost"
-            className="text-primary min-h-11 px-0 underline underline-offset-4 hover:bg-transparent"
-            onClick={() => changeFilters({ history: "all" })}
-          >
-            Clear history filter
-          </Button>
-        </div>
-      ) : null}
-
-      <AccessSearchToolbar
+      </AccessHeaderActions>
+      <AccessToolbar
         searchLabel="Search people"
         placeholder="Name, email, username, or job title"
         query={filters.query}
-        onQueryChange={(query) => changeFilters({ query })}
+        onQueryChange={(query) => {
+          setFilters((current) => ({ ...current, query }));
+          setPageIndex(0);
+        }}
         sort={filters.sort}
         sortOptions={sortOptions}
         onSortChange={(sort) => changeFilters({ sort })}
         activeFilterCount={filterCount}
         sortInFiltersBelowMd
+        quickFilters={
+          <ToggleGroup
+            aria-label="Status"
+            variant="segmented"
+            multiple={false}
+            value={[filters.status]}
+            className="w-full max-w-full flex-nowrap overflow-x-auto md:w-fit [&>*]:shrink-0"
+            onValueChange={(selection) => {
+              const next = quickStatusFilters.find(
+                (filter) => filter.status === selection[0],
+              );
+              if (next) changeFilters({ status: next.status });
+            }}
+          >
+            {quickStatusFilters.map((filter) => {
+              const total =
+                counts[filter.status as keyof typeof counts].data?.pagination
+                  .total;
+              return (
+                <ToggleGroupItem
+                  key={filter.status}
+                  value={filter.status}
+                  className="flex-none gap-1.5 px-2 text-sm whitespace-nowrap"
+                >
+                  {filter.label}
+                  {total === undefined ? null : (
+                    <span className="text-muted-foreground font-normal tabular-nums">
+                      {total}
+                    </span>
+                  )}
+                </ToggleGroupItem>
+              );
+            })}
+          </ToggleGroup>
+        }
       >
         <SelectField
           id="people-role-filter"
@@ -729,12 +652,58 @@ export function PeopleView() {
               changeFilters({ mfa });
           }}
         />
-      </AccessSearchToolbar>
+        <div className="space-y-2">
+          <SelectField
+            id="people-history-filter"
+            label="Activity"
+            value={filters.history ?? "all"}
+            options={[
+              { value: "all", label: "Any activity" },
+              { value: "no-recorded-sign-in", label: "No recorded sign-in" },
+              { value: "inactive", label: "Inactive for a period" },
+            ]}
+            onChange={(history) => {
+              if (
+                history === "all" ||
+                history === "no-recorded-sign-in" ||
+                history === "inactive"
+              )
+                changeFilters({ history });
+            }}
+          />
+          {filters.history === "inactive" ? (
+            <InactiveDaysField
+              days={
+                filters.inactiveDays ?? defaultDirectoryFilters.inactiveDays!
+              }
+              onApply={(inactiveDays) => changeFilters({ inactiveDays })}
+            />
+          ) : null}
+        </div>
+      </AccessToolbar>
+
+      {filters.history && filters.history !== "all" ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 text-sm">
+          <p className="text-muted-foreground">
+            {filters.history === "no-recorded-sign-in"
+              ? "Showing active people with no recorded sign-in."
+              : `Showing active people with recorded activity older than ${filters.inactiveDays} days.`}
+          </p>
+          <Button
+            variant="ghost"
+            className="text-action-text min-h-11 px-0 underline underline-offset-4 hover:bg-transparent"
+            onClick={() => changeFilters({ history: "all" })}
+          >
+            Clear history filter
+          </Button>
+        </div>
+      ) : null}
 
       <LoadingRegion
         loading={loading}
         label="Loading people…"
-        skeleton={<DirectorySkeleton />}
+        skeleton={<TableSkeleton columns={columns.length} />}
+        className="access-fill"
       >
         {page.items.length === 0 ? (
           <Empty className="min-h-64 border">
@@ -756,10 +725,7 @@ export function PeopleView() {
                 <Button
                   variant="outline"
                   className="min-h-11"
-                  onClick={() => {
-                    setFilters(defaultDirectoryFilters);
-                    setPageIndex(0);
-                  }}
+                  onClick={() => applyFilters(defaultDirectoryFilters)}
                 >
                   Clear search and filters
                 </Button>
@@ -775,69 +741,78 @@ export function PeopleView() {
             </EmptyContent>
           </Empty>
         ) : (
-          <div className="overflow-hidden rounded-md border">
-            <div className="hidden md:block">
-              <DataTable
-                ariaLabel="People"
-                columns={columns}
-                data={[...page.items]}
-                cellClassName="py-2 align-top whitespace-normal"
-                getRowId={(row) => row.user.id}
-                rowClassName={() => openRowClassName}
-              />
+          <div className="access-fill bg-card flex min-w-0 flex-col overflow-hidden rounded-md border">
+            <div className="access-fill access-scroll-table hidden md:block">
+              <Table aria-label="People" className="table-fixed">
+                <colgroup>
+                  {columns.map((column) => (
+                    <col key={column.id} className={column.width} />
+                  ))}
+                </colgroup>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    {columns.map((column) => (
+                      <TableHead
+                        key={column.id}
+                        className="text-muted-foreground h-9 px-3 text-xs"
+                      >
+                        {column.header}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {page.items.map((row) => (
+                    <TableRow
+                      key={row.user.id}
+                      data-state={
+                        row.user.id === selectedId ? "selected" : undefined
+                      }
+                      className={cn(openRowClassName, tintRowClassName, "h-10")}
+                    >
+                      {columns.map((column) => (
+                        <TableCell
+                          key={column.id}
+                          className="h-10 overflow-hidden px-3 py-0 align-middle whitespace-nowrap"
+                        >
+                          {column.cell(row)}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
             <ul
               aria-label="People"
-              className="grid min-w-0 gap-3 p-3 md:hidden"
+              className="divide-border min-w-0 divide-y md:hidden"
             >
               {page.items.map((row) => (
-                <li key={row.user.id} className="min-w-0">
-                  <Card className={`min-w-0 ${openRowClassName}`}>
-                    <CardContent className="min-w-0 space-y-3 p-4">
-                      <div className="flex min-w-0 items-start justify-between gap-3">
-                        <OpenPersonButton row={row} onOpen={replaceUserParam} />
-                        <StatusBadges row={row} />
-                      </div>
-                      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
-                        <dt className="text-muted-foreground">Email</dt>
-                        <dd className="min-w-0 break-all">{row.user.email}</dd>
-                        <dt className="text-muted-foreground">Role</dt>
-                        <dd>{roleLabels[row.user.role]}</dd>
-                        <dt className="text-muted-foreground">Groups</dt>
-                        <dd className="min-w-0">
-                          {row.user.role === "admin" ? (
-                            <span className="text-muted-foreground">
-                              Not needed
-                            </span>
-                          ) : (
-                            <MembershipList membership={row.membership} />
-                          )}
-                        </dd>
-                        <dt className="text-muted-foreground">Departments</dt>
-                        <dd className="min-w-0">
-                          <DepartmentList row={row} />
-                        </dd>
-                        <dt className="text-muted-foreground">
-                          Two-step verification
-                        </dt>
-                        <dd className="min-w-0">
-                          <MfaObservation person={row.user} />
-                        </dd>
-                        <dt className="text-muted-foreground">Last seen</dt>
-                        <dd className="min-w-0">
-                          <RecordedHistory
-                            value={lastSeen(row.user)}
-                            empty="No recorded sign-in"
-                          />
-                        </dd>
-                      </dl>
-                    </CardContent>
-                  </Card>
+                <li
+                  key={row.user.id}
+                  data-state={
+                    row.user.id === selectedId ? "selected" : undefined
+                  }
+                  className={cn(
+                    openRowClassName,
+                    tintRowClassName,
+                    "flex min-h-14 min-w-0 items-center justify-between gap-3 px-3 py-1.5",
+                  )}
+                >
+                  <OpenPerson
+                    row={row}
+                    inline={false}
+                    onOpen={replaceUserParam}
+                  />
+                  <span className="shrink-0 text-sm">
+                    <StatusWord row={row} now={now} />
+                  </span>
                 </li>
               ))}
             </ul>
             <TablePagination
               ariaLabel="People pages"
+              className="shrink-0 px-3 py-2 lg:py-2"
               total={page.total}
               offset={page.offset}
               rowCount={page.items.length}
@@ -863,6 +838,7 @@ export function PeopleView() {
       <PersonPanel
         row={selected}
         membership={selected?.membership}
+        recorded={rows?.find((row) => row.user.id === selectedId)?.user}
         people={people}
         listFresh={
           !catalog.isFetching && !catalog.isError && !catalog.isPending

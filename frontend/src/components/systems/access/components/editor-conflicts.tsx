@@ -159,7 +159,7 @@ export function ConflictDialog({
   const resolved = conflicts.every((conflict) => Boolean(choices[conflict.id]));
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="access-ui max-w-xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>

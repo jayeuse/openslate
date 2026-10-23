@@ -80,10 +80,10 @@ export function GroupPanel({
           if (!open) requestClose();
         }}
       >
-        <SheetContent className="w-full max-w-none gap-0 p-0 sm:w-[min(92vw,44rem)]">
+        <SheetContent className="access-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,44rem)]">
           {row && group ? (
             <>
-              <SheetHeader className="border-b p-5 pr-16">
+              <SheetHeader className="shrink-0 border-b p-5 pr-16">
                 <SheetTitle className="text-lg break-words">
                   {group.name}
                 </SheetTitle>
@@ -115,7 +115,7 @@ export function GroupPanel({
                 <X aria-hidden="true" />
               </SheetClose>
               {blocked && hasPendingOperation ? (
-                <Alert className="m-5 mb-0">
+                <Alert className="m-5 mb-0 shrink-0">
                   Finish the current change before closing.
                 </Alert>
               ) : null}

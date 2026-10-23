@@ -18,6 +18,9 @@ import {
   person,
 } from "./helpers/access-api";
 
+// People shows the Departments column from 1440px (DESIGN.md, Access rows).
+test.use({ viewport: { width: 1440, height: 900 } });
+
 const membershipId = (index: number) => fixtureId(80_000 + index);
 
 async function membershipsFixture(page: Page, count: number) {
@@ -84,6 +87,19 @@ async function disableBen(page: Page) {
   return sheet;
 }
 
+/**
+ * Opens a person's sheet from the directory. A 40px row shows the first group
+ * and "+n"; the sheet's Groups section lists the loaded page and continues it.
+ */
+async function openGroups(page: Page, name = "Ben Cruz") {
+  await page
+    .getByRole("button", { name: `Manage ${name}`, exact: true })
+    .click();
+  const sheet = page.getByRole("dialog", { name, exact: true });
+  await expect(sheet).toBeVisible();
+  return sheet.getByRole("region", { name: "Groups", exact: true });
+}
+
 async function column(row: Locator, name: string) {
   const table = row.page().getByRole("table", { name: "People", exact: true });
   const index = await table
@@ -98,7 +114,8 @@ test("People memberships include no-access groups beyond the global first hundre
   const { reads } = await membershipsFixture(page, 2);
   await page.goto("/access?view=people");
   const groups = await column(peopleRow(page), "Groups");
-  await expect(groups).toContainText("Z membership 00, Z membership 01");
+  await expect(groups).toContainText("Z membership 00");
+  await expect(groups).toContainText("+1 more group");
   await expect(groups).not.toContainText("None");
   await expect(peopleRow(page, "Rosa Reyes")).toContainText("Not needed");
   expect(
@@ -117,7 +134,10 @@ test("People memberships disclose a partial page and continue only after the per
 }) => {
   const { reads } = await membershipsFixture(page, 27);
   await page.goto("/access?view=people");
-  const groups = await column(peopleRow(page), "Groups");
+  await expect(await column(peopleRow(page), "Groups")).toContainText(
+    "Z membership 00+26 more groups",
+  );
+  const groups = await openGroups(page);
   await expect(groups).toContainText("Z membership 24");
   await expect(groups).not.toContainText("Z membership 25");
   await expect(groups).toContainText("25 of 27 groups");
@@ -158,7 +178,7 @@ test("People membership continuation failure retains the partial disclosure and 
     return "next";
   });
   await page.goto("/access?view=people");
-  const groups = await column(peopleRow(page), "Groups");
+  const groups = await openGroups(page);
   await expect(groups).toContainText("25 of 27 groups");
   await groups
     .getByRole("button", { name: "Load more groups", exact: true })
@@ -186,7 +206,7 @@ test("People membership refusal survives a cached directory remount until a fres
     return "next";
   });
   await page.goto("/access?view=people");
-  let groups = await column(peopleRow(page), "Groups");
+  let groups = await openGroups(page);
   await expect(groups).toContainText("Z membership 00");
   denied = true;
   await groups
@@ -194,11 +214,12 @@ test("People membership refusal survives a cached directory remount until a fres
     .click();
   await expect(groups.getByRole("alert")).toBeVisible();
   await expect(groups).not.toContainText("Z membership 00");
-  await expect(groups).not.toContainText("None");
+  await expect(groups).not.toContainText("Not in any group yet");
   denied = false;
+  await page.keyboard.press("Escape");
   await page.getByRole("link", { name: "Groups", exact: true }).click();
   await page.getByRole("link", { name: "People", exact: true }).click();
-  groups = await column(peopleRow(page), "Groups");
+  groups = await openGroups(page);
   await expect(groups.getByRole("alert")).toBeVisible();
   await expect(groups).not.toContainText("Z membership 00");
   const freshReads = reads.filter(
@@ -276,15 +297,24 @@ test("People department reach is explicitly partial until the shared membership 
     ),
   );
   await page.goto("/access?view=people");
-  const groups = await column(peopleRow(page), "Groups");
   const departments = await column(peopleRow(page), "Departments");
-  await expect(groups).toContainText("25 of 27 groups");
+  await expect(await column(peopleRow(page), "Groups")).toContainText(
+    "+26 more groups",
+  );
   await expect(departments).toContainText("Departments not fully loaded");
   await expect(departments).not.toContainText("None");
+  const groups = await openGroups(page);
+  const reach = page
+    .getByRole("dialog", { name: "Ben Cruz", exact: true })
+    .getByRole("region", { name: "Recorded activity", exact: true })
+    .getByRole("definition")
+    .first();
+  await expect(groups).toContainText("25 of 27 groups");
+  await expect(reach).toContainText("Departments not fully loaded");
   await groups
     .getByRole("button", { name: "Load more groups", exact: true })
     .click();
-  await expect(departments).toHaveText("Beyond-catalog department");
+  await expect(reach).toHaveText("Beyond-catalog department");
   await expect(groups).toContainText("Z membership 26");
   expect(api.sent("GET", `/api/departments/${membershipId(400)}`)).toHaveLength(
     0,
@@ -328,7 +358,7 @@ for (const state of ["disabled", "deleted"] as const)
       `/access?view=people&status=${state === "deleted" ? "deleted" : "all"}`,
     );
     const departments = await column(peopleRow(page), "Departments");
-    await expect(departments).toHaveText("Assigned department");
+    await expect(departments).toContainText("Assigned department");
     expect(api.sent("GET", `/api/users/${ids.ben}/access`)).toHaveLength(0);
   });
 
@@ -363,7 +393,7 @@ test("the offpage selected person shares membership continuation with their dire
     .getByRole("searchbox", { name: "Search people", exact: true })
     .fill("Ben Cruz");
   const groups = await column(peopleRow(page), "Groups");
-  await expect(groups).toContainText("Z membership 26");
+  await expect(groups).toContainText("Z membership 00+26 more groups");
   expect(
     reads
       .filter((url) => url.searchParams.get("member_id") === ids.ben)
@@ -408,7 +438,7 @@ for (const target of ["complete panel", "partial directory"] as const)
     if (target === "partial directory") {
       await sheet.getByRole("button", { name: "Close", exact: true }).click();
       region = await column(peopleRow(page), "Groups");
-      await expect(region).toContainText("25 of 27 groups");
+      await expect(region).toContainText("+26 more groups");
     }
     await expect(region).toContainText("Z membership 00");
     await expect(
@@ -437,7 +467,7 @@ for (const target of ["complete panel", "partial directory"] as const)
       await expect(sheet.getByLabel("Job title", { exact: true })).toHaveValue(
         "Unsubmitted draft title",
       );
-    else await expect(region).toContainText("25 of 27 groups");
+    else await expect(region).toContainText("+26 more groups");
   });
 
 test("membership loading cancels a held continuation when its person leaves the directory", async ({
@@ -467,12 +497,14 @@ test("membership loading cancels a held continuation when its person leaves the 
     }
   });
   await page.goto("/access?view=people");
-  let groups = await column(peopleRow(page), "Groups");
+  let groups = await openGroups(page);
   await expect(groups).toContainText("25 of 27 groups");
   await groups
     .getByRole("button", { name: "Load more groups", exact: true })
     .click();
   await held.entered;
+  // Closing the sheet keeps the continuation; leaving the directory ends it.
+  await page.keyboard.press("Escape");
   try {
     const failed = page.waitForEvent("requestfailed", {
       predicate: (request) => {
@@ -497,7 +529,7 @@ test("membership loading cancels a held continuation when its person leaves the 
   await page
     .getByRole("searchbox", { name: "Search people", exact: true })
     .fill("Ben Cruz");
-  groups = await column(peopleRow(page), "Groups");
+  groups = await openGroups(page);
   await expect(groups).toContainText("25 of 27 groups");
   await expect(groups).not.toContainText("Z membership 26");
   await expect(
@@ -627,7 +659,7 @@ test("an older membership Retry cannot clear a newer continuation refusal", asyn
   await expect(
     benGroups.getByRole("button", { name: "Retry groups", exact: true }),
   ).toBeVisible();
-  await expect(cyGroups).toContainText("25 of 110 groups");
+  await expect(cyGroups).toContainText("A unrelated 0+109 more groups");
   const cyRefresh = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (
@@ -642,13 +674,16 @@ test("an older membership Retry cannot clear a newer continuation refusal", asyn
   await held.entered;
   try {
     await (await cyRefresh).finished();
-    await cyGroups
+    const cySheetGroups = await openGroups(page, "cy");
+    await cySheetGroups
       .getByRole("button", { name: "Load more groups", exact: true })
       .click();
-    await expect(cyGroups.getByRole("alert")).toContainText(
+    await expect(cySheetGroups.getByRole("alert")).toContainText(
       "Groups are unavailable",
     );
-    await expect(cyGroups).not.toContainText("A unrelated 0");
+    await expect(cySheetGroups).not.toContainText("A unrelated 0");
+    await page.keyboard.press("Escape");
+    await expect(cySheetGroups).toBeHidden();
   } finally {
     held.release();
     await held.completed;
@@ -698,7 +733,7 @@ for (const mode of ["light", "dark"] as const) {
       await page.goto("/access?view=people");
       const groups = await column(peopleRow(page), "Groups");
       const departments = await column(peopleRow(page), "Departments");
-      await expect(groups).toContainText("25 of 27 groups");
+      await expect(groups).toContainText("+26 more groups");
       await expect(departments).toContainText("Departments not fully loaded");
       await expect(departments).not.toContainText("None");
       await page.evaluate(applyAppearancePreferences, {
@@ -707,21 +742,19 @@ for (const mode of ["light", "dark"] as const) {
       });
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.setViewportSize(viewport);
-      const people = page.getByRole(viewport.width === 390 ? "list" : "table", {
-        name: "People",
-        exact: true,
-      });
-      const row = people
-        .getByRole(viewport.width === 390 ? "listitem" : "row")
-        .filter({ hasText: "Ben Cruz" });
-      const more = row.getByRole("button", {
+      // The row keeps one line; the sheet discloses the partial page.
+      const sheetGroups = await openGroups(page);
+      const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+      const more = sheetGroups.getByRole("button", {
         name: "Load more groups",
         exact: true,
       });
       await more.scrollIntoViewIfNeeded();
       await expect(more).toBeVisible();
-      await expect(row).toContainText("25 of 27 groups");
-      await expect(row).toContainText("Departments not fully loaded");
+      await expect(sheetGroups).toContainText("25 of 27 groups");
+      await expect(
+        sheet.getByRole("region", { name: "Recorded activity", exact: true }),
+      ).toContainText("Departments not fully loaded");
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= window.innerWidth,

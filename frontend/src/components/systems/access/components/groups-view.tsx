@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, Search, UsersRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import {
   Empty,
   EmptyContent,
@@ -17,12 +15,20 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   DEFAULT_TABLE_PAGE_SIZE,
   TablePagination,
 } from "@/components/ui/table-pagination";
 import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { groupListOptions } from "../adapters/access-queries";
@@ -37,12 +43,18 @@ import {
   type GroupRow,
   type GroupSort,
 } from "../helpers/groups";
-import { AccessSearchToolbar } from "./access-search-toolbar";
+import { AccessHeaderActions } from "./access-header-actions";
+import { AccessToolbar } from "./access-toolbar";
+import { TableSkeleton } from "./table-skeleton";
 import { CreateGroupDialog, hasKeptNewGroup } from "./create-group-dialog";
 import type { GroupEditorTab } from "./group-editor";
 import { GroupPanel } from "./group-panel";
 import { SelectField } from "./people-fields";
-import { openRowClassName, RowOpenButton } from "./row-open-button";
+import {
+  openRowClassName,
+  RowOpenButton,
+  tintRowClassName,
+} from "./row-open-button";
 
 const sortOptions: readonly { value: GroupSort; label: string }[] = [
   { value: "name", label: "Name" },
@@ -87,37 +99,25 @@ function memberCount(count: number) {
   return `${count} ${count === 1 ? "member" : "members"}`;
 }
 
+/** Departments a group reaches, on one line: levels and "+n more". */
 function Reach({ row }: { row: GroupRow }) {
   if (!row.reach.length)
     return <span className="text-muted-foreground">No access</span>;
   const more = row.reach.length - REACH_SHOWN;
   return (
-    <ul className="space-y-0.5">
+    <span
+      className="flex min-w-0 items-center gap-3 overflow-hidden"
+      title={row.reach.map(summaryLabel).join(", ")}
+    >
       {row.reach.slice(0, REACH_SHOWN).map((item) => (
-        <li key={item.departmentId} className="break-words">
+        <span key={item.departmentId} className="min-w-0 truncate">
           {summaryLabel(item)}
-        </li>
+        </span>
       ))}
       {more > 0 ? (
-        <li className="text-muted-foreground">+{more} more</li>
+        <span className="text-muted-foreground shrink-0">+{more} more</span>
       ) : null}
-    </ul>
-  );
-}
-
-function GroupsSkeleton() {
-  return (
-    <div className="overflow-hidden rounded-md border">
-      <Skeleton className="h-10 w-full rounded-none" />
-      {Array.from({ length: 5 }, (_, index) => (
-        <div key={index} className="flex items-center gap-4 border-t p-3">
-          <Skeleton className="h-9 w-40" />
-          <Skeleton className="hidden h-5 w-48 md:block" />
-          <Skeleton className="h-5 w-20" />
-          <Skeleton className="hidden h-5 w-36 md:block" />
-        </div>
-      ))}
-    </div>
+    </span>
   );
 }
 
@@ -217,45 +217,61 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
   };
   const narrowed = filters.filter !== "all" || filters.query.trim() !== "";
 
-  const columns: DataTableColumn<GroupRow>[] = [
+  // Description shows only when a group on this page has one.
+  const described = page.items.some((row) => row.group.description.trim());
+  const columns: {
+    id: string;
+    header: string;
+    width?: string;
+    cell: (row: GroupRow) => ReactNode;
+  }[] = [
     {
       id: "name",
       header: "Name",
-      cell: ({ row }) => (
+      cell: (row) => (
         <RowOpenButton
-          title={row.original.group.name}
-          onOpen={() => openGroup(row.original.group.id)}
+          title={row.group.name}
+          inline
+          onOpen={() => openGroup(row.group.id)}
         />
       ),
     },
-    {
-      id: "description",
-      header: "Description",
-      cell: ({ row }) =>
-        row.original.group.description ? (
-          <span className="line-clamp-2 break-words">
-            {row.original.group.description}
-          </span>
-        ) : (
-          <span className="text-muted-foreground">
-            <span aria-hidden="true">—</span>
-            <span className="sr-only">No description</span>
-          </span>
-        ),
-    },
+    ...(described
+      ? [
+          {
+            id: "description",
+            header: "Description",
+            width: "w-[30%]",
+            cell: (row: GroupRow) =>
+              row.group.description ? (
+                <span
+                  className="text-muted-foreground block truncate"
+                  title={row.group.description}
+                >
+                  {row.group.description}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">
+                  <span aria-hidden="true">—</span>
+                  <span className="sr-only">No description</span>
+                </span>
+              ),
+          },
+        ]
+      : []),
     {
       id: "members",
       header: "Members",
-      cell: ({ row }) => (
-        <span className="tabular-nums">
-          {row.original.group.member_ids.length}
-        </span>
+      width: "w-28",
+      cell: (row) => (
+        <span className="tabular-nums">{row.group.member_ids.length}</span>
       ),
     },
     {
       id: "departments",
       header: "Departments reached",
-      cell: ({ row }) => <Reach row={row.original} />,
+      width: "w-[34%]",
+      cell: (row) => <Reach row={row} />,
     },
   ];
 
@@ -295,9 +311,9 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
     );
 
   return (
-    <div className="flex min-w-0 flex-col gap-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="sr-only">Group list</h2>
+    <div className="access-fill flex min-w-0 flex-col gap-3">
+      <h2 className="sr-only">Group list</h2>
+      <AccessHeaderActions>
         <p className="text-muted-foreground text-sm" aria-live="polite">
           {rows
             ? `${page.total} ${page.total === 1 ? "group" : "groups"}`
@@ -305,7 +321,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
         </p>
         {admin ? (
           <Button
-            className="min-h-11 w-full sm:w-auto"
+            className="min-h-11"
             disabled={rows === null}
             onClick={() => setCreateOpen(true)}
           >
@@ -313,9 +329,8 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
             Create group
           </Button>
         ) : null}
-      </div>
-
-      <AccessSearchToolbar
+      </AccessHeaderActions>
+      <AccessToolbar
         searchLabel="Search groups"
         placeholder="Name, description, or department"
         query={filters.query}
@@ -336,12 +351,13 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
             if (option) changeFilters({ filter: option.value });
           }}
         />
-      </AccessSearchToolbar>
+      </AccessToolbar>
 
       <LoadingRegion
         loading={loading}
         label="Loading groups…"
-        skeleton={<GroupsSkeleton />}
+        skeleton={<TableSkeleton columns={3} />}
+        className="access-fill"
       >
         {filtered.length === 0 ? (
           <Empty className="min-h-64 border">
@@ -390,47 +406,82 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
             ) : null}
           </Empty>
         ) : (
-          <div className="overflow-hidden rounded-md border">
-            <div className="hidden md:block">
-              <DataTable
-                ariaLabel="Groups"
-                columns={columns}
-                data={[...page.items]}
-                cellClassName="py-2 align-top whitespace-normal"
-                getRowId={(row) => row.group.id}
-                rowClassName={() => openRowClassName}
-              />
+          <div className="access-fill access-hug bg-card flex min-w-0 flex-col overflow-hidden rounded-md border">
+            <div className="access-fill access-scroll-table hidden md:block">
+              <Table aria-label="Groups" className="table-fixed">
+                <colgroup>
+                  {columns.map((column) => (
+                    <col key={column.id} className={column.width} />
+                  ))}
+                </colgroup>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    {columns.map((column) => (
+                      <TableHead
+                        key={column.id}
+                        className="text-muted-foreground h-9 px-3 text-xs"
+                      >
+                        {column.header}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {page.items.map((row) => (
+                    <TableRow
+                      key={row.group.id}
+                      data-state={
+                        row.group.id === selectedId ? "selected" : undefined
+                      }
+                      className={cn(openRowClassName, tintRowClassName, "h-10")}
+                    >
+                      {columns.map((column) => (
+                        <TableCell
+                          key={column.id}
+                          className="h-10 overflow-hidden px-3 py-0 align-middle whitespace-nowrap"
+                        >
+                          {column.cell(row)}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
             <ul
               aria-label="Groups"
-              className="grid min-w-0 gap-3 p-3 md:hidden"
+              className="divide-border min-w-0 divide-y md:hidden"
             >
               {page.items.map((row) => (
-                <li key={row.group.id} className="min-w-0">
-                  <Card className={`min-w-0 ${openRowClassName}`}>
-                    <CardContent className="min-w-0 space-y-3 p-4">
-                      <RowOpenButton
-                        title={row.group.name}
-                        subtitle={row.group.description || null}
-                        onOpen={() => openGroup(row.group.id)}
-                      />
-                      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
-                        <dt className="text-muted-foreground">Members</dt>
-                        <dd className="tabular-nums">
-                          {memberCount(row.group.member_ids.length)}
-                        </dd>
-                        <dt className="text-muted-foreground">Departments</dt>
-                        <dd className="min-w-0">
-                          <Reach row={row} />
-                        </dd>
-                      </dl>
-                    </CardContent>
-                  </Card>
+                <li
+                  key={row.group.id}
+                  data-state={
+                    row.group.id === selectedId ? "selected" : undefined
+                  }
+                  className={cn(
+                    openRowClassName,
+                    tintRowClassName,
+                    "flex min-h-14 min-w-0 items-center justify-between gap-3 px-3 py-1.5",
+                  )}
+                >
+                  <RowOpenButton
+                    title={row.group.name}
+                    subtitle={
+                      row.reach.length
+                        ? row.reach.map(summaryLabel).join(", ")
+                        : "No access"
+                    }
+                    onOpen={() => openGroup(row.group.id)}
+                  />
+                  <span className="text-muted-foreground shrink-0 text-sm tabular-nums">
+                    {memberCount(row.group.member_ids.length)}
+                  </span>
                 </li>
               ))}
             </ul>
             <TablePagination
               ariaLabel="Group pages"
+              className="shrink-0 px-3 py-2 lg:py-2"
               total={page.total}
               offset={page.offset}
               rowCount={page.items.length}

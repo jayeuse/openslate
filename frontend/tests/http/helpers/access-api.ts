@@ -176,6 +176,8 @@ export type Api = {
   monitoring: Map<string, Monitoring>;
   sessions: Session[];
   listReads: URLSearchParams[];
+  /** One-row `/api/users` reads that only need a total. */
+  countReads: URLSearchParams[];
   summaryReads: number;
   summaryQueries: URLSearchParams[];
   users: Map<string, User>;
@@ -347,6 +349,7 @@ export async function mockAccessApi(
     monitoring,
     sessions,
     listReads: [],
+    countReads: [],
     summaryReads: 0,
     summaryQueries: [],
     users,
@@ -377,8 +380,13 @@ export async function mockAccessApi(
     }
     const call = { method, path, body };
     calls.push(call);
+    // A one-row read with no ID list is a count (Overview cards, the People
+    // status filters); directory pages and ID lookups stay in listReads.
     if (method === "GET" && path === "/api/users")
-      api.listReads.push(new URLSearchParams(url.searchParams));
+      (url.searchParams.get("limit") === "1" && !url.searchParams.has("ids")
+        ? api.countReads
+        : api.listReads
+      ).push(new URLSearchParams(url.searchParams));
     if (method === "GET" && path === "/api/users/summary") {
       api.summaryReads += 1;
       api.summaryQueries.push(new URLSearchParams(url.searchParams));

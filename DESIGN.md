@@ -473,6 +473,8 @@ Wrong: Triplicate sets `--action` to its navy form ink, so a link looks like bod
 
 **The Name Beside Color Rule.** A department identity color never carries meaning alone. It is always shown beside the department name, as a mark, a band, or a card header.
 
+One exception, for dense rows: an Access People row may show a person's department marks with a count ("■■■ 3") when the names are in the row's accessible text and in the person sheet one click away. A single department still shows its name.
+
 Correct: the module header shows the `--dept-n` mark, then the module name, in the department's frame under its named head.
 
 Wrong: a legend that says "purple = Commerce" and cards with only a purple edge.
@@ -530,7 +532,7 @@ The main region pads 16px on phones and 20px by 28px from 640px up. Manage uses 
 
 The rhythm is a 4px base: 8px and 12px gaps inside groups, 16px between groups, 20px card padding, 28px between the page header and content. Tables open at 10 rows per page (options 5, 10, 25, 50).
 
-**The Still Page Rule.** On desktop (1280px and wider) a workspace page fills the viewport and never scrolls; its panels do. The shell header, the page header, and the footer line stay in place, and each panel (canvas, Structure, Properties, a section body) scrolls on its own. Scroll panels are `relative`, so screen-reader text inside them cannot stretch the page. Phones and tablets scroll the page. The Sandbox follows it now; the other workspaces follow it when their pass comes.
+**The Still Page Rule.** On desktop (1280px and wider) a workspace page fills the viewport and never scrolls; its panels do. The shell header, the page header, and the footer line stay in place, and each panel (canvas, Structure, Properties, a section body) scrolls on its own. Scroll panels are `relative`, so screen-reader text inside them cannot stretch the page. Phones and tablets scroll the page. The Sandbox and Access (People, Groups, Security) follow it now; inside a still page any panel, card, or list may scroll on its own with the quiet scrollbar. The other workspaces follow it when their pass comes.
 
 **The Quiet Scrollbar Rule.** Every scroll area uses a 4px thumb in an 8px lane with no track, tinted from `--ink-muted`; under the pointer it widens to 6px and darkens, in every look (Firefox draws its standard thin bar, which cannot be narrower). It is never hidden: it is the only cue that a panel has more below the fold. The sidebar tints its thumb with `--sidebar-muted`.
 
@@ -698,6 +700,20 @@ Quiet and direct. A button is text first, with a 16px icon when it helps.
 - **Focus:** the border turns `--action` and a 2px `--focus` outline sits 1px outside.
 - **Labels:** FieldLabel is 14px weight 500 (`data-slot="field-label"`); each look restyles it per the type skin places.
 - **Looks:** Whiteboard draws inputs, selects, and text areas with a 2px marker edge. Triplicate keeps a 1px form box on `--surface`.
+- **Access:** inside `access-ui`, fields follow the slim controls below.
+
+### Access slim controls
+
+Access tested a slimmer, quieter control set before any other page (owner, 2026-10-23). It applies only inside the `access-ui` class: on the Access page root and on the content of every Access sheet and dialog, because they render in portals. Another page adopts it by adding the class, after the owner approves the rollout.
+
+- **Sizes, every look, from 1280px:** fields, selects, search, and input groups are 32px tall with 10px sides; buttons are 32px with 12px sides, icon buttons 32×32; segmented items 28px; checkboxes 14px; switches 28×16; field labels 12px weight 500; sheet tabs 32px. Text stays 14px. The primary button differs by its fill, not its height. Below 1280px nothing changes and the 44px floor holds.
+- **Slate skin (no `data-theme`):** a field is a sunken well (`--surface-sunken`) with clear sides and top and a 1px bottom rule, small top corners and a square bottom. The rule is the field's 3:1 edge: `--control-edge` in dark, `--ink-muted` in light (where `--control-edge` reaches only 2.98:1 against the well). Hover shows the full edge and keeps the rule. Focus draws a 2px `--action` rule (the rule plus an inset line) and the standard focus outline. An error draws the rule in `--danger`, with the message under the field. Disabled fields drop the fill and dash the rule. Read-only values are plain text, never a disabled field. Outline buttons become quiet buttons: no border, the sunken fill, the hover fill on hover.
+- **Other looks:** Whiteboard, Triplicate, and Stockroom keep their own field and button skins at the slim sizes.
+- **Layout:** in a sheet, Details uses label-left rows: a 128px muted label column and the field on the right, about 40px per row, so the tab reads as facts until someone edits it. Dialogs and toolbars keep the label above. Phones stack the label above the field. Every label is a real `<label for>`.
+
+Correct: the person sheet shows "Job title" in the muted label column and "Service Coordinator" in a sunken well with a hairline under it; hovering draws the full edge.
+
+Wrong: a disabled, boxed "Email" field that the person cannot change (it is read-only, so it is plain text), or a 44px bordered box at 1440px inside Access.
 
 ### Tabs
 
@@ -730,6 +746,14 @@ Show safe, actionable error text based on known status and error codes. Network 
 ### Tables
 
 Hairline rows with 14px cells. Cells stay `--ink` in every look, so stored data never reads as a link. Whiteboard puts a 2px `--wb-tape` rule under bold heads. Triplicate makes a ruled ledger: a 1.5px `--ink` rule under the heads and a line number on each record row: a CSS counter in a `::before` with empty alternative text (`content: counter(tp-line) / ""`), placed in the first cell's left padding, with the same padding on the first head cell. Rows with a spanning cell (empty states, expanded details) and rows led by a checkbox get no number. Stockroom sets the heads on a steel band (`--sr-steel-lite`) with a 2px `--sr-steel` rule.
+
+**Access rows.** People, Groups, and Sessions share one row grammar. From 1280px a row is 40px and one line: a 24px avatar with the presence dot, the name at weight 500 and the email in muted ink on the same line (truncated, full text available), then words, dots, chips, and marks instead of sentences: Role as a word (Administrator as the action-tint chip), Status as a dot and a word ("Ends in 5 days" for an expiring guest), groups as chips with "+n", departments as marks with a count, two-step as "On" with a shield in flow ink, "Off", or "Unknown", and last activity as relative time in tabular figures. The whole row is one open target (`RowOpenButton`, named "Manage <name>"); the name is not a hover card. Hover takes the 6% ink tint and the open row the 14% tint. The head is sticky inside the scrolling table; a look's head band still applies. From 768 to 1279px a row keeps Person, Role, Status, and Last active, and the sheet holds the rest; phones show two-line rows of at least 56px. Row chips render through `Badge`, so each look's chip skin (Triplicate stamps, Stockroom tape) applies, and the row and the sheet read the same.
+
+**Status quick filters.** Beside the People search, a segmented control filters by status with counts: All, Active, Invited, Ending soon, Disabled. The counts are organization totals and do not follow the search. Other filters stay under one Filters button with an active count. On phones the control scrolls sideways instead of wrapping.
+
+Correct: "Active 43" in the segmented control and a 40px row "Ana Castillo ana.castillo@… · Member · ● Active · Service Triage · ■■ 2 · Off · 3 hours ago".
+
+Wrong: a 145px row with two avatars, the username under the name, and an underlined "Manage" link.
 
 ### Dialogs, sheets, and menus
 

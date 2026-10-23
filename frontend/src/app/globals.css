@@ -843,6 +843,232 @@ html[data-density="spacious"]
   height: max(44px, 2.75rem);
 }
 
+/* Slim controls, in Access only (A8, docs/specs/access-ui-ux-pass.md).
+   `access-ui` sits on the Access page root and on the content of every
+   Access sheet and dialog, which render in portals outside #main-content.
+   :is() takes its strongest argument, so each rule beats the ID-scoped 44px
+   floor in the page and the layered utilities in a portal. Sizes apply to
+   every look from 1280px; below 1280px nothing here applies and the floor
+   stays. The well-and-rule skin is Slate only (no data-theme on <html>). */
+@media (min-width: 1280px) {
+  :is(#main-content .access-ui, .access-ui)
+    :is(
+      [data-slot="input"],
+      [data-slot="select"],
+      [data-slot="native-select"],
+      [data-slot="input-group"]
+    ) {
+    height: 2rem;
+    min-height: 2rem;
+    padding-inline-end: 0.625rem;
+  }
+  :is(#main-content .access-ui, .access-ui)
+    :is([data-slot="input"], [data-slot="select"]):not([class*="pl-"]) {
+    padding-inline-start: 0.625rem;
+  }
+  :is(#main-content .access-ui, .access-ui) [data-slot="native-select"] {
+    padding-inline-end: 2rem;
+  }
+  :is(#main-content .access-ui, .access-ui) [data-slot="select"] {
+    padding-inline-end: 2.25rem;
+  }
+  :is(#main-content .access-ui, .access-ui) [data-slot="textarea"] {
+    min-height: 4rem;
+    padding-inline: 0.625rem;
+  }
+  :is(#main-content .access-ui, .access-ui)
+    [data-slot="button"]:not([data-size="icon"]) {
+    height: 2rem;
+    min-height: 2rem;
+    padding-inline: 0.75rem;
+  }
+  :is(#main-content .access-ui, .access-ui)
+    [data-slot="button"][data-size="icon"] {
+    width: 2rem;
+    height: 2rem;
+    min-width: 2rem;
+    min-height: 2rem;
+  }
+  /* The page number between the pager arrows. */
+  :is(#main-content .access-ui, .access-ui)
+    nav
+    [aria-current="page"][class~="size-11"] {
+    width: 2rem;
+    height: 2rem;
+  }
+  :is(#main-content .access-ui, .access-ui) [data-slot="field-label"] {
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 500;
+  }
+  :is(#main-content .access-ui, .access-ui) [data-slot="toggle-group-item"] {
+    height: 1.75rem;
+    min-height: 1.75rem;
+  }
+  :is(#main-content .access-ui, .access-ui) [data-slot="checkbox"] {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+  :is(#main-content .access-ui, .access-ui) [data-slot="switch"][data-size] {
+    width: 1.75rem;
+    height: 1rem;
+  }
+  :is(#main-content .access-ui, .access-ui) [data-slot="switch-thumb"] {
+    width: 0.75rem;
+    height: 0.75rem;
+  }
+  :is(#main-content .access-ui, .access-ui)
+    [data-slot="switch"][data-checked]
+    [data-slot="switch-thumb"] {
+    translate: 0.75rem 0;
+  }
+
+  /* The Still Page Rule: from 1280px People, Groups and Security fill the
+     viewport; each link of the chain shrinks, and only the table scrolls. */
+  .access-ui .access-fill,
+  .access-ui [data-slot="loading-region"].access-fill > div {
+    display: flex;
+    flex: 1 1 0%;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .access-ui .access-scroll-table > [data-slot="table-container"] {
+    flex: 1 1 0%;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    /* Keyboard focus never lands under the sticky head. */
+    scroll-padding-top: 2.25rem;
+  }
+  /* A short list hugs its rows; a long one still shrinks and scrolls. */
+  .access-ui .access-fill.access-hug,
+  .access-ui .access-hug .access-fill,
+  .access-ui .access-hug .access-scroll-table > [data-slot="table-container"] {
+    flex: 0 1 auto;
+  }
+  /* :where keeps this weaker than a look's own head band (Stockroom steel).
+     The rule under the head is a shadow on the cell, so it stays with the
+     sticky head instead of the collapsed row border. */
+  :where(.access-ui .access-scroll-table) [data-slot="table-head"] {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: var(--card);
+    box-shadow: inset 0 -1px 0 var(--border);
+  }
+}
+
+/* Slate skin: a sunken well with a 1px control-edge bottom rule (the 3:1
+   edge), the full edge on hover, and the action rule on focus. */
+:root:not([data-theme])
+  .access-ui
+  :is(
+    [data-slot="input"],
+    [data-slot="select"],
+    [data-slot="native-select"],
+    [data-slot="textarea"],
+    [data-slot="input-group"]
+  ) {
+  background-color: var(--surface-sunken);
+  border-color: transparent;
+  border-bottom-color: var(--control-edge);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+/* In Slate light, --control-edge is 2.98:1 against the well; --ink-muted keeps
+   the field edge above 3:1. Later state rules (focus, error, disabled) win. */
+:root:not([data-theme]):not(.dark)
+  .access-ui
+  :is(
+    [data-slot="input"],
+    [data-slot="select"],
+    [data-slot="native-select"],
+    [data-slot="textarea"],
+    [data-slot="input-group"]
+  ) {
+  border-bottom-color: var(--ink-muted);
+}
+:root:not([data-theme])
+  .access-ui
+  :is(
+    [data-slot="input"],
+    [data-slot="select"],
+    [data-slot="native-select"],
+    [data-slot="textarea"],
+    [data-slot="input-group"]
+  ):hover:not(:disabled, :focus-visible, :focus-within, [aria-invalid="true"]) {
+  border-color: var(--control-edge);
+}
+/* Slate light keeps the stronger bottom rule under the pointer too. */
+:root:not([data-theme]):not(.dark)
+  .access-ui
+  :is(
+    [data-slot="input"],
+    [data-slot="select"],
+    [data-slot="native-select"],
+    [data-slot="textarea"],
+    [data-slot="input-group"]
+  ):hover:not(:disabled, :focus-visible, :focus-within, [aria-invalid="true"]) {
+  border-bottom-color: var(--ink-muted);
+}
+:root:not([data-theme])
+  .access-ui
+  :is(
+    [data-slot="input"],
+    [data-slot="select"],
+    [data-slot="native-select"],
+    [data-slot="textarea"]
+  ):focus-visible,
+:root:not([data-theme]) .access-ui [data-slot="input-group"]:focus-within {
+  border-color: transparent;
+  border-bottom-color: var(--action);
+  box-shadow: inset 0 -1px 0 var(--action);
+}
+:root:not([data-theme])
+  .access-ui
+  :is(
+    [data-slot="input"],
+    [data-slot="select"],
+    [data-slot="native-select"],
+    [data-slot="textarea"]
+  )[aria-invalid="true"] {
+  border-color: transparent;
+  border-bottom-color: var(--danger);
+  box-shadow: inset 0 -1px 0 var(--danger);
+}
+:root:not([data-theme])
+  .access-ui
+  :is(
+    [data-slot="input"],
+    [data-slot="select"],
+    [data-slot="native-select"],
+    [data-slot="textarea"]
+  ):disabled {
+  background-color: transparent;
+  border-color: transparent;
+  border-bottom-style: dashed;
+  border-bottom-color: var(--rule-strong);
+  opacity: 1;
+}
+/* A disabled select reads like a disabled input: no faded wrapper. */
+:root:not([data-theme])
+  .access-ui
+  [data-slot="native-select-wrapper"]:has(select:disabled) {
+  opacity: 1;
+}
+/* Quiet buttons: an outline button is a sunken fill with no edge in Slate;
+   the other looks keep their outline skins. */
+:root:not([data-theme])
+  .access-ui
+  [data-slot="button"][data-variant="outline"] {
+  border-color: transparent;
+  background-color: var(--surface-sunken);
+}
+:root:not([data-theme])
+  .access-ui
+  [data-slot="button"][data-variant="outline"]:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
 /* Shared page switches retain a balanced track and thumb at every density. */
 #main-content [data-slot="switch"][data-size="default"] {
   --spacing: 0.25rem;

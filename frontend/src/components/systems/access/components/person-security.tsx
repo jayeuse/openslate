@@ -345,7 +345,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
                 Complete your own two-step verification in{" "}
                 <GuardedWorkspaceLink
                   href="/access?view=security"
-                  className="text-primary underline underline-offset-4"
+                  className="text-action-text underline underline-offset-4"
                 >
                   Security
                 </GuardedWorkspaceLink>{" "}
@@ -390,7 +390,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
           if (!open && !pending) setAction(null);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="access-ui">
           <AlertDialogHeader>
             <AlertDialogTitle>
               {action ? copies[action].title : "Confirm security action"}

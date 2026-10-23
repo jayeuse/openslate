@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { toast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { afterAccessUserChange } from "../adapters/access-queries";
@@ -70,7 +71,7 @@ import {
   type DraftReviewValues,
 } from "./editor-conflicts";
 import { SponsorSearchSelect } from "./person-search-select";
-import { SelectField, TextField } from "./people-fields";
+import { detailRowClassName, SelectField, TextField } from "./people-fields";
 
 type Edit = { baseline: PersonDraft; draft: PersonDraft };
 type Conflict = {
@@ -430,8 +431,9 @@ export function PersonDetails({
           {journalIssue}
         </Alert>
       ) : null}
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="flex flex-col gap-4 md:gap-2">
         <TextField
+          layout="row"
           id={`${id}-name`}
           label="Name"
           autoComplete="off"
@@ -441,6 +443,7 @@ export function PersonDetails({
           onChange={(display_name) => update({ display_name })}
         />
         <TextField
+          layout="row"
           id={`${id}-username`}
           label="Username"
           autoComplete="off"
@@ -451,6 +454,7 @@ export function PersonDetails({
           onChange={(username) => update({ username })}
         />
         <TextField
+          layout="row"
           id={`${id}-title`}
           label="Job title"
           autoComplete="off"
@@ -460,18 +464,21 @@ export function PersonDetails({
           onChange={(job_title) => update({ job_title })}
         />
         {guest ? (
-          <div className="flex min-w-0 flex-col gap-2">
-            <p className="text-sm font-medium">Role</p>
-            <p className="flex min-h-11 items-center text-sm">
+          <div
+            className={cn("flex min-w-0 flex-col gap-2", detailRowClassName)}
+          >
+            <p className="md:text-muted-foreground text-sm font-medium">Role</p>
+            <p className="flex min-h-11 items-center text-sm md:min-h-10">
               {roleLabels.guest}
             </p>
-            <p className="text-muted-foreground text-sm">
+            <p className="text-muted-foreground text-sm md:col-start-2">
               A guest stays a guest. To give more access, invite them as a
               member.
             </p>
           </div>
         ) : (
           <SelectField
+            layout="row"
             id={`${id}-role`}
             label="Role"
             value={values.role}
@@ -503,6 +510,7 @@ export function PersonDetails({
               onChange={(sponsor_user_id) => update({ sponsor_user_id })}
             />
             <TextField
+              layout="row"
               id={`${id}-expires`}
               label="Access ends"
               type="date"
@@ -564,7 +572,10 @@ export function PersonDetails({
         open={confirmOwnRole}
         onOpenChange={(open) => !open && setConfirmOwnRole(false)}
       >
-        <AlertDialogContent finalFocus={() => !focusRoleAfterSave.current}>
+        <AlertDialogContent
+          className="access-ui"
+          finalFocus={() => !focusRoleAfterSave.current}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>Change your own role?</AlertDialogTitle>
             <AlertDialogDescription>

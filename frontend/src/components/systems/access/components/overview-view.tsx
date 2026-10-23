@@ -1,7 +1,7 @@
 "use client";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
-import { useId, useState, type FormEvent, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import type { Route } from "next";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -34,20 +34,10 @@ import {
   userListOptions,
   userSummaryOptions,
 } from "../adapters/access-queries";
-import {
-  EXPIRING_SOON_DAYS,
-  formatDateTime,
-  inactiveDaysError,
-  parseInactiveDays,
-} from "../helpers/people";
-import {
-  INACTIVE_DAYS_DEFAULT,
-  INACTIVE_DAYS_MIN,
-  INACTIVE_DAYS_MAX,
-} from "../state/api-contracts";
+import { EXPIRING_SOON_DAYS, formatDateTime } from "../helpers/people";
+import { INACTIVE_DAYS_DEFAULT } from "../state/api-contracts";
 import { type OverviewHealth } from "../helpers/overview";
 import { InvitationSettings } from "./invitation-settings";
-import { TextField } from "./people-fields";
 
 type HealthCard = {
   id: keyof OverviewHealth;
@@ -189,11 +179,9 @@ export function OverviewView() {
     ending,
     pending,
   ];
-  const [inactiveDays, setInactiveDays] = useState(INACTIVE_DAYS_DEFAULT);
-  const [inactiveDraft, setInactiveDraft] = useState(
-    String(INACTIVE_DAYS_DEFAULT),
-  );
-  const [inactiveError, setInactiveError] = useState<string | null>(null);
+  // The inactivity period is a People history filter; the card counts the
+  // default period and links to People with it.
+  const inactiveDays = INACTIVE_DAYS_DEFAULT;
   const summary = useQuery(userSummaryOptions(inactiveDays));
   const health: OverviewHealth | null = counts.every((query) => query.data)
     ? {
@@ -228,18 +216,6 @@ export function OverviewView() {
       href: `/access?view=people&history=inactive&inactive_days=${summary.data?.inactive_days ?? inactiveDays}`,
     },
   ];
-
-  function applyInactiveDays(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const error = inactiveDaysError(inactiveDraft);
-    setInactiveError(error);
-    if (error) return;
-    const days = parseInactiveDays(inactiveDraft);
-    if (days !== null) {
-      setInactiveDays(days);
-      setInactiveDraft(String(days));
-    }
-  }
 
   if (denied)
     return (
@@ -439,33 +415,6 @@ export function OverviewView() {
                           ) : null}
                         </LoadingRegion>
                       )}
-                      {card.id === "activity" ? (
-                        <form
-                          onSubmit={applyInactiveDays}
-                          className="mt-auto space-y-3 border-t pt-3"
-                          noValidate
-                        >
-                          <TextField
-                            id={`${settingsTitleId}-inactive-days`}
-                            label="Inactive for (days)"
-                            inputMode="numeric"
-                            value={inactiveDraft}
-                            onChange={(value) => {
-                              setInactiveDraft(value);
-                              setInactiveError(null);
-                            }}
-                            description={`Whole days from ${INACTIVE_DAYS_MIN} to ${INACTIVE_DAYS_MAX}.`}
-                            error={inactiveError}
-                          />
-                          <Button
-                            type="submit"
-                            variant="outline"
-                            className="min-h-11 w-full"
-                          >
-                            Apply inactivity period
-                          </Button>
-                        </form>
-                      ) : null}
                     </Card>
                   </li>
                 ))}

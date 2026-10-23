@@ -15,6 +15,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, ShieldCheck } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -39,6 +40,7 @@ import {
 } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { authMeOptions } from "./adapters/access-queries";
+import { AccessHeaderSlot } from "./components/access-header-actions";
 import { DiscardChangesDialog } from "./components/people-fields";
 import {
   abandonUncertainDrafts,
@@ -224,8 +226,13 @@ function AccessControlCenter() {
         loading={shownAccess === null}
         label="Loading Access…"
         skeleton={<Skeleton className="h-40 w-full" />}
+        className={view === "security" ? undefined : "access-fill"}
       >
-        <div inert={verifying} aria-busy={verifying}>
+        <div
+          inert={verifying}
+          aria-busy={verifying}
+          className={view === "security" ? undefined : "access-fill"}
+        >
           {view === "people" ? (
             <PeopleView />
           ) : view === "groups" ? (
@@ -241,6 +248,8 @@ function AccessControlCenter() {
       title={copy?.title ?? "Access"}
       description={description}
       showSecurityLink={shownAccess === "all" && view === "overview"}
+      still={view !== null && view !== "overview"}
+      verifying={verifying}
     >
       <AccessVerifyingProvider verifying={verifying}>
         {body}
@@ -352,20 +361,32 @@ function useUnsavedDraftGuard(
   );
 }
 
+/**
+ * The Access page. `access-ui` scopes the slim controls (globals.css). A
+ * still view (People, Groups, Security) never scrolls from 1280px: its body
+ * shrinks to the viewport and only its table scrolls. The Overview and
+ * narrower screens scroll the body as before.
+ */
 function AccessFrame({
   title,
   description,
   showSecurityLink = false,
+  still = false,
+  verifying = false,
   children,
 }: {
   title: string;
   description: string;
   showSecurityLink?: boolean;
+  still?: boolean;
+  /** Header actions wait, like the page content, while the role is checked. */
+  verifying?: boolean;
   children?: ReactNode;
 }) {
+  const [actions, setActions] = useState<HTMLDivElement | null>(null);
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 p-3 sm:px-5 sm:py-4">
-      <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="access-ui flex h-full min-h-0 min-w-0 flex-col gap-3 p-3 sm:px-5 sm:py-4">
+      <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h1
             data-slot="page-title"
@@ -392,9 +413,20 @@ function AccessFrame({
             </GuardedWorkspaceLink>
           </Button>
         ) : null}
+        <div
+          ref={setActions}
+          inert={verifying}
+          aria-busy={verifying || undefined}
+          className="flex min-w-0 flex-wrap items-center justify-between gap-3 empty:hidden sm:justify-end"
+        />
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {children}
+      <div
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+          still && "xl:flex xl:flex-col xl:gap-3 xl:overflow-hidden",
+        )}
+      >
+        <AccessHeaderSlot value={actions}>{children}</AccessHeaderSlot>
       </div>
     </div>
   );

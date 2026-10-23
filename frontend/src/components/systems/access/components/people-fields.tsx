@@ -23,10 +23,42 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 
+import { cn } from "@/lib/utils";
+
 import { ActionError } from "./editor-conflicts";
 
 // Labelled fields shared by the invitation form and the person editor. Each
 // field ties its hint and error to the control with aria-describedby.
+
+/**
+ * Label-left rows for a sheet's Details tab: from 768px a 128px muted label
+ * column and the field on the right in a 40px row; phones stack the label
+ * above. Dialogs and toolbars keep the label above.
+ */
+export const detailRowClassName =
+  "md:grid md:grid-cols-[8rem_minmax(0,1fr)] md:items-center md:gap-x-4 md:gap-y-1 md:min-h-10";
+export const detailLabelClassName = "md:text-muted-foreground";
+/** The hint and error of a row sit under the field, in the field's column. */
+const detailNoteClassName = "md:col-start-2";
+
+export function FieldRow({
+  id,
+  label,
+  children,
+}: {
+  id?: string;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <Field className={cn("min-w-0", detailRowClassName)}>
+      <FieldLabel htmlFor={id} className={detailLabelClassName}>
+        {label}
+      </FieldLabel>
+      {children}
+    </Field>
+  );
+}
 
 function describedBy(
   id: string,
@@ -47,6 +79,7 @@ export function TextField({
   onChange,
   description,
   error,
+  layout = "stacked",
   ...input
 }: {
   id: string;
@@ -55,13 +88,18 @@ export function TextField({
   onChange: (value: string) => void;
   description?: ReactNode;
   error?: string | null;
+  /** "row" sets the label left of the field from 768px (sheet Details). */
+  layout?: "stacked" | "row";
 } & Omit<
   InputHTMLAttributes<HTMLInputElement>,
   "id" | "value" | "onChange" | "className"
 >) {
+  const row = layout === "row";
   return (
-    <Field className="min-w-0">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+    <Field className={cn("min-w-0", row && detailRowClassName)}>
+      <FieldLabel htmlFor={id} className={cn(row && detailLabelClassName)}>
+        {label}
+      </FieldLabel>
       <Input
         {...input}
         id={id}
@@ -72,9 +110,21 @@ export function TextField({
         className="min-h-11"
       />
       {description ? (
-        <FieldDescription id={`${id}-hint`}>{description}</FieldDescription>
+        <FieldDescription
+          id={`${id}-hint`}
+          className={cn(row && detailNoteClassName)}
+        >
+          {description}
+        </FieldDescription>
       ) : null}
-      {error ? <FieldError id={`${id}-error`}>{error}</FieldError> : null}
+      {error ? (
+        <FieldError
+          id={`${id}-error`}
+          className={cn(row && detailNoteClassName)}
+        >
+          {error}
+        </FieldError>
+      ) : null}
     </Field>
   );
 }
@@ -88,6 +138,7 @@ export function SelectField({
   description,
   error,
   disabled,
+  layout = "stacked",
 }: {
   id: string;
   label: string;
@@ -97,10 +148,15 @@ export function SelectField({
   description?: ReactNode;
   error?: string | null;
   disabled?: boolean;
+  /** "row" sets the label left of the field from 768px (sheet Details). */
+  layout?: "stacked" | "row";
 }) {
+  const row = layout === "row";
   return (
-    <Field className="min-w-0">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+    <Field className={cn("min-w-0", row && detailRowClassName)}>
+      <FieldLabel htmlFor={id} className={cn(row && detailLabelClassName)}>
+        {label}
+      </FieldLabel>
       <NativeSelect
         id={id}
         value={value}
@@ -117,9 +173,21 @@ export function SelectField({
         ))}
       </NativeSelect>
       {description ? (
-        <FieldDescription id={`${id}-hint`}>{description}</FieldDescription>
+        <FieldDescription
+          id={`${id}-hint`}
+          className={cn(row && detailNoteClassName)}
+        >
+          {description}
+        </FieldDescription>
       ) : null}
-      {error ? <FieldError id={`${id}-error`}>{error}</FieldError> : null}
+      {error ? (
+        <FieldError
+          id={`${id}-error`}
+          className={cn(row && detailNoteClassName)}
+        >
+          {error}
+        </FieldError>
+      ) : null}
     </Field>
   );
 }
@@ -145,7 +213,7 @@ export function DiscardChangesDialog({
 }) {
   return (
     <AlertDialog open={open} onOpenChange={(next) => !next && onKeep()}>
-      <AlertDialogContent>
+      <AlertDialogContent className="access-ui">
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>

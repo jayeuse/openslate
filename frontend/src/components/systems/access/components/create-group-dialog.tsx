@@ -210,7 +210,7 @@ export function CreateGroupDialog({
         open={open}
         onOpenChange={(next) => (next ? onOpenChange(true) : requestClose())}
       >
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="access-ui max-w-2xl">
           <DialogHeader>
             <DialogTitle>Create a group</DialogTitle>
             <DialogDescription>

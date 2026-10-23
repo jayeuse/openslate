@@ -258,10 +258,50 @@ export function directoryFiltersFromParams(
   };
 }
 
+/** The status quick filters beside the People search, in order. */
+export const quickStatusFilters: readonly {
+  label: string;
+  status: DirectoryStatusFilter;
+}[] = [
+  { label: "All", status: "current" },
+  { label: "Active", status: "active" },
+  { label: "Invited", status: "pending" },
+  { label: "Ending soon", status: "ending" },
+  { label: "Disabled", status: "disabled" },
+];
+
+export function isQuickStatus(status: DirectoryStatusFilter): boolean {
+  return quickStatusFilters.some((filter) => filter.status === status);
+}
+
+/**
+ * The URL parameters that keep the directory filters, defaults left out.
+ * The inverse of `directoryFiltersFromParams`; the search text stays out.
+ */
+export function directoryParams(filters: DirectoryFilters): [string, string][] {
+  const history = filters.history ?? "all";
+  const days = filters.inactiveDays ?? INACTIVE_DAYS_DEFAULT;
+  const params: [string, string | null][] = [
+    ["role", filters.role === "all" ? null : filters.role],
+    ["status", filters.status === "current" ? null : filters.status],
+    ["group", filters.groupId === "all" ? null : filters.groupId],
+    [
+      "department",
+      filters.departmentId === "all" ? null : filters.departmentId,
+    ],
+    ["sort", filters.sort === "name" ? null : filters.sort],
+    ["mfa", !filters.mfa || filters.mfa === "all" ? null : filters.mfa],
+    ["history", history === "all" ? null : history],
+    ["inactive_days", history === "inactive" ? String(days) : null],
+  ];
+  return params.filter((entry): entry is [string, string] => entry[1] !== null);
+}
+
+/** Filters hidden under More filters; a quick status shows beside the search. */
 export function activeFilterCount(filters: DirectoryFilters): number {
   return [
     filters.role !== "all",
-    filters.status !== "current",
+    !isQuickStatus(filters.status),
     filters.groupId !== "all",
     filters.departmentId !== "all",
     Boolean(filters.mfa && filters.mfa !== "all"),
@@ -309,6 +349,53 @@ export function directoryRequest(
           : filters.sort,
     sort_order: filters.sort === "newest" ? "desc" : "asc",
   };
+}
+
+// Row words
+
+const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+const capitalize = (text: string) =>
+  text.charAt(0).toUpperCase() + text.slice(1);
+
+/** The later of a person's recorded sign-in and recorded activity. */
+export function lastSeenAt(person: {
+  last_active_at: string | null;
+  last_sign_in_at: string | null;
+}): string | null {
+  const { last_active_at: active, last_sign_in_at: signIn } = person;
+  if (!active || !signIn) return active ?? signIn;
+  return Date.parse(active) >= Date.parse(signIn) ? active : signIn;
+}
+
+/**
+ * Relative last activity ("3 hours ago"). No record says so; it never
+ * claims that a person has not signed in.
+ */
+export function lastActiveLabel(value: string | null, now: number): string {
+  const time = value === null ? Number.NaN : Date.parse(value);
+  if (!Number.isFinite(time)) return "Not recorded";
+  const seconds = Math.max(0, (now - time) / 1000);
+  if (seconds < 60) return "Just now";
+  const steps: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["minute", 60],
+    ["hour", 3600],
+    ["day", 86_400],
+    ["week", 604_800],
+    ["month", 2_629_800],
+    ["year", 31_557_600],
+  ];
+  const limits = [3600, 86_400, 604_800, 2_629_800, 31_557_600, Infinity];
+  const index = limits.findIndex((limit) => seconds < limit);
+  const [unit, size] = steps[index]!;
+  return capitalize(relative.format(-Math.round(seconds / size), unit));
+}
+
+/** The whole days left before a guest's access ends. */
+export function endsInLabel(expiresAt: string, now: number): string {
+  const left = Date.parse(expiresAt) - now;
+  if (left < DAY_MS) return "Ends today";
+  const days = Math.ceil(left / DAY_MS);
+  return `Ends in ${days} ${days === 1 ? "day" : "days"}`;
 }
 
 // Guest expiry

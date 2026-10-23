@@ -742,7 +742,10 @@ export function SecurityView({
   }
   if (!active || !admitted) return null;
   return (
-    <section aria-label="Security workspace" className="min-w-0 space-y-5">
+    <section
+      aria-label="Security workspace"
+      className="access-fill flex min-w-0 flex-col gap-5"
+    >
       {notice ? (
         <Alert role="status" variant="success">
           {notice}
@@ -753,7 +756,10 @@ export function SecurityView({
           {error}
         </Alert>
       ) : null}
-      <fieldset disabled={livePending} className="min-w-0 space-y-5">
+      <fieldset
+        disabled={livePending}
+        className="access-fill flex min-w-0 flex-col gap-5"
+      >
         <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
           <LockKeyhole
             aria-hidden="true"
@@ -819,7 +825,7 @@ export function SecurityView({
         />
         <GuardedWorkspaceLink
           href="/manage?view=audit&audit=security-events"
-          className="text-primary focus-visible:outline-ring inline-flex min-h-11 items-center text-sm underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2"
+          className="text-action-text focus-visible:outline-ring inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2"
           aria-disabled={livePending}
           onClick={(event) => {
             if (livePending) event.preventDefault();
@@ -836,7 +842,7 @@ export function SecurityView({
         dismissible={!livePending}
       >
         <DialogContent
-          className="max-w-3xl"
+          className="access-ui max-w-3xl"
           finalFocus={() => policyOpener.current}
         >
           <DialogHeader className="mb-5">

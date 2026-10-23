@@ -282,7 +282,7 @@ export function InvitePersonDialog({
         open={open}
         onOpenChange={(next) => (next ? onOpenChange(true) : requestClose())}
       >
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="access-ui max-w-2xl">
           <DialogHeader>
             <DialogTitle>Invite a person</DialogTitle>
             <DialogDescription>

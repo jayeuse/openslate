@@ -67,6 +67,7 @@ export function AccessConfirmationDialog({
       }}
     >
       <AlertDialogContent
+        className="access-ui"
         finalFocus={() =>
           confirmOpener.current?.isConnected
             ? confirmOpener.current

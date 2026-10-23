@@ -349,7 +349,7 @@ export function PersonAccount({
         open={action !== null}
         onOpenChange={(open) => !open && !pending && setAction(null)}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="access-ui">
           <AlertDialogHeader>
             <AlertDialogTitle>{copy?.title}</AlertDialogTitle>
             <AlertDialogDescription>{copy?.description}</AlertDialogDescription>

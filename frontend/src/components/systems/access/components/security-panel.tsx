@@ -10,11 +10,11 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { type MouseEvent } from "react";
+import { type MouseEvent, type ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import { Skeleton } from "@/components/ui/skeleton";
-import { AccessSearchToolbar } from "../../access/components/access-search-toolbar";
+import { AccessToolbar } from "./access-toolbar";
+import { TableSkeleton } from "./table-skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,7 +33,16 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import { PaginationControls } from "@/components/ui/pagination-controls";
-import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import { tintRowClassName } from "./row-open-button";
 import type { PageResult } from "../../shared/helpers/page-collections";
 import {
   defaultAccessSessionsRequest,
@@ -154,60 +163,74 @@ export function SecurityPanel({
     return formatDateTime(value, region);
   }
 
-  const columns: DataTableColumn<AccessAdminSession>[] = [
+  // The session row grammar: one 40px line from 1280px, with the person,
+  // device and sign-in address together, a dot and a word for status, and a
+  // ghost verb for the row action.
+  const columns: {
+    id: string;
+    header: string;
+    width?: string;
+    cell: (session: AccessAdminSession) => ReactNode;
+  }[] = [
     {
       id: "person-device",
       header: "Person & device",
-      cell: ({ row }) => {
-        const session = row.original;
+      cell: (session) => {
         const DeviceIcon = session.device === "Mobile" ? Smartphone : Monitor;
-
+        const detail = `${session.device} · ${session.browser} · Sign-in IP: ${session.ip_address ?? "Unknown"}`;
         return (
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="bg-muted flex size-10 shrink-0 items-center justify-center rounded-lg">
-              <DeviceIcon aria-hidden="true" className="size-5" />
+          <span className="flex min-w-0 items-center gap-2.5">
+            <DeviceIcon
+              aria-hidden="true"
+              className="text-muted-foreground size-4 shrink-0"
+            />
+            <span className="max-w-[45%] shrink-0 truncate font-medium">
+              {session.person_name}
             </span>
-            <span className="min-w-0">
-              <span className="block font-medium break-words">
-                {session.person_name}
-              </span>
-              <span className="text-muted-foreground mt-0.5 block text-sm break-words">
-                {session.device} · {session.browser}
-              </span>
-              <span className="text-muted-foreground mt-1 block text-xs break-all">
-                Sign-in IP: {session.ip_address ?? "Unknown"}
-              </span>
+            <span className="text-muted-foreground truncate" title={detail}>
+              {detail}
             </span>
-          </div>
+          </span>
         );
       },
     },
     {
       id: "last-refreshed",
       header: "Last refreshed",
-      cell: ({ row }) => (
-        <span className="block min-w-0 break-words tabular-nums">
-          <time dateTime={row.original.refreshed_at}>
-            {refreshedAt(row.original.refreshed_at)}
-          </time>
-        </span>
+      width: "w-52",
+      cell: (session) => (
+        <time
+          dateTime={session.refreshed_at}
+          className="text-muted-foreground tabular-nums"
+        >
+          {refreshedAt(session.refreshed_at)}
+        </time>
       ),
     },
     {
       id: "status",
       header: "Status",
-      cell: ({ row }) =>
-        row.original.current ? (
-          <Badge variant="success">Current session</Badge>
-        ) : (
-          <Badge variant="outline">Other device</Badge>
-        ),
+      width: "w-40",
+      cell: (session) => (
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            className={
+              session.current
+                ? "size-2 shrink-0 rounded-full bg-[var(--flow)]"
+                : "size-2 shrink-0 rounded-full bg-[var(--rule-strong)]"
+            }
+          />
+          {session.current ? "Current session" : "Other device"}
+        </span>
+      ),
     },
     {
       id: "action",
       header: "Action",
-      cell: ({ row }) =>
-        row.original.current ? (
+      width: "w-24",
+      cell: (session) =>
+        session.current ? (
           <span
             className="text-muted-foreground"
             aria-label="Current session is protected"
@@ -217,11 +240,12 @@ export function SecurityPanel({
         ) : (
           <Button
             type="button"
-            variant="outline"
-            className="min-h-11"
-            aria-label={`End session for ${row.original.person_name}`}
+            variant="ghost"
+            size="sm"
+            className="relative z-10 min-h-11 px-2 xl:min-h-7"
+            aria-label={`End session for ${session.person_name}`}
             disabled={sessions.status !== "ready"}
-            onClick={(event) => actions.endSession(row.original, event)}
+            onClick={(event) => actions.endSession(session, event)}
           >
             End
           </Button>
@@ -231,7 +255,7 @@ export function SecurityPanel({
 
   return (
     <section
-      className="flex min-w-0 flex-col gap-4"
+      className="access-fill flex min-w-0 flex-col gap-4"
       aria-labelledby="manage-sessions-heading"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -258,7 +282,7 @@ export function SecurityPanel({
         </Button>
       </div>
 
-      <AccessSearchToolbar
+      <AccessToolbar
         searchLabel="Search sessions"
         placeholder="Person, device or browser"
         query={request.search}
@@ -266,6 +290,7 @@ export function SecurityPanel({
           changeRequest({ search: value });
         }}
         sortLabel="Sort sessions"
+        sortInFiltersBelowMd
         sort={sort}
         sortOptions={SESSION_SORT_OPTIONS}
         onSortChange={(value) => {
@@ -318,7 +343,7 @@ export function SecurityPanel({
             ))}
           </NativeSelect>
         </Field>
-      </AccessSearchToolbar>
+      </AccessToolbar>
 
       {sessions.status === "error" ? (
         <Alert role="alert" variant="destructive">
@@ -331,11 +356,15 @@ export function SecurityPanel({
       <LoadingRegion
         loading={sessions.status === "loading"}
         label="Loading sessions…"
-        skeleton={<Skeleton className="h-80 w-full" />}
+        skeleton={<TableSkeleton columns={4} rows={4} />}
+        className="access-fill"
       >
         {page ? (
-          <Card aria-label="Active sessions" className="w-full min-w-0">
-            <CardContent className="min-w-0 p-0">
+          <Card
+            aria-label="Active sessions"
+            className="access-fill w-full min-w-0 overflow-hidden"
+          >
+            <CardContent className="access-fill min-w-0 p-0">
               {page.total === 0 ? (
                 <Empty>
                   <EmptyHeader>
@@ -358,92 +387,116 @@ export function SecurityPanel({
                 </Empty>
               ) : (
                 <>
-                  <div className="divide-border divide-y lg:hidden">
+                  <ul
+                    aria-label="Sessions"
+                    className="divide-border min-w-0 divide-y md:hidden"
+                  >
                     {page.items.map((session) => {
                       const DeviceIcon =
                         session.device === "Mobile" ? Smartphone : Monitor;
-
                       return (
-                        <article
+                        <li
                           key={session.id}
-                          className="flex min-w-0 flex-col gap-3 p-4"
+                          title={`Last refreshed ${refreshedAt(session.refreshed_at)}`}
+                          className="flex min-h-14 min-w-0 items-center gap-3 py-1.5 pr-1 pl-3"
                         >
-                          <div className="flex min-w-0 items-start justify-between gap-3">
-                            <div className="flex min-w-0 items-start gap-3">
-                              <span className="bg-muted flex size-10 shrink-0 items-center justify-center rounded-lg">
-                                <DeviceIcon
-                                  aria-hidden="true"
-                                  className="size-5"
-                                />
-                              </span>
-                              <div className="min-w-0">
-                                <p className="font-medium break-words">
-                                  {session.person_name}
-                                </p>
-                                <p className="text-muted-foreground mt-0.5 text-sm break-words">
-                                  {session.device} · {session.browser}
-                                </p>
-                                <p className="text-muted-foreground mt-1 text-xs break-all">
-                                  Sign-in IP: {session.ip_address ?? "Unknown"}
-                                </p>
-                              </div>
-                            </div>
-                            {session.current ? (
-                              <Badge className="shrink-0" variant="success">
-                                Current session
-                              </Badge>
-                            ) : (
-                              <Badge className="shrink-0" variant="outline">
-                                Other device
-                              </Badge>
-                            )}
-                          </div>
-
-                          <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                            <div className="min-w-0">
-                              <dt className="text-muted-foreground text-xs">
-                                Last refreshed
-                              </dt>
-                              <dd className="mt-0.5 break-words tabular-nums">
-                                <time dateTime={session.refreshed_at}>
-                                  {refreshedAt(session.refreshed_at)}
-                                </time>
-                              </dd>
-                            </div>
-                          </dl>
-
-                          {!session.current ? (
+                          <DeviceIcon
+                            aria-hidden="true"
+                            className="text-muted-foreground size-6 shrink-0"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium">
+                              {session.person_name}
+                            </span>
+                            <span className="text-muted-foreground block truncate text-xs">
+                              {session.device} · {session.browser} · Sign-in IP:{" "}
+                              {session.ip_address ?? "Unknown"}
+                            </span>
+                            <span className="sr-only">
+                              Last refreshed{" "}
+                              <time dateTime={session.refreshed_at}>
+                                {refreshedAt(session.refreshed_at)}
+                              </time>
+                            </span>
+                          </span>
+                          <span className="inline-flex shrink-0 items-center gap-1.5 text-sm">
+                            <span
+                              aria-hidden="true"
+                              className={
+                                session.current
+                                  ? "size-2 shrink-0 rounded-full bg-[var(--flow)]"
+                                  : "size-2 shrink-0 rounded-full bg-[var(--rule-strong)]"
+                              }
+                            />
+                            {session.current
+                              ? "Current session"
+                              : "Other device"}
+                          </span>
+                          {session.current ? (
+                            <span
+                              aria-hidden="true"
+                              className="inline-block size-11 shrink-0"
+                            />
+                          ) : (
                             <Button
                               type="button"
-                              variant="outline"
-                              className="min-h-11 w-full"
+                              variant="ghost"
+                              className="min-h-11 min-w-11 shrink-0 px-2"
                               aria-label={`End session for ${session.person_name}`}
                               disabled={sessions.status !== "ready"}
                               onClick={(event) =>
                                 actions.endSession(session, event)
                               }
                             >
-                              End session
+                              End
                             </Button>
-                          ) : null}
-                        </article>
+                          )}
+                        </li>
                       );
                     })}
-                  </div>
-                  <div className="hidden min-w-0 lg:block">
-                    <DataTable
-                      ariaLabel="Sessions"
-                      cellClassName="px-3 py-3 whitespace-normal break-words sm:px-4"
-                      className="table-fixed"
-                      columns={columns}
-                      data={[...page.items]}
-                      getRowId={(session) => session.id}
-                    />
+                  </ul>
+                  <div className="access-fill access-scroll-table hidden min-w-0 md:block">
+                    <Table aria-label="Sessions" className="table-fixed">
+                      <colgroup>
+                        {columns.map((column) => (
+                          <col key={column.id} className={column.width} />
+                        ))}
+                      </colgroup>
+                      <TableHeader>
+                        <TableRow className="hover:bg-transparent">
+                          {columns.map((column) => (
+                            <TableHead
+                              key={column.id}
+                              className="text-muted-foreground h-9 px-3 text-xs"
+                            >
+                              {column.header}
+                            </TableHead>
+                          ))}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {page.items.map((session) => (
+                          <TableRow
+                            key={session.id}
+                            className={cn(tintRowClassName, "h-10")}
+                          >
+                            {columns.map((column) => (
+                              <TableCell
+                                key={column.id}
+                                className="h-10 overflow-hidden px-3 py-0 align-middle whitespace-nowrap"
+                              >
+                                {column.cell(session)}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
                 </>
               )}
             </CardContent>
-            <CardFooter className="flex flex-wrap items-center justify-between gap-3 border-t p-3">
+            <CardFooter className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t px-3 py-2">
               <p
                 className="text-muted-foreground text-sm tabular-nums"
                 role="status"

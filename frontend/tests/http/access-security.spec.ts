@@ -2278,7 +2278,7 @@ for (const observation of ["status", "enrollment", "verification"] as const)
       page
         .getByRole("table", { name: "People", exact: true })
         .getByRole("row", { name: /Monitoring Actor/ }),
-    ).toContainText(observation === "status" ? "Unknown" : "Not verified");
+    ).toContainText(observation === "status" ? "Unknown" : "Off");
     await page.getByRole("link", { name: "Overview", exact: true }).click();
     const card = page.getByRole("region", {
       name: "Administrator two-step verification",
@@ -2324,19 +2324,23 @@ for (const observation of ["status", "enrollment", "verification"] as const)
     await expect(dialog).toBeHidden();
     const row = await returnToPeople();
     await expect(
-      row.getByText(
-        observation === "status"
-          ? "Not verified"
-          : observation === "enrollment"
-            ? "Not verified"
-            : "Verified",
-        { exact: true },
-      ),
+      row.getByText(observation === "verification" ? "On" : "Off", {
+        exact: true,
+      }),
     ).toBeVisible();
     if (observation === "enrollment") {
-      const recorded = row.locator("time");
+      // The recorded time of the observation is in the person sheet.
+      await row
+        .getByRole("button", { name: "Manage Monitoring Actor", exact: true })
+        .click();
+      const facts = page
+        .getByRole("dialog", { name: "Monitoring Actor", exact: true })
+        .getByRole("region", { name: "Recorded activity", exact: true });
+      const recorded = facts.locator("time").first();
       await expect(recorded).toBeVisible();
       await expect(recorded).toHaveAttribute("datetime", enrollmentRecordedAt);
+      await page.keyboard.press("Escape");
+      await expect(facts).toBeHidden();
     }
     await page.getByRole("link", { name: "Overview", exact: true }).click();
     await expect

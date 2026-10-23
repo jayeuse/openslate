@@ -621,7 +621,7 @@ export function SecurityEventsView({
                 <Button
                   type="button"
                   variant="ghost"
-                  className="text-primary min-h-11 w-fit justify-start px-0 text-sm underline underline-offset-4 hover:bg-transparent"
+                  className="text-action-text min-h-11 w-fit justify-start px-0 text-sm underline underline-offset-4 hover:bg-transparent"
                   onClick={() =>
                     setPersonMode(
                       personMode === "directory" ? "id" : "directory",

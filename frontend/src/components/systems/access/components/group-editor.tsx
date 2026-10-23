@@ -90,7 +90,11 @@ import {
   catalogModules,
 } from "../hooks/use-access-catalog";
 import { GroupMemberPicker } from "./group-member-picker";
-import { TextField } from "./people-fields";
+import {
+  detailLabelClassName,
+  detailRowClassName,
+  TextField,
+} from "./people-fields";
 
 type Edit<Value> = { baseline: Value; draft: Value };
 type Edits = {
@@ -763,7 +767,7 @@ export function GroupEditor({
   return (
     <>
       {journalIssue ? (
-        <Alert variant="warning" role="status" className="m-5 mb-0">
+        <Alert variant="warning" role="status" className="m-5 mb-0 shrink-0">
           {journalIssue}
         </Alert>
       ) : null}
@@ -773,9 +777,9 @@ export function GroupEditor({
           if (value === "details" || value === "members" || value === "access")
             onTabChange(value);
         }}
-        className="gap-0"
+        className="min-h-0 flex-1 gap-0"
       >
-        <div className="border-b px-5 py-3">
+        <div className="shrink-0 border-b px-5 py-3">
           <TabsList
             aria-label="Group"
             className="grid w-full grid-cols-3 sm:w-fit"
@@ -783,7 +787,7 @@ export function GroupEditor({
             {tabs.map((item) => (
               <TabsTrigger
                 key={item.value}
-                className="min-h-9"
+                className="min-h-11 xl:min-h-8"
                 value={item.value}
               >
                 {item.label}
@@ -801,7 +805,10 @@ export function GroupEditor({
           </TabsList>
         </div>
 
-        <TabsContent value="details" className="p-5">
+        <TabsContent
+          value="details"
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+        >
           {admin ? (
             <div className="flex flex-col gap-6">
               <form
@@ -811,6 +818,7 @@ export function GroupEditor({
                 onSubmit={submit("details")}
               >
                 <TextField
+                  layout="row"
                   id={`${id}-name`}
                   label="Name"
                   autoComplete="off"
@@ -820,8 +828,17 @@ export function GroupEditor({
                   error={nameError}
                   onChange={(name) => update("details", { ...details, name })}
                 />
-                <Field className="min-w-0">
-                  <FieldLabel htmlFor={`${id}-description`}>
+                <Field
+                  className={cn(
+                    "min-w-0",
+                    detailRowClassName,
+                    "md:items-start",
+                  )}
+                >
+                  <FieldLabel
+                    htmlFor={`${id}-description`}
+                    className={cn(detailLabelClassName, "md:pt-2")}
+                  >
                     Description
                   </FieldLabel>
                   <Textarea
@@ -898,7 +915,10 @@ export function GroupEditor({
           )}
         </TabsContent>
 
-        <TabsContent value="members" className="p-5">
+        <TabsContent
+          value="members"
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+        >
           <form
             noValidate
             aria-label="Members"
@@ -919,7 +939,10 @@ export function GroupEditor({
           </form>
         </TabsContent>
 
-        <TabsContent value="access" className="p-5">
+        <TabsContent
+          value="access"
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+        >
           {admin ? (
             <form
               noValidate
@@ -995,7 +1018,7 @@ export function GroupEditor({
         open={deleting}
         onOpenChange={(open) => !open && pending === null && setDeleting(false)}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="access-ui">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {shown.name}?</AlertDialogTitle>
             <AlertDialogDescription>
