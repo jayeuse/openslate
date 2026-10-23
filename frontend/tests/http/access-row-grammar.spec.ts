@@ -518,7 +518,7 @@ test("Sessions use list rows on phones and size Sort to its longest option", asy
   for (const item of await list.getByRole("listitem").all())
     expect(await height(item)).toBeGreaterThanOrEqual(56);
   const end = page.getByRole("button", {
-    name: "End session for Eli",
+    name: "End session for Eli, Mobile Chrome",
     exact: true,
   });
   expect(await height(end)).toBeGreaterThanOrEqual(44);

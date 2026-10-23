@@ -114,6 +114,9 @@ function Panel({
       >
         {children}
       </div>
+      {/* The edge shadow along the body's bottom while more waits below:
+          it shows even when the cut part is blank space. */}
+      {more ? <div aria-hidden="true" className="access-scroll-edge" /> : null}
       {foot ? (
         <div
           className={cn(
@@ -743,10 +746,10 @@ export function AccessByDepartment({
   const shown = !total
     ? null
     : cue.fit !== null && cue.fit < total
-      ? `${cue.fit} of ${total} departments shown`
+      ? `${cue.fit} of ${total} shown`
       : total === 1
-        ? "1 department"
-        : `All ${total} departments`;
+        ? "1 shown"
+        : `All ${total} shown`;
   return (
     <Panel
       id="overview-departments"
@@ -774,16 +777,6 @@ export function AccessByDepartment({
             ))}
           </span>
           {shown ? <span className="tabular-nums">{shown}</span> : null}
-          {ready?.administrators ? (
-            <span>
-              {ready.administrators}{" "}
-              {ready.administrators === 1
-                ? "administrator manages"
-                : "administrators manage"}{" "}
-              all.
-            </span>
-          ) : null}
-          {ready?.partial ? <span>{ready.partial}</span> : null}
         </>
       }
     >
@@ -800,22 +793,49 @@ export function AccessByDepartment({
         >
           {ready ? (
             ready.rows.length ? (
-              <ul aria-label="Departments" className="divide-y">
-                {ready.rows.map((row) => (
-                  <li key={row.id}>
-                    <DepartmentLine row={row} />
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul aria-label="Departments" className="divide-y">
+                  {ready.rows.map((row) => (
+                    <li key={row.id}>
+                      <DepartmentLine row={row} />
+                    </li>
+                  ))}
+                </ul>
+                {/* The notes close the list, so the foot stays one line
+                    (the key and the count). */}
+                <DepartmentNotes ready={ready} />
+              </>
             ) : (
-              <p className="text-muted-foreground p-4 text-sm">
-                No departments yet
-              </p>
+              <>
+                <p className="text-muted-foreground p-4 text-sm">
+                  No departments yet
+                </p>
+                <DepartmentNotes ready={ready} />
+              </>
             )
           ) : null}
         </LoadingRegion>
       )}
     </Panel>
+  );
+}
+
+function DepartmentNotes({ ready }: { ready: DepartmentAccess }) {
+  if (!ready.administrators && !ready.partial) return null;
+  return (
+    <p className="text-muted-foreground border-t px-4 py-2 text-xs">
+      {ready.administrators ? (
+        <>
+          {ready.administrators}{" "}
+          {ready.administrators === 1
+            ? "administrator manages"
+            : "administrators manage"}{" "}
+          all.
+        </>
+      ) : null}
+      {ready.administrators && ready.partial ? " " : null}
+      {ready.partial}
+    </p>
   );
 }
 

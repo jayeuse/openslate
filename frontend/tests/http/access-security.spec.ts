@@ -417,7 +417,7 @@ test("Security and recovery keeps policy drafts and protects the current session
     "Page 1 of 1",
   );
   const endEli = page.getByRole("button", {
-    name: "End session for Eli",
+    name: "End session for Eli, Mobile Chrome",
     exact: true,
   });
   await endEli.click();
@@ -578,7 +578,7 @@ test("Session search, filters and sorting use the full server collection", async
   });
   await search.fill("Rhea");
   await expect(table.locator("tbody tr")).toHaveCount(1);
-  await expect(table).toContainText("Unknown · Unknown");
+  await expect(table).toContainText("Unknown device");
   await search.fill("");
   const sessionFilters = page
     .getByRole("region", { name: "Search sessions controls", exact: true })
@@ -1324,7 +1324,10 @@ test("Security reads show recovery and denial without sample sessions", async ({
       .locator("tbody tr"),
   ).toHaveCount(7);
   await expect(
-    page.getByRole("button", { name: "End session for Eli", exact: true }),
+    page.getByRole("button", {
+      name: "End session for Eli, Mobile Chrome",
+      exact: true,
+    }),
   ).toBeEnabled();
   await page.clock.fastForward(31_000);
   await page.getByRole("link", { name: "Overview", exact: true }).click();
@@ -1356,7 +1359,10 @@ test("Security reads show recovery and denial without sample sessions", async ({
       .click();
     await backgroundRead.entered;
     await page
-      .getByRole("button", { name: "End session for Eli", exact: true })
+      .getByRole("button", {
+        name: "End session for Eli, Mobile Chrome",
+        exact: true,
+      })
       .click();
     const sessionConfirmation = page.getByRole("alertdialog", {
       name: "End session",
@@ -1446,7 +1452,7 @@ test("Rejected session ending keeps the row and permits retry", async ({
   state.sessionWriteStatus = 503;
   await page.goto("/access?view=security");
   const end = page.getByRole("button", {
-    name: "End session for Eli",
+    name: "End session for Eli, Mobile Chrome",
     exact: true,
   });
   await end.click();
@@ -1706,7 +1712,10 @@ test("a failed background session reread retains rows while disabling session-en
       .click();
     await sessionRead.entered;
     await page
-      .getByRole("button", { name: "End session for Eli", exact: true })
+      .getByRole("button", {
+        name: "End session for Eli, Mobile Chrome",
+        exact: true,
+      })
       .click();
     const confirmation = page.getByRole("alertdialog", {
       name: "End session",
@@ -1734,7 +1743,7 @@ test("a failed background session reread retains rows while disabling session-en
   }
   await expect(table).toBeVisible();
   const endEli = page.getByRole("button", {
-    name: "End session for Eli",
+    name: "End session for Eli, Mobile Chrome",
     exact: true,
   });
   await expect(endEli).toBeDisabled();
@@ -1745,7 +1754,10 @@ test("a failed background session reread retains rows while disabling session-en
     .getByRole("button", { name: "Retry sessions", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "End session for Eli", exact: true }),
+    page.getByRole("button", {
+      name: "End session for Eli, Mobile Chrome",
+      exact: true,
+    }),
   ).toBeEnabled();
 });
 
@@ -2187,9 +2199,21 @@ for (const width of [1440, 390])
         : page.getByRole("table", { name: "Sessions", exact: true });
     await expect(sessions).toContainText("Sign-in IP: 198.51.100.101");
     await expect(sessions).toContainText("Sign-in IP: 2001:db8::102");
-    await expect(sessions).toContainText("Sign-in IP: Unknown");
+    // An unknown address drops out instead of reading "Unknown".
+    await expect(sessions).toContainText("Desktop · Safari");
+    await expect(sessions).not.toContainText("Sign-in IP: Unknown");
+    // The address is never cut off, on a phone row too.
+    const address = sessions
+      .getByText("Sign-in IP: 2001:db8::102")
+      .filter({ visible: true });
+    expect(
+      await address.evaluate((node) => node.scrollWidth <= node.clientWidth),
+    ).toBe(true);
     await expect(
-      page.getByRole("button", { name: "End session for Eli", exact: true }),
+      page.getByRole("button", {
+        name: "End session for Eli, Mobile Chrome",
+        exact: true,
+      }),
     ).toBeEnabled();
     await expectNoHorizontalScroll(page);
   });

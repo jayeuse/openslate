@@ -60,6 +60,8 @@
   --danger-ink: #ffffff;
   --focus: #2563eb;
   --lift: 0 1px 2px rgb(16 24 40 / 0.06);
+  /* The edge shadow of a scrolling panel body while more waits below. */
+  --edge-shadow: 0 0 10px 3px rgb(16 24 40 / 0.16);
   --lift-raised:
     0 2px 4px rgb(16 24 40 / 0.04), 0 12px 32px rgb(16 24 40 / 0.1);
   /* --lift-raised as SVG filter steps, for canvas nodes. */
@@ -215,6 +217,7 @@
   --danger-ink: #2a0703;
   --focus: #6ea2ff;
   --lift: 0 1px 2px rgb(0 0 0 / 0.4);
+  --edge-shadow: 0 0 10px 3px rgb(0 0 0 / 0.6);
   --lift-raised: 0 2px 4px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.45);
   --lift-filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.3))
     drop-shadow(0 8px 18px rgb(0 0 0 / 0.45));
@@ -1050,10 +1053,10 @@ html[data-density="spacious"]
     grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
     row-gap: 0.875rem;
     /* Departments keep their head (2.75rem), two rows (4.5rem), the foot
-       on two lines (the key and count, then the administrators: 3.3125rem)
-       and the panel's 2px border, 10.6875rem in all, so 11rem; below that,
-       Needs attention's body scrolls (whole from 768px tall). */
-    grid-template-rows: auto minmax(0, auto) minmax(11rem, 1fr);
+       on one line (2.0625rem with its rule) and the panel's 2px border,
+       9.4375rem in all, so 9.5rem; below that, Needs attention's body
+       scrolls (whole from 768px tall). */
+    grid-template-rows: auto minmax(0, auto) minmax(9.5rem, 1fr);
     grid-template-areas:
       "who who"
       "signins attention"
@@ -1098,6 +1101,22 @@ html[data-density="spacious"]
 }
 .access-ui .access-scroll-cue[data-scroll-more]:has(:focus-visible) {
   mask-image: none;
+}
+/* With the fade, an edge shadow along the body's bottom (Panel renders
+   .access-scroll-edge while more waits below), so the cue shows even when
+   the cut part is blank space. A zero-height layer above the body casts it
+   upward only; it goes while a row has keyboard focus. */
+.access-ui .access-scroll-edge {
+  position: relative;
+  z-index: 1;
+  height: 0;
+  flex-shrink: 0;
+  box-shadow: var(--edge-shadow);
+  clip-path: inset(-16px 0 0 0);
+  pointer-events: none;
+}
+.access-ui .access-scroll-cue:has(:focus-visible) + .access-scroll-edge {
+  display: none;
 }
 
 /* Chips in Slate: --secondary is the sunken fill, which vanishes on the

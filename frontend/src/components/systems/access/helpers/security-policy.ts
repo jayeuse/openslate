@@ -76,3 +76,28 @@ export function endAllSessionsSentence(
     count.more ? "at least " : ""
   }${people}. ${stays}`;
 }
+
+type SessionDevice = {
+  device: string;
+  browser: string;
+  ip_address: string | null;
+};
+
+function knownParts(session: SessionDevice) {
+  return [session.device, session.browser].filter((part) => part !== "Unknown");
+}
+
+/** The device in a sentence or a name ("Mobile Chrome", "unknown device"). */
+export function sessionDeviceWords(session: SessionDevice): string {
+  const parts = knownParts(session);
+  return parts.length ? parts.join(" ") : "unknown device";
+}
+
+/** The device line of a session row: known parts only, then the address. */
+export function sessionDetail(session: SessionDevice): string {
+  const parts = knownParts(session);
+  return [
+    ...(parts.length ? parts : ["Unknown device"]),
+    ...(session.ip_address ? [`Sign-in IP: ${session.ip_address}`] : []),
+  ].join(" · ");
+}

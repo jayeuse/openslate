@@ -5,6 +5,8 @@ import {
   advancedPolicySetCount,
   endAllSessionsSentence,
   policySummaryParts,
+  sessionDetail,
+  sessionDeviceWords,
 } from "../../../src/components/systems/access/helpers/security-policy";
 
 // The Security page's derived words (docs/specs/access-ui-ux-pass.md,
@@ -179,4 +181,57 @@ const sentenceRows: {
 for (const row of sentenceRows)
   test(`End all remote sessions sentence: ${row.name}`, () => {
     expect(endAllSessionsSentence(row.count)).toBe(row.sentence);
+  });
+
+const deviceRows: {
+  name: string;
+  session: { device: string; browser: string; ip_address: string | null };
+  words: string;
+  detail: string;
+}[] = [
+  {
+    name: "a known device with an address",
+    session: {
+      device: "Mobile",
+      browser: "Chrome",
+      ip_address: "198.51.100.7",
+    },
+    words: "Mobile Chrome",
+    detail: "Mobile · Chrome · Sign-in IP: 198.51.100.7",
+  },
+  {
+    // Unknown parts drop out instead of repeating "Unknown".
+    name: "a known device with no address",
+    session: { device: "Desktop", browser: "Safari", ip_address: null },
+    words: "Desktop Safari",
+    detail: "Desktop · Safari",
+  },
+  {
+    name: "an unknown device type with a known browser",
+    session: { device: "Unknown", browser: "Firefox", ip_address: null },
+    words: "Firefox",
+    detail: "Firefox",
+  },
+  {
+    name: "nothing known but the address",
+    session: {
+      device: "Unknown",
+      browser: "Unknown",
+      ip_address: "2001:db8::2",
+    },
+    words: "unknown device",
+    detail: "Unknown device · Sign-in IP: 2001:db8::2",
+  },
+  {
+    name: "nothing known",
+    session: { device: "Unknown", browser: "Unknown", ip_address: null },
+    words: "unknown device",
+    detail: "Unknown device",
+  },
+];
+
+for (const row of deviceRows)
+  test(`session device words: ${row.name}`, () => {
+    expect(sessionDeviceWords(row.session)).toBe(row.words);
+    expect(sessionDetail(row.session)).toBe(row.detail);
   });

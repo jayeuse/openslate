@@ -2,7 +2,7 @@
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { formatDateTime } from "../helpers/people";
 
-import { Monitor, Smartphone, UsersRound } from "lucide-react";
+import { LogOut, Monitor, Smartphone, UsersRound } from "lucide-react";
 import { type MouseEvent, type ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { LoadingRegion } from "@/components/ui/loading-region";
@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { tintRowClassName } from "./row-open-button";
+import { sessionDetail, sessionDeviceWords } from "../helpers/security-policy";
 import type { PageResult } from "../../shared/helpers/page-collections";
 import {
   defaultAccessSessionsRequest,
@@ -82,6 +83,11 @@ type SecurityPanelProps = {
     ) => void;
   };
 };
+
+/** Unique per row: "End session for Eli, Mobile Chrome". */
+function endSessionName(session: AccessAdminSession) {
+  return `End session for ${session.person_name}, ${sessionDeviceWords(session)}`;
+}
 
 export function SecurityPanel({
   sessions,
@@ -177,7 +183,7 @@ export function SecurityPanel({
       header: "Person & device",
       cell: (session) => {
         const DeviceIcon = session.device === "Mobile" ? Smartphone : Monitor;
-        const detail = `${session.device} · ${session.browser} · Sign-in IP: ${session.ip_address ?? "Unknown"}`;
+        const detail = sessionDetail(session);
         return (
           <span className="flex min-w-0 items-center gap-2.5">
             <DeviceIcon
@@ -217,7 +223,7 @@ export function SecurityPanel({
             aria-hidden="true"
             className={
               session.current
-                ? "size-2 shrink-0 rounded-full bg-[var(--flow)]"
+                ? "bg-flow size-2 shrink-0 rounded-full"
                 : "size-2 shrink-0 rounded-full bg-[var(--rule-strong)]"
             }
           />
@@ -231,11 +237,9 @@ export function SecurityPanel({
       width: "w-24",
       cell: (session) =>
         session.current ? (
-          <span
-            className="text-muted-foreground"
-            aria-label="Current session is protected"
-          >
-            —
+          <span className="text-muted-foreground">
+            <span aria-hidden="true">—</span>
+            <span className="sr-only">Current session is protected</span>
           </span>
         ) : (
           <DisabledReason reason={endReason}>
@@ -244,7 +248,7 @@ export function SecurityPanel({
               variant="ghost"
               size="sm"
               className="relative z-10 min-h-11 px-2 xl:min-h-7"
-              aria-label={`End session for ${session.person_name}`}
+              aria-label={endSessionName(session)}
               onClick={(event) => actions.endSession(session, event)}
             >
               End
@@ -287,7 +291,7 @@ export function SecurityPanel({
             className="text-danger-text border-danger-rule min-h-11"
             onClick={actions.endAllRemoteSessions}
           >
-            <UsersRound data-icon="inline-start" /> End all remote sessions
+            <LogOut data-icon="inline-start" /> End all remote sessions
           </Button>
         </DisabledReason>
       </div>
@@ -399,9 +403,10 @@ export function SecurityPanel({
                             <span className="block truncate font-medium">
                               {session.person_name}
                             </span>
-                            <span className="text-muted-foreground block truncate text-xs">
-                              {session.device} · {session.browser} · Sign-in IP:{" "}
-                              {session.ip_address ?? "Unknown"}
+                            {/* The device line wraps rather than cut the
+                                sign-in address. */}
+                            <span className="text-muted-foreground block text-xs wrap-anywhere">
+                              {sessionDetail(session)}
                             </span>
                             <span className="sr-only">
                               Last refreshed{" "}
@@ -410,19 +415,17 @@ export function SecurityPanel({
                               </time>
                             </span>
                           </span>
-                          <span className="inline-flex shrink-0 items-center gap-1.5 text-sm">
-                            <span
-                              aria-hidden="true"
-                              className={
-                                session.current
-                                  ? "size-2 shrink-0 rounded-full bg-[var(--flow)]"
-                                  : "size-2 shrink-0 rounded-full bg-[var(--rule-strong)]"
-                              }
-                            />
-                            {session.current
-                              ? "Current session"
-                              : "Other device"}
-                          </span>
+                          {/* Phones name only the current session; every
+                              other row is another device. */}
+                          {session.current ? (
+                            <span className="inline-flex shrink-0 items-center gap-1.5 text-sm">
+                              <span
+                                aria-hidden="true"
+                                className="bg-flow size-2 shrink-0 rounded-full"
+                              />
+                              Current session
+                            </span>
+                          ) : null}
                           {session.current ? (
                             <span
                               aria-hidden="true"
@@ -434,7 +437,7 @@ export function SecurityPanel({
                                 type="button"
                                 variant="ghost"
                                 className="min-h-11 min-w-11 shrink-0 px-2"
-                                aria-label={`End session for ${session.person_name}`}
+                                aria-label={endSessionName(session)}
                                 onClick={(event) =>
                                   actions.endSession(session, event)
                                 }

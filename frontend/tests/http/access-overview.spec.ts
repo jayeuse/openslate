@@ -4,6 +4,7 @@ import {
   expectNoPageScroll,
   heldResponse,
   test,
+  type Locator,
   type Page,
 } from "./helpers/test";
 
@@ -35,6 +36,20 @@ function block(page: Page, title: string) {
 }
 function attention(page: Page) {
   return block(page, "Needs attention");
+}
+/** A panel foot's parts sit on one line (the department count is short). */
+async function expectFootOnOneLine(panel: Locator) {
+  const foot = panel.locator("> div").last();
+  expect(
+    await foot.evaluate(
+      (node) =>
+        new Set(
+          [...node.children].map((child) =>
+            Math.round(child.getBoundingClientRect().top),
+          ),
+        ).size,
+    ),
+  ).toBe(1);
 }
 function activeFilters(page: Page) {
   return page.getByRole("group", { name: "Active filters", exact: true });
@@ -335,6 +350,13 @@ test("Needs attention fades its lower edge while more items wait below and keeps
   const fade = () =>
     body.evaluate((node) => getComputedStyle(node).maskImage !== "none");
   await expect.poll(fade).toBe(true);
+  // An edge shadow along the body's bottom shows the cue even over blank
+  // space; it is a layer after the body, not part of the faded content.
+  const edge = panel.locator("[data-overview-body] + .access-scroll-edge");
+  await expect(edge).toHaveCount(1);
+  expect(
+    await edge.evaluate((node) => getComputedStyle(node).boxShadow),
+  ).not.toBe("none");
 
   const departments = block(page, "Access by department");
   await expect(
@@ -344,12 +366,34 @@ test("Needs attention fades its lower edge while more items wait below and keeps
     await expect(departments.getByRole("link").nth(row)).toBeInViewport({
       ratio: 1,
     });
+  await expectFootOnOneLine(departments);
   await expectNoPageScroll(page);
 
-  // At the end of the scroll the fade goes, so it never hides the last row.
+  // At the end of the scroll the fade and the edge go, so neither hides the
+  // last row.
   await body.evaluate((node) => node.scrollTo({ top: node.scrollHeight }));
   await expect.poll(fade).toBe(false);
+  await expect(edge).toHaveCount(0);
   await expect(panel.getByText(/^All clear/)).toBeInViewport({ ratio: 1 });
+});
+
+test("from 768 px tall a usual Needs attention stays whole beside two department rows", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await mockAccessApi(page);
+  await page.goto("/access?view=overview");
+  const panel = attention(page);
+  await expect(panel.getByRole("listitem")).toHaveCount(4);
+  await expect(panel.getByText(/^All clear/)).toBeInViewport({ ratio: 1 });
+  await expect(panel.locator(".access-scroll-edge")).toHaveCount(0);
+  const departments = block(page, "Access by department");
+  for (const row of [0, 1])
+    await expect(departments.getByRole("link").nth(row)).toBeInViewport({
+      ratio: 1,
+    });
+  await expectFootOnOneLine(departments);
+  await expectNoPageScroll(page);
 });
 
 test("Access by department counts the rows shown, fades while more are below, and keeps the catalog order", async ({
@@ -406,7 +450,10 @@ test("Access by department counts the rows shown, fades while more are below, an
   });
   expect(fitting).toBeGreaterThanOrEqual(2);
   expect(fitting).toBeLessThan(14);
-  await expect(departments).toContainText(`${fitting} of 14 departments shown`);
+  await expect(departments).toContainText(`${fitting} of 14 shown`);
+  await expect(
+    departments.locator("[data-overview-body] + .access-scroll-edge"),
+  ).toHaveCount(1);
   const fade = () =>
     body.evaluate((node) => getComputedStyle(node).maskImage !== "none");
   await expect.poll(fade).toBe(true);
@@ -787,7 +834,7 @@ test("Access by department counts people per department and opens People filtere
     }),
   ).toBeVisible();
   await expect(departments).toContainText(/Read\s*Write\s*Manage/);
-  await expect(departments).toContainText("All 2 departments");
+  await expect(departments).toContainText("All 2 shown");
   await departments.getByRole("link", { name: /^Finance/ }).click();
   await expect(page).toHaveURL(
     new RegExp(`view=people&department=${ids.finance}`),

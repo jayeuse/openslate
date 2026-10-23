@@ -1,19 +1,10 @@
 "use client";
 
 import { X } from "lucide-react";
-import {
-  Fragment,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 
 import { Alert } from "@/components/ui/alert";
-import {
-  AdvancedSection,
-  writeAdvancedOpen,
-} from "@/components/ui/advanced-section";
+import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -47,8 +38,13 @@ type SecurityPolicyFormProps = {
     addMyAddress: () => Promise<void>;
     addressNotice: string;
     saveSection: () => Promise<void>;
-    clearDraft: () => void;
+    /** Discard keeps the removed draft for the footer's Undo. */
+    discard: () => void;
+    discarded: boolean;
+    undoDiscard: () => void;
   };
+  /** A save error and its recovery action, shown above the footer buttons. */
+  footerAlert?: ReactNode;
   /**
    * What this administrator may change. The organization owner changes the
    * organization's settings; the installation owner also changes the
@@ -84,6 +80,8 @@ const rowClassName =
   "min-w-0 md:grid md:min-h-10 md:grid-cols-[13rem_minmax(0,1fr)] md:items-center md:gap-x-4 md:gap-y-1";
 const rowLabelClassName = "md:text-muted-foreground";
 const rowNoteClassName = "md:col-start-2";
+/** A group note or list that sits in the field column (label + gap). */
+const fieldColumnClassName = "md:pl-56";
 const groupLegendClassName = "mb-2 text-sm font-medium";
 
 function days(value: string) {
@@ -243,6 +241,7 @@ function SelectRow({
 export function SecurityPolicyForm({
   form,
   editable,
+  footerAlert,
   onCancel,
 }: SecurityPolicyFormProps) {
   const {
@@ -254,31 +253,32 @@ export function SecurityPolicyForm({
     current,
     errors,
     changeSetting,
-    clearDraft,
+    discard,
+    discarded,
+    undoDiscard,
     addAddress,
     addMyAddress,
     addressNotice,
   } = form;
   const readOnly = !editable.organization;
 
-  // AdvancedSection keeps its own open state. An error inside a closed block
-  // (a refused address list, an invalid number) opens it the way the viewer
-  // would, by remembering it open and mounting it again, so the field the
-  // error names is visible and can take focus.
-  const advancedErrors = ADVANCED_FIELDS.filter((key) => errors[key]).join();
-  const [advancedMount, setAdvancedMount] = useState(0);
-  const advancedRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    if (!advancedErrors) return;
-    // The block's own state, not the remembered one: blocked storage reads
-    // as closed, and a block the viewer opened must stay open.
-    const toggle = advancedRef.current?.querySelector(
-      '[data-slot="advanced-section"] > button',
-    );
-    if (toggle?.getAttribute("aria-expanded") === "true") return;
-    writeAdvancedOpen(ADVANCED_STORAGE_KEY, true);
-    setAdvancedMount((count) => count + 1);
-  }, [advancedErrors]);
+  // An error inside a closed Advanced block (a refused address list, an
+  // invalid number) opens it, so the field it names shows and takes focus.
+  const advancedHasErrors = ADVANCED_FIELDS.some((key) => errors[key]);
+  // Discard removes its own button; focus moves to Undo, not to the page.
+  const undoRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (discarded) undoRef.current?.focus();
+  }, [discarded]);
+  // Undo removes itself in turn; focus moves to the Discard it brought
+  // back (only after Undo: a new edit keeps focus in its field).
+  const discardRef = useRef<HTMLButtonElement>(null);
+  const focusDiscard = useRef(false);
+  useEffect(() => {
+    if (!focusDiscard.current || discarded || !dirty) return;
+    focusDiscard.current = false;
+    discardRef.current?.focus();
+  }, [discarded, dirty]);
 
   const shorter = (key: "sessionRetention" | "eventRetention") =>
     current[key].trim() !== "" && Number(current[key]) < Number(saved[key]);
@@ -456,29 +456,125 @@ export function SecurityPolicyForm({
         </div>
       )}
 
-      <div ref={advancedRef} className="contents">
-        <AdvancedSection
-          key={advancedMount}
-          storageKey={ADVANCED_STORAGE_KEY}
-          setCount={advancedPolicySetCount(current)}
-        >
-          {readOnly ? (
-            <ReadOnlyRows rows={[...ipRows, ...installationRows(current)]} />
-          ) : (
-            <>
-              <PolicyGroup
-                legend="IP allow list"
-                describedBy="ip-allow-list-description"
+      <AdvancedSection
+        storageKey={ADVANCED_STORAGE_KEY}
+        setCount={advancedPolicySetCount(current)}
+        forceOpen={advancedHasErrors}
+      >
+        {readOnly ? (
+          <ReadOnlyRows rows={[...ipRows, ...installationRows(current)]} />
+        ) : (
+          <>
+            <PolicyGroup
+              legend="IP allow list"
+              describedBy="ip-allow-list-description"
+            >
+              <p
+                id="ip-allow-list-description"
+                className={cn(
+                  "text-muted-foreground text-sm",
+                  fieldColumnClassName,
+                )}
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <p
-                    id="ip-allow-list-description"
-                    className="text-muted-foreground min-w-0 flex-1 basis-64 text-sm"
+                An empty list allows all addresses. Include your current address
+                to keep access. You can add up to 100 addresses or ranges.
+              </p>
+              {current.ips.length ? (
+                <ul
+                  aria-label="Allowed addresses"
+                  className={cn(
+                    "flex min-w-0 flex-wrap gap-2",
+                    fieldColumnClassName,
+                  )}
+                >
+                  {Array.from(new Set(current.ips)).map((address) => (
+                    <li key={address} className="max-w-full min-w-0">
+                      <Badge
+                        variant="outline"
+                        className="max-w-full gap-1 rounded-md py-0 pr-0 pl-3 font-normal"
+                      >
+                        <span className="min-w-0 break-all">{address}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          // The chip's own ink, so the × shows on every
+                          // chip skin (Stockroom tape included).
+                          className="min-h-11 min-w-11 shrink-0 text-current hover:bg-current/15"
+                          aria-label={`Remove ${address}`}
+                          onClick={() =>
+                            changeSetting(
+                              "ips",
+                              current.ips.filter((value) => value !== address),
+                            )
+                          }
+                        >
+                          <X aria-hidden="true" className="size-4" />
+                        </Button>
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p
+                  className={cn(
+                    "text-muted-foreground text-sm",
+                    fieldColumnClassName,
+                  )}
+                >
+                  All addresses are allowed.
+                </p>
+              )}
+              {errors.ips ? (
+                <p
+                  role="alert"
+                  className={cn(
+                    "text-destructive text-sm",
+                    fieldColumnClassName,
+                  )}
+                >
+                  {errors.ips}
+                </p>
+              ) : null}
+              <Field
+                data-invalid={Boolean(errors.ipEntry)}
+                className={rowClassName}
+              >
+                <FieldLabel htmlFor="ip-entry" className={rowLabelClassName}>
+                  IP address or CIDR
+                </FieldLabel>
+                <div className="flex min-w-0 flex-wrap gap-2">
+                  <Input
+                    id="ip-entry"
+                    className="min-h-11 min-w-0 flex-1 basis-48"
+                    value={current.ipEntry}
+                    maxLength={64}
+                    placeholder="192.0.2.0/24 or 2001:db8::/64"
+                    aria-invalid={Boolean(errors.ipEntry)}
+                    aria-describedby={
+                      errors.ipEntry
+                        ? "ip-entry-error ip-allow-list-description"
+                        : "ip-allow-list-description"
+                    }
+                    onChange={(event) =>
+                      changeSetting("ipEntry", event.target.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        addAddress();
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={!current.ipEntry.trim()}
+                    onClick={addAddress}
                   >
-                    An empty list allows all addresses. Include your current
-                    address to keep access. You can add up to 100 addresses or
-                    ranges.
-                  </p>
+                    Add address
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
@@ -488,318 +584,280 @@ export function SecurityPolicyForm({
                     Use my address
                   </Button>
                 </div>
-                {current.ips.length ? (
-                  <ul
-                    aria-label="Allowed addresses"
-                    className="flex min-w-0 flex-wrap gap-2"
-                  >
-                    {Array.from(new Set(current.ips)).map((address) => (
-                      <li key={address} className="max-w-full min-w-0">
-                        <Badge
-                          variant="outline"
-                          className="max-w-full gap-1 rounded-md py-0 pr-0 pl-3 font-normal"
-                        >
-                          <span className="min-w-0 break-all">{address}</span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="min-h-11 min-w-11 shrink-0"
-                            aria-label={`Remove ${address}`}
-                            onClick={() =>
-                              changeSetting(
-                                "ips",
-                                current.ips.filter(
-                                  (value) => value !== address,
-                                ),
-                              )
-                            }
-                          >
-                            <X aria-hidden="true" className="size-4" />
-                          </Button>
-                        </Badge>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-muted-foreground text-sm">
-                    All addresses are allowed.
-                  </p>
-                )}
-                {errors.ips ? (
-                  <p role="alert" className="text-destructive text-sm">
-                    {errors.ips}
-                  </p>
-                ) : null}
-                <Field
-                  data-invalid={Boolean(errors.ipEntry)}
-                  className={rowClassName}
+                <FieldError id="ip-entry-error" className={rowNoteClassName}>
+                  {errors.ipEntry}
+                </FieldError>
+              </Field>
+              {addressNotice ? (
+                <p
+                  role="status"
+                  className={cn(
+                    "text-muted-foreground text-sm",
+                    fieldColumnClassName,
+                  )}
                 >
-                  <FieldLabel htmlFor="ip-entry" className={rowLabelClassName}>
-                    IP address or CIDR
-                  </FieldLabel>
-                  <div className="flex min-w-0 flex-wrap gap-2">
-                    <Input
-                      id="ip-entry"
-                      className="min-h-11 min-w-0 flex-1 basis-48"
-                      value={current.ipEntry}
-                      maxLength={64}
-                      placeholder="192.0.2.0/24 or 2001:db8::/64"
-                      aria-invalid={Boolean(errors.ipEntry)}
-                      aria-describedby={
-                        errors.ipEntry
-                          ? "ip-entry-error ip-allow-list-description"
-                          : "ip-allow-list-description"
-                      }
-                      onChange={(event) =>
-                        changeSetting("ipEntry", event.target.value)
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          addAddress();
-                        }
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={!current.ipEntry.trim()}
-                      onClick={addAddress}
-                    >
-                      Add address
-                    </Button>
-                  </div>
-                  <FieldError id="ip-entry-error" className={rowNoteClassName}>
-                    {errors.ipEntry}
-                  </FieldError>
-                </Field>
-                {addressNotice ? (
-                  <p role="status" className="text-muted-foreground text-sm">
-                    {addressNotice}
-                  </p>
-                ) : null}
-              </PolicyGroup>
+                  {addressNotice}
+                </p>
+              ) : null}
+            </PolicyGroup>
 
-              {editable.installation ? (
-                <>
-                  <PolicyGroup
-                    legend="Password requirements"
-                    describedBy="password-rules-description"
-                  >
-                    {numberRow(
-                      "minimumLength",
-                      "password-minimum",
-                      "Minimum password length",
-                      12,
-                      128,
-                      { id: "password-rules-description" },
-                    )}
-                    <CheckboxRow
-                      id="password-mixed-case"
-                      label="Require uppercase and lowercase letters"
-                      checked={current.requireMixedCase}
-                      onChange={(value) =>
-                        changeSetting("requireMixedCase", value)
-                      }
-                    />
-                    <CheckboxRow
-                      id="password-number"
-                      label="Require a number"
-                      checked={current.requireNumber}
-                      onChange={(value) =>
-                        changeSetting("requireNumber", value)
-                      }
-                    />
-                    <p
-                      id="password-rules-description"
-                      className="text-muted-foreground text-sm"
-                    >
-                      Use 12–128 characters. Common passwords are rejected.
-                      These rules apply when a password is next set or changed;
-                      existing passwords stay unchanged.
-                    </p>
-                  </PolicyGroup>
-
-                  <PolicyGroup legend="Session limits">
-                    <SelectRow
-                      id="session-absolute-mode"
-                      label="Total session lifetime"
-                      value={
-                        current.absoluteLifetime === "Off" ? "Off" : "Limited"
-                      }
-                      options={["Off", "Limited"]}
-                      onChange={(value) =>
-                        changeSetting(
-                          "absoluteLifetime",
-                          value === "Off" ? "Off" : "",
-                        )
-                      }
-                    />
-                    {current.absoluteLifetime !== "Off" &&
-                      numberRow(
-                        "absoluteLifetime",
-                        "session-absolute-minutes",
-                        "Lifetime (minutes)",
-                        1,
-                        43200,
-                      )}
-                    <p className="text-muted-foreground text-sm">
-                      Limit the total time from sign-in, even while the session
-                      stays active.
-                    </p>
-                    <SelectRow
-                      id="session-cap-mode"
-                      label="Concurrent session limit"
-                      value={
-                        current.concurrentLimit === "Off" ? "Off" : "Limited"
-                      }
-                      options={["Off", "Limited"]}
-                      onChange={(value) =>
-                        changeSetting(
-                          "concurrentLimit",
-                          value === "Off" ? "Off" : "",
-                        )
-                      }
-                    />
-                    {current.concurrentLimit !== "Off" &&
-                      numberRow(
-                        "concurrentLimit",
-                        "session-cap",
-                        "Maximum sessions",
-                        1,
-                        100,
-                      )}
-                    <p className="text-muted-foreground text-sm">
-                      Applies when sign-in completes.
-                    </p>
-                  </PolicyGroup>
-
-                  <PolicyGroup
-                    legend="Retention"
-                    describedBy={
-                      retentionShortened
-                        ? "security-retention-description"
-                        : undefined
+            {editable.installation ? (
+              <>
+                <PolicyGroup
+                  legend="Password requirements"
+                  describedBy="password-rules-description"
+                >
+                  {numberRow(
+                    "minimumLength",
+                    "password-minimum",
+                    "Minimum password length",
+                    12,
+                    128,
+                    {
+                      id: "password-rules-description",
+                      text: "Use 12–128 characters. Common passwords are rejected. These rules apply when a password is next set or changed; existing passwords stay unchanged.",
+                    },
+                  )}
+                  <CheckboxRow
+                    id="password-mixed-case"
+                    label="Require uppercase and lowercase letters"
+                    checked={current.requireMixedCase}
+                    onChange={(value) =>
+                      changeSetting("requireMixedCase", value)
                     }
-                  >
-                    {numberRow(
-                      "sessionRetention",
-                      "session-retention-days",
-                      "Session retention (days)",
-                      1,
-                      3650,
-                    )}
-                    {numberRow(
-                      "eventRetention",
-                      "security-event-retention-days",
-                      "Security event retention (days)",
-                      1,
-                      3650,
-                    )}
-                    {retentionShortened ? (
-                      <Alert
-                        id="security-retention-description"
-                        variant="warning"
-                        role="note"
-                      >
-                        Shortening a period can make older sessions or security
-                        events eligible for deletion at the next cleanup.
-                      </Alert>
-                    ) : null}
-                  </PolicyGroup>
+                  />
+                  <CheckboxRow
+                    id="password-number"
+                    label="Require a number"
+                    checked={current.requireNumber}
+                    onChange={(value) => changeSetting("requireNumber", value)}
+                  />
+                </PolicyGroup>
 
-                  <PolicyGroup
-                    legend="Sign-in attempts"
-                    describedBy="login-policy-description"
+                <PolicyGroup legend="Session limits">
+                  <SelectRow
+                    id="session-absolute-mode"
+                    label="Total session lifetime"
+                    value={
+                      current.absoluteLifetime === "Off" ? "Off" : "Limited"
+                    }
+                    options={["Off", "Limited"]}
+                    onChange={(value) =>
+                      changeSetting(
+                        "absoluteLifetime",
+                        value === "Off" ? "Off" : "",
+                      )
+                    }
+                  />
+                  {current.absoluteLifetime !== "Off" &&
+                    numberRow(
+                      "absoluteLifetime",
+                      "session-absolute-minutes",
+                      "Lifetime (minutes)",
+                      1,
+                      43200,
+                    )}
+                  <p
+                    className={cn(
+                      "text-muted-foreground text-sm",
+                      fieldColumnClassName,
+                    )}
                   >
-                    {numberRow(
-                      "loginThreshold",
-                      "login-threshold",
-                      "Failed attempts before lockout",
+                    Limit the total time from sign-in, even while the session
+                    stays active.
+                  </p>
+                  <SelectRow
+                    id="session-cap-mode"
+                    label="Concurrent session limit"
+                    value={
+                      current.concurrentLimit === "Off" ? "Off" : "Limited"
+                    }
+                    options={["Off", "Limited"]}
+                    onChange={(value) =>
+                      changeSetting(
+                        "concurrentLimit",
+                        value === "Off" ? "Off" : "",
+                      )
+                    }
+                  />
+                  {current.concurrentLimit !== "Off" &&
+                    numberRow(
+                      "concurrentLimit",
+                      "session-cap",
+                      "Maximum sessions",
                       1,
                       100,
                     )}
-                    {numberRow(
-                      "loginWindow",
-                      "login-window",
-                      "Attempt window (minutes)",
-                      1,
-                      1440,
+                  <p
+                    className={cn(
+                      "text-muted-foreground text-sm",
+                      fieldColumnClassName,
                     )}
-                    {numberRow(
-                      "loginCooldown",
-                      "login-cooldown",
-                      "Lockout duration (minutes)",
-                      1,
-                      1440,
-                    )}
-                    <p
-                      id="login-policy-description"
-                      className="text-muted-foreground text-sm"
+                  >
+                    Applies when sign-in completes.
+                  </p>
+                </PolicyGroup>
+
+                <PolicyGroup
+                  legend="Retention"
+                  describedBy={
+                    retentionShortened
+                      ? "security-retention-description"
+                      : undefined
+                  }
+                >
+                  {numberRow(
+                    "sessionRetention",
+                    "session-retention-days",
+                    "Session retention (days)",
+                    1,
+                    3650,
+                  )}
+                  {numberRow(
+                    "eventRetention",
+                    "security-event-retention-days",
+                    "Security event retention (days)",
+                    1,
+                    3650,
+                  )}
+                  {retentionShortened ? (
+                    <Alert
+                      id="security-retention-description"
+                      variant="warning"
+                      role="note"
                     >
-                      Too many failed attempts within the window temporarily
-                      block further attempts. Existing lockouts keep their
-                      remaining time.
-                    </p>
-                  </PolicyGroup>
-                </>
-              ) : (
-                <ReadOnlyRows rows={installationRows(current)} />
-              )}
-            </>
-          )}
-        </AdvancedSection>
-      </div>
+                      Shortening a period can make older sessions or security
+                      events eligible for deletion at the next cleanup.
+                    </Alert>
+                  ) : null}
+                </PolicyGroup>
+
+                <PolicyGroup
+                  legend="Sign-in attempts"
+                  describedBy="login-policy-description"
+                >
+                  {numberRow(
+                    "loginThreshold",
+                    "login-threshold",
+                    "Failed attempts before lockout",
+                    1,
+                    100,
+                  )}
+                  {numberRow(
+                    "loginWindow",
+                    "login-window",
+                    "Attempt window (minutes)",
+                    1,
+                    1440,
+                  )}
+                  {numberRow(
+                    "loginCooldown",
+                    "login-cooldown",
+                    "Lockout duration (minutes)",
+                    1,
+                    1440,
+                  )}
+                  <p
+                    id="login-policy-description"
+                    className={cn(
+                      "text-muted-foreground text-sm",
+                      fieldColumnClassName,
+                    )}
+                  >
+                    Too many failed attempts within the window temporarily block
+                    further attempts. Existing lockouts keep their remaining
+                    time.
+                  </p>
+                </PolicyGroup>
+              </>
+            ) : (
+              <ReadOnlyRows rows={installationRows(current)} />
+            )}
+          </>
+        )}
+      </AdvancedSection>
 
       {/* The dialog body scrolls; the actions stay at its bottom edge.
           -bottom-5 also covers the dialog's padding so fields don't show
-          below. Cancel first, Discard only with edits, the state as a chip. */}
-      {readOnly ? null : (
-        <div
-          role="group"
-          aria-label="Policy actions"
-          className="bg-card sticky -bottom-5 z-10 -mx-5 -mb-5 flex flex-wrap items-center justify-end gap-2 border-t px-5 pt-3 pb-5"
-        >
-          <span role="status" className="mr-auto">
-            {dirty ? (
-              <Badge variant="warning">Unsaved changes</Badge>
-            ) : justSaved ? (
-              <Badge variant="success">Account policy saved</Badge>
-            ) : (
-              <Badge variant="outline">Saved</Badge>
-            )}
-          </span>
+          below. Cancel first, Discard only with edits, the state as a chip;
+          a save error sits here too, above the buttons. A read-only viewer
+          gets one Close, since the header × scrolls away on a phone. */}
+      <div
+        role="group"
+        aria-label="Policy actions"
+        className="bg-card sticky -bottom-5 z-10 -mx-5 -mb-5 flex flex-wrap items-center justify-end gap-2 border-t px-5 pt-3 pb-5"
+      >
+        {footerAlert ? <div className="basis-full">{footerAlert}</div> : null}
+        {readOnly ? (
           <Button
             type="button"
             variant="outline"
             className="min-h-11"
             onClick={onCancel}
           >
-            Cancel
+            Close
           </Button>
-          {dirty ? (
+        ) : (
+          <>
+            <span role="status" className="mr-auto inline-flex items-center">
+              {dirty ? (
+                <Badge variant="warning">Unsaved changes</Badge>
+              ) : discarded ? (
+                <span className="text-muted-foreground inline-flex items-center gap-1 text-sm">
+                  Changes discarded
+                  <Button
+                    ref={undoRef}
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="min-h-11 px-2"
+                    onClick={() => {
+                      focusDiscard.current = true;
+                      undoDiscard();
+                    }}
+                  >
+                    Undo
+                  </Button>
+                </span>
+              ) : justSaved ? (
+                <Badge variant="success">Account policy saved</Badge>
+              ) : (
+                <Badge variant="outline" data-save-state="saved">
+                  Saved
+                </Badge>
+              )}
+            </span>
             <Button
               type="button"
               variant="outline"
               className="min-h-11"
-              onClick={() => clearDraft()}
+              onClick={onCancel}
             >
-              Discard changes
+              Cancel
             </Button>
-          ) : null}
-          <Button
-            type="submit"
-            className="min-h-11"
-            disabled={!dirty}
-            pending={saving}
-            pendingLabel="Saving…"
-          >
-            Save settings
-          </Button>
-        </div>
-      )}
+            {dirty ? (
+              <Button
+                ref={discardRef}
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={discard}
+              >
+                Discard changes
+              </Button>
+            ) : null}
+            <Button
+              type="submit"
+              className="min-h-11"
+              disabled={!dirty}
+              pending={saving}
+              pendingLabel="Saving…"
+            >
+              Save settings
+            </Button>
+          </>
+        )}
+      </div>
     </form>
   );
 }

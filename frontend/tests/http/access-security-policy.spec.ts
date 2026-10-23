@@ -170,31 +170,43 @@ test("the policy dialog shows the common settings and keeps the rare ones in a c
   });
 });
 
-test("a refused address list opens the closed Advanced block and focuses the address field", async ({
-  page,
-}) => {
-  const state = await mockManageSecurity(page);
-  await page.goto("/access?view=security");
-  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  const policy = policyDialog(page);
-  await policy.getByRole("button", { name: "Advanced", exact: true }).click();
-  const address = policy.getByLabel("IP address or CIDR", { exact: true });
-  await address.fill("192.0.2.0/24");
-  await policy
-    .getByRole("button", { name: "Add address", exact: true })
-    .click();
-  const advanced = policy.getByRole("button", { name: /^Advanced/ });
-  await advanced.click();
-  await expect(advanced).toHaveAccessibleName("Advanced · 1 set");
-  await expect(address).toBeHidden();
-  state.policyWriteFailure = { status: 409, code: "ip_lockout" };
-  await policy.getByRole("button", { name: "Save settings" }).click();
-  await expect(advanced).toHaveAttribute("aria-expanded", "true");
-  await expect(policy).toContainText(
-    "This list blocks your current address. Add your address, then save.",
-  );
-  await expect(address).toBeFocused();
-});
+for (const storage of ["available", "blocked"] as const)
+  test(`a refused address list opens the closed Advanced block and focuses the address field (storage ${storage})`, async ({
+    page,
+  }) => {
+    // Blocked site data makes reading window.localStorage itself throw.
+    if (storage === "blocked")
+      await page.addInitScript(() => {
+        Object.defineProperty(window, "localStorage", {
+          get() {
+            throw new DOMException("Blocked", "SecurityError");
+          },
+        });
+      });
+    const state = await mockManageSecurity(page);
+    await page.goto("/access?view=security");
+    await page
+      .getByRole("button", { name: "Edit policy", exact: true })
+      .click();
+    const policy = policyDialog(page);
+    await policy.getByRole("button", { name: "Advanced", exact: true }).click();
+    const address = policy.getByLabel("IP address or CIDR", { exact: true });
+    await address.fill("192.0.2.0/24");
+    await policy
+      .getByRole("button", { name: "Add address", exact: true })
+      .click();
+    const advanced = policy.getByRole("button", { name: /^Advanced/ });
+    await advanced.click();
+    await expect(advanced).toHaveAccessibleName("Advanced · 1 set");
+    await expect(address).toBeHidden();
+    state.policyWriteFailure = { status: 409, code: "ip_lockout" };
+    await policy.getByRole("button", { name: "Save settings" }).click();
+    await expect(advanced).toHaveAttribute("aria-expanded", "true");
+    await expect(policy).toContainText(
+      "This list blocks your current address. Add your address, then save.",
+    );
+    await expect(address).toBeFocused();
+  });
 
 test("a non-owner administrator reads the policy as text and sets up their own two-step on the page", async ({
   page,
@@ -256,9 +268,14 @@ test("a non-owner administrator reads the policy as text and sets up their own t
   await expect(
     policy.getByRole("button", { name: "Save settings", exact: true }),
   ).toHaveCount(0);
-  await policy
-    .getByRole("button", { name: "Close account policy", exact: true })
-    .click();
+  // The header × scrolls away on a phone, so the footer has one Close.
+  const footer = policy.getByRole("group", {
+    name: "Policy actions",
+    exact: true,
+  });
+  await expect(footer.getByRole("button")).toHaveText(["Close"]);
+  await footer.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(policy).toBeHidden();
   // The viewer's own setup keeps its flow, from the Security page.
   await workspace
     .getByRole("button", { name: "Set up two-step verification", exact: true })
@@ -355,11 +372,15 @@ test("End all remote sessions is danger ink and its confirmation counts the sess
   );
   const ending = heldResponse();
   await page.route("**/api/auth/admin-sessions", async (route) => {
-    if (route.request().method() === "DELETE") {
-      ending.enter();
-      await ending.released;
-    }
-    await route.fallback();
+    if (route.request().method() !== "DELETE") return route.fallback();
+    ending.enter();
+    await ending.released;
+    // One remote session started meanwhile, so it is still active after.
+    state.sessions = [
+      ...state.sessions.filter((session) => session.current),
+      { ...state.sessions[3], id: "00000000-0000-4000-8000-000000000299" },
+    ];
+    await route.fulfill({ status: 204 });
   });
   try {
     await confirmation
@@ -376,16 +397,34 @@ test("End all remote sessions is danger ink and its confirmation counts the sess
     ending.release();
   }
   await expect(confirmation).toBeHidden();
-  expect(state.sessions).toHaveLength(1);
+  // The result is a notice, not a lasting page alert, and names what the
+  // reloaded list still holds.
+  await expect(
+    page.getByText("Remote sessions ended · 1 still active", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Security workspace", exact: true })
+      .getByRole("status")
+      .filter({ hasText: "Remote sessions ended" }),
+  ).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("table", { name: "Sessions", exact: true })
+      .locator("tbody tr"),
+  ).toHaveCount(2);
 });
 
-test("End session names the person and device, and its notice stays on the page", async ({
+test("End session names the person and device, and its result is a notice outside the policy", async ({
   page,
 }) => {
   await mockManageSecurity(page);
   await page.goto("/access?view=security");
   await page
-    .getByRole("button", { name: "End session for Eli", exact: true })
+    .getByRole("button", {
+      name: "End session for Eli, Mobile Chrome",
+      exact: true,
+    })
     .click();
   const confirmation = page.getByRole("alertdialog", {
     name: "End session",
@@ -397,17 +436,17 @@ test("End session names the person and device, and its notice stays on the page"
   await confirmation
     .getByRole("button", { name: "Confirm end session", exact: true })
     .click();
+  await expect(page.getByText("Session ended", { exact: true })).toBeVisible();
+  // Each End names its row's device, so the names are unique.
   await expect(
-    page
-      .getByRole("region", { name: "Security workspace", exact: true })
-      .getByRole("status")
-      .filter({ hasText: "Session ended." }),
+    page.getByRole("button", {
+      name: "End session for Rhea, unknown device",
+      exact: true,
+    }),
   ).toBeVisible();
-  // A page notice stays with the page: it never follows into the policy.
+  // The result never follows into the policy dialog.
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  await expect(
-    policyDialog(page).getByText("Session ended.", { exact: true }),
-  ).toHaveCount(0);
+  await expect(policyDialog(page).getByText(/Session ended/)).toHaveCount(0);
 });
 
 test("Security opens 10 sessions a page with a compact policy line and a description of what it shows", async ({
@@ -455,4 +494,81 @@ test("Security opens 10 sessions a page with a compact policy line and a descrip
       { exact: true },
     ),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const close = policyDialog(page).getByRole("button", {
+    name: "Close account policy",
+    exact: true,
+  });
+  const box = await close.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(44);
+  expect(box?.height).toBeGreaterThanOrEqual(44);
+});
+
+test("a refused save shows its error and recovery in the fixed footer above the buttons", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await mockManageSecurity(page);
+  state.policyWriteFailure = { status: 409, code: "mfa_enrollment_required" };
+  await signInAsAdministrator(page, { organization: true, installation: true });
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = policyDialog(page);
+  await policy
+    .getByRole("checkbox", {
+      name: "Require two-step verification for members",
+      exact: true,
+    })
+    .check();
+  const footer = policy.getByRole("group", {
+    name: "Policy actions",
+    exact: true,
+  });
+  await footer.getByRole("button", { name: "Save settings" }).click();
+  const refusal = footer.getByRole("alert");
+  await expect(refusal).toContainText(
+    "Set up two-step verification for your own account",
+  );
+  await expect(refusal).toBeInViewport();
+  await refusal
+    .getByRole("button", { name: "Set up two-step verification", exact: true })
+    .click();
+  await expect(policy).toBeHidden();
+  await expect(
+    page.getByRole("dialog", { name: "Two-step verification", exact: true }),
+  ).toBeVisible();
+});
+
+test("Discard in the policy offers Undo in the footer until the next edit", async ({
+  page,
+}) => {
+  const state = await mockManageSecurity(page);
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = policyDialog(page);
+  const footer = policy.getByRole("group", {
+    name: "Policy actions",
+    exact: true,
+  });
+  const timeout = policy.getByLabel("Session timeout", { exact: true });
+  await timeout.selectOption("30 minutes");
+  await footer.getByRole("button", { name: "Discard changes" }).click();
+  await expect(timeout).toHaveValue("60 minutes");
+  const undo = footer.getByRole("button", { name: "Undo", exact: true });
+  await expect(footer.getByRole("status")).toContainText("Changes discarded");
+  await expect(undo).toBeFocused();
+  // No success alert: the footer says it.
+  await expect(policy.getByText("Unsaved changes discarded.")).toHaveCount(0);
+  await undo.click();
+  await expect(timeout).toHaveValue("30 minutes");
+  // Undo removes itself; focus moves to the Discard it brought back.
+  await expect(
+    footer.getByRole("button", { name: "Discard changes" }),
+  ).toBeFocused();
+  await expect(footer.getByRole("status")).toHaveText("Unsaved changes");
+  // The next edit ends the Undo.
+  await footer.getByRole("button", { name: "Discard changes" }).click();
+  await timeout.selectOption("8 hours");
+  await expect(undo).toHaveCount(0);
+  expect(state.writes).toEqual([]);
 });

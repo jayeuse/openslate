@@ -12,6 +12,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LockKeyhole, X } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { requestSessionRecheck } from "@/lib/auth-api";
+import { reportDone } from "@/lib/feedback";
 import { useMfaFlow } from "@/components/mfa-flow";
 import {
   registerWorkspaceSessionClear,
@@ -43,6 +45,7 @@ import {
 import {
   endAllSessionsSentence,
   policySummaryParts,
+  sessionDeviceWords,
 } from "../helpers/security-policy";
 import {
   defaultAccessSessionsRequest,
@@ -118,6 +121,13 @@ export function SecurityView({
   // next edit, inside the dialog where the person is looking.
   const [justSaved, setJustSaved] = useState(false);
   const [policySaving, setPolicySaving] = useState(false);
+  // The draft the dialog's Discard removed, for its Undo in the footer
+  // (until the next edit, a save, or closing the dialog).
+  const [discardedDraft, setDiscardedDraft] = useState<{
+    draft: SecuritySettingsFormDraft;
+    /** The stale-revision warning the draft had, restored with it. */
+    stale: boolean;
+  } | null>(null);
   const mounted = useRef(false);
   const epoch = useRef(0);
   const operation = useRef<Operation | null>(null);
@@ -177,6 +187,9 @@ export function SecurityView({
           factor.factor_type === "totp" && factor.status === "verified",
       )
     : null;
+  // The policy requires two-step of the viewer and it is not set up yet.
+  const ownMfaRequiredOff =
+    ownMfaOn === false && Boolean(ownMfa?.policy_required);
   const securityFields =
     securityQuery.data && !securityDenied
       ? securitySettingsFormFields(securityQuery.data)
@@ -312,7 +325,7 @@ export function SecurityView({
     queryClient,
   ]);
 
-  function clearDraft() {
+  function clearDraft({ inDialog = false }: { inDialog?: boolean } = {}) {
     if (operation.current) return false;
     setSecurityDraft({});
     setSecurityStale(false);
@@ -321,12 +334,29 @@ export function SecurityView({
     setFormErrors({});
     setAddressNotice("");
     setJustSaved(false);
-    setNotice("Unsaved changes discarded.");
+    setDiscardedDraft(null);
+    // The dialog says it in its footer, with Undo; a discard from the page
+    // guard (the dialog closed) leaves this notice.
+    setNotice(inDialog ? "" : "Unsaved changes discarded.");
     return true;
+  }
+  function discardInDialog() {
+    const removed = { draft: securityDraft, stale: securityStale };
+    if (clearDraft({ inDialog: true })) setDiscardedDraft(removed);
+  }
+  function undoDiscard() {
+    if (!discardedDraft || securityDirty || operation.current) return;
+    setSecurityDraft(discardedDraft.draft);
+    setSecurityStale(discardedDraft.stale);
+    setDiscardedDraft(null);
+  }
+  function closePolicy() {
+    setDiscardedDraft(null);
+    setPolicyOpen(false);
   }
   useAccessDraftRegistration("security-policy", {
     dirty: securityDirty,
-    discard: clearDraft,
+    discard: () => clearDraft(),
   });
 
   const begin = useCallback(
@@ -391,6 +421,7 @@ export function SecurityView({
     });
     setNotice("");
     setJustSaved(false);
+    setDiscardedDraft(null);
     setError("");
     setFormErrors((errors) => ({ ...errors, [key]: undefined }));
     setAddressNotice("");
@@ -581,6 +612,7 @@ export function SecurityView({
     setError("");
     setNotice("");
     setJustSaved(false);
+    setDiscardedDraft(null);
     setPolicySaving(true);
     try {
       // Consuming the query signal makes cancellation definitive: an older GET
@@ -677,10 +709,30 @@ export function SecurityView({
       await afterAccessAdminSessionsChange(queryClient);
       if (!owns(next)) return false;
       setSessionRequest((request) => ({ ...request, offset: 0 }));
-      setNotice(
-        all
-          ? "Remote sessions ended. Your current session stays active."
-          : "Session ended.",
+      if (!all) {
+        reportDone("Session ended");
+        return true;
+      }
+      // The list reloads: say if any remote session is still active (one
+      // started meanwhile, or one the server kept).
+      let remaining: number | null = null;
+      try {
+        const remote = await queryClient.fetchQuery({
+          ...accessAdminSessionsOptions(
+            queryClient,
+            remoteSessionsCountRequest,
+          ),
+          staleTime: 0,
+        });
+        remaining = remote.pagination.total;
+      } catch {
+        remaining = null;
+      }
+      if (!owns(next)) return true;
+      reportDone(
+        remaining
+          ? `Remote sessions ended · ${remaining} still active`
+          : "Remote sessions ended",
       );
       return true;
     } catch (caught) {
@@ -727,7 +779,7 @@ export function SecurityView({
       {
         origin: "admin-sessions",
         title: "End session",
-        description: `Signs out ${session.person_name}'s ${session.device} ${session.browser} session. Your current session stays.`,
+        description: `Signs out ${session.person_name}'s ${sessionDeviceWords(session)} session. Your current session stays.`,
         confirmLabel: "Confirm end session",
         pendingLabel: "Ending…",
         action: () =>
@@ -779,6 +831,27 @@ export function SecurityView({
       : confirm;
   if (!active || !admitted) return null;
   const summary = securityFields ? policySummaryParts(securityFields) : null;
+  const errorAlert = (
+    <Alert role="alert" variant="destructive">
+      <p>{error}</p>
+      {mfaRequiredError ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-2 min-h-11"
+          onClick={(event) => {
+            closePolicy();
+            openMfa(event);
+            mfaOpener.current = policyOpener.current;
+          }}
+        >
+          {ownMfaOn === false
+            ? "Set up two-step verification"
+            : "Manage two-step verification"}
+        </Button>
+      ) : null}
+    </Alert>
+  );
   return (
     <section
       aria-label="Security workspace"
@@ -830,24 +903,39 @@ export function SecurityView({
                   ? "Loading policy…"
                   : "Account policy unavailable"}
             </p>
-            <p className="text-muted-foreground mt-0.5 flex flex-wrap items-center text-sm">
-              <span>
+            {/* Inline text, so a phone wraps between words and keeps the
+                action with its separator. */}
+            <p className="text-muted-foreground mt-0.5 text-sm">
+              <span
+                className={cn(
+                  ownMfaRequiredOff && "text-warn-text font-medium",
+                )}
+              >
                 Your two-step verification
                 {ownMfaOn === null ? "" : `: ${ownMfaOn ? "On" : "Off"}`}
+                {ownMfaRequiredOff ? " · required for your role" : ""}
               </span>
-              <span aria-hidden="true">&nbsp;·&nbsp;</span>
-              <button
-                type="button"
-                aria-label={
-                  ownMfaOn === false
-                    ? "Set up two-step verification"
-                    : "Manage two-step verification"
-                }
-                className="text-action-text focus-visible:outline-ring inline-flex min-h-11 items-center rounded-sm font-medium underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 xl:min-h-6"
-                onClick={openMfa}
-              >
-                {ownMfaOn === false ? "Set up" : "Manage"}
-              </button>
+              {/* Below md the action takes its own line: phones keep every
+                  button at 44px, which would stretch a wrapped text line. */}
+              <span className="block whitespace-nowrap md:inline">
+                <span aria-hidden="true" className="hidden md:inline">
+                  {" · "}
+                </span>
+                <button
+                  type="button"
+                  aria-label={
+                    ownMfaOn === false
+                      ? "Set up two-step verification"
+                      : "Manage two-step verification"
+                  }
+                  // From md a 44px hit area from a pseudo-element, so the line
+                  // keeps its normal height.
+                  className="text-action-text focus-visible:outline-ring relative rounded-sm font-medium underline-offset-4 after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  onClick={openMfa}
+                >
+                  {ownMfaOn === false ? "Set up" : "Manage"}
+                </button>
+              </span>
             </p>
           </div>
           <Button
@@ -904,7 +992,9 @@ export function SecurityView({
       <Dialog
         open={policyOpen}
         onOpenChange={(open) => {
-          if (!livePending) setPolicyOpen(open);
+          if (livePending) return;
+          if (open) setPolicyOpen(true);
+          else closePolicy();
         }}
         dismissible={!livePending}
       >
@@ -915,12 +1005,15 @@ export function SecurityView({
           <DialogHeader className="mb-4">
             <div className="flex items-center justify-between gap-3">
               <DialogTitle>Account policy</DialogTitle>
+              {/* size-11 keeps a 44px target below 1280px; the Access
+                  icon-button rule makes it 32px from there. */}
               <Button
                 variant="ghost"
                 size="icon"
+                className="size-11"
                 aria-label="Close account policy"
                 disabled={livePending}
-                onClick={() => setPolicyOpen(false)}
+                onClick={closePolicy}
               >
                 <X aria-hidden="true" />
               </Button>
@@ -931,32 +1024,9 @@ export function SecurityView({
             aria-busy={livePending}
             className="min-w-0 space-y-4"
           >
-            {error ? (
-              <Alert role="alert" variant="destructive">
-                <p>{error}</p>
-                {mfaRequiredError ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="mt-2 min-h-11"
-                    onClick={(event) => {
-                      setPolicyOpen(false);
-                      openMfa(event);
-                      mfaOpener.current = policyOpener.current;
-                    }}
-                  >
-                    {ownMfaOn === false
-                      ? "Set up two-step verification"
-                      : "Manage two-step verification"}
-                  </Button>
-                ) : null}
-              </Alert>
-            ) : null}
-            {notice ? (
-              <Alert role="status" variant="success">
-                {notice}
-              </Alert>
-            ) : null}
+            {/* With the form shown, a save error sits in its fixed footer,
+                above the buttons; otherwise it leads the dialog. */}
+            {error && !securityFields ? errorAlert : null}
             {securityStale ? (
               <Alert role="note" variant="warning">
                 Policy changed since you opened it. Your draft is kept; review
@@ -1000,11 +1070,14 @@ export function SecurityView({
                   addMyAddress,
                   addressNotice,
                   saveSection,
-                  clearDraft,
+                  discard: discardInDialog,
+                  discarded: discardedDraft !== null,
+                  undoDiscard,
                   changeSetting,
                 }}
                 editable={editable}
-                onCancel={() => setPolicyOpen(false)}
+                footerAlert={error ? errorAlert : null}
+                onCancel={closePolicy}
               />
             ) : null}
           </fieldset>
