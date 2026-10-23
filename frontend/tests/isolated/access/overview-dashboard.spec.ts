@@ -41,14 +41,15 @@ test("the last-sign-in bar splits active and invited people into seven segments 
   ]);
   expect(bar).toMatchObject({ now: 3, today: 11, week: 31, total: 52 });
   expect(bar.label).toBe(
-    "52 people by last sign-in: 3 now, 8 earlier in the last day, 20 earlier in the last 7 days, 9 earlier in the last 30 days, 4 older, 5 never signed in, 3 invited",
+    "52 people by last sign-in: Now 3, Under a day 8, 1–7 days 20, 7–30 days 9, Older 4, Never signed in 5, Invited 3",
   );
 });
 
 test("the bar never shows a negative segment when the counts disagree", () => {
-  // More people signed in now than active within a day, and summaries read
-  // at slightly different moments: every segment is clamped and the total
-  // still equals active plus invited.
+  // More people signed in now than the summary counts as active, and
+  // summaries read at slightly different moments: "now" is the roster, no
+  // one signed in now counts as never signed in, and the total grows to
+  // hold them.
   const bar = lastSignInSegments({
     active: 4,
     pending: 0,
@@ -57,9 +58,25 @@ test("the bar never shows a negative segment when the counts disagree", () => {
     neverSignedIn: 1,
   });
   expect(bar.segments.map((segment) => segment.count)).toEqual([
-    3, 0, 0, 0, 0, 1, 0,
+    6, 0, 0, 0, 0, 0, 0,
   ]);
-  expect(bar.total).toBe(4);
+  expect(bar.total).toBe(6);
+});
+
+test("signed in now is the roster, and every window holds at least that many", () => {
+  // The day summary was read before two people signed in: it says no one
+  // was active in the last day while two sessions are open.
+  const bar = lastSignInSegments({
+    active: 10,
+    pending: 0,
+    signedInNow: 2,
+    inactive: { 1: 10, 7: 9, 30: 2 },
+    neverSignedIn: 0,
+  });
+  expect(bar).toMatchObject({ now: 2, today: 2, week: 2, total: 10 });
+  expect(bar.segments.map((segment) => segment.count)).toEqual([
+    2, 0, 0, 6, 2, 0, 0,
+  ]);
 });
 
 test("Who's here says how many disabled people its total leaves out", () => {

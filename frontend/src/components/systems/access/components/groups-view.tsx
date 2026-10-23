@@ -38,6 +38,7 @@ import {
   defaultGroupFilters,
   groupFiltersFromParams,
   groupRows,
+  strongestLevel,
   summaryLabel,
   type GroupFilters,
   type GroupGapFilter,
@@ -48,11 +49,12 @@ import { AccessHeaderActions } from "./access-header-actions";
 import { AccessToolbar, FilterSelect } from "./access-toolbar";
 import { TableSkeleton } from "./table-skeleton";
 import { CreateGroupDialog, hasKeptNewGroup } from "./create-group-dialog";
-import { DepartmentReach } from "./group-access-editor";
+import { DepartmentMark } from "@/components/sandbox/department-mark";
+import { AccessLevelBadge } from "./access-level-badge";
 import type { GroupEditorTab } from "./group-editor";
 import { GroupPanel } from "./group-panel";
 import { ReadError } from "./read-error";
-import { useDepartmentOrder } from "./people-row-parts";
+import { orderedDepartments, useDepartmentOrder } from "./people-row-parts";
 import {
   openRowClassName,
   RowOpenButton,
@@ -71,8 +73,8 @@ const gapOptions: readonly { value: GroupGapFilter; label: string }[] = [
   { value: "no-members", label: "Without members" },
 ];
 
-/** A reach list shows this many departments, then "+N more". */
-const REACH_SHOWN = 2;
+/** A reach cell shows at most this many department marks, like People. */
+const MARKS_SHOWN = 4;
 
 const editorTabs: readonly GroupEditorTab[] = ["details", "members", "access"];
 
@@ -119,8 +121,10 @@ function memberCount(count: number) {
 }
 
 /**
- * Departments a group reaches, on one line: each with its mark and level
- * chip, then "+n more".
+ * Departments a group reaches, in the Access row grammar People uses: at
+ * most four marks, a count, and the strongest level as one chip, on one
+ * line. Screen readers hear every department with its level; the sheet's
+ * Access tab keeps the full list.
  */
 function Reach({
   row,
@@ -131,20 +135,37 @@ function Reach({
 }) {
   if (!row.reach.length)
     return <span className="text-muted-foreground">No access</span>;
-  const more = row.reach.length - REACH_SHOWN;
+  const strongest = strongestLevel(row.reach);
+  const count = `${row.reach.length} ${row.reach.length === 1 ? "department" : "departments"}`;
+  const names = row.reach.map(summaryLabel).join(", ");
+  const marks = orderedDepartments(
+    row.reach.map((item) => ({ id: item.departmentId, name: item.name })),
+    position,
+  ).slice(0, MARKS_SHOWN);
   return (
-    <span
-      className="flex min-w-0 items-center gap-3 overflow-hidden"
-      title={row.reach.map(summaryLabel).join(", ")}
-    >
-      {row.reach.slice(0, REACH_SHOWN).map((item) => (
-        <span key={item.departmentId} className="flex min-w-0">
-          <DepartmentReach summary={item} position={position} />
+    <span className="flex min-w-0 items-center overflow-hidden" title={names}>
+      <span
+        aria-hidden="true"
+        className="flex min-w-0 items-center gap-2 whitespace-nowrap"
+      >
+        <span className="inline-flex shrink-0 items-center gap-[3px]">
+          {marks.map((department) =>
+            department.index === null ? null : (
+              <DepartmentMark
+                key={department.id}
+                departmentIndex={department.index}
+              />
+            ),
+          )}
         </span>
-      ))}
-      {more > 0 ? (
-        <span className="text-muted-foreground shrink-0">+{more} more</span>
-      ) : null}
+        <span className="text-muted-foreground min-w-0 truncate tabular-nums">
+          {count}
+        </span>
+        {strongest ? <AccessLevelBadge level={strongest} /> : null}
+      </span>
+      <span className="sr-only">
+        {count}: {names}
+      </span>
     </span>
   );
 }
@@ -270,6 +291,9 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
     {
       id: "name",
       header: "Name",
+      // Without Description, Name keeps a fixed share and Departments
+      // reached takes the rest.
+      width: described ? undefined : "w-[28%]",
       cell: (row) => (
         <RowOpenButton
           title={row.group.name}
@@ -313,7 +337,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
     {
       id: "departments",
       header: "Departments reached",
-      width: "w-[34%]",
+      width: described ? "w-72" : undefined,
       cell: (row) => <Reach row={row} position={position} />,
     },
   ];
@@ -509,25 +533,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
                   <RowOpenButton
                     title={row.group.name}
                     label={`Manage ${row.group.name}`}
-                    subtitle={
-                      row.reach.length ? (
-                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                          {row.reach.map((item, index) => (
-                            <span key={item.departmentId} className="min-w-0">
-                              <DepartmentReach
-                                summary={item}
-                                position={position}
-                              />
-                              {index < row.reach.length - 1 ? (
-                                <span className="sr-only">, </span>
-                              ) : null}
-                            </span>
-                          ))}
-                        </span>
-                      ) : (
-                        "No access"
-                      )
-                    }
+                    subtitle={<Reach row={row} position={position} />}
                     onOpen={() => openGroup(row.group.id)}
                   />
                   <span className="text-muted-foreground shrink-0 text-sm tabular-nums">

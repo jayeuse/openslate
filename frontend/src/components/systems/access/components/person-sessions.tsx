@@ -29,6 +29,7 @@ import {
   type AccessUser,
 } from "../state/api";
 import { ActionError } from "./editor-conflicts";
+import { ReadError } from "./read-error";
 
 type Revoke = { kind: "one"; session: AccessSession } | { kind: "all" };
 
@@ -129,16 +130,10 @@ export function PersonSessions({
         ) : null}
       </div>
       {sessions.isError ? (
-        <div role="alert" className="space-y-3 rounded-lg border p-4">
-          <p className="text-sm">Sessions could not be loaded.</p>
-          <Button
-            variant="outline"
-            className="min-h-11"
-            onClick={() => void sessions.refetch()}
-          >
-            Retry
-          </Button>
-        </div>
+        <ReadError
+          message="Sessions could not be loaded."
+          retry={() => void sessions.refetch()}
+        />
       ) : (
         <LoadingRegion
           loading={sessions.isPending}

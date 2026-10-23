@@ -71,9 +71,14 @@ test("the list shows members and the departments each group reaches", async ({
   await expect(clerks).toContainText("Inventory · Write");
   const auditors = table.getByRole("row", { name: /Auditors/ });
   await expect(auditors).toContainText("Year-end review");
+  // One line: the marks, a count and the strongest level; every department
+  // with its level is in the row's text for screen readers.
+  await expect(auditors).toContainText("3 departments");
+  await expect(auditors.locator('[data-slot="badge"]')).toHaveText(["Read"]);
   await expect(auditors).toContainText("Finance · Read");
   await expect(auditors).toContainText("Inventory · 1 module");
-  await expect(auditors).toContainText("+1 more");
+  await expect(auditors).toContainText("Unavailable department · Read");
+  await expect(auditors).not.toContainText("more");
 
   // A click anywhere on the row opens the group.
   // The open button's hit area covers the row, so click the row where the
@@ -81,7 +86,7 @@ test("the list shows members and the departments each group reaches", async ({
   await expect(clerks).toBeVisible();
   const clerkRow = (await clerks.boundingBox())!;
   const clerkAccess = (await clerks
-    .getByText("Inventory · Write")
+    .getByText("1 department", { exact: true })
     .boundingBox())!;
   await clerks.click({
     position: {
@@ -110,7 +115,14 @@ test("creating a group sends its first members and opens its access", async ({
   await expect(
     dialog.getByRole("button", { name: "Add Rosa Reyes" }),
   ).toHaveCount(0);
+  // Add and Remove are words, each named for its person.
+  await expect(dialog.getByRole("button", { name: "Add Ben Cruz" })).toHaveText(
+    "Add",
+  );
   await dialog.getByRole("button", { name: "Add Ben Cruz" }).click();
+  await expect(
+    dialog.getByRole("button", { name: "Remove Ben Cruz" }),
+  ).toHaveText("Remove");
   // Create adds the members, so the announcement asks for no Save.
   await expect(
     dialog.getByRole("status").filter({ hasText: "Ben Cruz" }),

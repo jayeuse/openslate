@@ -2,6 +2,7 @@
 
 import { useCallback, useId, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
@@ -211,7 +212,20 @@ export function CreateGroupDialog({
         onOpenChange={(next) => (next ? onOpenChange(true) : requestClose())}
       >
         <DialogContent className="access-ui max-w-2xl">
-          <DialogHeader>
+          {/* The × stays named for the dialog, like Close account policy;
+              a phone reaches Cancel in the sticky footer too. */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute top-3 right-3 z-10 size-11"
+            aria-label="Close new group"
+            disabled={pending}
+            onClick={requestClose}
+          >
+            <X aria-hidden="true" />
+          </Button>
+          <DialogHeader className="pr-12">
             <DialogTitle>Create a group</DialogTitle>
             <DialogDescription>You choose its access next.</DialogDescription>
           </DialogHeader>
@@ -246,7 +260,9 @@ export function CreateGroupDialog({
                 }
               />
             </Field>
-            <div className="max-h-[50vh] overflow-y-auto rounded-lg">
+            {/* From 640px the picker scrolls inside the dialog; on a phone
+                the dialog is the one scroller. */}
+            <div className="rounded-lg sm:max-h-[50vh] sm:overflow-y-auto">
               <GroupMemberPicker
                 selected={form.member_ids}
                 disabled={pending}
@@ -255,7 +271,7 @@ export function CreateGroupDialog({
               />
             </div>
             <ActionError message={submitError} />
-            <DialogFooter className="mt-0">
+            <DialogFooter className="bg-card sticky -bottom-5 z-10 -mx-5 mt-0 -mb-5 border-t px-5 pt-3 pb-8">
               <Button
                 type="button"
                 variant="outline"

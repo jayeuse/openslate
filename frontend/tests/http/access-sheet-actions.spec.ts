@@ -417,3 +417,37 @@ test("an add from the person sheet and a Members tab draft both survive", async 
     [ids.ana, ids.ben, ids.cy, later].sort(),
   );
 });
+
+test("on a phone Create group and Invite keep their buttons and a named close in view", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  addPeople(api, 30, 700);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/access?view=groups");
+  await page.getByRole("button", { name: "Create group" }).first().click();
+  const create = sheet(page, "Create a group");
+  await expect(
+    create.getByRole("button", { name: "Add Ben Cruz", exact: true }),
+  ).toBeVisible();
+  for (const name of ["Cancel", "Create group"])
+    await expect(
+      create.getByRole("button", { name, exact: true }),
+    ).toBeInViewport();
+  await create
+    .getByRole("button", { name: "Close new group", exact: true })
+    .click();
+  await expect(create).toBeHidden();
+
+  await page.goto("/access?view=people");
+  await page.getByRole("button", { name: "Invite person" }).click();
+  const invite = sheet(page, "Invite a person");
+  for (const name of ["Cancel", "Send invitation"])
+    await expect(
+      invite.getByRole("button", { name, exact: true }),
+    ).toBeInViewport();
+  await invite
+    .getByRole("button", { name: "Close invitation", exact: true })
+    .click();
+  await expect(invite).toBeHidden();
+});

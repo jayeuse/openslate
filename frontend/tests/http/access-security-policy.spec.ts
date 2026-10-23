@@ -560,6 +560,33 @@ test("Security opens 10 sessions a page with a compact policy line and a descrip
   expect(box?.height).toBeGreaterThanOrEqual(44);
 });
 
+test("the policy dialog keeps its title and Close in view while Advanced scrolls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockManageSecurity(page);
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = policyDialog(page);
+  await policy.getByRole("button", { name: /^Advanced/ }).click();
+  await expect(
+    policy.getByLabel("Failed attempts before lockout", { exact: true }),
+  ).toBeVisible();
+  const scrolled = await policy.evaluate((dialog) => {
+    dialog.scrollTop = dialog.scrollHeight;
+    return dialog.scrollTop;
+  });
+  expect(scrolled).toBeGreaterThan(0);
+  const top = (await policy.boundingBox())!.y;
+  for (const fixed of [
+    policy.getByRole("heading", { name: "Account policy", exact: true }),
+    policy.getByRole("button", { name: "Close account policy", exact: true }),
+  ]) {
+    await expect(fixed).toBeInViewport();
+    expect((await fixed.boundingBox())!.y).toBeGreaterThanOrEqual(top);
+  }
+});
+
 test("a refused save shows its error and recovery in the fixed footer above the buttons", async ({
   page,
 }) => {

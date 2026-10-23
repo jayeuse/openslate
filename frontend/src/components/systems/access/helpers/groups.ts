@@ -200,6 +200,20 @@ export function summaryLabel(summary: DepartmentSummary): string {
   return count ? `${level} + ${moduleCount(count)}` : level;
 }
 
+/** The strongest level a group gives anywhere, module rows included. */
+export function strongestLevel(
+  reach: readonly DepartmentSummary[],
+): AccessLevel | null {
+  let strongest = -1;
+  for (const summary of reach)
+    for (const level of [
+      summary.level,
+      ...summary.modules.map((item) => item.level),
+    ])
+      if (level) strongest = Math.max(strongest, accessLevels.indexOf(level));
+  return accessLevels[strongest] ?? null;
+}
+
 // The group list
 
 export type GroupRow = {

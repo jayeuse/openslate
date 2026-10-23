@@ -8,7 +8,13 @@ import {
   type Page,
 } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
-import { addPeople, ids, mockAccessApi } from "./helpers/access-api";
+import {
+  addPeople,
+  fixtureId,
+  group,
+  ids,
+  mockAccessApi,
+} from "./helpers/access-api";
 
 // Access rows, toolbars and controls: one slim row grammar for People,
 // Groups and Sessions, status quick filters with counts, filters kept in the
@@ -251,6 +257,33 @@ test("Groups use the slim rows and show Description only when a group has one", 
   await expect(
     table.getByRole("row").filter({ hasText: "Finance readers" }),
   ).toContainText("Month-end close");
+
+  // On a phone a group reads on two lines, however many departments it
+  // reaches.
+  const wide = fixtureId(330);
+  api.groups.set(
+    wide,
+    group(
+      wide,
+      "Year-end auditors",
+      [ids.ana],
+      [
+        { department_id: ids.inventory, module_id: null, level: "read" },
+        { department_id: ids.inventory, module_id: ids.prices, level: "write" },
+        { department_id: ids.finance, module_id: null, level: "manage" },
+        { department_id: fixtureId(331), module_id: null, level: "read" },
+      ],
+    ),
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  const list = page.getByRole("list", { name: "Groups", exact: true });
+  await expect(list.getByRole("listitem")).toHaveCount(3);
+  await expect(
+    list.getByRole("listitem").filter({ hasText: "Year-end auditors" }),
+  ).toContainText("3 departments");
+  for (const item of await list.getByRole("listitem").all())
+    expect(await height(item)).toBeLessThanOrEqual(64);
 });
 
 test("status quick filters show counts, filter the directory and survive a reload", async ({
@@ -579,6 +612,79 @@ test("the People Sort select has the field edge of the other selects", async ({
       page.getByRole("combobox", { name: "Rows per page", exact: true }),
     ),
   );
+  // Every select keeps room for its chevron in every look: the chevron
+  // starts after the end of the select's text box.
+  const crowded = () =>
+    page.evaluate(() =>
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          '.access-ui [data-slot="native-select-wrapper"]',
+        ),
+      ]
+        .filter((wrapper) => wrapper.offsetParent !== null)
+        .map((wrapper) => {
+          const select = wrapper.querySelector("select")!;
+          const icon = wrapper.querySelector(
+            '[data-slot="native-select-icon"]',
+          )!;
+          const style = getComputedStyle(select);
+          const textEnd =
+            select.getBoundingClientRect().right -
+            parseFloat(style.borderRightWidth) -
+            parseFloat(style.paddingRight);
+          return {
+            name:
+              select.getAttribute("aria-label") ??
+              select.labels?.[0]?.textContent?.trim(),
+            crowded: icon.getBoundingClientRect().left < textEnd - 0.5,
+          };
+        }),
+    );
+  for (const look of ["slate", "whiteboard", "triplicate", "stockroom"]) {
+    await page.evaluate((theme) => {
+      if (theme === "slate") delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = theme;
+    }, look);
+    const selects = await crowded();
+    expect(
+      selects.map((select) => select.name),
+      look,
+    ).toEqual(["Sort", "Rows per page"]);
+    expect(
+      selects.filter((select) => select.crowded),
+      look,
+    ).toEqual([]);
+  }
+});
+
+test("below 1280 px the page title scrolls away with the content", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  addPeople(api, 30, 700);
+  for (const size of [
+    { width: 390, height: 844 },
+    { width: 1024, height: 768 },
+  ]) {
+    await page.setViewportSize(size);
+    await page.goto("/access?view=people");
+    const title = page.getByRole("heading", { level: 1, name: "People" });
+    await expect(title).toBeInViewport();
+    await page
+      .getByRole("combobox", { name: "Rows per page", exact: true })
+      .first()
+      .selectOption("25");
+    const rows =
+      size.width < 768
+        ? page
+            .getByRole("list", { name: "People", exact: true })
+            .getByRole("listitem")
+        : peopleTable(page).locator('[data-slot="table-body"] tr');
+    await expect(rows).toHaveCount(25);
+    await rows.last().scrollIntoViewIfNeeded();
+    await expect(title).not.toBeInViewport();
+    await expectNoPageScroll(page);
+  }
 });
 
 test("the People toolbar keeps one row at 1280 px", async ({ page }) => {

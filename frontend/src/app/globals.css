@@ -868,6 +868,16 @@ html[data-density="spacious"]
     ) {
     height: 2rem;
     min-height: 2rem;
+  }
+  /* :where keeps this end padding weaker than the select rules below, so
+     a select keeps room for its chevron. */
+  :is(#main-content .access-ui, .access-ui)
+    :where(
+      [data-slot="input"],
+      [data-slot="input-group"],
+      button[role="combobox"],
+      input[role="combobox"]
+    ) {
     padding-inline-end: 0.625rem;
   }
   :is(#main-content .access-ui, .access-ui)
@@ -1044,7 +1054,7 @@ html[data-density="spacious"]
 /* From 1280px the Overview is still: Who's here across the top, the
    sign-ins feed on the left, Needs attention whole on the right, and the
    department list below it takes the rest. Only panel bodies scroll. The
-   DOM order is the phone order. */
+   DOM order is the phone order: Needs attention before the feed. */
 @media (min-width: 1280px) {
   .access-ui .access-overview {
     display: grid;

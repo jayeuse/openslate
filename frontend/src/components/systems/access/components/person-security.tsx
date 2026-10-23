@@ -266,6 +266,8 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
     return null;
   }
 
+  // Two-step as recorded by the last read: Off has nothing to reset.
+  const resettable = (data?.status.verified_factor_count ?? 0) > 0;
   const outcome = (
     <>
       {notice ? (
@@ -381,7 +383,11 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
               Rule); each result stays beside its own action. */}
           <AdvancedSection
             storageKey="access.person-security"
-            summary="Recovery and sign out, Reset two-step"
+            summary={
+              resettable
+                ? "Recovery and sign out, Reset two-step"
+                : "Recovery and sign out"
+            }
           >
             <section aria-labelledby={`${person.id}-signout-title`}>
               <h4 id={`${person.id}-signout-title`} className="font-medium">
@@ -403,44 +409,50 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
               </div>
               {ran === "revoke" ? outcome : null}
             </section>
-            <section aria-labelledby={`${person.id}-mfa-title`}>
-              <h4 id={`${person.id}-mfa-title`} className="font-medium">
-                Two-step verification
-              </h4>
-              {data.assurance !== "aal2" ? (
-                <p id={`${person.id}-mfa-reason`} className="mt-3 text-sm">
-                  Complete your own two-step verification in{" "}
-                  <GuardedWorkspaceLink
-                    href="/access?view=security"
-                    className="text-action-text underline underline-offset-4"
+            {/* Reset only while two-step is on: there is nothing to reset
+                when the person has no authenticator. */}
+            {resettable ? (
+              <section aria-labelledby={`${person.id}-mfa-title`}>
+                <h4 id={`${person.id}-mfa-title`} className="font-medium">
+                  Two-step verification
+                </h4>
+                {data.assurance !== "aal2" ? (
+                  <p id={`${person.id}-mfa-reason`} className="mt-3 text-sm">
+                    Complete your own two-step verification in{" "}
+                    <GuardedWorkspaceLink
+                      href="/access?view=security"
+                      className="text-action-text underline underline-offset-4"
+                    >
+                      Security
+                    </GuardedWorkspaceLink>{" "}
+                    before you reset it for someone else.
+                  </p>
+                ) : null}
+                <div className="mt-2 sm:-ml-3">
+                  <DisabledReason
+                    reason={reasonFor("reset")}
+                    // The visible line says why, so it is announced once.
+                    reasonId={
+                      data.status.target_eligible && data.assurance !== "aal2"
+                        ? `${person.id}-mfa-reason`
+                        : undefined
+                    }
                   >
-                    Security
-                  </GuardedWorkspaceLink>{" "}
-                  before you reset it for someone else.
-                </p>
-              ) : null}
-              <div className="mt-2 sm:-ml-3">
-                <DisabledReason
-                  reason={reasonFor("reset")}
-                  // The visible line says why, so it is announced once.
-                  reasonId={
-                    data.status.target_eligible && data.assurance !== "aal2"
-                      ? `${person.id}-mfa-reason`
-                      : undefined
-                  }
-                >
-                  <Button
-                    className="text-danger-text min-h-11 w-full sm:w-auto"
-                    variant="ghost"
-                    onClick={() => setAction("reset")}
-                  >
-                    Reset two-step verification
-                  </Button>
-                </DisabledReason>
-              </div>
-              {ran === "reset" ? outcome : null}
-            </section>
+                    <Button
+                      className="text-danger-text min-h-11 w-full sm:w-auto"
+                      variant="ghost"
+                      onClick={() => setAction("reset")}
+                    >
+                      Reset two-step verification
+                    </Button>
+                  </DisabledReason>
+                </div>
+                {ran === "reset" ? outcome : null}
+              </section>
+            ) : null}
           </AdvancedSection>
+          {/* A reset's result stays after the next read hides its block. */}
+          {ran === "reset" && !resettable ? outcome : null}
         </>
       )}
       {/* A result whose action block is gone (the read failed) stays here. */}

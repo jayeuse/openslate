@@ -325,6 +325,50 @@ test("reset uses its own confirmation and strict empty command", async ({
   );
 });
 
+test("Reset two-step shows only while two-step is on, and its result stays after it turns off", async ({
+  page,
+}) => {
+  const api = await setup(page);
+  let factors = 1;
+  api.on("GET", `/api/users/${ids.ben}/security`, (route) =>
+    route.fulfill({ json: { ...status(), verified_factor_count: factors } }),
+  );
+  const sheet = await open(page);
+  await openAdvanced(sheet);
+  const reset = sheet.getByRole("button", {
+    name: "Reset two-step verification",
+    exact: true,
+  });
+  await expect(reset).toBeVisible();
+  // The reset clears the factor, so the next read says Off.
+  factors = 0;
+  await reset.click();
+  await page
+    .getByRole("alertdialog", {
+      name: "Reset two-step verification?",
+      exact: true,
+    })
+    .getByRole("button", { name: "Reset two-step verification", exact: true })
+    .click();
+  await expect(
+    sheet.getByText("Two-step verification: Off", { exact: true }),
+  ).toBeVisible();
+  await expect(reset).toHaveCount(0);
+  await expect(
+    sheet.getByRole("button", {
+      name: "Send recovery and sign out",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    sheet.getByRole("status").filter({
+      hasText: /Two-step verification reset/,
+    }),
+  ).toContainText(
+    "Two-step verification reset. They are signed out everywhere.",
+  );
+});
+
 test("a pending security action keeps its dialog and pending label, then shows the result beside the action", async ({
   page,
 }) => {

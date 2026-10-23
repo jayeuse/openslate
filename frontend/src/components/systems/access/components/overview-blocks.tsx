@@ -38,6 +38,7 @@ import { ReadError } from "./read-error";
 
 import {
   notCountedWords,
+  signInSegmentWords,
   type AttentionItem,
   type DepartmentAccessRow,
   type SignInBar,
@@ -146,15 +147,6 @@ function RowsSkeleton({ rows, height }: { rows: number; height: string }) {
 
 // Who's here
 
-const segmentWords: Record<SignInSegmentId, string> = {
-  now: "Now",
-  today: "Last day",
-  week: "Last 7 days",
-  month: "Last 30 days",
-  older: "Older",
-  never: "Never signed in",
-  invited: "Invited",
-};
 /** Each legend item opens the People list with its filter, where one exists. */
 const segmentLinks: Partial<Record<SignInSegmentId, string>> = {
   now: "/access?view=security",
@@ -340,7 +332,7 @@ function Presence({ data }: { data: Presence }) {
             <>
               <Swatch id={segment.id} className="size-2.5 rounded-[2px]" />
               <span className={href ? "text-[var(--action-text)]" : undefined}>
-                {segmentWords[segment.id]}
+                {signInSegmentWords[segment.id]}
               </span>{" "}
               <b className="font-semibold tabular-nums">{segment.count}</b>
             </>

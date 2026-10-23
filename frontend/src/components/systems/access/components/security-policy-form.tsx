@@ -779,7 +779,7 @@ export function SecurityPolicyForm({
           -bottom-5 also covers the dialog's padding so fields don't show
           below. Cancel first, Discard only with edits, the state as a chip;
           a save error sits here too, above the buttons. A read-only viewer
-          gets one Close, since the header × scrolls away on a phone. */}
+          gets one Close here as well as the header ×. */}
       <div
         role="group"
         aria-label="Policy actions"

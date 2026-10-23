@@ -3,7 +3,7 @@ import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
 import { useCallback, useId, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Send } from "lucide-react";
+import { Send, X } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -282,7 +282,18 @@ export function InvitePersonDialog({
         onOpenChange={(next) => (next ? onOpenChange(true) : requestClose())}
       >
         <DialogContent className="access-ui max-w-2xl">
-          <DialogHeader>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute top-3 right-3 z-10 size-11"
+            aria-label="Close invitation"
+            disabled={pending}
+            onClick={requestClose}
+          >
+            <X aria-hidden="true" />
+          </Button>
+          <DialogHeader className="pr-12">
             <DialogTitle>Invite a person</DialogTitle>
           </DialogHeader>
           <form

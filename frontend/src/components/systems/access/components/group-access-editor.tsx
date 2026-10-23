@@ -93,7 +93,7 @@ function departmentRows(
  * the modules with their own level. The text reads as the summary line
  * ("Inventory · Write + 1 module"), so a screen reader hears one phrase.
  */
-export function DepartmentReach({
+function DepartmentReach({
   summary,
   position,
 }: {

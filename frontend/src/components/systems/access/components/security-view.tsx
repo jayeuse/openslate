@@ -1001,7 +1001,9 @@ export function SecurityView({
           className="access-ui max-w-3xl"
           finalFocus={() => policyOpener.current}
         >
-          <DialogHeader className="mb-4">
+          {/* The header stays while the policy scrolls, like its footer:
+              a long Advanced block never cuts a heading at the top edge. */}
+          <DialogHeader className="bg-card sticky -top-5 z-10 -mx-5 -mt-5 mb-4 border-b px-5 pt-5 pb-3">
             <div className="flex items-center justify-between gap-3">
               <DialogTitle>Account policy</DialogTitle>
               {/* size-11 keeps a 44px target below 1280px; the Access

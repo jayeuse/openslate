@@ -102,7 +102,7 @@ test("Who's here counts people by last sign-in and its legend opens the matching
   await expect(who).toContainText("of 6 people · 1 disabled not counted");
   await expect(
     who.getByRole("img", {
-      name: "6 people by last sign-in: 1 now, 0 earlier in the last day, 1 earlier in the last 7 days, 1 earlier in the last 30 days, 1 older, 1 never signed in, 1 invited",
+      name: "6 people by last sign-in: Now 1, Under a day 0, 1–7 days 1, 7–30 days 1, Older 1, Never signed in 1, Invited 1",
       exact: true,
     }),
   ).toBeVisible();
@@ -118,9 +118,9 @@ test("Who's here counts people by last sign-in and its legend opens the matching
   const legend = who.getByRole("list", { name: "Last sign-in", exact: true });
   await expect(legend.getByRole("listitem")).toHaveText([
     "Now 1",
-    "Last day 0",
-    "Last 7 days 1",
-    "Last 30 days 1",
+    "Under a day 0",
+    "1–7 days 1",
+    "7–30 days 1",
     "Older 1",
     "Never signed in 1",
     "Invited 1",
@@ -1025,10 +1025,11 @@ test("the Overview is a still page from 1280 px and stacks for a phone", async (
   await expect(attention(page).getByRole("listitem").first()).toBeVisible();
   await expectNoHorizontalScroll(page);
   const tops: number[] = [];
+  // On a phone what needs attention comes before the sign-in feed.
   for (const title of [
     "Who's here",
-    "Recent sign-ins",
     "Needs attention",
+    "Recent sign-ins",
     "Access by department",
   ]) {
     const box = await block(page, title).boundingBox();
@@ -1090,6 +1091,11 @@ test("invitation settings open from People and save only the changed value with 
   await expect(guest).toHaveValue("45");
   const save = settings.getByRole("button", { name: "Save settings" });
   await expect(save).toBeDisabled();
+  await expect(save).toHaveAccessibleDescription("No changes to save.");
+  // Enter in a field with nothing changed sends nothing.
+  await guest.press("Enter");
+  await expect(settings).toBeVisible();
+  expect(api.sent("PATCH", "/api/workspace")).toHaveLength(0);
 
   await guest.fill("0");
   await save.click();

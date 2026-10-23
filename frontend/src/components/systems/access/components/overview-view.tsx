@@ -469,6 +469,9 @@ export function OverviewView() {
           ) : null
         }
       />
+      {/* Needs attention comes first on a phone; from 1280px the grid
+          areas place it beside the feed. */}
+      <NeedsAttention state={attention} />
       <RecentSignIns
         state={feedState}
         bodyRef={feedBody}
@@ -485,7 +488,6 @@ export function OverviewView() {
             : null
         }
       />
-      <NeedsAttention state={attention} />
       <AccessByDepartment state={byDepartment} />
       <InvitePersonDialog
         open={inviteOpen}

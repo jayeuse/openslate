@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { Search, UserRoundMinus, UserRoundPlus } from "lucide-react";
+import { Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -190,14 +190,14 @@ export function GroupMemberPicker({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
-                  className="size-11 shrink-0"
+                  size="sm"
+                  className="min-h-11 shrink-0 px-2"
                   aria-label={`Remove ${member.name}`}
                   data-member-id={member.id}
                   disabled={disabled || remote.error !== ""}
                   onClick={() => remove(member)}
                 >
-                  <UserRoundMinus aria-hidden="true" />
+                  Remove
                 </Button>
               </li>
             ))}
@@ -243,8 +243,8 @@ export function GroupMemberPicker({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
-                  className="size-11 shrink-0"
+                  size="sm"
+                  className="min-h-11 shrink-0 px-2"
                   aria-label={`Add ${option.name}`}
                   disabled={
                     disabled ||
@@ -254,7 +254,7 @@ export function GroupMemberPicker({
                   }
                   onClick={() => add(option)}
                 >
-                  <UserRoundPlus aria-hidden="true" />
+                  Add
                 </Button>
               </li>
             ))}

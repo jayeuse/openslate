@@ -7,7 +7,7 @@ import type { AccessGroup, AccessLevel } from "../state/api-contracts";
 
 // Pure rules for the Overview dashboard (docs/specs/access-ui-ux-pass.md,
 // Phase 4). Every count comes from an existing read: the user summary for
-// the activity windows, admin sessions for "now", the directory totals for
+// the activity windows, admin sessions for "now" (the roster), the directory totals for
 // active and invited people, security events for recent sign-ins, and the
 // group list for access by department.
 
@@ -33,11 +33,27 @@ export type SignInBar = {
 };
 
 /**
+ * The legend words, one per segment. The windows are exclusive ranges, so
+ * no word repeats the cumulative "in the last day" of the sentence above.
+ */
+export const signInSegmentWords: Record<SignInSegmentId, string> = {
+  now: "Now",
+  today: "Under a day",
+  week: "1–7 days",
+  month: "7–30 days",
+  older: "Older",
+  never: "Never signed in",
+  invited: "Invited",
+};
+
+/**
  * The bar of all active and invited people by last sign-in. The summary
  * counts active people inactive for more than 1, 7, and 30 days, and active
- * people who never signed in; active within N days is what remains. Reads
- * taken a moment apart can disagree, so every window is clamped: a window
- * is never smaller than the one inside it, and no segment is negative.
+ * people who never signed in; active within N days is what remains. "Now"
+ * is the roster, the read the chips show. Reads taken a moment apart can
+ * disagree, so every window is clamped: no window is smaller than "now" or
+ * the window inside it, no one signed in now counts as never signed in,
+ * and no segment is negative.
  */
 export function lastSignInSegments(input: {
   active: number;
@@ -46,16 +62,16 @@ export function lastSignInSegments(input: {
   inactive: Record<1 | 7 | 30, number>;
   neverSignedIn: number;
 }): SignInBar {
-  const active = Math.max(0, input.active);
+  const now = Math.max(0, input.signedInNow);
+  const active = Math.max(0, input.active, now);
   const pending = Math.max(0, input.pending);
-  const never = Math.min(Math.max(0, input.neverSignedIn), active);
+  const never = Math.min(Math.max(0, input.neverSignedIn), active - now);
   const signedIn = active - never;
   const clamp = (value: number, low: number) =>
     Math.min(Math.max(value, low), signedIn);
-  const day = clamp(active - input.inactive[1] - never, 0);
+  const day = clamp(active - input.inactive[1] - never, now);
   const week = clamp(active - input.inactive[7] - never, day);
   const month = clamp(active - input.inactive[30] - never, week);
-  const now = Math.min(Math.max(0, input.signedInNow), day);
   const segments: SignInSegment[] = [
     { id: "now", count: now },
     { id: "today", count: day - now },
@@ -66,15 +82,6 @@ export function lastSignInSegments(input: {
     { id: "invited", count: pending },
   ];
   const total = active + pending;
-  const words: Record<SignInSegmentId, string> = {
-    now: "now",
-    today: "earlier in the last day",
-    week: "earlier in the last 7 days",
-    month: "earlier in the last 30 days",
-    older: "older",
-    never: "never signed in",
-    invited: "invited",
-  };
   return {
     segments,
     now,
@@ -82,7 +89,7 @@ export function lastSignInSegments(input: {
     week,
     total,
     label: `${total} ${total === 1 ? "person" : "people"} by last sign-in: ${segments
-      .map((segment) => `${segment.count} ${words[segment.id]}`)
+      .map((segment) => `${signInSegmentWords[segment.id]} ${segment.count}`)
       .join(", ")}`,
   };
 }

@@ -12,6 +12,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogCloseButton,
@@ -221,7 +222,9 @@ export function InvitationSettings({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!saved || !values || pending) return;
+    // Save at rest is aria-disabled (it says why), so Enter in a field
+    // still submits; with no change there is nothing to send.
+    if (!saved || !values || pending || !dirty) return;
     const found = invitationSettingsErrors(values);
     setErrors(found);
     if (Object.keys(found).length) return;
@@ -375,15 +378,19 @@ export function InvitationSettings({
                 Discard changes
               </Button>
             ) : null}
-            <Button
-              type="submit"
-              className="min-h-11"
-              disabled={!dirty}
-              pending={pending}
-              pendingLabel="Saving…"
+            <DisabledReason
+              reason={!dirty && !pending ? "No changes to save." : null}
             >
-              {stale ? "Save again" : "Save settings"}
-            </Button>
+              <Button
+                type="submit"
+                className="min-h-11"
+                disabled={!dirty}
+                pending={pending}
+                pendingLabel="Saving…"
+              >
+                {stale ? "Save again" : "Save settings"}
+              </Button>
+            </DisabledReason>
           </div>
         </form>
       ) : null}
