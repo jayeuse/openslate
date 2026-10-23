@@ -66,7 +66,7 @@ export type PersonState = {
 };
 
 const stateLabels: Record<PersonStateId, string> = {
-  pending: "Pending",
+  pending: "Invited",
   active: "Active",
   disabled: "Disabled",
   expired: "Expired",
@@ -277,7 +277,7 @@ export const rareStatusFilters: readonly {
 }[] = [
   { label: "Expired", status: "expired" },
   { label: "Deleted", status: "deleted" },
-  { label: "Everyone", status: "all" },
+  { label: "Everyone, including deleted", status: "all" },
 ];
 
 /**
@@ -814,7 +814,7 @@ export const usernameHint =
   "3 to 100 letters, numbers, hyphens, or underscores.";
 
 export function usernameError(value: string): string | null {
-  if (!value.trim()) return "Enter a username.";
+  if (!value.trim()) return `Enter a username of ${usernameHint}`;
   return USERNAME_PATTERN.test(value.trim()) ? null : `Use ${usernameHint}`;
 }
 

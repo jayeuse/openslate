@@ -274,7 +274,7 @@ export function memberOptionsFromUsers(
         email: user.email,
         role: user.role === "guest" ? ("guest" as const) : ("member" as const),
         blocked,
-        statusLabel: blocked ?? (state.id === "pending" ? "Pending" : null),
+        statusLabel: blocked ?? (state.id === "pending" ? "Invited" : null),
       };
     })
     .sort(compareNames);
@@ -301,7 +301,7 @@ export function memberOptionsFromCandidates(
         role: candidate.role,
         blocked,
         statusLabel:
-          blocked ?? (candidate.status === "pending" ? "Pending" : null),
+          blocked ?? (candidate.status === "pending" ? "Invited" : null),
       };
     })
     .sort(compareNames);

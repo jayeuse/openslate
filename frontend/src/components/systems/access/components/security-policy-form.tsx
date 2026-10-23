@@ -110,22 +110,22 @@ function installationRows(fields: SecuritySettingsFormFields) {
     ["Require uppercase and lowercase", onOff(fields.requireMixedCase)],
     ["Require a number", onOff(fields.requireNumber)],
     [
-      "Total session lifetime",
+      "Longest session",
       fields.absoluteLifetime === "Off"
         ? "Off"
         : minutes(fields.absoluteLifetime),
     ],
     [
-      "Concurrent session limit",
+      "Sessions per person",
       fields.concurrentLimit === "Off"
         ? "Off"
         : `Up to ${fields.concurrentLimit}`,
     ],
-    ["Session retention", days(fields.sessionRetention)],
-    ["Security event retention", days(fields.eventRetention)],
+    ["Keep session history", days(fields.sessionRetention)],
+    ["Keep security events", days(fields.eventRetention)],
     ["Failed attempts before lockout", fields.loginThreshold],
-    ["Attempt window", minutes(fields.loginWindow)],
-    ["Lockout duration", minutes(fields.loginCooldown)],
+    ["Within", minutes(fields.loginWindow)],
+    ["Lock for", minutes(fields.loginCooldown)],
   ] as const;
 }
 
@@ -343,7 +343,7 @@ export function SecurityPolicyForm({
 
   const ipRows = [
     [
-      "IP allow list",
+      "Allowed addresses",
       current.ips.length ? current.ips.join(", ") : "All addresses",
     ],
   ] as const;
@@ -374,7 +374,7 @@ export function SecurityPolicyForm({
         <ReadOnlyRows
           rows={[
             ["Two-step verification", twoStepWords(current)],
-            ["Enrollment grace", days(current.mfaGrace)],
+            ["Days to set up two-step", days(current.mfaGrace)],
             ["Session timeout", current.timeout],
           ]}
         />
@@ -421,19 +421,18 @@ export function SecurityPolicyForm({
               id="mfa-policy-description"
               className={cn("text-muted-foreground text-sm", rowNoteClassName)}
             >
-              Choose which roles must set up an authenticator app. People who
-              already use one still enter a code when they sign in.
+              Roles that must use an authenticator app.
             </p>
           </div>
           {numberRow(
             "mfaGrace",
             "mfa-grace",
-            "Enrollment grace (days)",
+            "Days to set up two-step",
             0,
             30,
             {
               id: "mfa-grace-description",
-              text: "Newly required accounts can enroll during the grace period. Zero days requires enrollment immediately.",
+              text: "0 means right away.",
             },
           )}
           {editable.installation ? (
@@ -466,7 +465,7 @@ export function SecurityPolicyForm({
         ) : (
           <>
             <PolicyGroup
-              legend="IP allow list"
+              legend="Allowed addresses"
               describedBy="ip-allow-list-description"
             >
               <p
@@ -476,12 +475,22 @@ export function SecurityPolicyForm({
                   fieldColumnClassName,
                 )}
               >
-                An empty list allows all addresses. Include your current address
-                to keep access. You can add up to 100 addresses or ranges.
+                Empty allows every address.
               </p>
+              {/* The limit shows only once the list is full. */}
+              {current.ips.length >= 100 ? (
+                <p
+                  className={cn(
+                    "text-muted-foreground text-sm",
+                    fieldColumnClassName,
+                  )}
+                >
+                  You can add up to 100 addresses or ranges.
+                </p>
+              ) : null}
               {current.ips.length ? (
                 <ul
-                  aria-label="Allowed addresses"
+                  aria-label="Addresses"
                   className={cn(
                     "flex min-w-0 flex-wrap gap-2",
                     fieldColumnClassName,
@@ -515,16 +524,7 @@ export function SecurityPolicyForm({
                     </li>
                   ))}
                 </ul>
-              ) : (
-                <p
-                  className={cn(
-                    "text-muted-foreground text-sm",
-                    fieldColumnClassName,
-                  )}
-                >
-                  All addresses are allowed.
-                </p>
-              )}
+              ) : null}
               {errors.ips ? (
                 <p
                   role="alert"
@@ -541,7 +541,7 @@ export function SecurityPolicyForm({
                 className={rowClassName}
               >
                 <FieldLabel htmlFor="ip-entry" className={rowLabelClassName}>
-                  IP address or CIDR
+                  Address or range
                 </FieldLabel>
                 <div className="flex min-w-0 flex-wrap gap-2">
                   <Input
@@ -637,7 +637,7 @@ export function SecurityPolicyForm({
                 <PolicyGroup legend="Session limits">
                   <SelectRow
                     id="session-absolute-mode"
-                    label="Total session lifetime"
+                    label="Longest session"
                     value={
                       current.absoluteLifetime === "Off" ? "Off" : "Limited"
                     }
@@ -668,7 +668,7 @@ export function SecurityPolicyForm({
                   </p>
                   <SelectRow
                     id="session-cap-mode"
-                    label="Concurrent session limit"
+                    label="Sessions per person"
                     value={
                       current.concurrentLimit === "Off" ? "Off" : "Limited"
                     }
@@ -709,14 +709,14 @@ export function SecurityPolicyForm({
                   {numberRow(
                     "sessionRetention",
                     "session-retention-days",
-                    "Session retention (days)",
+                    "Keep session history (days)",
                     1,
                     3650,
                   )}
                   {numberRow(
                     "eventRetention",
                     "security-event-retention-days",
-                    "Security event retention (days)",
+                    "Keep security events (days)",
                     1,
                     3650,
                   )}
@@ -746,14 +746,14 @@ export function SecurityPolicyForm({
                   {numberRow(
                     "loginWindow",
                     "login-window",
-                    "Attempt window (minutes)",
+                    "Within (minutes)",
                     1,
                     1440,
                   )}
                   {numberRow(
                     "loginCooldown",
                     "login-cooldown",
-                    "Lockout duration (minutes)",
+                    "Lock for (minutes)",
                     1,
                     1440,
                   )}
@@ -764,9 +764,7 @@ export function SecurityPolicyForm({
                       fieldColumnClassName,
                     )}
                   >
-                    Too many failed attempts within the window temporarily block
-                    further attempts. Existing lockouts keep their remaining
-                    time.
+                    Changes do not affect a lockout already in place.
                   </p>
                 </PolicyGroup>
               </>

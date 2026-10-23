@@ -98,6 +98,6 @@ export function sessionDetail(session: SessionDevice): string {
   const parts = knownParts(session);
   return [
     ...(parts.length ? parts : ["Unknown device"]),
-    ...(session.ip_address ? [`Sign-in IP: ${session.ip_address}`] : []),
+    ...(session.ip_address ? [`Sign-in address: ${session.ip_address}`] : []),
   ].join(" · ");
 }

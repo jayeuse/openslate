@@ -12,7 +12,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -39,7 +38,6 @@ import {
   roleLabels,
   usernameError,
   usernameFromEmail,
-  usernameHint,
 } from "../helpers/people";
 import { ApiError } from "@/lib/api";
 import {
@@ -96,7 +94,8 @@ type FieldErrors = Partial<
 >;
 
 const roleDescriptions: Record<AccessUserRole, string> = {
-  member: "Gets the access of the groups you choose.",
+  // A member's access comes from the groups below, which say so.
+  member: "",
   guest: "Can only read, for a limited time, with a sponsor.",
   admin: "Has full access everywhere and can change people and groups.",
 };
@@ -285,10 +284,6 @@ export function InvitePersonDialog({
         <DialogContent className="access-ui max-w-2xl">
           <DialogHeader>
             <DialogTitle>Invite a person</DialogTitle>
-            <DialogDescription>
-              Existing accounts accept when signed in. New accounts get an email
-              to set up their account.
-            </DialogDescription>
           </DialogHeader>
           <form
             noValidate
@@ -313,7 +308,6 @@ export function InvitePersonDialog({
                 autoComplete="off"
                 required
                 value={username}
-                description={usernameHint}
                 error={errors.username}
                 onChange={(value) => update({ username: value })}
               />
@@ -399,7 +393,7 @@ export function InvitePersonDialog({
               ) : (
                 <>
                   <p className="text-muted-foreground text-sm">
-                    Groups give access to departments and modules.
+                    Access comes from groups.
                     {form.role === "guest" ? " Guests can only read." : ""}
                   </p>
                   <Input

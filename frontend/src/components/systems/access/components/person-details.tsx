@@ -43,7 +43,6 @@ import {
   roleLabels,
   samePersonDraft,
   usernameError,
-  usernameHint,
   type PersonDraft,
   type PersonDraftField,
 } from "../helpers/people";
@@ -490,7 +489,6 @@ export function PersonDetails({
           autoComplete="off"
           value={values.username}
           disabled={pending}
-          description={usernameHint}
           error={errors.username}
           onChange={(username) => update({ username })}
         />

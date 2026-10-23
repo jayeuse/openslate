@@ -300,10 +300,6 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
           <h3 id="person-security-title" className="font-semibold">
             Sign-in security
           </h3>
-          <p className="text-muted-foreground text-sm">
-            Review this person&apos;s two-step verification and recovery
-            options.
-          </p>
         </div>
       </div>
       {query.isError ? (
@@ -341,13 +337,13 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
         <>
           <Badge variant="secondary">
             {data.status.verified_factor_count === 0
-              ? "Two-step verification not set up"
-              : "Two-step verification is set up"}
+              ? "Two-step verification: Off"
+              : "Two-step verification: On"}
           </Badge>
           {!data.status.target_eligible ? (
             <Alert variant="warning">
-              This person is not eligible for security actions. Pending
-              invitations use the invitation actions in Details.
+              This person is not eligible for security actions. Invited people
+              use the invitation actions in Details.
             </Alert>
           ) : null}
           <section
@@ -411,10 +407,6 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
               <h4 id={`${person.id}-mfa-title`} className="font-medium">
                 Two-step verification
               </h4>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Reset only after you confirm the person needs recovery. This
-                removes their authenticator app and signs them out everywhere.
-              </p>
               {data.assurance !== "aal2" ? (
                 <p id={`${person.id}-mfa-reason`} className="mt-3 text-sm">
                   Complete your own two-step verification in{" "}

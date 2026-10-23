@@ -432,7 +432,7 @@ test("Security and recovery keeps policy drafts and protects the current session
   expect(state.writes).toEqual([]);
   await endEli.click();
   await confirmation
-    .getByRole("button", { name: "Confirm end session", exact: true })
+    .getByRole("button", { name: "End session", exact: true })
     .click();
   await expect(endEli).toHaveCount(0);
   expect(state.writes).toEqual([
@@ -476,13 +476,13 @@ test("Security and recovery keeps policy drafts and protects the current session
     })
     .uncheck();
   await policy
-    .getByLabel("IP address or CIDR", { exact: true })
+    .getByLabel("Address or range", { exact: true })
     .fill("127.0.0.1");
   await policy
     .getByRole("button", { name: "Add address", exact: true })
     .click();
   await policy
-    .getByLabel("IP address or CIDR", { exact: true })
+    .getByLabel("Address or range", { exact: true })
     .fill("192.0.2.0/24");
   await policy
     .getByRole("button", { name: "Add address", exact: true })
@@ -538,7 +538,7 @@ test("Security and recovery keeps policy drafts and protects the current session
     .click();
   await confirmation
     .getByRole("button", {
-      name: "Confirm end all remote sessions",
+      name: "End all remote sessions",
       exact: true,
     })
     .click();
@@ -667,10 +667,10 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
     exact: true,
   });
   await threshold.fill("4");
-  const sessionRetention = policy.getByLabel("Session retention (days)", {
+  const sessionRetention = policy.getByLabel("Keep session history (days)", {
     exact: true,
   });
-  const eventRetention = policy.getByLabel("Security event retention (days)", {
+  const eventRetention = policy.getByLabel("Keep security events (days)", {
     exact: true,
   });
   await sessionRetention.fill("90");
@@ -694,14 +694,14 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
   expect(state.policy.session_retention_days).toBe(365);
   expect(state.policy.security_event_retention_days).toBe(730);
   state.policyWriteFailure = { status: 409, code: "ip_lockout" };
-  const address = policy.getByLabel("IP address or CIDR", { exact: true });
+  const address = policy.getByLabel("Address or range", { exact: true });
   await address.fill("192.0.2.0/24");
   await policy
     .getByRole("button", { name: "Add address", exact: true })
     .click();
   await save.click();
   await expect(policy).toContainText(
-    "The IP allow list would block your current address",
+    "These allowed addresses would block your current address",
   );
   // The refusal belongs to the allow list: it shows there and takes focus.
   await expect(policy).toContainText(
@@ -720,9 +720,7 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
     .getByRole("button", { name: "Add address", exact: true })
     .click();
   await save.click();
-  await expect(policy).toContainText(
-    "Check the policy values and IP addresses",
-  );
+  await expect(policy).toContainText("Check the policy values and addresses");
   await expect(
     policy.getByRole("button", { name: "Remove 198.51.100.0/24", exact: true }),
   ).toBeVisible();
@@ -780,8 +778,8 @@ test("independent roles and numeric limits save only changed keys, including fal
     exact: true,
   });
   await openAdvanced(policy);
-  const lifetime = policy.getByLabel("Total session lifetime", { exact: true });
-  const cap = policy.getByLabel("Concurrent session limit", { exact: true });
+  const lifetime = policy.getByLabel("Longest session", { exact: true });
+  const cap = policy.getByLabel("Sessions per person", { exact: true });
   const admin = policy.getByRole("checkbox", {
     name: "Require two-step verification for administrators",
     exact: true,
@@ -794,7 +792,7 @@ test("independent roles and numeric limits save only changed keys, including fal
     name: "Require two-step verification for guests",
     exact: true,
   });
-  const grace = policy.getByLabel("Enrollment grace (days)", { exact: true });
+  const grace = policy.getByLabel("Days to set up two-step", { exact: true });
   await expect(lifetime).toHaveValue("Off");
   await expect(cap).toHaveValue("Off");
   await member.check();
@@ -811,12 +809,8 @@ test("independent roles and numeric limits save only changed keys, including fal
   await policy
     .getByLabel("Failed attempts before lockout", { exact: true })
     .fill("1");
-  await policy
-    .getByLabel("Attempt window (minutes)", { exact: true })
-    .fill("1440");
-  await policy
-    .getByLabel("Lockout duration (minutes)", { exact: true })
-    .fill("1440");
+  await policy.getByLabel("Within (minutes)", { exact: true }).fill("1440");
+  await policy.getByLabel("Lock for (minutes)", { exact: true }).fill("1440");
   await save.click();
   await expect(save).toBeDisabled();
   expect(state.writes.at(-1)?.body).toEqual({
@@ -892,24 +886,24 @@ test("numeric bounds and whole numbers retain invalid drafts without a request o
   });
   await openAdvanced(policy);
   await policy
-    .getByLabel("Total session lifetime", { exact: true })
+    .getByLabel("Longest session", { exact: true })
     .selectOption("Limited");
   await save.click();
   await expect(
     policy.getByLabel("Lifetime (minutes)", { exact: true }),
   ).toHaveAttribute("aria-invalid", "true");
   await policy
-    .getByLabel("Concurrent session limit", { exact: true })
+    .getByLabel("Sessions per person", { exact: true })
     .selectOption("Limited");
   const cases = [
     ["Lifetime (minutes)", "43201", "1"],
     ["Maximum sessions", "101", "1"],
-    ["Enrollment grace (days)", "-1", "0"],
+    ["Days to set up two-step", "-1", "0"],
     ["Failed attempts before lockout", "0", "100"],
-    ["Attempt window (minutes)", "1441", "1"],
-    ["Lockout duration (minutes)", "1.5", "1"],
-    ["Session retention (days)", "0", "1"],
-    ["Security event retention (days)", "3651", "3650"],
+    ["Within (minutes)", "1441", "1"],
+    ["Lock for (minutes)", "1.5", "1"],
+    ["Keep session history (days)", "0", "1"],
+    ["Keep security events (days)", "3651", "3650"],
   ] as const;
   for (const [label, invalid] of cases)
     await policy.getByLabel(label, { exact: true }).fill(invalid);
@@ -923,16 +917,14 @@ test("numeric bounds and whole numbers retain invalid drafts without a request o
       invalid,
     );
   }
-  await policy
-    .getByLabel("Lockout duration (minutes)", { exact: true })
-    .fill("1e2");
+  await policy.getByLabel("Lock for (minutes)", { exact: true }).fill("1e2");
   await save.click();
   await expect(
-    policy.getByLabel("Lockout duration (minutes)", { exact: true }),
+    policy.getByLabel("Lock for (minutes)", { exact: true }),
   ).toHaveAttribute("aria-invalid", "true");
   for (const label of [
-    "Session retention (days)",
-    "Security event retention (days)",
+    "Keep session history (days)",
+    "Keep security events (days)",
   ])
     await expect(
       policy.getByLabel(label, { exact: true }),
@@ -943,8 +935,8 @@ test("numeric bounds and whole numbers retain invalid drafts without a request o
     await policy.getByLabel(label, { exact: true }).fill(valid);
   // Each retention field must reject its own draft while every sibling is valid.
   for (const [label, valid] of [
-    ["Session retention (days)", "1"],
-    ["Security event retention (days)", "3650"],
+    ["Keep session history (days)", "1"],
+    ["Keep security events (days)", "3650"],
   ] as const) {
     const field = policy.getByLabel(label, { exact: true });
     for (const invalid of ["", "0", "-1", "1.5", "1e2", "3651"]) {
@@ -993,10 +985,10 @@ test("separate retention days use Save and Discard without changing Backup", asy
     name: "Retention",
     exact: true,
   });
-  const sessions = retention.getByLabel("Session retention (days)", {
+  const sessions = retention.getByLabel("Keep session history (days)", {
     exact: true,
   });
-  const events = retention.getByLabel("Security event retention (days)", {
+  const events = retention.getByLabel("Keep security events (days)", {
     exact: true,
   });
   const save = policy.getByRole("button", {
@@ -1119,10 +1111,10 @@ async function openMalformedRetentionPolicy(
       .filter({ hasText: "Account policy could not be loaded." }),
   ).toHaveAttribute("data-variant", "destructive");
   await expect(
-    policy.getByLabel("Session retention (days)", { exact: true }),
+    policy.getByLabel("Keep session history (days)", { exact: true }),
   ).toHaveCount(0);
   await expect(
-    policy.getByLabel("Security event retention (days)", { exact: true }),
+    policy.getByLabel("Keep security events (days)", { exact: true }),
   ).toHaveCount(0);
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
@@ -1153,10 +1145,10 @@ test("explicit Retry recovers a malformed retention policy", async ({
     .getByRole("button", { name: "Retry account policy", exact: true })
     .click();
   await expect(
-    policy.getByLabel("Session retention (days)", { exact: true }),
+    policy.getByLabel("Keep session history (days)", { exact: true }),
   ).toHaveValue("57");
   await expect(
-    policy.getByLabel("Security event retention (days)", { exact: true }),
+    policy.getByLabel("Keep security events (days)", { exact: true }),
   ).toHaveValue("823");
   await expect(
     policy.getByRole("button", { name: "Save settings", exact: true }),
@@ -1184,16 +1176,21 @@ test("a refused all-role MFA save retains the future draft and offers the viewer
         exact: true,
       })
       .check();
-  await policy.getByLabel("Enrollment grace (days)", { exact: true }).fill("7");
+  await policy.getByLabel("Days to set up two-step", { exact: true }).fill("7");
   const save = policy.getByRole("button", {
     name: "Save settings",
     exact: true,
   });
   await save.click();
   const refusal = policy.getByRole("alert");
-  await expect(refusal).toContainText(
-    "Set up two-step verification for your own account before you require it for every role",
-  );
+  await expect(
+    refusal.getByText("Set up your own two-step verification first.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    refusal.getByRole("button", { name: "Set up two-step verification" }),
+  ).toBeVisible();
   await expect(save).toBeEnabled();
   for (const role of roles)
     await expect(
@@ -1203,7 +1200,7 @@ test("a refused all-role MFA save retains the future draft and offers the viewer
       }),
     ).toBeChecked();
   await expect(
-    policy.getByLabel("Enrollment grace (days)", { exact: true }),
+    policy.getByLabel("Days to set up two-step", { exact: true }),
   ).toHaveValue("7");
   expect(state.policy).toMatchObject({
     mfa_require_admin: false,
@@ -1461,13 +1458,13 @@ test("Rejected session ending keeps the row and permits retry", async ({
     exact: true,
   });
   await confirmation
-    .getByRole("button", { name: "Confirm end session", exact: true })
+    .getByRole("button", { name: "End session", exact: true })
     .click();
   await expect(confirmation).toContainText("The session could not be ended");
   expect(state.sessions).toHaveLength(7);
   state.sessionWriteStatus = 204;
   await confirmation
-    .getByRole("button", { name: "Confirm end session", exact: true })
+    .getByRole("button", { name: "End session", exact: true })
     .click();
   await expect(confirmation).toBeHidden();
   await expect(end).toHaveCount(0);
@@ -1728,7 +1725,7 @@ test("a failed background session reread retains rows while disabling session-en
     ).toBeVisible();
     await expect(
       confirmation.getByRole("button", {
-        name: "Confirm end session",
+        name: "End session",
         exact: true,
       }),
     ).toBeDisabled();
@@ -1996,7 +1993,7 @@ test("custom password rules and address chips save explicitly and reload indepen
   await minimum.fill("17");
   await minimum.fill("13");
   await expect(save).toBeDisabled();
-  const entry = policy.getByLabel("IP address or CIDR", { exact: true });
+  const entry = policy.getByLabel("Address or range", { exact: true });
   await entry.fill("::1");
   await entry.press("Enter");
   await policy.getByRole("button", { name: "Remove ::1", exact: true }).click();
@@ -2074,13 +2071,13 @@ test("invalid local policy and unavailable caller address retain the draft witho
   await expect(minimum).toHaveAttribute("aria-invalid", "true");
   await expect(policy).toContainText("whole number from 12 to 128");
   await expect(minimum).toHaveValue("11");
-  const entry = policy.getByLabel("IP address or CIDR", { exact: true });
+  const entry = policy.getByLabel("Address or range", { exact: true });
   await entry.fill("invalid-range");
   await policy
     .getByRole("button", { name: "Add address", exact: true })
     .click();
   await expect(entry).toHaveAttribute("aria-invalid", "true");
-  await expect(policy).toContainText("valid IP address or CIDR range");
+  await expect(policy).toContainText("valid address or range");
   state.callerReadStatus = 503;
   await policy
     .getByRole("button", { name: "Use my address", exact: true })
@@ -2197,14 +2194,14 @@ for (const width of [1440, 390])
       width === 390
         ? page.getByRole("region", { name: "Active sessions", exact: true })
         : page.getByRole("table", { name: "Sessions", exact: true });
-    await expect(sessions).toContainText("Sign-in IP: 198.51.100.101");
-    await expect(sessions).toContainText("Sign-in IP: 2001:db8::102");
+    await expect(sessions).toContainText("Sign-in address: 198.51.100.101");
+    await expect(sessions).toContainText("Sign-in address: 2001:db8::102");
     // An unknown address drops out instead of reading "Unknown".
     await expect(sessions).toContainText("Desktop · Safari");
-    await expect(sessions).not.toContainText("Sign-in IP: Unknown");
+    await expect(sessions).not.toContainText("Sign-in address: Unknown");
     // The address is never cut off, on a phone row too.
     const address = sessions
-      .getByText("Sign-in IP: 2001:db8::102")
+      .getByText("Sign-in address: 2001:db8::102")
       .filter({ visible: true });
     expect(
       await address.evaluate((node) => node.scrollWidth <= node.clientWidth),

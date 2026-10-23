@@ -66,13 +66,14 @@ const accessViews = {
     // The Overview shows its group and department totals instead.
     description: "",
   },
+  // The title and the controls say what People and Groups do.
   people: {
     title: "People",
-    description: "Invite people, set their role, and review their sessions.",
+    description: "",
   },
   groups: {
     title: "Groups",
-    description: "Give groups read, write, or manage access to departments.",
+    description: "",
   },
 } as const;
 

@@ -1032,10 +1032,6 @@ export function GroupEditor({
               className="flex flex-col gap-4"
               onSubmit={submit("access")}
             >
-              <p className="text-muted-foreground text-sm">
-                Choose a level for each department. Open a department to give
-                one of its modules its own level.
-              </p>
               <GroupAccessEditor
                 entries={access}
                 departmentSearch={departmentSearch}

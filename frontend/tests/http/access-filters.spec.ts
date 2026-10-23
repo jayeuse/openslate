@@ -114,12 +114,13 @@ test("rare statuses sit under the strip's More menu, which shows the chosen one"
   await status
     .getByRole("button", { name: "More statuses", exact: true })
     .click();
-  for (const name of ["Expired", "Deleted", "Everyone"])
-    await expect(page.getByRole("menuitemradio", { name })).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
-  await page.getByRole("menuitemradio", { name: "Deleted" }).click();
+  for (const name of ["Expired", "Deleted", "Everyone, including deleted"])
+    await expect(
+      page.getByRole("menuitemradio", { name, exact: true }),
+    ).toHaveAttribute("aria-checked", "false");
+  await page
+    .getByRole("menuitemradio", { name: "Deleted", exact: true })
+    .click();
 
   await expect(page).toHaveURL(/status=deleted/);
   await expect.poll(() => api.listReads.at(-1)?.get("deleted")).toBe("only");
@@ -141,7 +142,7 @@ test("rare statuses sit under the strip's More menu, which shows the chosen one"
     .getByRole("button", { name: "Status: Deleted", exact: true })
     .click();
   await expect(
-    page.getByRole("menuitemradio", { name: "Deleted" }),
+    page.getByRole("menuitemradio", { name: "Deleted", exact: true }),
   ).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("Escape");
   // Status is never a chip and never counts on the Filters button.

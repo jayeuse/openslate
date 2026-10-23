@@ -63,7 +63,7 @@ test("the status strip names every directory status, and status never counts as 
   ).toEqual([
     ["Expired", "expired"],
     ["Deleted", "deleted"],
-    ["Everyone", "all"],
+    ["Everyone, including deleted", "all"],
   ]);
   // Status lives only in the strip, so no status is a Filters filter.
   for (const status of ["pending", "expired", "deleted", "all"] as const)

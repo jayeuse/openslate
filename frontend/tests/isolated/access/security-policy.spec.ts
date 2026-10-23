@@ -197,7 +197,7 @@ const deviceRows: {
       ip_address: "198.51.100.7",
     },
     words: "Mobile Chrome",
-    detail: "Mobile · Chrome · Sign-in IP: 198.51.100.7",
+    detail: "Mobile · Chrome · Sign-in address: 198.51.100.7",
   },
   {
     // Unknown parts drop out instead of repeating "Unknown".
@@ -220,7 +220,7 @@ const deviceRows: {
       ip_address: "2001:db8::2",
     },
     words: "unknown device",
-    detail: "Unknown device · Sign-in IP: 2001:db8::2",
+    detail: "Unknown device · Sign-in address: 2001:db8::2",
   },
   {
     name: "nothing known",

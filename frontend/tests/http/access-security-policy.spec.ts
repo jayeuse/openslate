@@ -78,7 +78,7 @@ test("the policy dialog shows the common settings and keeps the rare ones in a c
       }),
     ).toBeVisible();
   await expect(
-    policy.getByLabel("Enrollment grace (days)", { exact: true }),
+    policy.getByLabel("Days to set up two-step", { exact: true }),
   ).toBeVisible();
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
@@ -91,10 +91,10 @@ test("the policy dialog shows the common settings and keeps the rare ones in a c
   });
   await expect(advanced).toHaveAttribute("aria-expanded", "false");
   for (const label of [
-    "IP address or CIDR",
+    "Address or range",
     "Minimum password length",
-    "Total session lifetime",
-    "Session retention (days)",
+    "Longest session",
+    "Keep session history (days)",
     "Failed attempts before lockout",
   ])
     await expect(policy.getByLabel(label, { exact: true })).toBeHidden();
@@ -190,7 +190,7 @@ for (const storage of ["available", "blocked"] as const)
       .click();
     const policy = policyDialog(page);
     await policy.getByRole("button", { name: "Advanced", exact: true }).click();
-    const address = policy.getByLabel("IP address or CIDR", { exact: true });
+    const address = policy.getByLabel("Address or range", { exact: true });
     await address.fill("192.0.2.0/24");
     await policy
       .getByRole("button", { name: "Add address", exact: true })
@@ -207,6 +207,39 @@ for (const storage of ["available", "blocked"] as const)
     );
     await expect(address).toBeFocused();
   });
+
+test("the address list says an empty list allows every address and names the limit only when the list is full", async ({
+  page,
+}) => {
+  const state = await mockManageSecurity(page);
+  state.policy.ip_allow_list = Array.from(
+    { length: 99 },
+    (_, index) => `198.51.100.${index + 1}`,
+  );
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = policyDialog(page);
+  await policy.getByRole("button", { name: /^Advanced/ }).click();
+  const addresses = policy.getByRole("group", {
+    name: "Allowed addresses",
+    exact: true,
+  });
+  await expect(
+    addresses.getByText("Empty allows every address.", { exact: true }),
+  ).toBeVisible();
+  const limit = addresses.getByText(
+    "You can add up to 100 addresses or ranges.",
+    { exact: true },
+  );
+  await expect(limit).toHaveCount(0);
+
+  const entry = policy.getByLabel("Address or range", { exact: true });
+  await entry.fill("203.0.113.0/24");
+  await policy
+    .getByRole("button", { name: "Add address", exact: true })
+    .click();
+  await expect(limit).toBeVisible();
+});
 
 test("a non-owner administrator reads the policy as text and sets up their own two-step on the page", async ({
   page,
@@ -235,19 +268,19 @@ test("a non-owner administrator reads the policy as text and sets up their own t
     await expect(policy.getByRole(role)).toHaveCount(0);
   await expect(policy.getByRole("term")).toHaveText([
     "Two-step verification",
-    "Enrollment grace",
+    "Days to set up two-step",
     "Session timeout",
-    "IP allow list",
+    "Allowed addresses",
     "Minimum password length",
     "Require uppercase and lowercase",
     "Require a number",
-    "Total session lifetime",
-    "Concurrent session limit",
-    "Session retention",
-    "Security event retention",
+    "Longest session",
+    "Sessions per person",
+    "Keep session history",
+    "Keep security events",
     "Failed attempts before lockout",
-    "Attempt window",
-    "Lockout duration",
+    "Within",
+    "Lock for",
   ]);
   await expect(policy.getByRole("definition")).toHaveText([
     "Required for administrators",
@@ -306,7 +339,7 @@ test("an organization owner edits two-step and the address list but reads instal
     }),
   ).toBeEnabled();
   await expect(
-    policy.getByLabel("Enrollment grace (days)", { exact: true }),
+    policy.getByLabel("Days to set up two-step", { exact: true }),
   ).toBeEditable();
   await expect(
     policy.getByLabel("Session timeout", { exact: true }),
@@ -317,7 +350,7 @@ test("an organization owner edits two-step and the address list but reads instal
   );
   await policy.getByRole("button", { name: "Advanced", exact: true }).click();
   await expect(
-    policy.getByLabel("IP address or CIDR", { exact: true }),
+    policy.getByLabel("Address or range", { exact: true }),
   ).toBeEditable();
   await expect(
     policy.getByLabel("Minimum password length", { exact: true }),
@@ -385,7 +418,7 @@ test("End all remote sessions is danger ink and its confirmation counts the sess
   try {
     await confirmation
       .getByRole("button", {
-        name: "Confirm end all remote sessions",
+        name: "End all remote sessions",
         exact: true,
       })
       .click();
@@ -434,7 +467,7 @@ test("End session names the person and device, and its result is a notice outsid
     "Signs out Eli's Mobile Chrome session. Your current session stays.",
   );
   await confirmation
-    .getByRole("button", { name: "Confirm end session", exact: true })
+    .getByRole("button", { name: "End session", exact: true })
     .click();
   await expect(page.getByText("Session ended", { exact: true })).toBeVisible();
   // Each End names its row's device, so the names are unique.
@@ -527,7 +560,7 @@ test("a refused save shows its error and recovery in the fixed footer above the 
   await footer.getByRole("button", { name: "Save settings" }).click();
   const refusal = footer.getByRole("alert");
   await expect(refusal).toContainText(
-    "Set up two-step verification for your own account",
+    "Set up your own two-step verification first.",
   );
   await expect(refusal).toBeInViewport();
   await refusal

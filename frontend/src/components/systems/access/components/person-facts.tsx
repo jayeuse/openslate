@@ -83,8 +83,8 @@ export function PersonFacts({
           {person.mfa_verified_totp === null
             ? "Unknown"
             : person.mfa_verified_totp
-              ? "Verified"
-              : "Not verified"}
+              ? "On"
+              : "Off"}
           {person.mfa_observed_at ? (
             <span className="text-muted-foreground block text-xs">
               Recorded <Recorded value={person.mfa_observed_at} empty="" />

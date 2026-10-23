@@ -166,7 +166,7 @@ export function PersonSessions({
                       ) : null}
                     </p>
                     <p className="text-muted-foreground text-sm break-all">
-                      Sign-in IP: {session.ip_address ?? "Unknown"}
+                      Sign-in address: {session.ip_address ?? "Unknown"}
                     </p>
                     <p className="text-muted-foreground text-sm">
                       Last active {formatDateTime(session.refreshed_at, region)}{" "}

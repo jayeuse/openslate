@@ -45,7 +45,8 @@ type Change = (patch: Partial<DirectoryFilters>) => void;
 /**
  * The status strip beside the People search: the common statuses with
  * organization totals, then More for the rare ones (Expired, Deleted,
- * Everyone). A rare status shows as the strip's selected item.
+ * Everyone, including deleted). A rare status shows as the strip's selected
+ * item.
  */
 export function StatusStrip({
   status,
@@ -101,7 +102,8 @@ export function StatusStrip({
               aria-label={rare ? `Status: ${rare.label}` : "More statuses"}
               className={cn(
                 toggleVariants({ variant: "segmented" }),
-                // Wide enough for "Everyone", so a rare choice moves nothing.
+                // Wide enough for "Expired" and "Deleted"; the longer
+                // "Everyone, including deleted" widens it when chosen.
                 "text-muted-foreground hover:text-foreground h-auto min-h-11 min-w-[6.5rem] flex-none justify-center gap-1 px-2 text-sm whitespace-nowrap hover:bg-transparent xl:min-h-9",
                 "data-[current=true]:text-action-text data-[current=true]:bg-[var(--surface-raised)] data-[current=true]:font-semibold data-[current=true]:shadow-[var(--lift),inset_0_0_0_1px_color-mix(in_oklab,var(--ink-muted)_60%,transparent)]",
               )}

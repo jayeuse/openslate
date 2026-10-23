@@ -74,8 +74,9 @@ import { SecurityPolicyForm } from "./security-policy-form";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 
-const MFA_REQUIRED_MESSAGE =
-  "Set up two-step verification for your own account before you require it for every role. Your changes are still here.";
+// Mapped from the refusal's code (mfa_enrollment_required); the alert's
+// button beside it opens the setup.
+const MFA_REQUIRED_MESSAGE = "Set up your own two-step verification first.";
 
 type SecurityViewProps = {
   active: boolean;
@@ -439,7 +440,7 @@ export function SecurityView({
     if (!validSecurityNetwork(address)) {
       setFormErrors((errors) => ({
         ...errors,
-        ipEntry: "Enter a valid IP address or CIDR range.",
+        ipEntry: "Enter a valid address or range.",
       }));
       return;
     }
@@ -450,7 +451,7 @@ export function SecurityView({
     if (!duplicate && ips.length >= 100) {
       setFormErrors((errors) => ({
         ...errors,
-        ipEntry: "You can add up to 100 addresses or ranges.",
+        ipEntry: "The list is full. Remove an address to add another.",
       }));
       return;
     }
@@ -481,9 +482,7 @@ export function SecurityView({
         (value) => securityNetworkKey(value) === securityNetworkKey(address),
       );
       if (!duplicate && ips.length >= 100) {
-        setError(
-          "You can add up to 100 addresses or ranges. Remove one before adding your address.",
-        );
+        setError("The list is full. Remove an address to add another.");
         return;
       }
       if (!duplicate) {
@@ -671,9 +670,9 @@ export function SecurityView({
             caught.code === "mfa_enrollment_required"
             ? MFA_REQUIRED_MESSAGE
             : caught instanceof ApiError && caught.code === "ip_lockout"
-              ? "The IP allow list would block your current address. Include your current address before saving."
+              ? "These allowed addresses would block your current address. Include your current address before saving."
               : caught instanceof ApiError && caught.status === 422
-                ? "Check the policy values and IP addresses. Your changes are still here."
+                ? "Check the policy values and addresses. Your changes are still here."
                 : caught instanceof ApiError && caught.status === 403
                   ? "Only administrators can change account policy. Reload the page to check your access."
                   : "The policy could not be saved. Try again.",
@@ -780,7 +779,7 @@ export function SecurityView({
         origin: "admin-sessions",
         title: "End session",
         description: `Signs out ${session.person_name}'s ${sessionDeviceWords(session)} session. Your current session stays.`,
-        confirmLabel: "Confirm end session",
+        confirmLabel: "End session",
         pendingLabel: "Ending…",
         action: () =>
           runSessionEnd((signal) => endAccessSession(session, signal), false),
@@ -796,7 +795,7 @@ export function SecurityView({
         title: "End all remote sessions",
         // Replaced at render by the count, read when the dialog opens.
         description: "",
-        confirmLabel: "Confirm end all remote sessions",
+        confirmLabel: "End all remote sessions",
         pendingLabel: "Ending…",
         action: () => runSessionEnd(endAllAccessRemoteSessions, true),
       },

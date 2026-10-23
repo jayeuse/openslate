@@ -116,7 +116,7 @@ test("person security is lazy, current and recovery acceptance never claims deli
   expect(api.sent("GET", `/api/users/${ids.ben}/security`)).toHaveLength(0);
   await sheet.getByRole("tab", { name: "Security", exact: true }).click();
   await expect(
-    sheet.getByText("Two-step verification is set up", { exact: true }),
+    sheet.getByText("Two-step verification: On", { exact: true }),
   ).toBeVisible();
   await sheet
     .getByRole("button", { name: "Send recovery email", exact: true })
@@ -157,7 +157,7 @@ test("unavailable and malformed status stay unavailable until a fresh Retry", as
     "Security could not be loaded.",
   );
   await expect(
-    sheet.getByText("Two-step verification not set up", { exact: true }),
+    sheet.getByText("Two-step verification: Off", { exact: true }),
   ).toHaveCount(0);
   await expect(sheet).not.toContainText("Private provider routing detail");
   valid = true;
@@ -165,7 +165,7 @@ test("unavailable and malformed status stay unavailable until a fresh Retry", as
     .getByRole("button", { name: "Retry security", exact: true })
     .click();
   await expect(
-    sheet.getByText("Two-step verification is set up", { exact: true }),
+    sheet.getByText("Two-step verification: On", { exact: true }),
   ).toBeVisible();
 });
 
@@ -243,6 +243,8 @@ test("reset uses its own confirmation and strict empty command", async ({
   const api = await setup(page);
   const sheet = await open(page);
   await openAdvanced(sheet);
+  // The consequence is said once, in the confirmation, not beside the button.
+  await expect(sheet).not.toContainText("This removes their authenticator app");
   await sheet
     .getByRole("button", {
       name: "Reset two-step verification",

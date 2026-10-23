@@ -81,7 +81,7 @@ test("the directory shows role, status, groups and derived departments, and sear
   const ana = table.getByRole("row", { name: /Ana Santos/ });
   await expect(ana).toContainText("Guest");
   await expect(ana).toContainText(/Ends /);
-  await expect(table.getByRole("row", { name: /cy/ })).toContainText("Pending");
+  await expect(table.getByRole("row", { name: /cy/ })).toContainText("Invited");
   await expect(table.getByRole("row", { name: /Rosa Reyes/ })).toContainText(
     "All departments",
   );
@@ -184,7 +184,33 @@ test("inviting a member sends the chosen groups", async ({ page }) => {
     page.getByRole("table", { name: "People" }).getByRole("row", {
       name: /eve_stone/,
     }),
-  ).toContainText("Pending");
+  ).toContainText("Invited");
+});
+
+test("the invitation shows the username rule only with a username error", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  await page.goto("/access?view=people");
+  await page.getByRole("button", { name: "Invite person" }).click();
+  const dialog = page.getByRole("dialog", { name: "Invite a person" });
+  const username = dialog.getByLabel("Username");
+  await expect(dialog.getByText("Access comes from groups.")).toBeVisible();
+  await expect(dialog).not.toContainText("3 to 100 letters");
+  await expect(username).toHaveAccessibleDescription("");
+
+  await dialog.getByLabel("Email").fill("eve.stone@example.com");
+  await username.fill("e!");
+  await dialog.getByRole("button", { name: "Send invitation" }).click();
+  await expect(username).toHaveAccessibleDescription(
+    "Use 3 to 100 letters, numbers, hyphens, or underscores.",
+  );
+  await username.fill("");
+  await dialog.getByRole("button", { name: "Send invitation" }).click();
+  await expect(username).toHaveAccessibleDescription(
+    "Enter a username of 3 to 100 letters, numbers, hyphens, or underscores.",
+  );
+  expect(api.sent("POST", "/api/auth/invitations")).toHaveLength(0);
 });
 
 test("an existing account invitation reports in-app delivery without promising email", async ({
@@ -748,7 +774,7 @@ for (const width of [1440, 390])
       [
         "Rosa Reyes",
         [
-          ["Two-step verification", /^Verified/],
+          ["Two-step verification", /^On/],
           ["Active sessions", "1"],
           ["Last sign-in", "2026-09-12T09:15:00Z"],
           ["Last activity", "2026-10-01T07:45:00Z"],
@@ -757,7 +783,7 @@ for (const width of [1440, 390])
       [
         "Ben Cruz",
         [
-          ["Two-step verification", /^Not verified/],
+          ["Two-step verification", /^Off/],
           ["Active sessions", "2"],
           ["Last sign-in", "No recorded sign-in"],
           ["Last activity", "2026-10-02T08:30:00Z"],
@@ -1046,9 +1072,9 @@ test("person sessions show sign-in addresses and accepted revocation refreshes t
   let sheet = panel(page, "Ben Cruz");
   await sheet.getByRole("tab", { name: "Sessions", exact: true }).click();
   const sessions = sheet.getByRole("list", { name: "Sessions", exact: true });
-  await expect(sessions).toContainText("Sign-in IP: 198.51.100.101");
-  await expect(sessions).toContainText("Sign-in IP: 2001:db8::102");
-  await expect(sessions).toContainText("Sign-in IP: Unknown");
+  await expect(sessions).toContainText("Sign-in address: 198.51.100.101");
+  await expect(sessions).toContainText("Sign-in address: 2001:db8::102");
+  await expect(sessions).toContainText("Sign-in address: Unknown");
   await expect(sessions.getByRole("listitem")).toHaveCount(3);
   await sessions
     .getByRole("button", { name: /^Sign out Laptop browser/ })
@@ -1058,7 +1084,7 @@ test("person sessions show sign-in addresses and accepted revocation refreshes t
     .getByRole("button", { name: "Sign out", exact: true })
     .click();
   await expect(sessions).not.toContainText("198.51.100.101");
-  await expect(sessions).toContainText("Sign-in IP: 2001:db8::102");
+  await expect(sessions).toContainText("Sign-in address: 2001:db8::102");
   expect(
     api.sent("DELETE", `/api/users/${ids.ben}/sessions/${ids.laptop}`),
   ).toHaveLength(1);
