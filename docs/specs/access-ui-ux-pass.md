@@ -116,13 +116,13 @@ The owner wants a layout that says what each part does, what it gives, and what 
 
 **Counterpoints raised with the owner:**
 
-| Point                       | Pain                                                                                                      | Solution                                                                                                                                     |
-| --------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| A dashboard of active users | The API has no history, so a trend line needs a new endpoint; several count requests slow the first load. | Show windows and a feed from existing data first; a trend chart is decision A7; measure the request count.                                   |
-| An identity of its own      | OpenSlate has no fixed identity by owner decision; a branded Access breaks the four looks.                | Take identity from structure: department marks, level chips, and presence, as the Sandbox and OpenComms already do.                          |
-| Slimmer rows                | Smaller rows shrink targets.                                                                              | Compact sizes from 1280 px up only; the 44 px floor stays on touch screens and phones; the whole row is the target.                          |
-| Slimmer, quieter fields     | A quieter rest state can hide that a field is editable.                                                   | The bottom rule stays at 3:1 in every state; hover shows the full edge; read-only is plain text, so editable and read-only never look alike. |
-| Fewer, smaller buttons      | Actions can hide.                                                                                         | Verb and object labels, counts, Advanced for rare actions, and keyboard access to every row action.                                          |
+| Point                       | Pain                                                                                                      | Solution                                                                                                                                          |
+| --------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A dashboard of active users | The API has no history, so a trend line needs a new endpoint; several count requests slow the first load. | Show windows and a feed from existing data first; a trend chart is decision A7; measure the request count.                                        |
+| An identity of its own      | OpenSlate has no fixed identity by owner decision; a branded Access breaks the four looks.                | Take identity from structure: department marks, level chips, and presence, as the Sandbox and OpenComms already do.                               |
+| Slimmer rows                | Smaller rows shrink targets.                                                                              | Compact sizes from 1280 px up only (by width, as in the Sandbox); the 44 px floor stays below 1280 px and on phones; the whole row is the target. |
+| Slimmer, quieter fields     | A quieter rest state can hide that a field is editable.                                                   | The bottom rule stays at 3:1 in every state; hover shows the full edge; read-only is plain text, so editable and read-only never look alike.      |
+| Fewer, smaller buttons      | Actions can hide.                                                                                         | Verb and object labels, counts, Advanced for rare actions, and keyboard access to every row action.                                               |
 
 ## Decisions
 
@@ -291,6 +291,14 @@ Each phase starts with failing tests, ends with the Access batch (lint, build, t
 | S8  | A failed Discard shows its error in the dialog (R18). The "Finish the current change" notice clears when the change finishes (R8).                                                                                                                                     | HTTP                                                                 |
 | S9  | After a lost answer, Create group and Invite check the server before they offer Retry: an existing group or invitation opens instead of a second one or a conflict message (R13). Create group compares the same-name groups before and after the request, not clocks. | HTTP with a dropped response                                         |
 
+**Phase 1 results (2026-10-23, 099d24e3).** S1 to S9 each have a test that failed first; the final batch passed 396 isolated and 419 HTTP tests across Access and the other pages that use the shared guard. Decisions during the work:
+
+- S1 keeps the last trusted view mounted and inert during the role check; a `verifying` flag also disables Save, Send, and Create in sheets and dialogs, which render in portals. Delete group and the person account actions are not wrapped yet; Phase 3 adds them (H3).
+- S6 narrowed: a save that may have completed stays in the journal, moving inside Access goes ahead, and only sign-out or an organization switch asks. The question lives in the shell guard (`workspace-navigation-guard.tsx`), so it comes from any page; callers pass an optional `exit` signal ("session" or "organization"), and a link counts as a switch only when it names another organization.
+- S9 compares the same-name groups before and after the request, not clocks.
+- The journal keeps one slot per person and per group; old single-slot keys are removed on mount.
+- Live hands-on checks as the administrator (lost form on window return, Back, own role) and as `ho-manager` (Members add and Save) passed.
+
 ### Phase 2: row, button, and control grammar
 
 | ID  | Change                                                                                                                                                                                                                               | Proof                                                                                                             |
@@ -300,6 +308,16 @@ Each phase starts with failing tests, ends with the Access batch (lint, build, t
 | P3  | Status quick filters with counts (All, Active, Invited, Ending soon, Disabled) sit beside the search; the other filters stay under Filters. The inactivity period becomes a filter in the URL.                                       | HTTP: reload keeps the filter                                                                                     |
 | P4  | Controls take their `xl:` sizes (36 px buttons, 32 px row actions); every search shows an icon and a placeholder; links use `--action-text`.                                                                                         | Computed sizes at 1440 and 390                                                                                    |
 | P5  | Slim controls inside `access-ui` (point 5): sizes for every look, the well-and-rule skin for Slate only, label-left rows in sheet Details. The `access-ui` class sits on the page root and on every Access sheet and dialog content. | Computed heights 32 px at 1440 and 44 px at 390; field edge ≥3:1 in the four looks; screenshots in the four looks |
+
+**Phase 2 results (2026-10-23, d51903eb).** The final batch passed 400 isolated and 216 HTTP tests; a `ui-reviewer` round ("fix") was resolved. Live: 40px rows, 32px controls, page scroll 0 at 1280×720 and 1440×900, field edges 5.89:1 (Slate light) and 3.27:1 (Slate dark). Decisions during the work:
+
+- Departments shows in the People row only from 1440px; from 1280 to 1439px the column gives its room to names, and the sheet's Recorded activity list always shows departments by name. The "Departments not fully loaded" disclosure follows the column (row from 1440px, sheet always).
+- Department marks follow the department catalog order (the order OpenComms uses), because Access does not read the Sandbox design.
+- The slim sizes apply by width from 1280px, like the Sandbox, not by pointer type.
+- Invite person and Create group moved into the page header; a cold People load makes five one-row count reads for the quick filters.
+- The People header count is the organization total; the table footer shows the filtered count.
+- Rows say "Pending" but the quick filter says "Invited"; Phase 6 aligns the words. "Manage <group>" names for Groups rows wait for Phase 3.
+- Add to group (A2, H7) is still to do in Phase 3.
 
 ### Phase 3: person and group sheets
 
