@@ -23,6 +23,7 @@ import {
   TablePagination,
 } from "@/components/ui/table-pagination";
 import { ApiError } from "@/lib/api";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import { groupListOptions } from "../adapters/access-queries";
 import { getAccessGroup } from "../state/api";
@@ -37,7 +38,7 @@ import {
   type GroupSort,
 } from "../helpers/groups";
 import { AccessSearchToolbar } from "./access-search-toolbar";
-import { CreateGroupDialog } from "./create-group-dialog";
+import { CreateGroupDialog, hasKeptNewGroup } from "./create-group-dialog";
 import type { GroupEditorTab } from "./group-editor";
 import { GroupPanel } from "./group-panel";
 import { SelectField } from "./people-fields";
@@ -133,7 +134,12 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
   );
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
-  const [createOpen, setCreateOpen] = useState(false);
+  const signedInId = useVerifiedWorkspaceUserId();
+  // A new group's unsaved form in the journal opens again on return, unless
+  // the link opens a group.
+  const [createOpen, setCreateOpen] = useState(
+    () => admin && !searchParams.get("group") && hasKeptNewGroup(signedInId),
+  );
   const [openTab, setOpenTab] = useState<GroupEditorTab | null>(null);
   const [appliedSearch, setAppliedSearch] = useState(filters.query.trim());
   useEffect(() => {

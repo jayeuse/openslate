@@ -2,9 +2,11 @@ import { z } from "zod";
 
 import type { PersonDraft } from "../helpers/people";
 import {
+  accessDraftSubmissionNeedsReload,
   beginDraftSubmission,
   browserStorage,
   clearDraft,
+  discardDraft,
   finishUncertainDraft,
   readDraft,
   writeDraft,
@@ -12,10 +14,10 @@ import {
   type ReadResult,
 } from "./draft-journal-storage";
 
-// The person editor's draft in the per-tab journal ("identity" owner). It
-// keeps unsaved details across a reload and marks a save that was sent but
-// not answered as uncertain, so the editor asks for a review instead of
-// sending it twice.
+// The person editor's drafts in the per-tab journal ("identity" owner), one
+// record per person. It keeps unsaved details across a reload and marks a
+// save that was sent but not answered as uncertain, so the editor asks for a
+// review instead of sending it twice.
 
 const personDraftSchema: z.ZodType<PersonDraft> = z.strictObject({
   username: z.string().max(100),
@@ -40,12 +42,15 @@ const storedSchema: z.ZodType<StoredPersonDraft> = z.strictObject({
 
 const target = (value: StoredPersonDraft) => `person:${value.personId}`;
 const OWNER = "identity";
+/** One journal slot per person, so a kept draft of one never replaces another's. */
+const slot = (personId: string) => ({ owner: OWNER, id: personId }) as const;
 
 export function readPersonDraft(
   userId: string,
+  personId: string,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): ReadResult<StoredPersonDraft> {
-  return readDraft(userId, OWNER, storedSchema, target, storage);
+  return readDraft(userId, slot(personId), storedSchema, target, storage);
 }
 
 export function writePersonDraft(
@@ -53,14 +58,31 @@ export function writePersonDraft(
   value: StoredPersonDraft,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
-  return writeDraft(userId, OWNER, value, storedSchema, target, storage);
+  return writeDraft(
+    userId,
+    slot(value.personId),
+    value,
+    storedSchema,
+    target,
+    storage,
+  );
 }
 
 export function clearPersonDraft(
   userId: string,
+  personId: string,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
-  return clearDraft(userId, OWNER, storedSchema, target, storage);
+  return clearDraft(userId, slot(personId), storedSchema, target, storage);
+}
+
+/** Discard the editable draft; false while the browser still keeps it. */
+export function discardPersonDraft(
+  userId: string,
+  personId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  return discardDraft(userId, slot(personId), storedSchema, target, storage);
 }
 
 export function beginPersonSubmission(
@@ -70,12 +92,20 @@ export function beginPersonSubmission(
 ): boolean {
   return beginDraftSubmission(
     userId,
-    OWNER,
+    slot(value.personId),
     value,
     storedSchema,
     target,
     storage,
   );
+}
+
+/** A save of this target was sent from this page and may still land. */
+export function personSubmissionNeedsReload(
+  userId: string,
+  personId: string,
+): boolean {
+  return accessDraftSubmissionNeedsReload(userId, slot(personId));
 }
 
 /**
@@ -84,12 +114,13 @@ export function beginPersonSubmission(
  */
 export function finishPersonSubmission(
   userId: string,
+  personId: string,
   confirmed: boolean,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
   return finishUncertainDraft(
     userId,
-    OWNER,
+    slot(personId),
     storedSchema,
     target,
     storage,

@@ -91,12 +91,11 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
   const operation = useRef<AbortController | null>(null);
   const curtain = useRef(suspended);
   const self = actorId === person.id;
-  useAccessDraftRegistration(
-    `person-security-${person.id}`,
-    false,
-    () => !operation.current,
+  useAccessDraftRegistration(`person-security-${person.id}`, {
+    dirty: false,
+    discard: () => !operation.current,
     pending,
-  );
+  });
   useLayoutEffect(() => {
     alive.current = true;
     return () => {

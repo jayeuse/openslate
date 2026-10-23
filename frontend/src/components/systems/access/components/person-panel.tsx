@@ -22,6 +22,7 @@ import { formatDate, roleLabels, type DirectoryRow } from "../helpers/people";
 import type { AccessUser } from "../state/api";
 import type { PersonMemberships } from "../hooks/use-people-memberships";
 import { useAccessDraftNavigation } from "../state/draft-navigation";
+import type { DraftScope } from "../state/draft-registry";
 import { DiscardChangesDialog } from "./people-fields";
 import { PersonAccess } from "./person-access";
 import { PersonAccount } from "./person-account";
@@ -30,6 +31,10 @@ import { PersonSecurity } from "./person-security";
 import { PersonSessions } from "./person-sessions";
 
 type PanelTab = "details" | "access" | "sessions" | "security";
+
+/** The drafts this sheet owns; other Access drafts stay as they are. */
+const personSheet: DraftScope = (id) =>
+  id === "person-editor" || id.startsWith("person-security-");
 
 /**
  * One person, opened from the directory. On a phone it fills the screen.
@@ -50,10 +55,13 @@ export function PersonPanel({
 }) {
   const signedInId = useVerifiedWorkspaceUserId();
   const region = useWorkspaceDisplayRegion();
-  const { hasUnsavedDraft, hasPendingOperation, discardUnsavedDrafts } =
+  const { unsavedIn, pendingIn, discardUnsavedDrafts } =
     useAccessDraftNavigation();
+  const hasUnsavedDraft = unsavedIn(personSheet);
+  const hasPendingOperation = pendingIn(personSheet);
   const [blocked, setBlocked] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [discardError, setDiscardError] = useState("");
   const [tab, setTab] = useState<PanelTab>("details");
   const person = row?.user ?? null;
 
@@ -62,8 +70,10 @@ export function PersonPanel({
       setBlocked(true);
       return;
     }
-    if (hasUnsavedDraft) setConfirmClose(true);
-    else {
+    if (hasUnsavedDraft) {
+      setDiscardError("");
+      setConfirmClose(true);
+    } else {
       setTab("details");
       onClose();
     }
@@ -204,9 +214,15 @@ export function PersonPanel({
         open={confirmClose}
         title="Discard unsaved changes?"
         description="Your changes to this person have not been saved."
+        error={discardError}
         onKeep={() => setConfirmClose(false)}
         onDiscard={() => {
-          if (!discardUnsavedDrafts()) return;
+          if (!discardUnsavedDrafts(personSheet)) {
+            setDiscardError(
+              "Your draft could not be cleared from this browser. Keep editing, or try again.",
+            );
+            return;
+          }
           setConfirmClose(false);
           setTab("details");
           onClose();

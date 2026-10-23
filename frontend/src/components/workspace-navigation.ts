@@ -362,3 +362,19 @@ export function currentNavigationKey(
   if (!definition) return null;
   return `${definition.id}:${sectionFor(definition, searchParams, hash)}`;
 }
+
+/**
+ * What a navigation leaves besides the page: the signed-in session (sign-out)
+ * or the organization (a switch). Both clear the tab's saved drafts.
+ */
+export type WorkspaceNavigationExit = "session" | "organization";
+
+/** A link that names an organization leaves the current one only when it names another. */
+export function organizationLinkExit(
+  target: string | undefined,
+  current: string | null,
+): WorkspaceNavigationExit | undefined {
+  return target !== undefined && target !== current
+    ? "organization"
+    : undefined;
+}

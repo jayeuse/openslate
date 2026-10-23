@@ -667,3 +667,21 @@ export function sponsorOptions(users: readonly AccessUser[], now: number) {
       left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
     );
 }
+
+/**
+ * After an invitation that got no answer, the pending person it made for
+ * this email address, if any. Email addresses compare without case.
+ */
+export function invitationMadeByLostInvite<
+  Person extends Pick<AccessUser, "email" | "status" | "is_deleted">,
+>(people: readonly Person[], email: string): Person | null {
+  const wanted = email.trim().toLowerCase();
+  return (
+    people.find(
+      (person) =>
+        !person.is_deleted &&
+        person.status === "pending" &&
+        person.email.trim().toLowerCase() === wanted,
+    ) ?? null
+  );
+}

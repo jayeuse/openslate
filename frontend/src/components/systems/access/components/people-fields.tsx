@@ -23,6 +23,8 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 
+import { ActionError } from "./editor-conflicts";
+
 // Labelled fields shared by the invitation form and the person editor. Each
 // field ties its hint and error to the control with aria-describedby.
 
@@ -122,17 +124,22 @@ export function SelectField({
   );
 }
 
-/** Asks before unsaved changes are thrown away. */
+/**
+ * Asks before unsaved changes are thrown away. A discard that fails keeps
+ * the dialog open with its `error`.
+ */
 export function DiscardChangesDialog({
   open,
   title,
   description,
+  error = "",
   onKeep,
   onDiscard,
 }: {
   open: boolean;
   title: string;
   description: string;
+  error?: string;
   onKeep: () => void;
   onDiscard: () => void;
 }) {
@@ -143,6 +150,7 @@ export function DiscardChangesDialog({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
+        <ActionError message={error} title={null} />
         <AlertDialogFooter>
           <Button variant="outline" className="min-h-11" onClick={onKeep}>
             Keep editing

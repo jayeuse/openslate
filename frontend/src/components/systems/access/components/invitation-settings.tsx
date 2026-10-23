@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { toast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import {
   afterInvitationSettingsChange,
@@ -25,6 +26,7 @@ import {
 } from "../helpers/overview";
 import { updateAccessInvitationSettings } from "../state/api";
 import { useAccessDraftRegistration } from "../state/draft-navigation";
+import { invitationSettingsDraftJournal } from "../state/form-drafts";
 import { ActionError } from "./editor-conflicts";
 import { TextField } from "./people-fields";
 
@@ -51,14 +53,19 @@ function days(count: number) {
 export function InvitationSettings({ titleId }: { titleId: string }) {
   const id = useId();
   const client = useQueryClient();
+  const signedInId = useVerifiedWorkspaceUserId();
   const settings = useQuery(invitationSettingsOptions());
   // Only the fields the person edited; the others follow the saved settings,
-  // so a newer save by someone else is kept for them.
-  const [form, setForm] = useState<Partial<InvitationSettingsForm>>({});
+  // so a newer save by someone else is kept for them. Edits come back from
+  // the journal, for example after Back and Forward.
+  const [form, setForm] = useState<Partial<InvitationSettingsForm>>(
+    () => invitationSettingsDraftJournal.read(signedInId) ?? {},
+  );
   const [errors, setErrors] = useState<InvitationSettingsErrors>({});
   const [error, setError] = useState("");
   const [stale, setStale] = useState(false);
   const [pending, setPending] = useState(false);
+  const [discardIssue, setDiscardIssue] = useState("");
 
   const saved = settings.data;
   const values = saved ? { ...settingsFormFrom(saved), ...form } : null;
@@ -69,18 +76,32 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
       values.guestDurationDays !== String(saved.guest_duration_days));
 
   const discard = useCallback(() => {
+    if (!invitationSettingsDraftJournal.discard(signedInId)) return false;
     setForm({});
     setErrors({});
     setError("");
     setStale(false);
     return true;
-  }, []);
-  useAccessDraftRegistration("invitation-settings", dirty, discard);
+  }, [signedInId]);
+  useAccessDraftRegistration("invitation-settings", {
+    dirty,
+    discard,
+    pending,
+  });
 
   function update(patch: Partial<InvitationSettingsForm>) {
-    setForm((current) => ({ ...current, ...patch }));
+    const next = { ...form, ...patch };
+    setForm(next);
     setErrors({});
     setError("");
+    const unchanged =
+      saved !== undefined &&
+      (next.invitationExpiryDays ?? String(saved.invitation_expiry_days)) ===
+        String(saved.invitation_expiry_days) &&
+      (next.guestDurationDays ?? String(saved.guest_duration_days)) ===
+        String(saved.guest_duration_days);
+    if (unchanged) invitationSettingsDraftJournal.discard(signedInId);
+    else invitationSettingsDraftJournal.write(signedInId, next);
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -99,6 +120,7 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
     try {
       const result = await updateAccessInvitationSettings(patch);
       afterInvitationSettingsChange(client, result);
+      invitationSettingsDraftJournal.discard(signedInId);
       setForm({});
       setStale(false);
       toast.add({ title: "Invitation settings saved", type: "success" });
@@ -201,6 +223,7 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
             </Alert>
           ) : null}
           <ActionError message={error} />
+          <ActionError message={discardIssue} title={null} />
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             {dirty || stale ? (
               <Button
@@ -208,7 +231,13 @@ export function InvitationSettings({ titleId }: { titleId: string }) {
                 variant="outline"
                 className="min-h-11"
                 disabled={pending}
-                onClick={discard}
+                onClick={() =>
+                  setDiscardIssue(
+                    discard()
+                      ? ""
+                      : "Your draft could not be cleared from this browser. Keep editing, or try again.",
+                  )
+                }
               >
                 Discard changes
               </Button>

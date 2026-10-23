@@ -511,3 +511,23 @@ export function groupErrorMessage(error: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+/**
+ * After a create that got no answer, the group it made: a group with the
+ * same name whose ID was not among the same-name groups read before the
+ * request. Group names are not unique, and the server's clock may differ
+ * from the browser's, so only the IDs tell the new group apart.
+ */
+export function groupMadeByLostCreate(
+  groups: readonly AccessGroup[],
+  name: string,
+  before: ReadonlySet<string>,
+): AccessGroup | null {
+  const wanted = name.trim();
+  return (
+    groups.find(
+      (group) =>
+        !group.is_deleted && group.name === wanted && !before.has(group.id),
+    ) ?? null
+  );
+}

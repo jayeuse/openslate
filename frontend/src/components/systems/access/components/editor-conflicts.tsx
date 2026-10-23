@@ -224,14 +224,21 @@ export function ConflictDialog({
   );
 }
 
-export function ActionError({ message }: { message: string }) {
+/** A failed action's reason; `title` null shows the reason alone. */
+export function ActionError({
+  message,
+  title = "Could not apply the change",
+}: {
+  message: string;
+  title?: string | null;
+}) {
   if (!message) return null;
   return (
     <Alert variant="destructive" role="alert">
       <AlertCircle />
       <div className="mt-2">
-        <p className="font-medium">Could not apply the change</p>
-        <p className="mt-1">{message}</p>
+        {title ? <p className="font-medium">{title}</p> : null}
+        <p className={title ? "mt-1" : undefined}>{message}</p>
       </div>
     </Alert>
   );

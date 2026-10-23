@@ -7,8 +7,34 @@ export const draftIdentifier = z
   .max(256)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const MAX_RECORD_LENGTH = 32_768;
-export type AccessDraftOwner = "identity" | "group" | "settings";
+export type AccessDraftOwner =
+  "identity" | "group" | "settings" | "invite" | "group-create";
+/**
+ * Where a draft lives: an owner with one slot, or an owner with one slot per
+ * target (a person or a group), so editing one target never replaces the
+ * kept draft of another.
+ */
+export type AccessDraftSlot =
+  AccessDraftOwner | { owner: AccessDraftOwner; id: string };
 const submissionsBegunInDocument = new Set<string>();
+// Advances whenever every account's drafts are cleared (sign-out, an account
+// or organization switch). A save that answers after a newer generation
+// began writes nothing back.
+let journalGeneration = 0;
+
+export function accessDraftJournalGeneration(): number {
+  return journalGeneration;
+}
+
+function slotOwner(slot: AccessDraftSlot): AccessDraftOwner {
+  return typeof slot === "string" ? slot : slot.owner;
+}
+
+function encodeKeyPart(value: string): string {
+  // encodeURIComponent leaves dots untouched; encode them so one part can
+  // never prefix-match another.
+  return encodeURIComponent(value).replaceAll(".", "%2E");
+}
 
 export type AccessDraftStorage = Pick<
   Storage,
@@ -31,27 +57,30 @@ export function browserStorage(): AccessDraftStorage | undefined {
 
 export function accessDraftStorageKey(
   userId: string,
-  owner: AccessDraftOwner,
+  slot: AccessDraftSlot,
 ): string {
-  return `${accessDraftUserStoragePrefix(userId)}${owner}`;
+  const prefix = accessDraftUserStoragePrefix(userId);
+  return typeof slot === "string"
+    ? `${prefix}${slot}`
+    : `${prefix}${slot.owner}.${encodeKeyPart(slot.id)}`;
 }
 
 export function accessDraftSubmissionNeedsReload(
   userId: string,
-  owner: AccessDraftOwner,
+  slot: AccessDraftSlot,
 ): boolean {
-  return submissionsBegunInDocument.has(accessDraftStorageKey(userId, owner));
+  return submissionsBegunInDocument.has(accessDraftStorageKey(userId, slot));
 }
 
 export function accessDraftUserStoragePrefix(userId: string): string {
-  // encodeURIComponent leaves dots untouched; encode them to keep user keys
-  // from prefix-matching another account's key during cleanup.
-  return `${ACCESS_DRAFT_STORAGE_PREFIX}${encodeURIComponent(userId).replaceAll(".", "%2E")}.`;
+  // Encoded dots keep user keys from prefix-matching another account's key
+  // during cleanup.
+  return `${ACCESS_DRAFT_STORAGE_PREFIX}${encodeKeyPart(userId)}.`;
 }
 
 export function readDraft<T>(
   userId: string,
-  owner: AccessDraftOwner,
+  slot: AccessDraftSlot,
   schema: z.ZodType<T>,
   target: (value: T) => string,
   storage: AccessDraftStorage | undefined,
@@ -59,12 +88,13 @@ export function readDraft<T>(
   if (!storage) return { status: "unavailable", value: null };
   let raw: string | null;
   try {
-    raw = storage.getItem(accessDraftStorageKey(userId, owner));
+    raw = storage.getItem(accessDraftStorageKey(userId, slot));
   } catch {
     return { status: "unavailable", value: null };
   }
   if (raw === null) return { status: "ready", value: null };
   if (raw.length > MAX_RECORD_LENGTH) return { status: "invalid", value: null };
+  const owner = slotOwner(slot);
   try {
     const data: unknown = JSON.parse(raw);
     const retired = z
@@ -109,7 +139,7 @@ export function readDraft<T>(
 
 export function writeDraft<T>(
   userId: string,
-  owner: AccessDraftOwner,
+  slot: AccessDraftSlot,
   payload: T,
   schema: z.ZodType<T>,
   target: (value: T) => string,
@@ -119,19 +149,19 @@ export function writeDraft<T>(
   const parsed = schema.safeParse(payload);
   if (!draftIdentifier.safeParse(userId).success || !parsed.success)
     return false;
-  const current = readDraft(userId, owner, schema, target, storage);
+  const current = readDraft(userId, slot, schema, target, storage);
   if (current.status === "uncertain" || current.status === "unavailable")
     return false;
   const raw = JSON.stringify({
     version: 1,
     userId,
-    owner,
+    owner: slotOwner(slot),
     target: target(parsed.data),
     payload: parsed.data,
   });
   if (raw.length > MAX_RECORD_LENGTH) return false;
   try {
-    storage.setItem(accessDraftStorageKey(userId, owner), raw);
+    storage.setItem(accessDraftStorageKey(userId, slot), raw);
     return true;
   } catch {
     return false;
@@ -140,7 +170,7 @@ export function writeDraft<T>(
 
 export function beginDraftSubmission<T>(
   userId: string,
-  owner: AccessDraftOwner,
+  slot: AccessDraftSlot,
   payload: T,
   schema: z.ZodType<T>,
   target: (value: T) => string,
@@ -150,13 +180,13 @@ export function beginDraftSubmission<T>(
   const parsed = schema.safeParse(payload);
   if (!draftIdentifier.safeParse(userId).success || !parsed.success)
     return false;
-  if (readDraft(userId, owner, schema, target, storage).status !== "ready")
+  if (readDraft(userId, slot, schema, target, storage).status !== "ready")
     return false;
-  const key = accessDraftStorageKey(userId, owner);
+  const key = accessDraftStorageKey(userId, slot);
   const raw = JSON.stringify({
     version: 1,
     userId,
-    owner,
+    owner: slotOwner(slot),
     target: target(parsed.data),
     state: "uncertain",
     payload: parsed.data,
@@ -174,21 +204,21 @@ export function beginDraftSubmission<T>(
 
 export function clearDraft<T>(
   userId: string,
-  owner: AccessDraftOwner,
+  slot: AccessDraftSlot,
   schema: z.ZodType<T>,
   target: (value: T) => string,
   storage: AccessDraftStorage | undefined,
   onlyUncertain = false,
 ): boolean {
   if (!storage) return false;
-  const current = readDraft(userId, owner, schema, target, storage);
+  const current = readDraft(userId, slot, schema, target, storage);
   if (
     onlyUncertain
       ? current.status !== "uncertain"
       : current.status === "uncertain" || current.status === "unavailable"
   )
     return false;
-  const key = accessDraftStorageKey(userId, owner);
+  const key = accessDraftStorageKey(userId, slot);
   let retired = false;
   try {
     storage.setItem(
@@ -196,7 +226,7 @@ export function clearDraft<T>(
       JSON.stringify({
         version: 1,
         userId,
-        owner,
+        owner: slotOwner(slot),
         target: "retired",
         state: "retired",
       }),
@@ -215,17 +245,36 @@ export function clearDraft<T>(
 
 export function finishUncertainDraft<T>(
   userId: string,
-  owner: AccessDraftOwner,
+  slot: AccessDraftSlot,
   schema: z.ZodType<T>,
   target: (value: T) => string,
   storage: AccessDraftStorage | undefined,
   confirmed: boolean,
 ): boolean {
-  const key = accessDraftStorageKey(userId, owner);
+  const key = accessDraftStorageKey(userId, slot);
   if (!confirmed && submissionsBegunInDocument.has(key)) return false;
-  if (!clearDraft(userId, owner, schema, target, storage, true)) return false;
+  if (!clearDraft(userId, slot, schema, target, storage, true)) return false;
   if (confirmed) submissionsBegunInDocument.delete(key);
   return true;
+}
+
+/**
+ * Discard an editable draft. True when no editable draft remains in this
+ * browser afterwards; false when one is still kept (the storage refused the
+ * change) or the slot holds a save that may have completed.
+ */
+export function discardDraft<T>(
+  userId: string,
+  slot: AccessDraftSlot,
+  schema: z.ZodType<T>,
+  target: (value: T) => string,
+  storage: AccessDraftStorage | undefined,
+): boolean {
+  // Without storage nothing was ever kept.
+  if (!storage) return true;
+  if (clearDraft(userId, slot, schema, target, storage)) return true;
+  const after = readDraft(userId, slot, schema, target, storage);
+  return after.status === "ready" && after.value === null;
 }
 
 export function clearDraftKeys(
@@ -253,6 +302,9 @@ export function clearAccessDraftStorageExcept(
   userId: string | null,
   storage: AccessDraftStorage | undefined = browserStorage(),
 ): boolean {
+  // Clearing every account's drafts (sign-out, an account or organization
+  // switch) starts a new generation; keeping one account's drafts does not.
+  if (userId === null) journalGeneration += 1;
   const keep = userId === null ? null : accessDraftUserStoragePrefix(userId);
   return clearDraftKeys(
     (key) =>
@@ -260,4 +312,78 @@ export function clearAccessDraftStorageExcept(
       (keep === null || !key.startsWith(keep)),
     storage,
   );
+}
+
+function uncertainKeys(userId: string, storage: AccessDraftStorage): string[] {
+  const prefix = accessDraftUserStoragePrefix(userId);
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index++) {
+    const key = storage.key(index);
+    if (!key?.startsWith(prefix)) continue;
+    try {
+      const record: unknown = JSON.parse(storage.getItem(key) ?? "null");
+      if (
+        typeof record === "object" &&
+        record !== null &&
+        "state" in record &&
+        record.state === "uncertain"
+      )
+        keys.push(key);
+    } catch {
+      // An unreadable record is not a save that may have completed.
+    }
+  }
+  return keys;
+}
+
+/**
+ * Whether this account's journal holds a save that may have completed. It
+ * stays in the journal after its editor closes, so the page guards ask about
+ * it before an organization switch or a sign-out clears it.
+ */
+export function accessDraftsHoldUncertainSave(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  if (!storage) return false;
+  try {
+    return uncertainKeys(userId, storage).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Forgets this account's saves that may have completed, after a person chose to discard them. */
+export function abandonUncertainDrafts(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): boolean {
+  if (!storage) return true;
+  try {
+    for (const key of uncertainKeys(userId, storage)) {
+      storage.removeItem(key);
+      submissionsBegunInDocument.delete(key);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Removes this account's drafts from the earlier journal, which kept one
+ * person and one group draft per account. Per-target slots replaced it.
+ */
+export function removeSingleSlotDrafts(
+  userId: string,
+  storage: AccessDraftStorage | undefined = browserStorage(),
+): void {
+  if (!storage) return;
+  for (const owner of ["identity", "group"] as const) {
+    try {
+      storage.removeItem(accessDraftStorageKey(userId, owner));
+    } catch {
+      // A kept old record is never read again; sign-out clears it.
+    }
+  }
 }

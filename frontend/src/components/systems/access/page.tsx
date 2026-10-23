@@ -27,6 +27,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   GuardedWorkspaceLink,
   useWorkspaceNavigationGuard,
+  type WorkspaceNavigationExit,
 } from "@/components/workspace-navigation-guard";
 import {
   accessNavigationFor,
@@ -39,12 +40,17 @@ import {
 
 import { authMeOptions } from "./adapters/access-queries";
 import { DiscardChangesDialog } from "./components/people-fields";
+import {
+  abandonUncertainDrafts,
+  accessDraftsHoldUncertainSave,
+} from "./state/draft-journal-storage";
 import { GroupsView } from "./components/groups-view";
 import { OverviewView } from "./components/overview-view";
 import { SecurityView } from "./components/security-view";
 import { PeopleView } from "./components/people-view";
 import {
   AccessDraftNavigationProvider,
+  AccessVerifyingProvider,
   useAccessDraftNavigation,
 } from "./state/draft-navigation";
 
@@ -150,17 +156,30 @@ function AccessControlCenter() {
       ? identity.data
       : null;
   const access = trustedIdentity ? accessNavigationFor(trustedIdentity) : null;
+  // A window return checks the session and the role again. Until that check
+  // ends, the last trusted view stays mounted, so open forms, dialogs, tabs
+  // and filters survive it. The page content is inert meanwhile; sheets and
+  // dialogs render in portals outside it and disable their submit buttons
+  // through AccessVerifyingProvider. Another account or organization
+  // remounts the page in the shell.
+  const verifying = suspended || roleAwaitingVerification;
+  const [lastAccess, setLastAccess] = useState<AccessNavigation | null>(null);
+  if (access !== null && access !== lastAccess) setLastAccess(access);
+  const shownAccess =
+    access ?? (verifying && !identity.isError ? lastAccess : null);
   const requestedView = searchParams.get("view");
-  const navigationBlock = useUnsavedDraftGuard(securityBusy);
+  const navigationBlock = useUnsavedDraftGuard(userId, securityBusy);
   useEffect(() => {
     if (access === "groups" && requestedView !== "groups")
       router.replace(`${pathname}?view=groups` as Route);
   }, [access, pathname, requestedView, router]);
   const view =
-    access === null || access === "none" ? null : viewFor(access, searchParams);
+    shownAccess === null || shownAccess === "none"
+      ? null
+      : viewFor(shownAccess, searchParams);
   const copy = view === null ? null : accessViews[view];
   const description =
-    access === "groups"
+    shownAccess === "groups"
       ? "Change who is in the groups you manage."
       : (copy?.description ?? "");
   const identityMismatch =
@@ -191,7 +210,7 @@ function AccessControlCenter() {
           Retry
         </Button>
       </div>
-    ) : access === "none" ? (
+    ) : shownAccess === "none" ? (
       <Empty className="border">
         <EmptyHeader>
           <EmptyTitle>Access is managed by administrators</EmptyTitle>
@@ -202,26 +221,30 @@ function AccessControlCenter() {
       </Empty>
     ) : (
       <LoadingRegion
-        loading={identity.isPending || roleAwaitingVerification || suspended}
+        loading={shownAccess === null}
         label="Loading Access…"
         skeleton={<Skeleton className="h-40 w-full" />}
       >
-        {view === "people" ? (
-          <PeopleView />
-        ) : view === "groups" ? (
-          <GroupsView mode={access === "all" ? "admin" : "manager"} />
-        ) : view === "overview" ? (
-          <OverviewView />
-        ) : null}
+        <div inert={verifying} aria-busy={verifying}>
+          {view === "people" ? (
+            <PeopleView />
+          ) : view === "groups" ? (
+            <GroupsView mode={shownAccess === "all" ? "admin" : "manager"} />
+          ) : view === "overview" ? (
+            <OverviewView />
+          ) : null}
+        </div>
       </LoadingRegion>
     );
   return (
     <AccessFrame
       title={copy?.title ?? "Access"}
       description={description}
-      showSecurityLink={access === "all" && view === "overview"}
+      showSecurityLink={shownAccess === "all" && view === "overview"}
     >
-      {body}
+      <AccessVerifyingProvider verifying={verifying}>
+        {body}
+      </AccessVerifyingProvider>
       <SecurityView
         active={requestedView === "security"}
         admitted={access === "all"}
@@ -232,33 +255,54 @@ function AccessControlCenter() {
   );
 }
 
-type PendingNavigation = { resume: () => void };
+type PendingNavigation = {
+  resume: () => void;
+  /** Saves that may have completed would be cleared by this exit. */
+  unresolved: boolean;
+};
+
+const finishFirst = "Finish the current change before leaving this page.";
+const discardFailed =
+  "Your draft could not be cleared from this browser. Keep editing, or try again.";
 
 /**
  * Holds workspace navigation while an Access editor has unsaved changes and
  * asks before discarding them. A reload or tab close gets the browser's own
- * warning.
+ * warning. The shell asks about a save that may have completed before a
+ * sign-out or an organization switch; when this page asks first, its
+ * Discard forgets those saves too, so only one question shows.
  */
-function useUnsavedDraftGuard(securityBusy: boolean): ReactNode {
+function useUnsavedDraftGuard(
+  userId: string,
+  securityBusy: boolean,
+): ReactNode {
   const { hasUnsavedDraft, hasPendingOperation, discardUnsavedDrafts } =
     useAccessDraftNavigation();
   const [pending, setPending] = useState<PendingNavigation | null>(null);
   const [notice, setNotice] = useState("");
+  const [discardError, setDiscardError] = useState("");
+  // The wait notice ends with the change it waited for.
+  if (notice === finishFirst && !securityBusy && !hasPendingOperation)
+    setNotice("");
 
   const guard = useCallback(
-    (href: string, resume: () => void) => {
+    (href: string, resume: () => void, exit?: WorkspaceNavigationExit) => {
       if (securityBusy || hasPendingOperation) {
-        setNotice("Finish the current change before leaving this page.");
+        setNotice(finishFirst);
         return false;
       }
       if (!hasUnsavedDraft) return true;
       if (new URL(href, window.location.origin).href === window.location.href)
         return true;
       setNotice("");
-      setPending({ resume });
+      setDiscardError("");
+      setPending({
+        resume,
+        unresolved: exit !== undefined && accessDraftsHoldUncertainSave(userId),
+      });
       return false;
     },
-    [hasUnsavedDraft, securityBusy, hasPendingOperation],
+    [hasUnsavedDraft, securityBusy, hasPendingOperation, userId],
   );
   useWorkspaceNavigationGuard(guard);
 
@@ -283,20 +327,21 @@ function useUnsavedDraftGuard(securityBusy: boolean): ReactNode {
         open={pending !== null}
         title="Discard unsaved changes?"
         description="You have changes in Access that are not saved. Leaving this page discards them."
+        error={discardError}
         onKeep={() => setPending(null)}
         onDiscard={() => {
           const next = pending;
           if (!next) return;
           if (hasPendingOperation) {
-            setNotice("Finish the current change before leaving this page.");
+            setNotice(finishFirst);
             setPending(null);
             return;
           }
-          if (!discardUnsavedDrafts()) {
-            setNotice(
-              "Your draft could not be cleared from this browser. Keep editing, or try again.",
-            );
-            setPending(null);
+          if (
+            !discardUnsavedDrafts() ||
+            (next.unresolved && !abandonUncertainDrafts(userId))
+          ) {
+            setDiscardError(discardFailed);
             return;
           }
           setPending(null);

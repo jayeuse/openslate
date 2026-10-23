@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/table-pagination";
 import { ApiError } from "@/lib/api";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 
 import {
   directoryPageOptions,
@@ -45,7 +46,7 @@ import {
 } from "../helpers/people";
 import type { AccessDirectoryUser } from "../state/api";
 import { AccessSearchToolbar } from "./access-search-toolbar";
-import { InvitePersonDialog } from "./invite-person-dialog";
+import { hasKeptInvitation, InvitePersonDialog } from "./invite-person-dialog";
 import { SelectField } from "./people-fields";
 import { usePeopleSearch } from "../hooks/use-people-search";
 import {
@@ -310,7 +311,12 @@ export function PeopleView() {
   );
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_TABLE_PAGE_SIZE);
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const signedInId = useVerifiedWorkspaceUserId();
+  // An unsent invitation in the journal opens again on return, unless the
+  // link opens a person.
+  const [inviteOpen, setInviteOpen] = useState(
+    () => !searchParams.get("user") && hasKeptInvitation(signedInId),
+  );
   const [now] = useState(() => Date.now());
   const wide = useSyncExternalStore(
     subscribeWide,
@@ -863,7 +869,11 @@ export function PeopleView() {
         }
         onClose={() => replaceUserParam(null)}
       />
-      <InvitePersonDialog open={inviteOpen} onOpenChange={setInviteOpen} />
+      <InvitePersonDialog
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+        onFound={replaceUserParam}
+      />
     </div>
   );
 }

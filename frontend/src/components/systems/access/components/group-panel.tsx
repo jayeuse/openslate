@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,8 +17,12 @@ import {
 
 import type { GroupRow } from "../helpers/groups";
 import { useAccessDraftNavigation } from "../state/draft-navigation";
+import type { DraftScope } from "../state/draft-registry";
 import { GroupEditor, type GroupEditorTab } from "./group-editor";
 import { DiscardChangesDialog } from "./people-fields";
+
+/** The drafts this sheet owns; other Access drafts stay as they are. */
+const groupSheet: DraftScope = (id) => id === "group-editor";
 
 /**
  * One group, opened from the list. On a phone it fills the screen. Closing
@@ -36,20 +41,33 @@ export function GroupPanel({
   initialTab: GroupEditorTab | null;
   onClose: () => void;
 }) {
-  const { hasUnsavedDraft, discardUnsavedDrafts } = useAccessDraftNavigation();
+  const { unsavedIn, pendingIn, discardUnsavedDrafts } =
+    useAccessDraftNavigation();
+  const hasUnsavedDraft = unsavedIn(groupSheet);
+  const hasPendingOperation = pendingIn(groupSheet);
+  const [blocked, setBlocked] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [discardError, setDiscardError] = useState("");
   const defaultTab: GroupEditorTab = mode === "manager" ? "members" : "details";
   const [tab, setTab] = useState<GroupEditorTab | null>(null);
   const group = row?.group ?? null;
 
   function close() {
     setTab(null);
+    setBlocked(false);
     onClose();
   }
 
   function requestClose() {
-    if (hasUnsavedDraft) setConfirmClose(true);
-    else close();
+    // A save in flight finishes first, so it never reports a discarded change.
+    if (hasPendingOperation) {
+      setBlocked(true);
+      return;
+    }
+    if (hasUnsavedDraft) {
+      setDiscardError("");
+      setConfirmClose(true);
+    } else close();
   }
 
   const members = group?.member_ids.length ?? 0;
@@ -96,6 +114,11 @@ export function GroupPanel({
               >
                 <X aria-hidden="true" />
               </SheetClose>
+              {blocked && hasPendingOperation ? (
+                <Alert className="m-5 mb-0">
+                  Finish the current change before closing.
+                </Alert>
+              ) : null}
               <GroupEditor
                 key={group.id}
                 group={group}
@@ -113,9 +136,15 @@ export function GroupPanel({
         open={confirmClose}
         title="Discard unsaved changes?"
         description="Your changes to this group have not been saved."
+        error={discardError}
         onKeep={() => setConfirmClose(false)}
         onDiscard={() => {
-          if (!discardUnsavedDrafts()) return;
+          if (!discardUnsavedDrafts(groupSheet)) {
+            setDiscardError(
+              "Your draft could not be cleared from this browser. Keep editing, or try again.",
+            );
+            return;
+          }
           setConfirmClose(false);
           close();
         }}

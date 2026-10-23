@@ -316,7 +316,10 @@ export function SecurityView({
     setNotice("Unsaved changes discarded.");
     return true;
   }
-  useAccessDraftRegistration("security-policy", securityDirty, clearDraft);
+  useAccessDraftRegistration("security-policy", {
+    dirty: securityDirty,
+    discard: clearDraft,
+  });
 
   const begin = useCallback(
     (writing: boolean) => {

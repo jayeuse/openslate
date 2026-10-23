@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useId, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/ui/alert";
@@ -13,6 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -51,12 +59,18 @@ import {
   type AccessGroupAccessEntry,
   type AccessVersioned,
 } from "../state/api";
-import { accessDraftSubmissionNeedsReload } from "../state/draft-journal-storage";
-import { useAccessDraftRegistration } from "../state/draft-navigation";
+import { accessDraftJournalGeneration } from "../state/draft-journal-storage";
+import {
+  useAccessDraftRegistration,
+  useAccessVerifying,
+  verifyingReason,
+} from "../state/draft-navigation";
 import {
   beginGroupSubmission,
   clearGroupDraft,
+  discardGroupDraft,
   finishGroupSubmission,
+  groupSubmissionNeedsReload,
   readGroupDraft,
   writeGroupDraft,
   type GroupSection,
@@ -166,8 +180,8 @@ export function GroupEditor({
   const client = useQueryClient();
   const signedInId = useVerifiedWorkspaceUserId();
   const admin = mode === "admin";
-  const [stored] = useState(() => readGroupDraft(signedInId));
-  const ownRecord = stored.value?.groupId === group.id ? stored.value : null;
+  const [stored] = useState(() => readGroupDraft(signedInId, group.id));
+  const ownRecord = stored.value;
   const [edits, setEdits] = useState<Edits>(() =>
     ownRecord && stored.status === "ready"
       ? {
@@ -183,9 +197,7 @@ export function GroupEditor({
   const [journalIssue, setJournalIssue] = useState(() =>
     stored.status === "invalid"
       ? "A saved draft could not be restored safely, so it was not used."
-      : stored.status === "uncertain" && !ownRecord
-        ? "A change to another group may not have been saved. Open that group to review it before you edit here."
-        : "",
+      : "",
   );
   const [latest, setLatest] = useState<AccessGroup | null>(null);
   const [errors, setErrors] = useState<Partial<Record<GroupSection, string>>>(
@@ -196,6 +208,18 @@ export function GroupEditor({
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  // Advances when the person discards the drafts; a save that answers
+  // afterwards writes nothing back.
+  const discarded = useRef(0);
+  // A save that answers after the editor closed (Back, a section switch)
+  // keeps its draft in the journal for the return.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   // A save answers with the new group before the list is read again.
   const shown =
@@ -230,40 +254,43 @@ export function GroupEditor({
   const departments = catalogDepartments(departmentSearch.combined);
   const modules = catalogModules(moduleSearch.combined);
   const dirty = Boolean(edits.details || edits.members || edits.access);
+  const verifying = useAccessVerifying();
   const locked = uncertain !== null || pending !== null;
 
   const persist = useCallback(
     (next: Edits) => {
       const kept = next.details || next.members || next.access;
       if (!kept) {
-        clearGroupDraft(signedInId);
+        clearGroupDraft(signedInId, group.id);
         return;
       }
-      // An unresolved save of another group blocks the journal; keep that
-      // notice rather than replacing it.
       if (
         !writeGroupDraft(signedInId, {
           groupId: group.id,
           ...next,
           sending: null,
-        }) &&
-        stored.status !== "uncertain"
+        })
       )
         setJournalIssue(
           "This browser cannot keep your draft, so unsaved changes will be lost if the page reloads.",
         );
     },
-    [group.id, signedInId, stored.status],
+    [group.id, signedInId],
   );
 
   const discard = useCallback(() => {
-    clearGroupDraft(signedInId);
+    if (!discardGroupDraft(signedInId, group.id)) return false;
+    discarded.current += 1;
     setEdits(noEdits);
     setErrors({});
     setNameError(null);
     return true;
-  }, [signedInId]);
-  useAccessDraftRegistration("group-editor", dirty && !uncertain, discard);
+  }, [signedInId, group.id]);
+  useAccessDraftRegistration("group-editor", {
+    dirty: dirty && !uncertain,
+    discard,
+    pending: pending !== null,
+  });
 
   function commitEdits(next: Edits) {
     setEdits(next);
@@ -347,11 +374,19 @@ export function GroupEditor({
       sending: section,
     };
     const journaled = beginGroupSubmission(signedInId, record);
+    const run = discarded.current;
+    const journal = accessDraftJournalGeneration();
+    // A discard, a sign-out or an organization switch since the save began
+    // wins; otherwise the drafts go back to the journal.
+    const keepsJournal = () =>
+      discarded.current === run && accessDraftJournalGeneration() === journal;
     let result: AccessVersioned<AccessGroup>;
     try {
       result = await request(section, fresh, resolved);
     } catch (caught) {
       if (isUnansweredRequest(caught)) {
+        // The journal keeps the unanswered save for review on return.
+        if (discarded.current !== run || !mounted.current) return;
         if (journaled) {
           setEdits(noEdits);
           setUncertain(record);
@@ -368,7 +403,12 @@ export function GroupEditor({
         void afterAccessGroupChange(client);
         return;
       }
-      finishGroupSubmission(signedInId, true);
+      finishGroupSubmission(signedInId, group.id, true);
+      if (!keepsJournal()) return;
+      if (!mounted.current) {
+        persist(withEdit);
+        return;
+      }
       commitEdits(withEdit);
       if (caught instanceof ApiError && caught.status === 412 && retry) {
         // Someone changed this group between the read and the save.
@@ -385,7 +425,13 @@ export function GroupEditor({
       void afterAccessGroupChange(client);
       return;
     }
-    finishGroupSubmission(signedInId, true);
+    finishGroupSubmission(signedInId, group.id, true);
+    if (!keepsJournal()) return;
+    if (!mounted.current) {
+      // The other sections' drafts stay for the return.
+      persist({ ...others, [section]: null });
+      return;
+    }
     commitEdits({ ...others, [section]: null });
     setLatest(result.data);
     toast.add({ title: savedCopy[section], type: "success" });
@@ -455,7 +501,7 @@ export function GroupEditor({
 
   async function save(section: GroupSection) {
     const edit = edits[section];
-    if (!edit || locked) return;
+    if (!edit || locked || verifying) return;
     if (section === "details") {
       const found = groupNameError((edit.draft as GroupDetails).name);
       setNameError(found);
@@ -542,7 +588,7 @@ export function GroupEditor({
         return;
       }
       await deleteAccessGroup(group.id, { etag: fresh.etag });
-      clearGroupDraft(signedInId);
+      clearGroupDraft(signedInId, group.id);
       setEdits(noEdits);
       setDeleting(false);
       toast.add({ title: `${fresh.data.name} is deleted`, type: "success" });
@@ -634,13 +680,13 @@ export function GroupEditor({
           entriesLabel={section === "access" ? "Access" : "Members"}
           canResolve={
             listFresh &&
-            !accessDraftSubmissionNeedsReload(signedInId, "group") &&
+            !groupSubmissionNeedsReload(signedInId, group.id) &&
             (section !== "members" ||
               (!peopleSearch.error && !peopleSearch.selectedLoading))
           }
           pending={pending !== null}
           onResolve={() => {
-            if (!finishGroupSubmission(signedInId, false)) {
+            if (!finishGroupSubmission(signedInId, group.id, false)) {
               setJournalIssue(
                 "The saved change could not be cleared from this browser. Try again.",
               );
@@ -693,13 +739,15 @@ export function GroupEditor({
               Discard changes
             </Button>
           ) : null}
-          <Button
-            type="submit"
-            className="min-h-11"
-            disabled={!changed || pending !== null}
-          >
-            {pending === section ? "Saving…" : label}
-          </Button>
+          <DisabledReason reason={verifying ? verifyingReason : null}>
+            <Button
+              type="submit"
+              className="min-h-11"
+              disabled={!changed || pending !== null}
+            >
+              {pending === section ? "Saving…" : label}
+            </Button>
+          </DisabledReason>
         </div>
       </>
     );
