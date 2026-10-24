@@ -20,7 +20,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { requestEmailChange } from "@/lib/auth-api";
-import { profileSelfOptions } from "../adapters/profile-queries";
+import { profileSelfOptions } from "@/components/profile/adapters/profile-queries";
 
 export default function EmailChange() {
   const userId = useVerifiedWorkspaceUserId();

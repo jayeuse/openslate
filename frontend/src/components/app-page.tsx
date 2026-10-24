@@ -69,6 +69,11 @@ type OrganizationChoice = {
 // is initiated by trusted input, never by a timer or background request.
 const activityRenewalInterval = 5 * 60_000;
 
+/** Account routes stay reachable without an organization: the profile and Account settings. */
+function isAccountRoute(pathname: string) {
+  return pathname === "/profile" || pathname === "/settings";
+}
+
 type CheckQueue = {
   active: boolean;
   queued: { pathname: string; version: number } | null;
@@ -393,7 +398,7 @@ export function AppPage({ children }: AppPageProps) {
                 !mounted.current ||
                 current.requestId !== requestId ||
                 current.nextVersion > requested.version ||
-                requested.pathname !== "/profile" ||
+                !isAccountRoute(requested.pathname) ||
                 currentOrganizationId() === null ||
                 !(
                   error instanceof ApiError &&
@@ -424,7 +429,7 @@ export function AppPage({ children }: AppPageProps) {
             : null;
           if (
             result === "valid" &&
-            requested.pathname === "/profile" &&
+            isAccountRoute(requested.pathname) &&
             (blocked || (body.authenticated && body.organization_id === null))
           ) {
             const me = await getAuthMe(controller.signal);
@@ -580,7 +585,7 @@ export function AppPage({ children }: AppPageProps) {
           // Another organization's drafts and notices never carry over.
           const contextChanged =
             accountChanged ||
-            ((result === "valid" || requested.pathname === "/profile") &&
+            ((result === "valid" || isAccountRoute(requested.pathname)) &&
               previousUserId !== null &&
               organizationIdRef.current !== null &&
               organizationIdRef.current !== responseOrganizationId);
@@ -613,7 +618,7 @@ export function AppPage({ children }: AppPageProps) {
             }
           }
           if (result === "organization") {
-            if (requested.pathname === "/profile") {
+            if (isAccountRoute(requested.pathname)) {
               // Verified account-only route, with a fresh cache and no shell reads.
               responseOrganizationId = null;
               responseAccountOnly = true;
@@ -818,7 +823,7 @@ export function AppPage({ children }: AppPageProps) {
       <div className="mt-2 flex flex-wrap gap-3">
         {accountProfileAvailable && (
           <Button asChild variant="outline" className="min-h-11">
-            <Link href="/profile">Your profile</Link>
+            <Link href="/settings">Account settings</Link>
           </Button>
         )}
         <Button
@@ -853,7 +858,7 @@ export function AppPage({ children }: AppPageProps) {
       <div className="mt-5 flex flex-wrap justify-center gap-3">
         {accountProfileAvailable && (
           <Button asChild variant="outline" className="min-h-11">
-            <Link href="/profile">Your profile</Link>
+            <Link href="/settings">Account settings</Link>
           </Button>
         )}
         <Button
@@ -943,7 +948,7 @@ export function AppPage({ children }: AppPageProps) {
                         </GuardedWorkspaceLink>
                       </Button>
                       <MfaCleanupNotice flow={mfa} />
-                      {pathname === "/profile" ? children : null}
+                      {isAccountRoute(pathname) ? children : null}
                     </div>
                   </main>
                 </WorkspaceSignOutProvider>

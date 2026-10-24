@@ -23,9 +23,9 @@ for (const role of ["member", "guest"] as const) {
     page,
   }) => {
     const api = await installProfileApi(page, { role });
-    await page.goto("/profile");
+    await page.goto("/settings");
     await expect(
-      page.getByRole("heading", { name: "Your profile", exact: true }),
+      page.getByRole("heading", { name: "Account settings", exact: true }),
     ).toBeVisible();
     for (const name of [
       "Identity",
@@ -93,7 +93,7 @@ test("Profile email request needs the current password and keeps saved email rea
   await context.addCookies([
     { name: "openslate_csrf", value: "owned-profile-csrf", url: baseURL },
   ]);
-  await page.goto("/profile#security");
+  await page.goto("/settings#security");
   await page.getByRole("button", { name: "Change email", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "Change email",
@@ -162,7 +162,7 @@ test("Profile clears nullable values explicitly and rejects overlong Unicode bef
   page,
 }) => {
   const api = await installProfileApi(page);
-  await page.goto("/profile");
+  await page.goto("/settings");
   const phone = page.getByLabel("Phone", { exact: true });
   await expect(phone).toHaveValue("+1 555 0101");
   await phone.fill("");
@@ -189,7 +189,7 @@ for (const failure of [422, 503] as const) {
   }) => {
     const api = await installProfileApi(page);
     api.patchStatus = failure;
-    await page.goto("/profile");
+    await page.goto("/settings");
     const phone = page.getByLabel("Phone", { exact: true });
     await expect(phone).toHaveValue("+1 555 0101");
     await phone.fill("Retained draft");
@@ -245,7 +245,7 @@ for (const defect of [
         return { ...body, avatar_file_id: "not-a-uuid" };
       return { ...body, provider_secret: "Must not render" };
     };
-    await page.goto("/profile");
+    await page.goto("/settings");
     await expect(
       page.getByRole("alert").filter({
         hasText: /profile.*(unavailable|not|could|unable|invalid)/i,
@@ -264,7 +264,7 @@ test("Profile serializes pending edits and ignores a late old-account completion
   page,
 }) => {
   const api = await installProfileApi(page);
-  await page.goto("/profile");
+  await page.goto("/settings");
   await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(
     "+1 555 0101",
   );
@@ -307,7 +307,7 @@ test("Profile section anchors keep an unsaved identity draft and guarded navigat
   page,
 }) => {
   await installProfileApi(page);
-  await page.goto("/profile");
+  await page.goto("/settings");
   await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
     "Maya Chen",
   );
@@ -318,7 +318,7 @@ test("Profile section anchors keep an unsaved identity draft and guarded navigat
     .getByRole("navigation", { name: "Profile sections", exact: true })
     .getByRole("link", { name: "Regional", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/profile#regional$/);
+  await expect(page).toHaveURL(/\/settings#regional$/);
   await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
     "Unsaved owned name",
   );
@@ -329,7 +329,7 @@ test("Profile section anchors keep an unsaved identity draft and guarded navigat
   const dialog = page.getByRole("alertdialog").filter({ hasText: /unsaved/i });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: /cancel|keep editing/i }).click();
-  await expect(page).toHaveURL(/\/profile#regional$/);
+  await expect(page).toHaveURL(/\/settings#regional$/);
   await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
     "Unsaved owned name",
   );
@@ -340,7 +340,7 @@ test("Profile uploads and clears an owned private avatar without purge or automa
 }) => {
   const api = await installProfileApi(page);
   const revoked = await observeProfilePhotoRevocations(page);
-  await page.goto("/profile");
+  await page.goto("/settings");
   await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
     "Maya Chen",
   );
@@ -380,7 +380,7 @@ test("Profile rejects an invalid mime photo selection before reservation", async
   page,
 }) => {
   const api = await installProfileApi(page);
-  await page.goto("/profile");
+  await page.goto("/settings");
   await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
     "Maya Chen",
   );
@@ -401,7 +401,7 @@ test("Profile refuses creator avatar metadata before binding", async ({
 }) => {
   const api = await installProfileApi(page);
   api.fileShape = (file) => ({ ...file, creator_id: profileUserB });
-  await page.goto("/profile");
+  await page.goto("/settings");
   await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
     "Maya Chen",
   );
@@ -427,7 +427,7 @@ test("Profile explains committed avatar cleanup 503 and never reserves or binds 
   const api = await installProfileApi(page);
   api.people.get(profileUserA)!.avatar_file_id = profileUserB;
   api.partialCleanup = true;
-  await page.goto("/profile");
+  await page.goto("/settings");
   await expect(
     page.getByRole("img", { name: "Your profile photo", exact: true }),
   ).toBeVisible();
@@ -462,7 +462,7 @@ test("Profile refuses private avatar mime delivery without clearing the saved bi
   const api = await installProfileApi(page);
   api.people.get(profileUserA)!.avatar_file_id = avatarFileId;
   api.avatarFault = "mime";
-  await page.goto("/profile");
+  await page.goto("/settings");
   await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
     "Maya Chen",
   );
@@ -522,7 +522,7 @@ test("Profile avatar refusal rechecks once and stays usable until explicit reloa
       .catch(() => {});
   });
   try {
-    await page.goto("/profile");
+    await page.goto("/settings");
     await expect(
       page.getByRole("img", { name: "Your profile photo", exact: true }),
     ).toBeVisible();
@@ -564,7 +564,7 @@ test("Profile uncertain upload preserves the existing photo and text draft witho
   const api = await installProfileApi(page);
   api.people.get(profileUserA)!.avatar_file_id = profileUserB;
   api.uploadStatus = 503;
-  await page.goto("/profile");
+  await page.goto("/settings");
   const photo = page.getByRole("img", {
     name: "Your profile photo",
     exact: true,
@@ -611,7 +611,7 @@ test("Profile revokes the old account photo URL and never binds a late old-accou
   const api = await installProfileApi(page);
   api.people.get(profileUserA)!.avatar_file_id = profileUserB;
   const revoked = await observeProfilePhotoRevocations(page);
-  await page.goto("/profile");
+  await page.goto("/settings");
   const photo = page.getByRole("img", {
     name: "Your profile photo",
     exact: true,
@@ -668,7 +668,7 @@ test("Profile unmount revokes its owned photo URL without clearing the saved ide
   const api = await installProfileApi(page);
   api.people.get(profileUserA)!.avatar_file_id = avatarFileId;
   const revoked = await observeProfilePhotoRevocations(page);
-  await page.goto("/profile");
+  await page.goto("/settings");
   const photo = page.getByRole("img", {
     name: "Your profile photo",
     exact: true,
@@ -692,7 +692,7 @@ test("Profile optional member MFA uses the incumbent enrollment verification and
   const mfa = await mockMfa(page);
   await installProfileApi(page, { role: "member", session: false, mfa: false });
   try {
-    await page.goto("/profile#security");
+    await page.goto("/settings#security");
     await page
       .getByRole("button", {
         name: "Manage two-step verification",
@@ -752,7 +752,7 @@ test("Profile optional MFA unavailable status retries honestly and cancel remove
   mfa.statusFailure = 503;
   await installProfileApi(page, { session: false, mfa: false });
   try {
-    await page.goto("/profile#security");
+    await page.goto("/settings#security");
     await page
       .getByRole("button", {
         name: "Manage two-step verification",
@@ -789,9 +789,10 @@ test("Profile optional MFA unavailable status retries honestly and cancel remove
 });
 
 for (const [entry, destination] of [
-  ["/settings/appearance", "/profile#look"],
-  ["/platform?section=account", "/profile#security"],
-  ["/platform#account", "/profile#security"],
+  ["/settings/appearance", "/settings#look"],
+  ["/platform?section=account", "/settings#security"],
+  ["/platform#account", "/settings#security"],
+  ["/profile#look", "/settings#look"],
 ] as const) {
   test(`Profile legacy entry ${entry} replaces to the correct section`, async ({
     page,
@@ -801,7 +802,7 @@ for (const [entry, destination] of [
     const escaped = destination.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     await expect(page).toHaveURL(new RegExp(`${escaped}$`));
     await expect(
-      page.getByRole("heading", { name: "Your profile", exact: true }),
+      page.getByRole("heading", { name: "Account settings", exact: true }),
     ).toBeVisible();
   });
 }
@@ -830,7 +831,7 @@ test("Profile entry honors explicit Platform section precedence and Your profile
   await expect(page).toHaveURL(/\/profile$/);
   await expect(
     page.getByRole("navigation", { name: "Breadcrumb", exact: true }),
-  ).toContainText("Profile");
+  ).toContainText("Your profile");
   await expect(
     page.getByRole("link", { name: "Your profile, Maya Chen", exact: true }),
   ).toHaveAttribute("aria-current", "page");
@@ -848,7 +849,7 @@ for (const viewport of [
       api.patchStatus = 503;
       api.theme = theme;
       await page.setViewportSize(viewport);
-      await page.goto("/profile");
+      await page.goto("/settings");
       await expect(
         page.getByLabel("Display name", { exact: true }),
       ).toHaveValue("Maya Chen");

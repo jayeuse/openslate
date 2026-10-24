@@ -419,9 +419,10 @@ export function isWorkspaceNavigationGroupActive(
   return group.href.split("?")[0] === pathname;
 }
 
-/** OpenComms and Profile sit below the sidebar groups. */
+/** OpenComms, Profile and Account settings sit outside the sidebar groups. */
 const COMMS_NAVIGATION_KEY = "comms";
 const PROFILE_NAVIGATION_KEY = "profile";
+const SETTINGS_NAVIGATION_KEY = "account-settings";
 
 /** The navigation key of the place a URL shows, or null outside the sidebar. */
 export function currentNavigationKey(
@@ -431,8 +432,9 @@ export function currentNavigationKey(
 ): string | null {
   if (pathname === "/comms" || pathname.startsWith("/comms/"))
     return COMMS_NAVIGATION_KEY;
-  if (pathname === "/profile" || pathname === "/settings/appearance")
-    return PROFILE_NAVIGATION_KEY;
+  if (pathname === "/profile") return PROFILE_NAVIGATION_KEY;
+  if (pathname === "/settings" || pathname === "/settings/appearance")
+    return SETTINGS_NAVIGATION_KEY;
   const definition = workspaceNavigationDefinitions.find(
     (candidate) => candidate.pathname === pathname,
   );

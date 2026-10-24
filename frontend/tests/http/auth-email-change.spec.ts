@@ -24,7 +24,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function openEmailRequest(page: Page) {
-  await page.goto("/profile#security");
+  await page.goto("/settings#security");
   await page.getByRole("button", { name: "Change email", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "Change email",
@@ -58,7 +58,7 @@ test("email request refuses a wrong password without refresh, replay or changed 
   await expect(dialog.getByRole("alert")).toContainText(
     /password|not.*accepted/i,
   );
-  await expect(page).toHaveURL(/\/profile#security$/);
+  await expect(page).toHaveURL(/\/settings#security$/);
   await expect(dialog.getByLabel("New email", { exact: true })).toHaveValue(
     changedEmail,
   );
@@ -222,7 +222,7 @@ for (const first of ["current", "new"] as const) {
     await expect(confirm(page)).toBeEnabled();
     expect(api.completions).toHaveLength(1);
     await confirm(page).click();
-    await expect(page).toHaveURL(/\/profile(?:#security)?$/);
+    await expect(page).toHaveURL(/\/settings(?:#security)?$/);
     await expect(page.getByText(changedEmail, { exact: true })).toBeVisible();
     expect(api.completions.at(-1)?.body).toEqual({ token_hash: finalProof });
     expect(api.refreshes).toBe(0);
@@ -316,7 +316,7 @@ test("final confirmation enters the incumbent MFA continuation before private Pr
       }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Your profile", exact: true }),
+      page.getByRole("heading", { name: "Account settings", exact: true }),
     ).toHaveCount(0);
     await expect(page.getByText(changedEmail, { exact: true })).toHaveCount(0);
     await page.getByLabel("Verification code", { exact: true }).fill("123456");
@@ -324,7 +324,7 @@ test("final confirmation enters the incumbent MFA continuation before private Pr
       .getByRole("button", { name: "Verify code", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "Your profile", exact: true }),
+      page.getByRole("heading", { name: "Account settings", exact: true }),
     ).toBeVisible();
     await expect(page.getByText(changedEmail, { exact: true })).toBeVisible();
     expect(api.completions).toHaveLength(1);

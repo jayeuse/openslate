@@ -12,6 +12,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RotateCcw,
+  Settings,
   UserCircle,
   X,
 } from "lucide-react";
@@ -27,10 +28,7 @@ import {
 
 import { useUserPreferences } from "@/components/theme-provider";
 import { useOrganizationTheme } from "@/components/organization-theme-provider";
-import {
-  OrganizationMenu,
-  membershipRoleLabels,
-} from "@/components/organization-menu";
+import { OrganizationMenu } from "@/components/organization-menu";
 import { PersonAvatar } from "@/components/person-avatar";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { NotificationBell } from "@/components/systems/platform/components/notification-bell";
@@ -91,7 +89,11 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import { signOut, requestSessionRecheck } from "@/lib/auth-api";
+import {
+  membershipRoleLabels,
+  requestSessionRecheck,
+  signOut,
+} from "@/lib/auth-api";
 import { ApiError } from "@/lib/api";
 
 const SIDEBAR_COLLAPSED_KEY = "openslate-sidebar-collapsed";
@@ -793,10 +795,12 @@ function AppCommsLink({ surface, collapsed }: ShellRowProps) {
 
 /**
  * The signed-in person: their avatar, name and role in this organization.
- * The row is a link to their own profile and is current there.
+ * The row is a link to their own profile and is current only there: on
+ * /profile, or on /profile?person= with their own id.
  */
 function AppAccountRow({ surface, collapsed }: ShellRowProps) {
   const pathname = usePathname();
+  const person = useSearchParams().get("person");
   const userId = useVerifiedWorkspaceUserId();
   const suspended = useWorkspaceInteractionSuspended();
   const identity = useQuery({ ...authMeOptions(), enabled: !suspended });
@@ -805,7 +809,9 @@ function AppAccountRow({ surface, collapsed }: ShellRowProps) {
   const name = self ? (self.displayName ?? self.username) : undefined;
   const role = self?.currentOrganization?.role;
   const label = name ? `Your profile, ${name}` : "Your profile";
-  const active = pathname === "/profile";
+  const active =
+    pathname === "/profile" &&
+    (!person || person.toLowerCase() === userId.toLowerCase());
   const drawer = surface === "drawer";
 
   return (
@@ -939,6 +945,17 @@ function AppHeaderActions({
             >
               <UserCircle aria-hidden="true" />
               Your profile
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              render={
+                <GuardedWorkspaceLink
+                  href={"/settings" as Route}
+                  onAcceptedNavigate={() => onAccountOpenChange(false)}
+                />
+              }
+            >
+              <Settings aria-hidden="true" />
+              Account settings
             </DropdownMenuItem>
             <DropdownMenuItem onClick={requestLogout}>
               <LogOut aria-hidden="true" />

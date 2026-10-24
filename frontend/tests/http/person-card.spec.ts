@@ -78,6 +78,24 @@ test("Person card intent loads one target, keyboard opens and Escape restores fo
   }
 });
 
+test("Person card View profile opens that person's profile and closes the card", async ({
+  page,
+}) => {
+  const api = await installPersonCardApi(page);
+  await visit(page, api);
+  await trigger(page).click();
+  await expectMemberCard(page);
+  const link = card(page).getByRole("link", {
+    name: "View profile",
+    exact: true,
+  });
+  await expect(link).toHaveAttribute("href", `/profile?person=${cardTarget}`);
+  await link.click();
+  await expect(page).toHaveURL(new RegExp(`/profile\\?person=${cardTarget}$`));
+  await expect(card(page)).toHaveCount(0);
+  expect(api.writes).toEqual([]);
+});
+
 test("Person card guest DTO omits private keys and nullable member values remain truthful", async ({
   page,
 }) => {

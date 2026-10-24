@@ -10,6 +10,7 @@ import {
   getWorkspaceLocation,
 } from "@/components/workspace-navigation";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
+import { useProfileView } from "@/components/profile/hooks/use-profile-view";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -24,8 +25,8 @@ const routeLabels: Record<string, string> = {
   "/access": "Access",
   "/sandbox": "Sandbox",
   "/comms": "OpenComms",
+  "/settings": "Account settings",
   "/settings/appearance": "Appearance",
-  "/profile": "Profile",
 };
 
 // Links in the header bar keep a 24px target.
@@ -85,10 +86,22 @@ export function AppBreadcrumbs() {
         ) : null}
         <BreadcrumbItem className="min-w-0">
           <BreadcrumbPage className="block min-h-6 truncate leading-6">
-            {current}
+            {pathname === "/profile" ? <ProfileCrumb /> : current}
           </BreadcrumbPage>
         </BreadcrumbItem>
       </BreadcrumbList>
     </Breadcrumb>
   );
+}
+
+/**
+ * "Your profile" on the person's own profile, the person's name on another
+ * profile, and "Profile" while it loads or when it is not available, so the
+ * header never shows an id or names a hidden person.
+ */
+function ProfileCrumb() {
+  const view = useProfileView();
+  if (view.status !== "ready")
+    return view.status === "loading" && view.own ? "Your profile" : "Profile";
+  return view.own ? "Your profile" : view.profile.displayName;
 }

@@ -31,11 +31,13 @@ import {
   type IdentityField,
   type ProfilePatch,
   type ProfileSelf,
-} from "../adapters/profile-api";
+} from "@/components/profile/adapters/profile-api";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
   profileSelfKey,
+  personProfilesKey,
   profileSelfOptions,
-} from "../adapters/profile-queries";
+} from "@/components/profile/adapters/profile-queries";
 
 const labels = {
   display_name: "Display name",
@@ -245,12 +247,18 @@ export default function Identity({
           "Profile saved; previous photo deletion is unfinished. Contact your administrator about cleanup.",
         );
       else setFeedback("Profile saved.");
-      // Compact identity contains no private fields. Only existing directory
-      // representations need invalidation after an accepted self edit.
+      // An accepted self edit changes the directory rows and this account's
+      // own Profile view, so both reads refetch on their next use. The shell's
+      // identity read (account row, header avatar) refetches now.
       void client.invalidateQueries({
         queryKey: ["access", "directory"],
         refetchType: "none",
       });
+      void client.invalidateQueries({
+        queryKey: personProfilesKey(userId),
+        refetchType: "none",
+      });
+      void client.invalidateQueries({ queryKey: authMeOptions().queryKey });
     } catch (failure) {
       if (!current()) return;
       setError(

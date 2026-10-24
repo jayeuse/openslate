@@ -10,7 +10,8 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
-import { X, UserRound } from "lucide-react";
+import type { Route } from "next";
+import { ArrowRight, X, UserRound } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/popover";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { PersonAvatar } from "@/components/person-avatar";
+import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { AvatarBadge } from "@/components/ui/avatar";
 import {
   useVerifiedWorkspaceUserId,
@@ -304,15 +306,25 @@ function BoundPersonCard({
           </LoadingRegion>
         )}
         {current ? (
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11 self-start"
-            disabled={read.isFetching}
-            onClick={() => void read.refetch()}
-          >
-            Reload person card
-          </Button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              disabled={read.isFetching}
+              onClick={() => void read.refetch()}
+            >
+              Reload person card
+            </Button>
+            <GuardedWorkspaceLink
+              href={`/profile?person=${encodeURIComponent(personId)}` as Route}
+              onAcceptedNavigate={() => setOpen(false)}
+              className="text-action-text focus-visible:outline-ring inline-flex min-h-11 items-center gap-1.5 rounded-sm text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              View profile
+              <ArrowRight aria-hidden="true" className="size-4" />
+            </GuardedWorkspaceLink>
+          </div>
         ) : null}
       </PopoverContent>
     </Popover>

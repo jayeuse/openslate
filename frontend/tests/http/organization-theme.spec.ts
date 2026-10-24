@@ -546,9 +546,9 @@ test("Organization preview survives personal storage events and Save when storag
   expect(api.writes).toEqual([{ revision: 4, theme: "stockroom" }]);
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Your profile", exact: true })
+    .getByRole("menuitem", { name: "Account settings", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/profile$/);
+  await expect(page).toHaveURL(/\/settings$/);
   await expect(
     page.getByRole("radiogroup", { name: "Color mode", exact: true }),
   ).toBeVisible();

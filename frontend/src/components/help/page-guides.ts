@@ -39,7 +39,7 @@ export const PAGE_GUIDES = {
       "Overview shows who is signed in, recent sign-ins, what needs attention and access by department. Its links open the matching list.",
       "People lists everyone in the organization, and Invite person sends an invitation. The status buttons and Filters narrow the list; open a person to change their details, groups and security.",
       "Groups give access to departments. Read opens and views, Write adds and changes records, and Manage also changes settings and who has access. Department managers change only the members of their groups.",
-      "Security shows a summary of the account policy and the active sessions. Administrators change the policy in Edit policy. Your own sign-in settings are in your profile.",
+      "Security shows a summary of the account policy and the active sessions. Administrators change the policy in Edit policy. Your own sign-in settings are in Account settings.",
     ],
   },
   openview: {
@@ -72,6 +72,14 @@ export const PAGE_GUIDES = {
   },
   profile: {
     title: "Profile",
+    entries: [
+      "Your profile shows your photo, name, job title, phone, role, groups, and short bio, as people in your organization see them.",
+      "View profile on a person card opens that person's profile. Guests see only the photo, name, and job title.",
+      "Account settings holds your identity, sign-in, look, and regional preferences. Open it from your profile or the account menu.",
+    ],
+  },
+  "account-settings": {
+    title: "Account settings",
     entries: [
       "Identity holds your display name, job title, phone, short bio, and photo. Save identity confirms only your changed fields.",
       "Sign-in & security shows your sign-in information, sessions, and available two-step verification controls.",

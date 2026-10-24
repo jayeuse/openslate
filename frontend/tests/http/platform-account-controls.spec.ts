@@ -163,7 +163,7 @@ async function openAccount(
     route.fulfill({ json: profileSelf(accountUser, "admin") }),
   );
   await page.goto("/platform?section=account");
-  await expect(page).toHaveURL(/\/profile#security$/);
+  await expect(page).toHaveURL(/\/settings#security$/);
 }
 
 test("loads own sessions and exposes a retryable denied and empty state", async ({
@@ -776,7 +776,7 @@ test("current-session revocation clears owned drafts and attachment URLs through
   ).toBeVisible();
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Your profile", exact: true })
+    .getByRole("menuitem", { name: "Account settings", exact: true })
     .click();
   await expect(
     page.getByText("Chrome on macOS", { exact: true }),
@@ -890,7 +890,7 @@ for (const [index, failure] of ["Access", "workspace", "Comms"].entries()) {
     await expect(
       page.getByRole("button", { name: "Retry clearing drafts" }),
     ).toBeVisible();
-    await expect(page).toHaveURL(/\/profile#security$/);
+    await expect(page).toHaveURL(/\/settings#security$/);
     expect(session.signedOutReads).toBe(0);
     expect(revocations).toBe(1);
     for (const [keyIndex, key] of cleanupKeys.entries())
@@ -1138,9 +1138,9 @@ test("accepted Account remote-session end refreshes the cached People count", as
   const directoryReadsBefore = directoryReads().length;
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Your profile", exact: true })
+    .getByRole("menuitem", { name: "Account settings", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/profile$/);
+  await expect(page).toHaveURL(/\/settings$/);
   const sessions = page.getByRole("list", {
     name: "Active sessions",
     exact: true,

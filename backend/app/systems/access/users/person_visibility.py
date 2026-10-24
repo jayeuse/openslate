@@ -1,4 +1,4 @@
-"""Current bounded person visibility: modules, Boards, groups and Comms (D36)."""
+"""Current bounded person visibility: modules, Boards, groups and Comms (D36), and profiles."""
 
 from collections.abc import Collection
 from uuid import UUID
@@ -95,3 +95,26 @@ def visible_person(db: Session, actor: User, target_id: UUID) -> User:
         if target is not None:
             return target
     raise error("person_not_found", "Person not found", 404)
+
+
+def profile_person(db: Session, actor: User, target_id: UUID) -> tuple[User, Membership, str]:
+    """The person whose profile the actor may read, their membership, and the actor's role.
+
+    Profiles (PD17): administrators and members see every active member of the bound
+    organization; a guest keeps ``visible_person``; anyone reads their own profile.
+    Every other case is the same 404 as the person card.
+    """
+    actor_membership = fresh_membership(db, actor)
+    if actor_membership is None:
+        raise error("person_not_found", "Person not found", 404)
+    if actor_membership.role == "guest" and target_id != actor.id:
+        visible_person(db, actor, target_id)
+    row = db.execute(
+        select(User, Membership)
+        .join(Membership, bound_membership_join())
+        .where(User.id == target_id, active_account_clause())
+        .execution_options(populate_existing=True)
+    ).first()
+    if row is None:
+        raise error("person_not_found", "Person not found", 404)
+    return row[0], row[1], actor_membership.role

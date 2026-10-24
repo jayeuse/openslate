@@ -96,7 +96,7 @@ async function installIdentity(
 async function openAccount(page: Page) {
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Your profile", exact: true })
+    .getByRole("menuitem", { name: "Account settings", exact: true })
     .click();
   await expect(
     page.getByRole("region", { name: "Look & behavior", exact: true }),
@@ -252,14 +252,14 @@ test("legacy Appearance and Your profile share only confirmed theme saves, prese
     await expect(dark(page)).toBeDisabled();
     await expect(page.locator("html")).not.toHaveClass(/dark/);
     await openAccount(page);
-    // The Profile route now owns a pending-navigation guard. Section anchors
+    // Account settings owns a pending-navigation guard. Section anchors
     // still keep the incumbent controls mounted while the save is in flight.
-    await expect(page).toHaveURL(/\/profile#look$/);
+    await expect(page).toHaveURL(/\/settings#look$/);
     await page
       .getByRole("navigation", { name: "Profile sections", exact: true })
       .getByRole("link", { name: "Sign-in & security", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/profile#security$/);
+    await expect(page).toHaveURL(/\/settings#security$/);
     const control = dark(page);
     await expect(light(page)).toBeChecked();
     await expect(control).toBeDisabled();
@@ -688,7 +688,7 @@ test("additive regional appearance remains display-only while partial theme and 
   await page.goto("/settings/appearance");
   await expect(light(page)).toBeChecked();
   await expect(dark(page)).toBeEnabled();
-  await expect(page).toHaveURL(/\/profile#look$/);
+  await expect(page).toHaveURL(/\/settings#look$/);
   await dark(page).click();
   await expect(dark(page)).toBeChecked();
   await page.getByRole("switch", { name: "Reduce motion" }).click();
@@ -715,7 +715,7 @@ test("additive regional appearance remains display-only while partial theme and 
     ["Start page after sign-in", "manage"],
   ])
     await expect(page.getByLabel(label, { exact: true })).toHaveValue(value);
-  await expect(page).toHaveURL(/\/profile#look$/);
+  await expect(page).toHaveURL(/\/settings#look$/);
 });
 
 test("System follows OS color without writes and explicit color stays fixed", async ({

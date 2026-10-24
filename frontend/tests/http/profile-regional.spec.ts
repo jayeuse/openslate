@@ -18,7 +18,7 @@ test("Profile Regional keeps an unsaved timezone through section navigation and 
   page,
 }) => {
   await installProfileApi(page);
-  await page.goto("/profile#regional");
+  await page.goto("/settings#regional");
   const timezone = page.getByLabel("Timezone", { exact: true });
   await expect(timezone).toBeEnabled();
   await timezone.fill("Europe/London");
@@ -36,7 +36,7 @@ test("Profile Regional keeps an unsaved timezone through section navigation and 
   await dialog
     .getByRole("button", { name: "Keep editing", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/profile#identity$/);
+  await expect(page).toHaveURL(/\/settings#identity$/);
   await expect(timezone).toHaveValue("Europe/London");
 });
 
@@ -44,7 +44,7 @@ test("Profile Regional confirms personal choices with partial writes", async ({
   page,
 }) => {
   const api = await installProfileApi(page);
-  await page.goto("/profile#regional");
+  await page.goto("/settings#regional");
   await expect(page.getByLabel("Date format", { exact: true })).toHaveValue(
     "organization",
   );
@@ -145,7 +145,7 @@ for (const [dateFormat, timeFormat] of [
       if (new URL(request.url()).pathname === "/api/workspace")
         workspaceRequests.push(request.method());
     });
-    await page.goto("/profile#regional");
+    await page.goto("/settings#regional");
     await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue(
       "America/Los_Angeles",
     );
@@ -215,7 +215,7 @@ test("Profile Regional failed save keeps confirmed values and Retry does not rep
 }) => {
   const api = await installProfileApi(page);
   api.preferencesWriteStatus = 503;
-  await page.goto("/profile#regional");
+  await page.goto("/settings#regional");
   await expect(page.getByLabel("Date format", { exact: true })).toHaveValue(
     "organization",
   );
@@ -292,7 +292,7 @@ test("confirmed Profile Regional choices reach Access people and sessions withou
     }
     return route.fulfill({ json: preferences });
   });
-  await page.goto("/profile#regional");
+  await page.goto("/settings#regional");
   const regional = page.getByRole("region", { name: "Regional", exact: true });
   await expect(
     regional.getByLabel("Date format", { exact: true }),

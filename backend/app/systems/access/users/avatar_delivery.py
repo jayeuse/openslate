@@ -22,7 +22,7 @@ from app.core.database import get_db
 from app.systems.access.policy.checks import require_live_session
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.membership import organization_required
-from app.systems.access.users.person_visibility import visible_person
+from app.systems.access.users.person_visibility import profile_person
 from app.systems.access.users.profile import ready_avatar
 from app.systems.platform.files.access import error, fresh_user
 from app.systems.platform.files.delivery import read_content, record_download
@@ -58,7 +58,8 @@ def get_avatar_identity(
 def _bound_avatar(db: Session, identity: CurrentIdentity, target_id: UUID) -> File:
     require_live_session(db, actor_id=identity.user.id, session_id=identity.session_id)
     actor = fresh_user(db, identity.user.id)
-    target = actor if target_id == actor.id else visible_person(db, actor, target_id)
+    # A photo shows wherever its profile can (PD17).
+    target = actor if target_id == actor.id else profile_person(db, actor, target_id)[0]
     db.refresh(target, with_for_update={"read": True, "nowait": True})
     if not is_active_account(db, target):
         raise error("person_not_found", "Person not found", 404)

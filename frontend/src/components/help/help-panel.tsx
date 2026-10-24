@@ -202,11 +202,11 @@ export function HelpPanel() {
               </p>
             ) : keyboardShortcuts === false ? (
               <p className="text-muted-foreground text-sm">
-                Shortcuts are off. Turn them on in your profile.
+                Shortcuts are off. Turn them on in Account settings.
               </p>
             ) : disabled ? (
               <p className="text-muted-foreground text-sm">
-                Shortcut preferences are unavailable. Check your profile to
+                Shortcut preferences are unavailable. Check Account settings to
                 retry.
               </p>
             ) : null}
@@ -238,11 +238,11 @@ export function HelpPanel() {
               Arrow editing and Enter or Space activation always work.
             </p>
             <GuardedWorkspaceLink
-              href="/profile#look"
+              href="/settings#look"
               onAcceptedNavigate={() => setOpen(false)}
               className="text-primary focus-visible:outline-ring inline-flex min-h-11 items-center rounded-md text-sm underline underline-offset-4 focus-visible:outline-2"
             >
-              Open your profile
+              Open Account settings
             </GuardedWorkspaceLink>
           </section>
           <section

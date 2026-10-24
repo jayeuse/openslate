@@ -554,7 +554,8 @@ test("the current navigation key follows the route and its section", () => {
   expect(key("/sandbox", "section=history")).toBe("sandbox:history");
   expect(key("/sandbox")).toBe("sandbox:build");
   expect(key("/comms")).toBe("comms");
-  expect(key("/settings/appearance")).toBe("profile");
+  expect(key("/settings/appearance")).toBe("account-settings");
+  expect(key("/settings")).toBe("account-settings");
   expect(key("/profile")).toBe("profile");
   expect(key("/login")).toBeNull();
 });

@@ -12,6 +12,8 @@ from app.systems.access.users.schemas import (
     AuthMeResponse,
     PersonCardPublicResponse,
     PersonCardResponse,
+    PersonProfilePublicResponse,
+    PersonProfileResponse,
     UserPreferencesResponse,
 )
 from app.systems.platform.files.schemas import FileResponse
@@ -251,6 +253,25 @@ def execute_profile_control(
     except (ValidationError, ValueError):
         raise SamplePhaseActionError(
             "Person card response is invalid", step="visible_other_card"
+        ) from None
+    profile_response = request("visible_other_profile", "GET", f"/api/users/{admin_id}/profile")
+    try:
+        if person.role == "guest":
+            PersonProfilePublicResponse.model_validate_json(profile_response.content, strict=True)
+            _require(
+                set(profile_response.json()) == {"display_name", "job_title", "avatar_url"},
+                "visible_other_profile",
+            )
+        else:
+            PersonProfileResponse.model_validate_json(profile_response.content, strict=True)
+            _require(
+                set(profile_response.json())
+                == {"display_name", "job_title", "avatar_url", "phone", "bio", "role", "groups"},
+                "visible_other_profile",
+            )
+    except (ValidationError, ValueError):
+        raise SamplePhaseActionError(
+            "Profile response is invalid", step="visible_other_profile"
         ) from None
     content = dummy_file("sample-avatar.png")
     reserved = file_read(

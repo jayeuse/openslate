@@ -31,15 +31,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/toast";
-import type { AccountRole } from "@/lib/auth-api";
+import { membershipRoleLabels } from "@/lib/auth-api";
 import { cn } from "@/lib/utils";
-
-/** The membership role as people read it ("Administrator", "Member", "Guest"). */
-export const membershipRoleLabels: Record<AccountRole, string> = {
-  admin: "Administrator",
-  member: "Member",
-  guest: "Guest",
-};
 
 const WORKSPACE_HOME = "/openview" as Route;
 

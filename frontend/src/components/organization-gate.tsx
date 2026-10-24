@@ -217,7 +217,7 @@ export function OrganizationGate({
 
       <div className="mt-6 flex flex-wrap gap-3">
         <Button asChild variant="outline" className="min-h-11">
-          <Link href="/profile">Your profile</Link>
+          <Link href="/settings">Account settings</Link>
         </Button>
         <Button
           type="button"

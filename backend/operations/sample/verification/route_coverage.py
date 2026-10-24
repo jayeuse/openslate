@@ -24,6 +24,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         *COMMS_ROUTES,
         ("PATCH", "/api/auth/me/profile"),
         ("GET", "/api/users/{user_id}/card"),
+        ("GET", "/api/users/{user_id}/profile"),
         ("GET", "/api/users/{user_id}/avatar"),
         ("POST", "/api/charts"),
         ("GET", "/api/charts"),
