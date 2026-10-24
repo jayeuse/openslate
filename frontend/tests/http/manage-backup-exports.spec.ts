@@ -170,6 +170,10 @@ test("export validates the passphrase before a request and cancels with empty se
   await page.setViewportSize({ width: 390, height: 844 });
   const { exports } = await fixtures(page, baseURL);
   await page.goto("/manage?view=backup");
+  // A phone lists the history first, then opens one backup's detail.
+  await page
+    .getByRole("button", { name: "Inspect Backup 1", exact: true })
+    .click();
   await expect(selectedBackup(page)).toBeVisible();
   await expect(downloadAction(page)).toBeVisible();
   await downloadAction(page).click();
@@ -422,7 +426,11 @@ test("export reloads the UUID for an off-page source and preserves it through un
   baseURL,
 }) => {
   const { exports } = await fixtures(page, baseURL);
-  const source = exports.backups.runs[5]!;
+  // Twelve backups, so the source is past the first page of ten.
+  exports.backups.runs = Array.from({ length: 12 }, (_, index) =>
+    backupRun(index + 1),
+  );
+  const source = exports.backups.runs[11]!;
   const operation = readyBackupExport(source.id, {
     id: "abcdefab-cdef-4abc-8def-abcdefabcdef",
   });
@@ -442,7 +450,7 @@ test("export reloads the UUID for an off-page source and preserves it through un
   ).toBeEnabled();
   await page
     .getByRole("searchbox", { name: "Search backups" })
-    .fill("Backup 1");
+    .fill("Backup 2");
   await expect(
     page.getByText("Showing 1–1 of 1", { exact: true }),
   ).toBeVisible();

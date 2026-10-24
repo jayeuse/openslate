@@ -67,6 +67,11 @@ type AccessToolbarProps<T extends string> = {
   sortInFiltersBelowMd?: boolean;
   /** Quick filters beside the search (People's status). */
   quickFilters?: ReactNode;
+  /**
+   * Put the quick filters on their own row under the search, still before
+   * the chips, for a toolbar in a narrow pane (Manage Backup). Off by default.
+   */
+  quickFiltersBelow?: boolean;
   /** The view's own actions at the end of the row. */
   actions?: ReactNode;
   /** The Filters rows (`FilterRow`, `FilterSelect`). */
@@ -259,6 +264,7 @@ export function AccessToolbar<T extends string>({
   onClearFilters,
   sortInFiltersBelowMd = false,
   quickFilters,
+  quickFiltersBelow = false,
   actions,
   children,
 }: AccessToolbarProps<T>) {
@@ -400,7 +406,7 @@ export function AccessToolbar<T extends string>({
             />
           </div>
         </Field>
-        {quickFilters ? (
+        {quickFilters && !quickFiltersBelow ? (
           <div className="order-last w-full min-w-0 md:order-none md:w-auto xl:shrink-0">
             {quickFilters}
           </div>
@@ -445,6 +451,9 @@ export function AccessToolbar<T extends string>({
           </div>
         ) : null}
       </div>
+      {quickFilters && quickFiltersBelow ? (
+        <div className="min-w-0">{quickFilters}</div>
+      ) : null}
       <FilterChips
         chips={chips}
         onClearFilters={onClearFilters}

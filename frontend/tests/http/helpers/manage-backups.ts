@@ -30,21 +30,23 @@ export function backupRun(
   index: number,
   values: Partial<BackupRunFixture> = {},
 ): BackupRunFixture {
+  // One run per day back from 2026-10-07, for any index.
+  const day = new Date(Date.UTC(2026, 9, 8 - index)).toISOString().slice(0, 10);
   return {
     id: `00000000-0000-4000-8000-${String(700 + index).padStart(12, "0")}`,
     name: `Backup ${index}`,
     provenance: "manual",
     installation: "current",
     state: "succeeded",
-    requested_at: `2026-10-0${8 - index}T02:00:00Z`,
-    started_at: `2026-10-0${8 - index}T02:01:00Z`,
-    finished_at: `2026-10-0${8 - index}T02:05:00Z`,
-    reconciled_at: `2026-10-0${8 - index}T02:05:00Z`,
+    requested_at: `${day}T02:00:00Z`,
+    started_at: `${day}T02:01:00Z`,
+    finished_at: `${day}T02:05:00Z`,
+    reconciled_at: `${day}T02:05:00Z`,
     schedule: "daily",
     retention_days: 30,
     snapshot_id: String(index).repeat(64),
     manifest_sha256: "a".repeat(64),
-    verified_at: `2026-10-0${8 - index}T02:04:00Z`,
+    verified_at: `${day}T02:04:00Z`,
     failure_code: null,
     expired_at: null,
     ...values,
@@ -92,6 +94,9 @@ export async function mockManageBackups(page: Page) {
     statusReads: 0,
     versionReads: 0,
     historyReads: [] as URLSearchParams[],
+    // The status panel's one-row "last good backup" read, kept apart so
+    // history paging checks still read the last history request.
+    lastGoodReads: [] as URLSearchParams[],
     patches: [] as Record<string, unknown>[],
     queueRequests: [] as { name: string; key: string }[],
     replay: new Map<string, BackupRunFixture>(),
@@ -210,7 +215,11 @@ export async function mockManageBackups(page: Page) {
       return;
     }
     const query = new URL(route.request().url()).searchParams;
-    state.historyReads.push(query);
+    const lastGood =
+      query.get("limit") === "1" &&
+      query.get("state") === "succeeded" &&
+      query.get("sort_by") === "finished_at";
+    (lastGood ? state.lastGoodReads : state.historyReads).push(query);
     if (state.historyReadStatus !== 200) {
       await route.fulfill({
         status: state.historyReadStatus,

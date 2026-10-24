@@ -2,7 +2,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
-import { AlertTriangle, CheckCircle2, Database, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import {
   Suspense,
   useEffect,
@@ -13,15 +13,6 @@ import {
 } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   GuardedWorkspaceLink,
@@ -84,16 +75,9 @@ import {
   WorkspaceLogoBindingChanged,
   type WorkspaceLogoFile,
 } from "./adapters/workspace-logo-api";
-import {
-  BackupPanel,
-  BackupRunnerStatus,
-  SnapshotScheduleForm,
-} from "./components/backup-panel";
+import { BackupPanel } from "./components/backup-panel";
 import { useManageMaintenance } from "./state/controller";
-import {
-  backupScheduleLabels,
-  isManageBackupExportId,
-} from "./adapters/backup-api";
+import { isManageBackupExportId } from "./adapters/backup-api";
 import { UpdatesPanel } from "./components/updates-panel";
 import { ManageUnavailable } from "./components/manage-unavailable";
 import { LicensingPanel } from "./components/licensing-panel";
@@ -482,8 +466,6 @@ function ManageContent() {
     resume: () => void;
   } | null>(null);
   const [error, setError] = useState("");
-  const [scheduleOpen, setScheduleOpen] = useState(false);
-  const scheduleOpener = useRef<HTMLButtonElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const recoveryView = tab === "Backup";
   const pageTitle = tab;
@@ -1410,64 +1392,12 @@ function ManageContent() {
           {sectionShown && recoveryView ? (
             <section
               aria-label="Backup workspace"
-              className="manage-scroll min-w-0 space-y-5"
+              className="manage-scroll min-w-0"
             >
-              <div className="min-w-0">
-                <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
-                  <Database
-                    aria-hidden="true"
-                    className="text-muted-foreground size-6 shrink-0"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 data-slot="section-title" className="font-semibold">
-                        Backup schedule
-                      </h2>
-                      {maintenance.dirty ? (
-                        <Badge variant="warning">Unsaved changes</Badge>
-                      ) : null}
-                    </div>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                      {maintenance.acceptedStatus
-                        ? `${backupScheduleLabels[maintenance.acceptedStatus.policy.schedule]} · Keep ${maintenance.acceptedStatus.policy.retention_days} days`
-                        : maintenance.status.isPending &&
-                            !maintenance.policyRefused
-                          ? "Loading backup policy…"
-                          : "Backup policy unavailable"}
-                    </p>
-                    {maintenance.acceptedStatus ? (
-                      <BackupRunnerStatus status={maintenance.acceptedStatus} />
-                    ) : maintenance.status.isError ||
-                      maintenance.policyRefused ? (
-                      <Alert role="alert" variant="destructive">
-                        <p>
-                          {maintenance.policyRefused
-                            ? "Only administrators can review backup policy."
-                            : "Backup policy could not be loaded."}
-                        </p>
-                        <Button
-                          variant="outline"
-                          onClick={() => void maintenance.retryPolicy()}
-                        >
-                          Retry backup policy
-                        </Button>
-                      </Alert>
-                    ) : null}
-                  </div>
-                  <Button
-                    ref={scheduleOpener}
-                    variant="outline"
-                    className="min-h-11"
-                    onClick={() => {
-                      setError("");
-                      setScheduleOpen(true);
-                    }}
-                  >
-                    Edit schedule
-                  </Button>
-                </div>
-              </div>
-              <BackupPanel maintenance={maintenance} />
+              <BackupPanel
+                maintenance={maintenance}
+                onOpenSchedule={() => setError("")}
+              />
             </section>
           ) : null}
 
@@ -1513,47 +1443,6 @@ function ManageContent() {
           ) : null}
         </div>
       </fieldset>
-      <Dialog
-        open={scheduleOpen}
-        onOpenChange={setScheduleOpen}
-        dismissible={!maintenance.pending}
-      >
-        <DialogContent
-          className="slim-ui max-w-3xl"
-          finalFocus={() => scheduleOpener.current}
-        >
-          <DialogHeader className="mb-5">
-            <div className="flex items-center justify-between gap-3">
-              <DialogTitle>Backup schedule</DialogTitle>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Close backup schedule"
-                disabled={maintenance.pending}
-                onClick={() => setScheduleOpen(false)}
-              >
-                <X aria-hidden="true" />
-              </Button>
-            </div>
-            <DialogDescription>
-              Choose when backups run and how long they are kept. The person who
-              runs your server sets up the backup service.
-            </DialogDescription>
-          </DialogHeader>
-          <fieldset
-            disabled={maintenance.pending}
-            aria-busy={maintenance.pending}
-            className="min-w-0 space-y-4"
-          >
-            <SnapshotScheduleForm maintenance={maintenance} />
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setScheduleOpen(false)}>
-                Close
-              </Button>
-            </DialogFooter>
-          </fieldset>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

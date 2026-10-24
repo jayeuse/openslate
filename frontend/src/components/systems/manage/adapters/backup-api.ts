@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_TABLE_PAGE_SIZE } from "@/components/ui/table-pagination";
 import { ApiError, apiFetch } from "@/lib/api";
 
 export const backupScheduleSchema = z.enum(["disabled", "daily", "weekly"]);
@@ -195,7 +196,7 @@ export type ManageBackupsRequest = {
   run_id?: string;
 };
 export const defaultManageBackupsRequest: ManageBackupsRequest = {
-  limit: 4,
+  limit: DEFAULT_TABLE_PAGE_SIZE,
   offset: 0,
   search: "",
   sort_by: "requested_at",

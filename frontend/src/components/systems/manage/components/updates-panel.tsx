@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { failureLabel, updateProcedureUrl } from "../adapters/backup-api";
 import type { useManageMaintenance } from "../state/controller";
-import { formatBackupTime, useWorkspaceRegion } from "./backup-panel";
+import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
 
 export function UpdatesPanel({
   maintenance,
