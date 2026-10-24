@@ -2,13 +2,16 @@ import { readFile } from "node:fs/promises";
 
 import {
   expect,
+  expectNoHorizontalScroll,
   heldResponse,
+  signedInAs,
   signedInSession,
   test,
   type Route,
   type Page,
 } from "./helpers/test";
 import { fixtureId } from "./helpers/access-api";
+import { openFilters, enterDay } from "./helpers/filters";
 import { mockMfa } from "./helpers/mfa";
 import { profilePreferences, profileSelf } from "./helpers/profile-api";
 import { pageOf } from "../helpers/pagination";
@@ -107,8 +110,10 @@ function makeAuditLogs(count = 12): AuditLogFixture[] {
       created_at: `2026-09-${String(12 - (index % 12)).padStart(2, "0")}T12:30:00Z`,
       performed_by: number % 7 === 0 ? null : performer,
       action: (["create", "update", "delete"] as const)[number % 3],
-      entity_type: number % 2 === 0 ? "user" : "record",
-      entity_id: fixtureId(2000 + number),
+      entity_type: number % 2 === 0 ? "users" : "records",
+      // Distinct leading digits: a target without a name reads as its kind
+      // and the first 8 characters of its id.
+      entity_id: `${String(2000 + number).padStart(8, "0")}-0000-4000-8000-000000000000`,
       department_id: null,
       before: number % 3 === 0 ? { status: "assigned" } : null,
       after: { status: number % 3 === 0 ? "in progress" : "active" },
@@ -262,6 +267,11 @@ function createAuditRoute(logs: AuditLogFixture[]) {
             log.entity_type === params.get("entity_type"),
         )
         .filter(
+          (log) =>
+            !params.get("department_id") ||
+            log.department_id === params.get("department_id"),
+        )
+        .filter(
           (log) => !params.get("action") || log.action === params.get("action"),
         )
         .filter((log) =>
@@ -333,7 +343,30 @@ function createAuditRoute(logs: AuditLogFixture[]) {
   };
 }
 
+const SALES_ID = "00000000-0000-4000-8000-0000000003a1";
+const SERVICE_ID = "00000000-0000-4000-8000-0000000003a2";
+
+function department(id: string, name: string) {
+  return {
+    id,
+    department_name: name,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    deleted_at: null,
+    is_deleted: false,
+    performed_by: null,
+  };
+}
+
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/departments?*", (route) =>
+    route.fulfill({
+      json: pageOf(
+        [department(SALES_ID, "Sales"), department(SERVICE_ID, "Service")],
+        { limit: 100, offset: 0, total: 2 },
+      ),
+    }),
+  );
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       json: {
@@ -374,13 +407,14 @@ test("Audit uses server filters, sort and page requests, with server-named actor
   await expect(
     table.getByText("Mara Santos", { exact: true }).first(),
   ).toBeVisible();
-  await page.getByRole("button", { name: "More filters", exact: true }).click();
-  await page.getByRole("combobox", { name: "Person", exact: true }).click();
+  const filters = await openFilters(page);
+  await filters.getByRole("combobox", { name: "Person", exact: true }).click();
   await expect(
     page.getByRole("option", { name: "Tara Reyes", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "More filters", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(filters).toBeHidden();
   await expect(
     table.getByText("Unknown person", { exact: true }).first(),
   ).toBeVisible();
@@ -405,60 +439,81 @@ test("Audit uses server filters, sort and page requests, with server-named actor
     .poll(() => api.requests.at(-1)?.searchParams.get("sort_order"))
     .toBe("asc");
 
-  await page
-    .getByRole("searchbox", { name: "Search activity", exact: true })
-    .fill("delete");
-  await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("search"))
-    .toBe("delete");
-  await expect(table.locator("tbody tr")).toHaveCount(4);
-  await expect(table.getByText("Delete", { exact: true })).toHaveCount(4);
-
-  await page.getByRole("button", { name: "More filters" }).click();
-  await chooseAuditFilter(page, "Person", "Tara Reyes");
-  await expect(
-    page.getByText("Person: Tara Reyes", { exact: true }),
-  ).toBeVisible();
-  await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("performed_by"))
-    .toBe(NULL_LABEL_ACTOR_ID);
-  await chooseAuditFilter(page, "Entity", "User");
-  await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("entity_type"))
-    .toBe("user");
-  await page.getByLabel("Action", { exact: true }).selectOption("update");
+  // The kind quick filter is the action filter (MD6); it shows no counts.
+  const kind = page.getByRole("group", { name: "Kind of event", exact: true });
+  await expect(kind.getByRole("button")).toHaveText([
+    "All",
+    "Changes",
+    "Created",
+    "Deleted",
+  ]);
+  await kind.getByRole("button", { name: "Deleted", exact: true }).click();
   await expect
     .poll(() => api.requests.at(-1)?.searchParams.get("action"))
-    .toBe("update");
-  await page.getByLabel("From", { exact: true }).fill("2026-09-04");
-  await page.getByLabel("To", { exact: true }).fill("2026-09-10");
-  await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
-    .toBe("2026-09-03T16:00:00.000Z");
-  await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
-    .toBe("2026-09-10T15:59:59.999Z");
+    .toBe("delete");
+  await expect(table.locator("tbody tr")).toHaveCount(4);
 
-  await page
-    .getByRole("searchbox", { name: "Search activity", exact: true })
-    .fill("assigned");
-  await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("search"))
-    .toBe("assigned");
-
-  await page
-    .getByRole("button", { name: "Clear filters", exact: true })
-    .click();
-  await expect(
-    page.getByRole("combobox", { name: "Person", exact: true }),
-  ).toContainText("All people");
   await page
     .getByRole("searchbox", { name: "Search activity", exact: true })
     .fill("active");
   await expect
     .poll(() => api.requests.at(-1)?.searchParams.get("search"))
     .toBe("active");
-  expect(api.requests.at(-1)?.searchParams.get("performed_by")).toBeNull();
+  await kind.getByRole("button", { name: "Changes", exact: true }).click();
+  await expect
+    .poll(() => api.requests.at(-1)?.searchParams.get("action"))
+    .toBe("update");
+
+  await openFilters(page);
+  await chooseAuditFilter(page, "Person", "Tara Reyes");
+  await expect
+    .poll(() => api.requests.at(-1)?.searchParams.get("performed_by"))
+    .toBe(NULL_LABEL_ACTOR_ID);
+  await chooseAuditFilter(page, "Area", "People · Access");
+  await expect
+    .poll(() => api.requests.at(-1)?.searchParams.get("entity_type"))
+    .toBe("users");
+  await enterDay(page, "From", "2026-09-04");
+  await enterDay(page, "To", "2026-09-10");
+  await expect
+    .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
+    .toBe("2026-09-03T16:00:00.000Z");
+  await expect
+    .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
+    .toBe("2026-09-10T15:59:59.999Z");
+  await page.keyboard.press("Escape");
+
+  // Active filters show as removable chips (DESIGN.md, Filters).
+  const chips = page.getByRole("group", { name: "Active filters" });
+  await expect(chips).toContainText("Person: Tara Reyes");
+  await expect(chips).toContainText("Area: People · Access");
+  await expect(chips).toContainText("From: 4 sept. 2026");
+  await expect(chips).toContainText("To: 10 sept. 2026");
+  await expect(
+    page.getByRole("button", { name: "Filters", exact: true }),
+  ).toHaveAccessibleDescription("4 active filters");
+  await chips
+    .getByRole("button", { name: "Remove Area filter", exact: true })
+    .click();
+  await expect
+    .poll(() => api.requests.at(-1)?.searchParams.has("entity_type"))
+    .toBe(false);
+  await expect(chips).not.toContainText("Area:");
+
+  await chips.getByRole("button", { name: "Clear all", exact: true }).click();
+  await expect(chips).toBeHidden();
+  // Clear all keeps the search and the kind.
+  await expect(
+    page.getByRole("searchbox", { name: "Search activity", exact: true }),
+  ).toHaveValue("active");
+  await expect(kind.getByRole("button", { pressed: true })).toHaveText(
+    "Changes",
+  );
+  await openFilters(page);
+  await expect(
+    page.getByRole("combobox", { name: "Person", exact: true }),
+  ).toHaveText("Anyone");
+  await page.keyboard.press("Escape");
 
   await page
     .getByRole("searchbox", { name: "Search activity", exact: true })
@@ -466,23 +521,15 @@ test("Audit uses server filters, sort and page requests, with server-named actor
   await expect(
     page.getByText("No audit entries match these filters", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Showing 0–0 of 0", { exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Clear filters", exact: true })
-    .click();
-  await expect(
-    page
-      .getByRole("table", { name: "Activity history table", exact: true })
-      .locator("tbody tr"),
-  ).toHaveCount(10);
 });
 
-test("Audit paging is server-backed and detail reads the selected audit ID", async ({
+test("Audit rows are 40px sentences, each whole row opens its event, and paging is server-backed", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   const logs = makeAuditLogs();
+  logs[0]!.before = { status: "assigned" };
+  logs[0]!.after = { status: "in progress" };
   logs[5]!.after = { title: "Paged detail target", status: "in progress" };
   const api = createAuditRoute(logs);
   await page.route("**/api/audit-logs**", (route) => api.handle(route));
@@ -492,7 +539,35 @@ test("Audit paging is server-backed and detail reads the selected audit ID", asy
     name: "Activity history table",
     exact: true,
   });
-  await expect(table.locator("tbody tr")).toHaveCount(10);
+  const first = table.locator("tbody tr").first();
+  await expect(first).toContainText("Changed Status · Record 00002001");
+  expect((await first.boundingBox())?.height).toBe(40);
+  // One open target per row, named by the sentence and made unique by the
+  // person and time; no per-row "View details" button.
+  await expect(table.getByRole("button", { name: "View details" })).toHaveCount(
+    0,
+  );
+  const open = first.getByRole("button");
+  await expect(open).toHaveCount(1);
+  await expect(open).toHaveAccessibleName(
+    // MD16: a period for the dot, and seconds keep names unique.
+    /^Changed Status\. Record 00002001, Mara Santos, .+ \d{1,2}:\d{2}:\d{2}$/,
+  );
+  // The target covers the row: a click on the area cell opens the event.
+  const area = first.getByRole("cell").last();
+  const box = (await area.boundingBox())!;
+  await page.mouse.click(box.x + 8, box.y + box.height / 2);
+  const sheet = page.getByRole("dialog", {
+    name: "Changed Record 00002001",
+    exact: true,
+  });
+  await expect(sheet).toBeVisible();
+  await sheet
+    .getByRole("button", { name: "Close event details", exact: true })
+    .click();
+  await expect(sheet).toBeHidden();
+  await expect(open).toBeFocused();
+
   await expect(
     page.getByText("Showing 1–10 of 12", { exact: true }),
   ).toBeVisible();
@@ -510,33 +585,378 @@ test("Audit paging is server-backed and detail reads the selected audit ID", asy
   await expect(
     page.getByText("Showing 6–10 of 12", { exact: true }),
   ).toBeVisible();
-
-  await page
-    .getByRole("button", {
-      name: "View audit Paged detail target",
-      exact: true,
-    })
+  await table
+    .getByRole("button", { name: /^Created\. Person Paged detail target, / })
     .click();
-  const details = page.getByRole("dialog");
-  await expect(details).toBeVisible();
-  await expect(details).toContainText("Status: in progress");
-  expect(
-    api.details.some(
-      (url) => url.pathname === `/api/audit-logs/${logs[5]!.id}`,
-    ),
-  ).toBe(true);
-  await details.getByRole("button", { name: "Close detail" }).click();
-  await page.getByRole("button", { name: "More filters" }).click();
-  await chooseAuditFilter(page, "Entity", "Record");
+  await expect(
+    page.getByRole("dialog", { name: "Created Person Paged detail target" }),
+  ).toBeVisible();
+  // The sheet reads the list row; there is no detail request.
+  expect(api.details).toHaveLength(0);
+  await page.keyboard.press("Escape");
+  await openFilters(page);
+  await chooseAuditFilter(page, "Area", "Records · Sandbox");
   await expect
     .poll(() => ({
       entity: api.requests.at(-1)?.searchParams.get("entity_type"),
       offset: api.requests.at(-1)?.searchParams.get("offset"),
     }))
-    .toEqual({ entity: "record", offset: "0" });
+    .toEqual({ entity: "records", offset: "0" });
   await expect(
     page.getByText("Showing 1–5 of 6", { exact: true }),
   ).toBeVisible();
+});
+
+test("the event sheet lists changed values only, as words, then the record and raw values", async ({
+  page,
+}) => {
+  const logs = makeAuditLogs(1);
+  logs[0]!.department_id = SALES_ID;
+  logs[0]!.entity_type = "records";
+  logs[0]!.target_label = "Q-1042";
+  logs[0]!.before = {
+    status: "draft",
+    sent_at: null,
+    is_pinned: false,
+    owner: "[REDACTED]",
+  };
+  logs[0]!.after = {
+    status: "sent",
+    sent_at: "2026-09-12T12:30:00Z",
+    is_pinned: true,
+    owner: "[REDACTED]",
+  };
+  const api = createAuditRoute(logs);
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
+  await page.goto("/manage?view=audit");
+  const row = page
+    .getByRole("table", { name: "Activity history table", exact: true })
+    .getByRole("row")
+    .filter({ hasText: "Q-1042" });
+  await expect(row).toContainText("Changed Status, Sent at +2 · Q-1042");
+  await expect(row.getByRole("cell").last()).toHaveText("Sales");
+  await row.getByRole("button").click();
+
+  const sheet = page.getByRole("dialog", { name: "Changed Q-1042" });
+  const changed = sheet.getByRole("region", { name: "What changed" });
+  // Old → new for each changed value: null reads "Not set", booleans read
+  // as words, times use the organization format, and a redacted value is
+  // "Hidden" on both sides.
+  await expect(changed.getByRole("listitem")).toHaveText([
+    "Status draft to sent",
+    "Sent at Not set to 12 sept. 2026, 20:30",
+    "Pinned No to Yes",
+    "Owner Hidden to Hidden",
+  ]);
+  await expect(changed).not.toContainText("null");
+  await expect(changed).not.toContainText("REDACTED");
+  const record = sheet.getByRole("region", { name: "Record" });
+  await expect(record).toContainText("Q-1042");
+  await expect(record).toContainText("Records · Sales");
+  await expect(record).toContainText(logs[0]!.id);
+  await expect(
+    record.getByRole("link", { name: "Open Q-1042", exact: true }),
+  ).toHaveAttribute("href", `/openview?record=${logs[0]!.entity_id}`);
+  // Advanced holds the raw values, closed by default.
+  await expect(sheet.getByText('"sent_at": null')).toBeHidden();
+  await sheet.getByRole("button", { name: /^Advanced/ }).click();
+  await expect(sheet.getByText(/"sent_at": null/)).toBeVisible();
+});
+
+test("record values read by field name, a deleted field keeps its name, and an unreadable field keeps its short id", async ({
+  page,
+}) => {
+  const quantity = "9e8d7c01-0000-4000-8000-000000000001";
+  const oldNotes = "9e8d7c02-0000-4000-8000-000000000002";
+  const hidden = "9e8d7c03-0000-4000-8000-000000000003";
+  const logs = makeAuditLogs(2);
+  for (const log of logs) {
+    log.entity_type = "records";
+    log.action = "update";
+  }
+  logs[0]!.target_label = "SC-118";
+  logs[0]!.before = {
+    data: { [quantity]: 40, [oldNotes]: "Count", [hidden]: 1 },
+  };
+  logs[0]!.after = { data: { [quantity]: 36, [oldNotes]: null, [hidden]: 2 } };
+  logs[1]!.target_label = "SC-119";
+  logs[1]!.before = { data: { [quantity]: 5 } };
+  logs[1]!.after = { data: { [quantity]: 6 } };
+  const api = createAuditRoute(logs);
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
+  const fieldReads: string[] = [];
+  await page.route("**/api/fields/*", async (route) => {
+    const id = new URL(route.request().url()).pathname.split("/").pop()!;
+    fieldReads.push(id);
+    if (id === hidden)
+      return route.fulfill({ status: 403, json: { detail: "Forbidden" } });
+    const deleted = id === oldNotes;
+    await route.fulfill({
+      json: {
+        id,
+        module_id: "00000000-0000-4000-8000-000000000301",
+        name: deleted ? "Old notes" : "Quantity",
+        type: "text",
+        required: false,
+        position: 0,
+        audit_redacted: false,
+        config: {},
+        relationship_target_module_id: null,
+        relationship_multiple_targets: null,
+        relationship_multiple_sources: null,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        deleted_at: deleted ? "2026-10-01T00:00:00Z" : null,
+        is_deleted: deleted,
+        performed_by: null,
+      },
+    });
+  });
+  await page.goto("/manage?view=audit");
+  const table = page.getByRole("table", {
+    name: "Activity history table",
+    exact: true,
+  });
+  await expect(
+    table.getByRole("row").filter({ hasText: "SC-118" }),
+  ).toContainText("Changed Quantity, Old notes +1 · SC-118");
+  await expect(
+    table.getByRole("row").filter({ hasText: "SC-119" }),
+  ).toContainText("Changed Quantity · SC-119");
+  // One read per distinct field on the page; the refusal touches nothing else.
+  expect([...fieldReads].sort()).toEqual([quantity, oldNotes, hidden].sort());
+  await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
+  await table
+    .getByRole("row")
+    .filter({ hasText: "SC-118" })
+    .getByRole("button")
+    .click();
+  const sheet = page.getByRole("dialog", { name: "Changed SC-118" });
+  await expect(
+    sheet.getByRole("region", { name: "What changed" }).getByRole("listitem"),
+  ).toHaveText([
+    "Quantity 40 to 36",
+    "Old notes Count to Not set",
+    "Field 9e8d7c03 1 to 2",
+  ]);
+});
+
+test("a system kind chosen as the Area lists its events instead of one fold row", async ({
+  page,
+}) => {
+  const logs = makeAuditLogs(5);
+  for (const log of logs.slice(0, 4)) {
+    log.entity_type = "in_app_notifications";
+    log.action = "update";
+    log.before = { read_at: null };
+    log.after = { read_at: "2026-09-12T12:30:00Z" };
+    log.target_label = "In App Notifications · name unavailable";
+  }
+  const api = createAuditRoute(logs);
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
+  await page.goto("/manage?view=audit");
+  const table = page.getByRole("table", {
+    name: "Activity history table",
+    exact: true,
+  });
+  const fold = table.getByRole("row").filter({ hasText: "system events" });
+  await expect(fold).toContainText("4 system events hidden on this page");
+  await openFilters(page);
+  await chooseAuditFilter(page, "Area", "Notifications");
+  await expect
+    .poll(() => api.requests.at(-1)?.searchParams.get("entity_type"))
+    .toBe("in_app_notifications");
+  await expect(fold).toHaveCount(0);
+  await expect(
+    table.getByRole("button", { name: /^Changed Read at\. Notification / }),
+  ).toHaveCount(4);
+});
+
+test("system events fold into one row with Show, the choice is remembered, and a search lists every match", async ({
+  page,
+}) => {
+  const logs = makeAuditLogs(6);
+  for (const index of [1, 2, 4]) {
+    logs[index]!.entity_type = "in_app_notifications";
+    logs[index]!.action = "update";
+    logs[index]!.before = { read_at: null };
+    logs[index]!.after = { read_at: "2026-09-12T12:30:00Z" };
+    logs[index]!.target_label = "In App Notifications · name unavailable";
+  }
+  const api = createAuditRoute(logs);
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
+  await page.goto("/manage?view=audit");
+  const table = page.getByRole("table", {
+    name: "Activity history table",
+    exact: true,
+  });
+  const fold = table.getByRole("row").filter({ hasText: "system events" });
+  await expect(fold).toHaveText(
+    "3 system events hidden on this page, such as read receipts.Show system events",
+  );
+  await expect(table.locator("tbody tr")).toHaveCount(4);
+  await expect(table).not.toContainText("Notification");
+
+  await fold.getByRole("button", { name: "Show system events" }).click();
+  await expect(table.locator("tbody tr")).toHaveCount(7);
+  await expect(
+    table.getByRole("button", { name: /^Changed Read at\. Notification / }),
+  ).toHaveCount(3);
+  await expect(table).not.toContainText("name unavailable");
+
+  // The viewer's choice survives a reload.
+  await page.reload();
+  await expect(table.locator("tbody tr")).toHaveCount(7);
+  await fold.getByRole("button", { name: "Hide system events" }).click();
+  await expect(table.locator("tbody tr")).toHaveCount(4);
+
+  // A search always lists its matches, fold or not.
+  await page
+    .getByRole("searchbox", { name: "Search activity", exact: true })
+    .fill("read_at");
+  await expect
+    .poll(() => api.requests.at(-1)?.searchParams.get("search"))
+    .toBe("read_at");
+  await expect(table.locator("tbody tr")).toHaveCount(3);
+  await expect(fold).toHaveCount(0);
+});
+
+test("a department manager reads Audit for the departments they manage, with no Security events, no Export and no refused request", async ({
+  page,
+}) => {
+  const managerId = "00000000-0000-4000-8000-000000000301";
+  await signedInAs(page, {
+    id: managerId,
+    role: "member",
+    // Service comes first here; the picker sorts by name (MD16).
+    access: [
+      { department_id: SERVICE_ID, module_id: null, level: "manage" },
+      { department_id: SALES_ID, module_id: null, level: "manage" },
+    ],
+  });
+  const logs = makeAuditLogs(6).map((log, index) => ({
+    ...log,
+    department_id: index < 4 ? SALES_ID : SERVICE_ID,
+  }));
+  const api = createAuditRoute(logs);
+  const refused: string[] = [];
+  let revoked = false;
+  // The department names arrive late; the default waits for them.
+  const names = heldResponse();
+  await page.route("**/api/departments?*", async (route) => {
+    names.enter();
+    await names.released;
+    await route.fallback();
+  });
+  // The server rule (audit/router.py): a member reads only with the
+  // department_id of a department they manage; everything else is refused.
+  await page.route("**/api/audit-logs**", async (route) => {
+    const url = new URL(route.request().url());
+    const scoped =
+      !revoked &&
+      (url.pathname === "/api/audit-logs" ||
+        url.pathname === "/api/audit-logs/options") &&
+      [SALES_ID, SERVICE_ID].includes(
+        url.searchParams.get("department_id") ?? "",
+      );
+    if (!scoped) {
+      refused.push(url.pathname + url.search);
+      await route.fulfill({ status: 403, json: { detail: "Forbidden" } });
+      return;
+    }
+    await api.handle(route);
+  });
+  await page.route("**/api/security-events**", async (route) => {
+    refused.push(new URL(route.request().url()).pathname);
+    await route.fulfill({ status: 403, json: { detail: "Forbidden" } });
+  });
+  await page.goto("/manage?view=organization");
+  await page.getByRole("link", { name: "Audit", exact: true }).click();
+  await expect(page).toHaveURL(/view=audit/);
+  await names.entered;
+  expect(api.requests).toEqual([]);
+  names.release();
+
+  const table = page.getByRole("table", {
+    name: "Activity history table",
+    exact: true,
+  });
+  await expect(table.locator("tbody tr")).toHaveCount(4);
+  await expect(table.getByRole("cell", { name: "Sales" })).toHaveCount(4);
+  expect(api.requests.at(-1)?.searchParams.get("department_id")).toBe(SALES_ID);
+  await expect(page.getByRole("tab", { name: "Security events" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "Export audit preview" }),
+  ).toHaveCount(0);
+
+  // Two managed departments: a Department picker sorted by name, the
+  // first by name by default.
+  const picker = page.getByRole("combobox", { name: "Department" });
+  await expect(picker.locator("option")).toHaveText(["Sales", "Service"]);
+  await expect(picker).toHaveValue(SALES_ID);
+  expect(
+    api.requests.every(
+      (url) => url.searchParams.get("department_id") === SALES_ID,
+    ),
+  ).toBe(true);
+  await picker.selectOption({ label: "Service" });
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  expect(api.requests.at(-1)?.searchParams.get("department_id")).toBe(
+    SERVICE_ID,
+  );
+  // The sheet reads the row, since the single-event read is admin-only.
+  await table.locator("tbody tr").first().getByRole("button").click();
+  await expect(
+    page.getByRole("dialog").getByRole("heading", { name: "What changed" }),
+  ).toBeVisible();
+  expect(api.details).toHaveLength(0);
+  expect(refused).toEqual([]);
+
+  // A manager who loses the department is told so, not "Only administrators".
+  await page.keyboard.press("Escape");
+  revoked = true;
+  // A new page size is a fresh read, which the server now refuses.
+  await page.getByRole("combobox", { name: "Rows per page" }).selectOption("5");
+  await expect(
+    page.getByRole("alert").filter({
+      hasText: "You no longer have access to this audit history.",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Only administrators can view audit history."),
+  ).toHaveCount(0);
+});
+
+test("on a phone Activity is a list of two-line rows, and a row opens its event as a full sheet", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const logs = makeAuditLogs(3);
+  logs[0]!.department_id = SALES_ID;
+  logs[0]!.before = { status: "assigned" };
+  logs[0]!.after = { status: "in progress" };
+  const api = createAuditRoute(logs);
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
+  await page.goto("/manage?view=audit");
+  const list = page.getByRole("list", { name: "Activity history" });
+  await expect(list.getByRole("listitem")).toHaveCount(3);
+  const first = list.getByRole("listitem").first();
+  await expect(first).toContainText("Changed Status · Record 00002001");
+  await expect(first).toContainText("Mara Santos · Sales");
+  expect((await first.boundingBox())!.height).toBeGreaterThanOrEqual(56);
+  await first.getByRole("button").click();
+  const sheet = page.getByRole("dialog", {
+    name: "Changed Record 00002001",
+    exact: true,
+  });
+  await expect(sheet).toBeVisible();
+  expect((await sheet.boundingBox())!.width).toBeCloseTo(390, 0);
+  await expect(sheet.getByRole("listitem")).toHaveText([
+    "Status assigned to in progress",
+  ]);
+  await expectNoHorizontalScroll(page);
 });
 
 test("Audit export downloads server CSV beyond one page and blocks a failed stale preview until Retry succeeds", async ({
@@ -566,9 +986,10 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
     page.getByText("Showing 1–10 of 123", { exact: true }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "More filters" }).click();
-  await page.getByLabel("From", { exact: true }).fill("2026-09-01");
-  await page.getByLabel("To", { exact: true }).fill("2026-09-12");
+  await openFilters(page);
+  await enterDay(page, "From", "2026-09-01");
+  await enterDay(page, "To", "2026-09-12");
+  await page.keyboard.press("Escape");
   await expect
     .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
     .toBe("2026-08-31T16:00:00.000Z");
@@ -674,7 +1095,6 @@ test("Audit unscoped reads and export hide cached data on refusal until explicit
   page,
 }) => {
   const logs = makeAuditLogs();
-  logs[0]!.after = { title: "Denied detail target", status: "active" };
   const api = createAuditRoute(logs);
   api.denyList();
   await page.route("**/api/audit-logs**", (route) => api.handle(route));
@@ -688,24 +1108,6 @@ test("Audit unscoped reads and export hide cached data on refusal until explicit
   await listDenied.getByRole("button", { name: "Retry" }).click();
   await expect(
     page.getByRole("table", { name: "Activity history table", exact: true }),
-  ).toBeVisible();
-
-  api.denyDetails();
-  await page
-    .getByRole("button", {
-      name: "View audit Denied detail target",
-      exact: true,
-    })
-    .click();
-  await expect(listDenied).toBeVisible();
-  await expect(page.getByRole("dialog")).toBeHidden();
-  await expect(
-    page.getByRole("table", { name: "Activity history table" }),
-  ).toBeHidden();
-  api.allowDetails();
-  await listDenied.getByRole("button", { name: "Retry" }).click();
-  await expect(
-    page.getByRole("table", { name: "Activity history table" }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Export audit preview" }).click();
@@ -1107,6 +1509,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
 test("Audit shows server actor names, meaningful targets and workspace-local date and time", async ({
   page,
 }) => {
+  await page.clock.setFixedTime(new Date("2026-09-12T14:00:00Z"));
   let allowDateSettings = false;
   await page.route("**/api/workspace", (route) =>
     allowDateSettings
@@ -1145,28 +1548,12 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
   logs[1]!.actor_label = "Historical person label";
   logs[1]!.before = { name: "Closed team" };
   logs[1]!.after = null;
+  logs[1]!.entity_type = "groups";
   logs[2]!.after = { data: { title_field: "[REDACTED]" } };
-  logs[2]!.target_label = "Record · name unavailable";
+  logs[2]!.target_label = "Records · name unavailable";
   logs[3]!.target_label = "Authorized current person";
   const api = createAuditRoute(logs);
-  await page.route("**/api/audit-logs**", async (route) => {
-    if (
-      new URL(route.request().url()).pathname ===
-      `/api/audit-logs/${logs[0]!.id}`
-    ) {
-      await route.fulfill({
-        json: {
-          ...wireAuditLog(logs[0]!),
-          actor_name: "Fresh detail name",
-          created_at: "2026-09-12T13:45:00Z",
-          after: { title: "Fresh detail title" },
-          target_label: "Fresh detail title",
-        },
-      });
-      return;
-    }
-    await api.handle(route);
-  });
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
   await page.goto("/manage?view=audit");
   const table = page.getByRole("table", {
     name: "Activity history table",
@@ -1183,21 +1570,28 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
   await page
     .getByRole("button", { name: "Retry date settings", exact: true })
     .click();
-  await expect(namedRow.getByRole("cell").first()).toHaveText(
-    "12 sept. 2026, 20:30",
-  );
+  // 12:30 UTC is 20:30 in Manila: today, in the organization's zone.
+  await expect(namedRow.getByRole("cell").first()).toHaveText("Today 20:30");
   await expect(
     table.getByText("Unknown person", { exact: true }).first(),
   ).toBeVisible();
-  await expect(table.getByText("Closed team", { exact: true })).toBeVisible();
+  // MD13: a name reads with its kind; without one, the kind and short id.
   await expect(
-    table.getByText("Record · name unavailable", { exact: true }),
+    table.getByRole("button", { name: /^Deleted\. Group Closed team, / }),
   ).toBeVisible();
   await expect(
-    table.getByText("Authorized current person", { exact: true }),
+    table.getByRole("button", {
+      name: /^Created\. Record 00002003, Unknown person, /,
+    }),
   ).toBeVisible();
+  await expect(
+    table.getByRole("button", {
+      name: /^Changed Status\. Person Authorized current person, /,
+    }),
+  ).toBeVisible();
+  await expect(table).not.toContainText("name unavailable");
   await expect(table).not.toContainText(logs[2]!.entity_id!);
-  await page.getByRole("button", { name: "More filters" }).click();
+  await openFilters(page);
   await page.getByRole("combobox", { name: "Person", exact: true }).click();
   for (const name of [
     "Server display name",
@@ -1206,42 +1600,18 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
   ])
     await expect(page.getByRole("option", { name, exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "More filters" }).click();
-  await namedRow
-    .getByRole("button", { name: "View audit New record title", exact: true })
-    .click();
+  await page.keyboard.press("Escape");
+  await namedRow.getByRole("button").click();
   const detail = page.getByRole("dialog", {
-    name: /Audit entry detail/,
+    name: "Changed New record title",
+    exact: true,
   });
-  await expect(
-    detail.getByText("Fresh detail name · 12 sept. 2026, 21:45", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    detail.getByText("Update · Record", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    detail.getByText("Fresh detail title", { exact: true }),
-  ).toBeVisible();
-  await expect(detail).not.toContainText("2026-09-12T13:45:00Z");
-
-  await detail.getByRole("button", { name: "Close detail" }).click();
-  await page
-    .getByRole("button", {
-      name: "View audit Record · name unavailable",
-      exact: true,
-    })
+  await expect(detail).toContainText("Server display name");
+  await expect(detail).toContainText("12 sept. 2026, 20:30");
+  await expect(detail).not.toContainText("2026-09-12T12:30:00Z");
+  await detail
+    .getByRole("button", { name: "Close event details", exact: true })
     .click();
-  await expect(
-    page.getByRole("heading", {
-      name: "Audit entry detail · Record · name unavailable",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("dialog", { name: /Audit entry detail/ }),
-  ).not.toContainText(logs[2]!.entity_id!);
 });
 
 test("Audit search waits for typing to settle before sending its server query", async ({
@@ -1334,9 +1704,10 @@ for (const [personal, title] of [
       exact: true,
     });
     await expect(table).toBeVisible();
-    await page.getByRole("button", { name: "More filters" }).click();
-    await page.getByLabel("From", { exact: true }).fill("2026-03-08");
-    await page.getByLabel("To", { exact: true }).fill("2026-03-08");
+    await openFilters(page);
+    await enterDay(page, "From", "2026-03-08");
+    await enterDay(page, "To", "2026-03-08");
+    await page.keyboard.press("Escape");
 
     await expect
       .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
@@ -1463,8 +1834,9 @@ test("Audit export pins the opening horizon through preview retry and server CSV
   await expect(
     page.getByText("Showing 1–10 of 102", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "More filters" }).click();
-  await page.getByLabel("To", { exact: true }).fill("2026-10-02");
+  await openFilters(page);
+  await enterDay(page, "To", "2026-10-02");
+  await page.keyboard.press("Escape");
   await expect
     .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
     .toBe("2026-10-02T15:59:59.999Z");
@@ -1511,7 +1883,7 @@ test("Audit export pins the opening horizon through preview retry and server CSV
   ).toBe(true);
 });
 
-test("Audit export refuses more than 10000 rows and exports the header after filters narrow to zero", async ({
+test("Audit Export is disabled with its reason above 10,000 events and exports the header after filters narrow to zero", async ({
   page,
 }, testInfo) => {
   const api = createAuditRoute(makeAuditLogs(10001));
@@ -1520,24 +1892,26 @@ test("Audit export refuses more than 10000 rows and exports the header after fil
   await expect(
     page.getByText("Showing 1–10 of 10001", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Export audit preview" }).click();
+  // MD7: the list total says why before anything opens.
+  const exportButton = page.getByRole("button", {
+    name: "Export audit preview",
+    exact: true,
+  });
+  await expect(exportButton).toHaveAttribute("aria-disabled", "true");
+  await expect(exportButton).toHaveAccessibleDescription(
+    "Narrow the filters to 10,000 events or fewer to export.",
+  );
+  await exportButton.focus();
+  await page.keyboard.press("Enter");
   const preview = page.getByRole("dialog", {
     name: "Audit export preview",
     exact: true,
   });
-  await expect(preview.getByRole("alert")).toContainText(
-    "Audit exports support up to 10,000 entries. Narrow your filters and try again.",
-  );
-  await expect(
-    preview.getByRole("button", { name: "Download CSV", exact: true }),
-  ).toBeDisabled();
+  await expect(preview).toBeHidden();
   expect(
     api.requests.every((url) => Number(url.searchParams.get("limit")) <= 10),
   ).toBe(true);
   expect(api.exports).toHaveLength(0);
-  await preview
-    .getByRole("button", { name: "Close preview", exact: true })
-    .click();
   await page
     .getByRole("searchbox", { name: "Search activity", exact: true })
     .fill("no matching activity");
@@ -1607,7 +1981,7 @@ test("Audit option search finds actors outside the capped first result and prese
   await expect(
     page.getByRole("table", { name: "Activity history table", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "More filters", exact: true }).click();
+  await openFilters(page);
   const person = page.getByRole("combobox", { name: "Person", exact: true });
   await person.click();
   await page

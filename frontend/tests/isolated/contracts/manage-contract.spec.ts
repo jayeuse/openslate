@@ -1,10 +1,10 @@
 import {
   downloadManageAuditCsv,
   getManageAuditExportPreview,
-  getManageAuditLog,
   getManageAuditOptions,
   listManageAuditLogs,
 } from "../../../src/components/systems/manage/adapters/audit-api";
+import { getAuditFieldName } from "../../../src/components/systems/manage/adapters/audit-fields-api";
 import {
   admitManageBackupExportDownload,
   getManageBackupExport,
@@ -128,8 +128,13 @@ describeContracts("Manage", [
     name: "listManageAuditLogs",
     run: () => listManageAuditLogs({ ...auditFilters, limit: 25, offset: 0 }),
   },
-  { name: "getManageAuditLog", run: () => getManageAuditLog(auditId) },
   { name: "getManageAuditOptions", run: () => getManageAuditOptions() },
+  {
+    name: "getAuditFieldName",
+    run: () => getAuditFieldName(auditId),
+    // The adapter accepts only the field it asked for.
+    responses: { "GET /api/fields/{field_id}": { id: auditId } },
+  },
   {
     name: "getManageAuditExportPreview",
     run: () => getManageAuditExportPreview(auditFilters),

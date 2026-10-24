@@ -159,19 +159,40 @@ export function installationOwnerFor(
 }
 
 /**
+ * The departments whose audit a person may read when Audit is scoped (MD12).
+ * The audit list admits an administrator for the whole organization (null),
+ * and anyone else only with a `department_id` whose department level is
+ * manage (`audit/router.py`). A guest is capped at read and a module-only
+ * manager has no department level, so both get none.
+ */
+export function auditDepartmentsFor(
+  identity: Pick<AuthMe, "role" | "access"> | undefined,
+): string[] | null {
+  if (identity?.role === "admin") return null;
+  if (identity?.role !== "member") return [];
+  return [
+    ...new Set(
+      identity.access
+        .filter((entry) => entry.moduleId === null && entry.level === "manage")
+        .map((entry) => entry.departmentId),
+    ),
+  ];
+}
+
+/**
  * Which Manage sections a person sees (MD3, docs/specs/manage-relayout.md):
- * Organization for everyone; Audit for an administrator (`require_admin`; a
- * manager's department audit waits for MD12, since the page does not send a
- * department yet); Jobs for a verified administrator; Backup and Updates for
- * the installation owner.
+ * Organization for everyone; Audit for an administrator (`require_admin`) and
+ * a department manager (MD12, the page sends `department_id`); Jobs for a
+ * verified administrator; Backup and Updates for the installation owner.
  */
 function visibleManageItem(
   id: string,
   access: AccessNavigation,
   jobsAdmitted: boolean,
   installationOwner: boolean,
+  auditManager: boolean,
 ): boolean {
-  if (id === "audit") return access === "all";
+  if (id === "audit") return access === "all" || auditManager;
   if (id === "jobs") return jobsAdmitted;
   if (id === "backup" || id === "updates") return installationOwner;
   return true;
@@ -182,13 +203,20 @@ function visibleItems(
   access: AccessNavigation,
   jobsAdmitted: boolean,
   installationOwner: boolean,
+  auditManager: boolean,
 ): readonly { id: string; label: string }[] {
   const items = definition.items;
   // Every Sandbox API requires an administrator (`require_admin`).
   if (definition.id === "sandbox") return access === "all" ? items : [];
   if (definition.id === "manage")
     return items.filter((item) =>
-      visibleManageItem(item.id, access, jobsAdmitted, installationOwner),
+      visibleManageItem(
+        item.id,
+        access,
+        jobsAdmitted,
+        installationOwner,
+        auditManager,
+      ),
     );
   if (definition.id !== "access" || access === "all") return items;
   if (access === "groups") return items.filter((item) => item.id === "groups");
@@ -294,6 +322,7 @@ export function getWorkspaceNavigation(
   access: AccessNavigation,
   jobsAdmitted = false,
   installationOwner = false,
+  auditManager = false,
 ): readonly WorkspaceNavigationGroup[] {
   return workspaceNavigationDefinitions.flatMap((definition) => {
     const items = visibleItems(
@@ -301,6 +330,7 @@ export function getWorkspaceNavigation(
       access,
       jobsAdmitted,
       installationOwner,
+      auditManager,
     ).map((item) => ({
       ...item,
       href: href(

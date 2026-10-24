@@ -17,6 +17,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import {
   accessNavigationFor,
+  auditDepartmentsFor,
   installationOwnerFor,
   currentNavigationKey,
   getWorkspaceNavigation,
@@ -140,6 +141,7 @@ export function AppNavigation({
     accessNavigationFor(identity.data),
     jobsAdmitted,
     installationOwnerFor(identity.data),
+    (auditDepartmentsFor(identity.data)?.length ?? 0) > 0,
   );
   const search = searchParams.toString();
   const activeGroupId = groups.find((group) =>

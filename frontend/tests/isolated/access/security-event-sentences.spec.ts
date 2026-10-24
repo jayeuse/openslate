@@ -323,16 +323,16 @@ const typeRows: {
   },
   {
     type: "security.retention",
-    label: "Session retention",
+    label: "Session history cleanup",
     patch: {
       actor_id: null,
       subject_id: null,
       metadata: { deleted_sessions: 4, retention_days: 30 },
     },
-    success: "Session retention removed 4 session records.",
+    success: "Session history cleanup removed 4 session records.",
     unfinished: {
       outcome: "failure",
-      sentence: "Session retention cleanup failed.",
+      sentence: "Session history cleanup failed.",
     },
   },
   {
@@ -513,7 +513,7 @@ const factRows: {
       event_type: "security.retention",
       metadata: { deleted_sessions: 1 },
     },
-    sentence: "Session retention removed 1 session record.",
+    sentence: "Session history cleanup removed 1 session record.",
   },
   {
     name: "a retention of no sessions",
@@ -521,12 +521,12 @@ const factRows: {
       event_type: "security.retention",
       metadata: { deleted_sessions: 0 },
     },
-    sentence: "Session retention removed 0 session records.",
+    sentence: "Session history cleanup removed 0 session records.",
   },
   {
     name: "a retention without a count",
     patch: { event_type: "security.retention", metadata: {} },
-    sentence: "Session retention removed session records.",
+    sentence: "Session history cleanup removed session records.",
   },
   {
     name: "a retention with a negative count",
@@ -534,7 +534,7 @@ const factRows: {
       event_type: "security.retention",
       metadata: { deleted_sessions: -1 },
     },
-    sentence: "Session retention removed session records.",
+    sentence: "Session history cleanup removed session records.",
   },
   {
     name: "a retention with a fractional count",
@@ -542,7 +542,7 @@ const factRows: {
       event_type: "security.retention",
       metadata: { deleted_sessions: 1.5 },
     },
-    sentence: "Session retention removed session records.",
+    sentence: "Session history cleanup removed session records.",
   },
   {
     name: "a retention with a count beyond safe integers",
@@ -550,7 +550,7 @@ const factRows: {
       event_type: "security.retention",
       metadata: { deleted_sessions: 9_007_199_254_740_992 },
     },
-    sentence: "Session retention removed session records.",
+    sentence: "Session history cleanup removed session records.",
   },
   {
     name: "a retention with a text count",
@@ -558,7 +558,7 @@ const factRows: {
       event_type: "security.retention",
       metadata: { deleted_sessions: "4" },
     },
-    sentence: "Session retention removed session records.",
+    sentence: "Session history cleanup removed session records.",
   },
   {
     name: "an export of one record as CSV",

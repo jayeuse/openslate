@@ -29,7 +29,7 @@ export const eventLabels: Record<string, string> = {
   "user.authentication_disable": "Authentication disablement",
   "user.authentication_restore": "Authentication restoration",
   "workspace.security_policy_change": "Account policy change",
-  "security.retention": "Session retention",
+  "security.retention": "Session history cleanup",
   "backup.export.download": "Backup export download",
   "file.download": "File download",
   "records.export.authorized": "Record export authorization",
@@ -220,8 +220,8 @@ export function securityEventSentence(
     case "security.retention": {
       const removed = count("deleted_sessions");
       return result(
-        `Session retention removed ${removed === null ? "session records" : `${removed} session record${removed === 1 ? "" : "s"}`}.`,
-        "Session retention cleanup",
+        `Session history cleanup removed ${removed === null ? "session records" : `${removed} session record${removed === 1 ? "" : "s"}`}.`,
+        "Session history cleanup",
       );
     }
     case "backup.export.download":

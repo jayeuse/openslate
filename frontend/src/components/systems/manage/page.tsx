@@ -30,6 +30,7 @@ import {
 } from "@/components/workspace-navigation-guard";
 import {
   accessNavigationFor,
+  auditDepartmentsFor,
   getWorkspaceNavigation,
   installationOwnerFor,
 } from "@/components/workspace-navigation";
@@ -316,6 +317,7 @@ function ManageContent() {
       accessNavigationFor(knownIdentity),
       true,
       installationOwnerFor(knownIdentity),
+      (auditDepartmentsFor(knownIdentity)?.length ?? 0) > 0,
     ).find((group) => group.id === "manage")?.items ?? [];
   const sectionDecided =
     requestedTab === "Organization" ||
@@ -1216,7 +1218,9 @@ function ManageContent() {
 
   const renderPageHeader = (actions?: ReactNode) => (
     <header className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-      <div className="min-w-0 flex-1">
+      {/* A 16rem basis lets the actions wrap under the title on a phone
+          instead of squeezing the meta line into a column. */}
+      <div className="min-w-0 flex-1 basis-64">
         <h1
           ref={headingRef}
           data-slot="page-title"
@@ -1477,6 +1481,13 @@ function ManageContent() {
             <ManageAudit
               renderHeader={renderPageHeader}
               securityEventsAdmitted={verifiedOrganizationRole === "admin"}
+              // A member reads the departments they manage (MD12); a failed
+              // identity reads unscoped, and the server's refusal decides.
+              managedDepartments={
+                knownIdentity?.role === "member"
+                  ? (auditDepartmentsFor(knownIdentity) ?? [])
+                  : null
+              }
               securityEventsSelected={
                 searchParams.get("audit") === "security-events"
               }
