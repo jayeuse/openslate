@@ -102,7 +102,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The browser install pulls apt packages and can be slow on a busy mirror;
+    # the test step keeps its own 10-minute hang limit.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend
@@ -127,6 +129,7 @@ jobs:
       - name: Install pinned Playwright Chromium
         run: npm exec --no -- playwright install --with-deps chromium
       - name: Run isolated frontend tests
+        timeout-minutes: 10
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/isolated.json
         run: npm test -- --project=isolated --reporter=line,json
@@ -308,7 +311,9 @@ jobs:
     needs: [changes, build]
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The browser install pulls apt packages and can be slow on a busy mirror;
+    # the measurement step keeps its own 10-minute hang limit.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend
