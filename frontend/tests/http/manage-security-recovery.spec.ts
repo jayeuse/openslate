@@ -138,7 +138,7 @@ test("Backup schedule saves revisioned real policy and keeps cancelled drafts wi
     exact: true,
   });
   const schedule = dialog.getByLabel("Backup schedule", { exact: true });
-  const retention = dialog.getByLabel("Retention period", { exact: true });
+  const retention = dialog.getByLabel("Keep backups for", { exact: true });
   await expect(schedule).toHaveValue("disabled");
   await schedule.selectOption("weekly");
   await retention.selectOption("90");
@@ -156,7 +156,7 @@ test("Backup schedule saves revisioned real policy and keeps cancelled drafts wi
   await schedule.selectOption("weekly");
   await retention.selectOption("90");
   await dialog
-    .getByRole("button", { name: "Save settings", exact: true })
+    .getByRole("button", { name: "Save schedule", exact: true })
     .click();
   await expect(
     dialog.getByRole("button", { name: "Discard changes", exact: true }),
@@ -170,10 +170,10 @@ test("Backup schedule saves revisioned real policy and keeps cancelled drafts wi
   await expect(dialog).toContainText("UTC");
   await expect(schedule).toHaveValue("daily");
   await expect(
-    dialog.getByRole("button", { name: "Save settings", exact: true }),
+    dialog.getByRole("button", { name: "Save schedule", exact: true }),
   ).toBeEnabled();
   await expect(
-    dialog.getByRole("button", { name: "Review latest policy", exact: true }),
+    dialog.getByRole("button", { name: "Review latest schedule", exact: true }),
   ).toHaveCount(0);
   await dialog
     .getByRole("button", { name: "Discard changes", exact: true })
@@ -315,7 +315,9 @@ test("Backup failure and denial never expose sample policy or cached history as 
   backup.historyReadStatus = 403;
   await sendOpenViewEvent(page, "invalidate", { entity: "backup_runs" });
   await expect(
-    page.getByText("Only administrators can review backups.", { exact: true }),
+    page.getByText("Only the installation owner can review backups.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Inspect Backup 1", exact: true }),
@@ -360,62 +362,62 @@ test("Backup conflict retains a draft and queue retry reuses the accepted reques
   backup.policy.retention_days = 90;
   await sendOpenViewEvent(page, "invalidate", { entity: "backup_policies" });
   await expect(policy).toContainText(
-    "Backup policy changed. Your draft is still here",
+    "The backup schedule changed. Your draft is still here",
   );
-  const passiveChange = policy
-    .getByRole("status")
-    .filter({ hasText: "Backup policy changed. Your draft is still here" });
+  const passiveChange = policy.getByRole("status").filter({
+    hasText: "The backup schedule changed. Your draft is still here",
+  });
   await expect(passiveChange).toHaveAttribute("data-variant", "warning");
   await expect(
     policy.getByLabel("Backup schedule", { exact: true }),
   ).toHaveValue("daily");
   await expect(
-    policy.getByLabel("Retention period", { exact: true }),
+    policy.getByLabel("Keep backups for", { exact: true }),
   ).toHaveValue("30");
   await expect(
-    policy.getByRole("button", { name: "Save settings", exact: true }),
+    policy.getByRole("button", { name: "Save schedule", exact: true }),
   ).toBeDisabled();
   expect(backup.patches).toEqual([]);
   await policy
-    .getByRole("button", { name: "Review latest policy", exact: true })
+    .getByRole("button", { name: "Review latest schedule", exact: true })
     .click();
   await expect(
-    policy.getByLabel("Retention period", { exact: true }),
+    policy.getByLabel("Keep backups for", { exact: true }),
   ).toHaveValue("90");
   await expect(
     policy.getByLabel("Backup schedule", { exact: true }),
   ).toHaveValue("daily");
   await policy
-    .getByRole("button", { name: "Save settings", exact: true })
+    .getByRole("button", { name: "Save schedule", exact: true })
     .click();
   await expect(
     policy.getByRole("button", { name: "Discard changes", exact: true }),
   ).toHaveCount(0);
   await policy
-    .getByLabel("Retention period", { exact: true })
+    .getByLabel("Keep backups for", { exact: true })
     .selectOption("7");
   backup.policy.revision = 4;
   await policy
-    .getByRole("button", { name: "Save settings", exact: true })
+    .getByRole("button", { name: "Save schedule", exact: true })
     .click();
   await expect(policy).toContainText(
-    "Backup policy changed. Your draft is still here",
+    "The backup schedule changed. Your draft is still here",
   );
-  const failedSave = policy
-    .getByRole("alert")
-    .filter({ hasText: "Backup policy changed. Your draft is still here" });
+  const failedSave = policy.getByRole("alert").filter({
+    hasText: "The backup schedule changed. Your draft is still here",
+  });
   await expect(failedSave).toHaveAttribute("data-variant", "destructive");
   await expect(
-    policy.getByLabel("Retention period", { exact: true }),
+    policy.getByLabel("Keep backups for", { exact: true }),
   ).toHaveValue("7");
   await expect(
-    policy.getByRole("button", { name: "Save settings", exact: true }),
+    policy.getByRole("button", { name: "Save schedule", exact: true }),
   ).toBeDisabled();
   await policy
-    .getByRole("button", { name: "Review latest policy", exact: true })
+    .getByRole("button", { name: "Review latest schedule", exact: true })
     .click();
   await policy
-    .getByRole("button", { name: "Save settings", exact: true })
+    .getByRole("button", { name: "Save schedule", exact: true })
     .click();
   await expect(
     policy.getByRole("button", { name: "Discard changes", exact: true }),
@@ -491,7 +493,7 @@ test("Backup pending submission blocks duplicate and route leave, then events re
   backup.runner.state = "recovery_required";
   await sendOpenViewEvent(page, "invalidate", { entity: "backup_runs" });
   await expect(
-    page.getByText("Operator recovery required", { exact: true }),
+    page.getByText("Needs recovery on the server", { exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "Inspect Held request", exact: true })
@@ -501,8 +503,10 @@ test("Backup pending submission blocks duplicate and route leave, then events re
     exact: true,
   });
   await expect(inspector).toContainText("Verified");
-  await expect(inspector).toContainText("Not reconciled");
-  await expect(inspector).toContainText("Services did not restart");
+  await expect(
+    inspector.getByText("Needs recovery on the server", { exact: true }),
+  ).toBeVisible();
+  await expect(inspector).toContainText("The server did not restart");
   await expect(inspector.getByText("Completed", { exact: true })).toHaveCount(
     0,
   );
@@ -597,7 +601,7 @@ test("Backup opens on one status panel of facts, with Back up now as the one pri
   backup.runner.state = "recovery_required";
   await sendOpenViewEvent(page, "invalidate", { entity: "backup_policies" });
   await expect(panel.getByTestId("backup-service-warning")).toHaveText(
-    "The person who runs your server must fix the backup service. New requests wait in the queue.",
+    "The person who runs your server must run backup recovery. New requests wait in the queue.",
   );
 });
 
@@ -648,12 +652,10 @@ test("Backup history lists 40px rows with a status word, status quick filters, a
 
   // Source and Installation wait in the Filters popover and show as chips.
   await page.getByRole("button", { name: "Filters", exact: true }).click();
-  await page
-    .getByLabel("Request source", { exact: true })
-    .selectOption("scheduled");
+  await page.getByLabel("Source", { exact: true }).selectOption("scheduled");
   await page.keyboard.press("Escape");
   const chips = page.getByRole("group", { name: "Active filters" });
-  await expect(chips).toContainText("Source: Scheduled");
+  await expect(chips).toContainText("Source: Automatic");
   await expect(rows).toHaveCount(2);
   expect(backup.historyReads.at(-1)?.get("provenance")).toBe("scheduled");
   await chips
@@ -691,12 +693,12 @@ test("a backup's detail shows label-left facts, a short snapshot id with its ful
   await expect(detail.locator("dt")).toHaveText([
     "Requested",
     "Source",
-    "Schedule at request",
+    "Schedule then",
     "Started",
     "Finished",
     "Snapshot",
     "Verification",
-    "Restart / reconciliation",
+    "Server restart",
     "Restore",
   ]);
   await expect(
@@ -755,8 +757,8 @@ test("the schedule dialog shows only Close at rest, and its Save bar after an ed
   const footer = dialog.getByTestId("backup-schedule-footer");
   await expect(footer.getByRole("button")).toHaveText(["Close"]);
   // Label-left rows: each label sits beside its field.
-  const label = dialog.getByText("Retention period", { exact: true });
-  const field = dialog.getByLabel("Retention period", { exact: true });
+  const label = dialog.getByText("Keep backups for", { exact: true });
+  const field = dialog.getByLabel("Keep backups for", { exact: true });
   const labelBox = await label.boundingBox();
   const fieldBox = await field.boundingBox();
   expect(labelBox!.x + labelBox!.width).toBeLessThanOrEqual(fieldBox!.x);
@@ -768,7 +770,7 @@ test("the schedule dialog shows only Close at rest, and its Save bar after an ed
   await expect(footer.getByRole("button")).toHaveText([
     "Close",
     "Discard changes",
-    "Save settings",
+    "Save schedule",
   ]);
   await expect(
     footer.getByText("Unsaved changes", { exact: true }),

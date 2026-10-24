@@ -440,7 +440,7 @@ test("Audit uses server filters, sort and page requests, with server-named actor
     .toBe("asc");
 
   // The kind quick filter is the action filter (MD6); it shows no counts.
-  const kind = page.getByRole("group", { name: "Kind of event", exact: true });
+  const kind = page.getByRole("group", { name: "Event type", exact: true });
   await expect(kind.getByRole("button")).toHaveText([
     "All",
     "Changes",

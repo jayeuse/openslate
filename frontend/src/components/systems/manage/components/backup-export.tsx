@@ -159,15 +159,15 @@ export function BackupExportPanel({
                 [
                   "Size",
                   operation.size_bytes === null
-                    ? "Not recorded"
+                    ? "—"
                     : formatFileSize(operation.size_bytes),
                 ],
-                ["Checksum", operation.sha256 ?? "Not recorded"],
+                ["Checksum", operation.sha256 ?? "—"],
                 [
                   "Failure",
                   operation.failure_code
                     ? failureLabel(operation.failure_code)
-                    : "None recorded",
+                    : "—",
                 ],
               ].map(([label, value]) => (
                 <div key={label} className="contents">

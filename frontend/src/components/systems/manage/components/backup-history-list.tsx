@@ -48,7 +48,7 @@ const STATUS_FILTERS: readonly {
 const SOURCE_OPTIONS = [
   { value: "all", label: "Any source" },
   { value: "manual", label: "Manual" },
-  { value: "scheduled", label: "Scheduled" },
+  { value: "scheduled", label: "Automatic" },
 ] as const;
 const INSTALLATION_OPTIONS = [
   { value: "all", label: "Any installation" },
@@ -197,7 +197,6 @@ export function BackupHistoryList({
           <FilterSelect
             id={`${id}-source`}
             label="Source"
-            ariaLabel="Request source"
             value={request.provenance}
             options={SOURCE_OPTIONS}
             onChange={(provenance) => onRequestChange({ provenance })}
@@ -222,7 +221,7 @@ export function BackupHistoryList({
           <Alert role="alert" variant="destructive" className="m-3">
             <p>
               {failure === "denied"
-                ? "Only administrators can review backups."
+                ? "Only the installation owner can review backups."
                 : "Backup history could not be loaded."}
             </p>
             <Button
@@ -257,7 +256,7 @@ export function BackupHistoryList({
                   ? "No backups match these filters"
                   : body === "no-page"
                     ? "No backups on this page"
-                    : "No backup requests yet"}
+                    : "No backups yet"}
               </EmptyTitle>
             </EmptyHeader>
           </Empty>

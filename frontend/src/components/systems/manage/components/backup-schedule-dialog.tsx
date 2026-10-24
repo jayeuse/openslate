@@ -56,7 +56,7 @@ export function BackupScheduleDialog({
     : null;
   const close = () => onOpenChange(false);
   const saveReason = maintenance.stale
-    ? "Review the latest policy first."
+    ? "Review the latest schedule first."
     : maintenance.actionsReason;
   return (
     <Dialog
@@ -92,7 +92,7 @@ export function BackupScheduleDialog({
             <Alert role="alert" variant="destructive">
               <p>
                 {maintenance.policyRefused
-                  ? "Only administrators can review backup status."
+                  ? "Only the installation owner can review backup status."
                   : "Backup status could not be loaded."}
               </p>
               <Button
@@ -114,8 +114,8 @@ export function BackupScheduleDialog({
                   }
                 >
                   <p>
-                    Backup policy changed. Your draft is still here. Review the
-                    latest policy before saving again.
+                    The backup schedule changed. Your draft is still here.
+                    Review the latest schedule before you save again.
                   </p>
                   <Button
                     type="button"
@@ -124,7 +124,7 @@ export function BackupScheduleDialog({
                     disabled={maintenance.pending}
                     onClick={() => void maintenance.reviewLatestPolicy()}
                   >
-                    Review latest policy
+                    Review latest schedule
                   </Button>
                 </Alert>
               ) : null}
@@ -159,7 +159,7 @@ export function BackupScheduleDialog({
                     ))}
                   </Select>
                 </ScheduleRow>
-                <ScheduleRow id={`${id}-retention`} label="Retention period">
+                <ScheduleRow id={`${id}-retention`} label="Keep backups for">
                   <Select
                     id={`${id}-retention`}
                     value={String(current.retention_days)}
@@ -230,7 +230,7 @@ export function BackupScheduleDialog({
                     className="min-h-11"
                     disabled={maintenance.pending}
                   >
-                    {maintenance.pending ? "Saving…" : "Save settings"}
+                    {maintenance.pending ? "Saving…" : "Save schedule"}
                   </Button>
                 </DisabledReason>
               </>

@@ -776,8 +776,8 @@ export default function ManageAudit({
               <Alert role="alert" variant="warning">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p>
-                    Workspace date settings could not be loaded. Retry to format
-                    dates in your organization’s locale and timezone.
+                    Organization date settings could not be loaded. Retry to
+                    format dates in your organization’s locale and timezone.
                   </p>
                   <Button
                     variant="outline"

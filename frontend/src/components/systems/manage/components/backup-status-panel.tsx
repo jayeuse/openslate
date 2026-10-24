@@ -120,7 +120,7 @@ export function BackupStatusPanel({
           <Alert role="alert" variant="destructive">
             <p>
               {maintenance.policyRefused
-                ? "Only administrators can review backup status."
+                ? "Only the installation owner can review backup status."
                 : "Backup status could not be loaded."}
             </p>
             <Button

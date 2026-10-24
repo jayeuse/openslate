@@ -11,9 +11,9 @@ export const LIMITS_WORDS = "None · capacity depends on your server";
 
 const resultWords: Record<ManageVersion["status"], string> = {
   current: "Up to date",
-  stale: "Release information is stale",
-  unavailable: "Release information unavailable",
-  unknown: "Version comparison unavailable",
+  stale: "The release check is out of date",
+  unavailable: "The release check is not available",
+  unknown: "The versions could not be compared",
   available: "",
 };
 

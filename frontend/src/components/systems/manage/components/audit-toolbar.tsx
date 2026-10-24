@@ -155,7 +155,7 @@ export function AuditToolbar({
         </Field>
       ) : null}
       <ToggleGroup
-        aria-label="Kind of event"
+        aria-label="Event type"
         variant="segmented"
         multiple={false}
         value={[filters.kind]}

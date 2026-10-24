@@ -39,10 +39,13 @@ function recordHref(log: ManageAuditLog, admin: boolean): Route | null {
   return null;
 }
 
-function rawValues(values: Record<string, unknown> | null): string {
+function rawValues(
+  values: Record<string, unknown> | null,
+  empty: string,
+): string {
   return values && Object.keys(values).length
     ? JSON.stringify(values, null, 2)
-    : "None recorded";
+    : empty;
 }
 
 const rowClassName =
@@ -208,7 +211,7 @@ export function AuditEventSheet({
                     <dt className="text-muted-foreground mb-1">Before</dt>
                     <dd>
                       <pre className="bg-muted overflow-x-auto rounded-md p-3 text-xs whitespace-pre-wrap">
-                        {rawValues(log.before)}
+                        {rawValues(log.before, "No earlier value")}
                       </pre>
                     </dd>
                   </div>
@@ -216,7 +219,7 @@ export function AuditEventSheet({
                     <dt className="text-muted-foreground mb-1">After</dt>
                     <dd>
                       <pre className="bg-muted overflow-x-auto rounded-md p-3 text-xs whitespace-pre-wrap">
-                        {rawValues(log.after)}
+                        {rawValues(log.after, "No new value")}
                       </pre>
                     </dd>
                   </div>

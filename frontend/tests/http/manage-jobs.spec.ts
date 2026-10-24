@@ -538,7 +538,7 @@ for (const response of ["wrong-id", "409", "404", "422"] as const)
     await expect(
       page
         .getByRole("alert")
-        .filter({ hasText: /unconfirmed|changed|available|values/ }),
+        .filter({ hasText: /could not be confirmed|changed|available|values/ }),
     ).toBeVisible();
     await expect(
       page.getByText("Retry requested.", { exact: true }),
@@ -554,11 +554,11 @@ test("backup wrong-location receipt stays unresolved and blocks new retry keys",
   await openJobs(page);
   await (await retry(page, "Nightly backup")).click();
   await expect(
-    page.getByRole("alert").filter({ hasText: "unconfirmed" }),
+    page.getByRole("alert").filter({ hasText: "could not be confirmed" }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Backup retry request confirmed.", { exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByText("Retry requested.", { exact: true })).toHaveCount(
+    0,
+  );
   expect(api.posts).toHaveLength(1);
   expect(api.posts[0].key).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
   await expect(await retry(page, "Weekly Report")).toBeDisabled();
@@ -579,7 +579,7 @@ test("uncertain backup first reads Jobs then explicitly recovers one accepted ru
   );
   await (await retry(page, "Nightly backup")).click();
   await expect(
-    page.getByRole("alert").filter({ hasText: "unconfirmed" }),
+    page.getByRole("alert").filter({ hasText: "could not be confirmed" }),
   ).toBeVisible();
   await reread;
   expect(api.posts).toHaveLength(1);
@@ -592,9 +592,7 @@ test("uncertain backup first reads Jobs then explicitly recovers one accepted ru
     .getByRole("button", { name: "Check retry result", exact: true })
     .click();
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "Backup retry request confirmed." }),
+    page.getByRole("status").filter({ hasText: "Retry requested." }),
   ).toBeVisible();
   expect(api.posts).toHaveLength(2);
   expect(api.posts[1].key).toBe(key);
@@ -658,7 +656,7 @@ test("backup uncertainty survives same-account section remount without an automa
   await openJobs(page);
   await (await retry(page, "Nightly backup")).click();
   await expect(
-    page.getByRole("alert").filter({ hasText: "unconfirmed" }),
+    page.getByRole("alert").filter({ hasText: "could not be confirmed" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
   await page.getByRole("link", { name: "Jobs", exact: true }).click();
@@ -670,9 +668,7 @@ test("backup uncertainty survives same-account section remount without an automa
     .getByRole("button", { name: "Check retry result", exact: true })
     .click();
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "Backup retry request confirmed." }),
+    page.getByRole("status").filter({ hasText: "Retry requested." }),
   ).toBeVisible();
   expect(api.posts[1].key).toBe(api.posts[0].key);
 });
@@ -699,9 +695,9 @@ test("account replacement cancels a held retry and never transfers its key or la
   await expect(page.getByText("Nightly backup", { exact: true })).toHaveCount(
     0,
   );
-  await expect(
-    page.getByText("Backup retry request confirmed.", { exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByText("Retry requested.", { exact: true })).toHaveCount(
+    0,
+  );
   await expect(
     page.getByRole("button", { name: "Check retry result", exact: true }),
   ).toHaveCount(0);
@@ -877,7 +873,7 @@ test("backup readback failure cannot offer recovery POST until a fresh GET succe
   await openJobs(page);
   await (await retry(page, "Nightly backup")).click();
   await expect(
-    page.getByRole("alert").filter({ hasText: "unconfirmed" }),
+    page.getByRole("alert").filter({ hasText: "could not be confirmed" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Check retry result", exact: true }),
@@ -893,9 +889,7 @@ test("backup readback failure cannot offer recovery POST until a fresh GET succe
     .getByRole("button", { name: "Check retry result", exact: true })
     .click();
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "Backup retry request confirmed." }),
+    page.getByRole("status").filter({ hasText: "Retry requested." }),
   ).toBeVisible();
   expect(api.posts[1].key).toBe(api.posts[0].key);
 });
@@ -991,7 +985,9 @@ for (const state of ["registry", "unconfirmed"] as const) {
           );
           await (await retry(page, "Nightly backup")).click();
           await expect(
-            page.getByRole("alert").filter({ hasText: "unconfirmed" }),
+            page
+              .getByRole("alert")
+              .filter({ hasText: "could not be confirmed" }),
           ).toBeVisible();
           await reread;
           expect(api.posts).toHaveLength(1);

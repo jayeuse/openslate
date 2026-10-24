@@ -23,14 +23,14 @@ export const JOB_STATES = [
   { value: "interrupted", word: "Interrupted", tone: "warn" },
 ] as const satisfies readonly { value: string; word: string; tone: JobTone }[];
 
-/** The kinds the server registers, in its own words. */
+/** The kinds the server registers, with OpenComms named as in the navigation. */
 export const JOB_KINDS = [
   { value: "report-run", label: "Report run" },
   { value: "post-publish", label: "Post publication" },
   { value: "event-reminder", label: "Event reminder" },
   { value: "backup", label: "Backup" },
-  { value: "comms-scheduled-message", label: "Scheduled Comms message" },
-  { value: "comms-export", label: "Comms export" },
+  { value: "comms-scheduled-message", label: "Scheduled OpenComms message" },
+  { value: "comms-export", label: "OpenComms export" },
   { value: "comms-link-preview", label: "Link preview" },
 ] as const;
 

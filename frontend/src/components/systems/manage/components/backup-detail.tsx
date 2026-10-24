@@ -15,6 +15,7 @@ import {
 } from "../adapters/backup-api";
 import {
   backupExportReason,
+  backupRestartWords,
   backupRunStatus,
   backupScheduleAtRequest,
   shortSnapshotId,
@@ -83,11 +84,8 @@ export function BackupDetail({
   const exportReason = backupExportReason(run);
   const facts: [string, ReactNode][] = [
     ["Requested", at(run.requested_at, region)],
-    [
-      "Source",
-      run.provenance === "manual" ? "Manual request" : "Scheduled request",
-    ],
-    ["Schedule at request", backupScheduleAtRequest(run)],
+    ["Source", run.provenance === "manual" ? "Manual" : "Automatic"],
+    ["Schedule then", backupScheduleAtRequest(run)],
     ["Started", at(run.started_at, region)],
     ["Finished", at(run.finished_at, region)],
     ["Snapshot", run.snapshot_id ? <Snapshot id={run.snapshot_id} /> : "—"],
@@ -98,10 +96,8 @@ export function BackupDetail({
         : "Not verified",
     ],
     [
-      "Restart / reconciliation",
-      run.reconciled_at
-        ? `Reconciled · ${formatBackupTime(run.reconciled_at, region)}`
-        : "Not reconciled",
+      "Server restart",
+      backupRestartWords(run, (value) => formatBackupTime(value, region)),
     ],
   ];
   if (run.failure_code) facts.push(["Failure", failureLabel(run.failure_code)]);
@@ -120,7 +116,8 @@ export function BackupDetail({
         <ExternalLink aria-hidden="true" className="size-3.5" />
       </a>
       <span className="text-muted-foreground block text-xs">
-        Use the procedure for this release. It may need repository access.
+        Use the steps for this release. The person who runs your server follows
+        them.
       </span>
     </span>,
   ]);

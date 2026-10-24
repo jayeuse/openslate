@@ -135,7 +135,7 @@ test("Events mixed nullable feed and details explain representative and partial 
   await expect(dialog).toContainText(
     "Repeated attempts are grouped. The time shows the first one.",
   );
-  await expect(dialog).toContainText("No person recorded");
+  await expect(dialog.locator('dt:text-is("Done by") + dd')).toHaveText("—");
   await expect(dialog).not.toContainText(unsafeEventCanary);
   await expect(dialog).not.toContainText(/last seen|attempt count/i);
   await page.keyboard.press("Escape");
@@ -1620,17 +1620,17 @@ const emittedSentenceCases: {
   },
   {
     type: "user.authentication_activation",
-    sentence: "Mara activated authentication for Jay.",
+    sentence: "Mara enabled sign-in for Jay.",
     patch: { subject_id: mfaUserB },
   },
   {
     type: "user.authentication_disable",
-    sentence: "Mara disabled authentication for Jay.",
+    sentence: "Mara disabled sign-in for Jay.",
     patch: { subject_id: mfaUserB },
   },
   {
     type: "user.authentication_restore",
-    sentence: "Mara restored authentication for Jay.",
+    sentence: "Mara restored sign-in for Jay.",
     patch: { subject_id: mfaUserB },
   },
   {
@@ -1679,14 +1679,12 @@ const emittedSentenceCases: {
   },
   {
     type: "records.aggregate_snapshot.authorized",
-    sentence:
-      "Mara was authorized to create an aggregate snapshot with 7 buckets.",
+    sentence: "Mara was authorized to read a record summary with 7 groups.",
     patch: { subject_id: eventOperationId, metadata: { bucket_count: 7 } },
   },
   {
     type: "records.aggregate_snapshots.authorized",
-    sentence:
-      "Mara was authorized to create 2 aggregate snapshots with 7 buckets.",
+    sentence: "Mara was authorized to read 2 record summaries with 7 groups.",
     patch: {
       subject_id: null,
       metadata: {
@@ -1816,7 +1814,7 @@ test("S09: missing and malformed sentence facts keep non-success outcomes truthf
     "An invitation from Unknown person to Unknown person was denied.",
     "Two-step verification reset by Unknown person for Unknown person was only partly completed.",
     "Unknown person was authorized to export records.",
-    "Unknown person was authorized to create aggregate snapshots.",
+    "Unknown person was authorized to read record summaries.",
     "Unknown person queued a retry for a job.",
   ])
     await expect(

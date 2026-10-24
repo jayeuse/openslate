@@ -381,7 +381,9 @@ test("Logo stale revision preserves the ready candidate and settings draft for e
     .fill("Preserved on conflict");
   await save(page).click();
   await expect(
-    page.getByText(/Workspace settings changed\. The latest values are loaded/),
+    page.getByText(
+      /Organization settings changed\. The latest values are loaded/,
+    ),
   ).toBeVisible();
   await expect(page.getByLabel("Description", { exact: true })).toHaveValue(
     "Preserved on conflict",
@@ -425,7 +427,9 @@ test("Logo retained-candidate refusal rechecks the session before any further pu
   await pick(page);
   await save(page).click();
   await expect(
-    page.getByText(/Workspace settings changed\. The latest values are loaded/),
+    page.getByText(
+      /Organization settings changed\. The latest values are loaded/,
+    ),
   ).toBeVisible();
   const sessionsBeforeRefusal = api.sessionReads;
   const gate = heldResponse();

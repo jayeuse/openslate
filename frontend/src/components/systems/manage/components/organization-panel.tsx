@@ -123,8 +123,8 @@ export function OrganizationPanel({
       ) : null}
       {staleRevision ? (
         <Alert variant="destructive">
-          Workspace settings changed. The latest values are loaded. Review your
-          changes and save again.
+          Organization settings changed. The latest values are loaded. Review
+          your changes and save again.
         </Alert>
       ) : null}
       <div className="grid min-w-0 gap-4 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_21.25rem] xl:grid-rows-[minmax(0,1fr)]">
@@ -250,7 +250,9 @@ function OrganizationPreview({
           />
           <div className="min-w-0">
             <h3 className="font-semibold break-words">
-              {workspace ? organizationName : "Workspace details unavailable"}
+              {workspace
+                ? organizationName
+                : "Organization details unavailable"}
             </h3>
             <p className="text-muted-foreground text-sm break-words">
               {workspace

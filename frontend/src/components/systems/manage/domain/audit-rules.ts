@@ -19,8 +19,9 @@ type Kind = { noun: string; plural: string; area: string };
 
 /**
  * Every audited table the server writes, as a noun and the page it belongs
- * to. Tables whose audit is off (`__audit_enabled__ = False`) are absent. An
- * unknown table reads "Item" in "Workspace", never its split table name.
+ * to, in customer words (glossary "Internal" terms such as Binding are not
+ * shown). Tables whose audit is off (`__audit_enabled__ = False`) are absent.
+ * An unknown table reads "Item" in "Other", never its split table name.
  */
 const kinds: Readonly<Record<string, Kind>> = {
   records: { noun: "Record", plural: "Records", area: "Sandbox" },
@@ -49,21 +50,29 @@ const kinds: Readonly<Record<string, Kind>> = {
     plural: "Trigger runs",
     area: "Sandbox",
   },
-  sandbox_bindings: { noun: "Binding", plural: "Bindings", area: "Sandbox" },
+  sandbox_bindings: {
+    noun: "Live item link",
+    plural: "Live item links",
+    area: "Sandbox",
+  },
   sandbox_documents: {
     noun: "Sandbox design",
     plural: "Sandbox designs",
     area: "Sandbox",
   },
   sandbox_publications: {
-    noun: "Publication",
-    plural: "Publications",
+    noun: "Published change",
+    plural: "Published changes",
     area: "Sandbox",
   },
   sandbox_test_runs: { noun: "Test run", plural: "Test runs", area: "Sandbox" },
   sandbox_versions: { noun: "Version", plural: "Versions", area: "Sandbox" },
   users: { noun: "Person", plural: "People", area: "Access" },
-  memberships: { noun: "Membership", plural: "Memberships", area: "Access" },
+  memberships: {
+    noun: "Organization member",
+    plural: "Organization members",
+    area: "Access",
+  },
   groups: { noun: "Group", plural: "Groups", area: "Access" },
   group_members: {
     noun: "Group member",
@@ -111,8 +120,8 @@ const kinds: Readonly<Record<string, Kind>> = {
   reports: { noun: "Report", plural: "Reports", area: "OpenView" },
   report_runs: { noun: "Report run", plural: "Report runs", area: "OpenView" },
   report_run_rows: {
-    noun: "Report row",
-    plural: "Report rows",
+    noun: "Report result",
+    plural: "Report results",
     area: "OpenView",
   },
   files: { noun: "File", plural: "Files", area: "Platform" },
@@ -140,8 +149,8 @@ const kinds: Readonly<Record<string, Kind>> = {
 };
 const unknownKind: Kind = {
   noun: "Item",
-  plural: "Other items",
-  area: "Workspace",
+  plural: "Items",
+  area: "Other",
 };
 
 export function auditKind(entityType: string): Kind {
@@ -151,7 +160,6 @@ export function auditKind(entityType: string): Kind {
 /** The Area filter's option label for a table. */
 export function auditKindLabel(entityType: string): string {
   const kind = auditKind(entityType);
-  if (kind === unknownKind) return "Other items";
   return kind.plural === kind.area
     ? kind.plural
     : `${kind.plural} · ${kind.area}`;

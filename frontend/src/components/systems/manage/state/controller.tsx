@@ -18,6 +18,7 @@ import {
   backupExportSourceAvailable,
   exportPassphraseError,
   backupPolicyPatch,
+  backupStateLabels,
   admitManageBackupExportDownload,
   defaultManageBackupsRequest,
   getManageBackupStatus,
@@ -348,7 +349,7 @@ export function useManageMaintenance({
       setDraft({});
       setDraftPolicy(null);
       setStaleRevision(false);
-      setNotice("Backup policy saved.");
+      setNotice("Backup schedule saved.");
       return true;
     } catch (caught) {
       if (operation.signal.aborted) return false;
@@ -361,8 +362,8 @@ export function useManageMaintenance({
           isOwnerRefusal(caught)
             ? OWNER_REFUSAL_MESSAGE
             : caught instanceof ApiError && caught.status === 403
-              ? "Only administrators can change backup policy."
-              : "Backup policy could not be saved. Your draft is still here.",
+              ? "Only the installation owner can change the backup schedule."
+              : "The backup schedule could not be saved. Your draft is still here.",
         );
       }
       return false;
@@ -395,7 +396,7 @@ export function useManageMaintenance({
       if (caught instanceof ApiError && caught.status === 403)
         setPolicyDenied(true);
       setError(
-        "The latest backup policy could not be loaded. Your draft is still here.",
+        "The latest backup schedule could not be loaded. Your draft is still here.",
       );
     } finally {
       if (command.current === operation) {
@@ -441,7 +442,9 @@ export function useManageMaintenance({
       await afterManageBackupQueue(client);
       if (operation.signal.aborted) return false;
       setNotice(
-        `${run.name}: ${run.state === "queued" ? "queued for the host runner" : run.state}. Queueing does not execute a backup.`,
+        run.state === "queued"
+          ? `${run.name} is queued. The backup service on the server runs it.`
+          : `${run.name}: ${backupStateLabels[run.state].toLowerCase()}.`,
       );
       return true;
     } catch (caught) {
@@ -451,7 +454,7 @@ export function useManageMaintenance({
         isOwnerRefusal(caught)
           ? OWNER_REFUSAL_MESSAGE
           : caught instanceof ApiError && caught.status === 403
-            ? "Only administrators can request a backup."
+            ? "Only the installation owner can request a backup."
             : "The backup request could not be confirmed. Retry the same name to check the same request.",
       );
       return false;
@@ -511,7 +514,7 @@ export function useManageMaintenance({
         isOwnerRefusal(caught)
           ? OWNER_REFUSAL_MESSAGE
           : caught instanceof ApiError && caught.status === 403
-            ? "Only an eligible administrator can request an export."
+            ? "Only the installation owner can request an export."
             : "The export request could not be confirmed. Retry without changing the passphrase to check the same request.",
       );
       return false;

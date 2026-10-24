@@ -1066,7 +1066,7 @@ test("separate retention days use Save and Discard without changing Backup", asy
     name: "Backup schedule",
     exact: true,
   });
-  const backupRetention = backupPolicy.getByLabel("Retention period", {
+  const backupRetention = backupPolicy.getByLabel("Keep backups for", {
     exact: true,
   });
   await expect(backupRetention).toHaveValue("30");

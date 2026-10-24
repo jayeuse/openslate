@@ -58,8 +58,8 @@ test("each job kind reads in the server's words, and a new kind reads as its nam
     "Post publication",
     "Event reminder",
     "Backup",
-    "Scheduled Comms message",
-    "Comms export",
+    "Scheduled OpenComms message",
+    "OpenComms export",
     "Link preview",
     "Future work",
   ]);

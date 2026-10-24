@@ -121,7 +121,7 @@ export function UpdatesPanel({
         {maintenance.versionRefused || maintenance.version.isError ? (
           <Alert role="alert" variant="destructive" className="my-1.5">
             {maintenance.versionRefused
-              ? "Only administrators can review version status."
+              ? "Only the installation owner can review version status."
               : "Version status could not be loaded. Try again."}
           </Alert>
         ) : !version && maintenance.version.isPending ? (

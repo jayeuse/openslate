@@ -31,7 +31,7 @@ test("the Updates rows name the version, the release check result, its failure a
       name: "an unavailable release source",
       version: version({}),
       check: {
-        result: "Release information unavailable",
+        result: "The release check is not available",
         failure: "The release source was unavailable",
         times: "Last successful check — · Last attempt at 2026-10-08T03:00:00Z",
       },
@@ -63,7 +63,7 @@ test("the Updates rows name the version, the release check result, its failure a
         failure_code: null,
       }),
       check: {
-        result: "Release information is stale",
+        result: "The release check is out of date",
         failure: null,
         times:
           "Last successful check at 2026-10-01T00:00:00Z · Last attempt at 2026-10-08T03:00:00Z",
@@ -96,7 +96,7 @@ test("the Updates rows name the version, the release check result, its failure a
         failure_code: null,
       }),
       check: {
-        result: "Version comparison unavailable",
+        result: "The versions could not be compared",
         failure: null,
         times:
           "Last successful check at 2026-10-08T04:00:00Z · Last attempt at 2026-10-08T03:00:00Z",

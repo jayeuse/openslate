@@ -474,14 +474,14 @@ function ManageContent() {
     tab === "Organization"
       ? organizationReader
         ? "Only an administrator can change these settings."
-        : "Make this workspace feel like your organization."
+        : "Set your organization’s name, region, and look."
       : tab === "Jobs"
         ? "See scheduled work, attempts, and problems."
         : tab === "Audit"
           ? "See who changed what, then inspect the details."
           : tab === "Updates & licensing"
             ? "The person who runs your server installs updates."
-            : "Restoring a backup is done on the server itself.";
+            : "The person who runs your server restores backups.";
   // A real owner-only refusal (a stale identity) lands on the same notice.
   const ownerRefused =
     (tab === "Backup" || tab === "Updates & licensing") &&
@@ -798,7 +798,7 @@ function ManageContent() {
     if (selection.kind === "remove") return { kind: "ready", id: null };
     if (selection.kind === "reservation-unknown") {
       setLogoError(
-        "The logo reservation could not be confirmed. Review Logo files, or choose a logo again.",
+        "The logo upload could not be confirmed. Choose the logo again.",
       );
       return { kind: "stopped" };
     }
@@ -820,7 +820,7 @@ function ManageContent() {
         )
           requestSessionRecheck();
         setLogoError(
-          "The logo reservation could not be confirmed. Review Logo files, or choose a logo again.",
+          "The logo upload could not be confirmed. Choose the logo again.",
         );
         return { kind: "stopped" };
       }
@@ -920,7 +920,7 @@ function ManageContent() {
         setLogoNotice("Previous logo cleanup completed.");
       } else
         setLogoError(
-          "Cleanup is still unfinished. Retry when the current operation has ended.",
+          "Cleanup is not finished. Try again when the current task ends.",
         );
     } catch (caught) {
       if (!owns()) return;
@@ -930,7 +930,7 @@ function ManageContent() {
         caught.code === "purge_disabled";
       setLogoError(
         purgeDisabled
-          ? "Manual permanent deletion is disabled."
+          ? "Permanent delete is turned off on this server."
           : apiErrorMessage(
               caught,
               "The logo could not be checked. Try again.",
@@ -1097,7 +1097,7 @@ function ManageContent() {
         if (!ownsCommand()) return;
         if (refreshed.isError || !refreshed.data)
           setError(
-            "Workspace settings changed, but the latest values could not be loaded. Retry before saving again.",
+            "Organization settings changed, but the latest values could not be loaded. Retry before saving again.",
           );
         else {
           workspaceNeedsReadback.current = false;

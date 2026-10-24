@@ -609,14 +609,14 @@ test("Updates and licensing share a real read-only destination and never simulat
   ]);
   await expect(software.getByRole("definition")).toHaveText([
     "0.1.0 · Stable channel",
-    /^Release information unavailable/,
+    /^The release check is not available/,
     "No license required · Self-hosted",
     "None · capacity depends on your server",
   ]);
   await expect(
     page.getByRole("heading", { name: /Software version|License & usage/ }),
   ).toHaveCount(0);
-  await expect(software).toContainText("Release information unavailable");
+  await expect(software).toContainText("The release check is not available");
   await expect(license).toContainText("No license required");
   await expect(
     license.getByText(
@@ -635,7 +635,7 @@ test("Updates and licensing share a real read-only destination and never simulat
     .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await refreshed;
-  await expect(software).toContainText("Release information unavailable");
+  await expect(software).toContainText("The release check is not available");
   await expect(
     software.getByRole("link", {
       name: "Update procedure for this release",
@@ -692,7 +692,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   state.version.latest_version = "0.2.0";
   state.version.observed_at = "2026-10-01T00:00:00Z";
   await sendOpenViewEvent(page, "invalidate", { entity: "update_statuses" });
-  await expect(software).toContainText("Release information is stale");
+  await expect(software).toContainText("The release check is out of date");
   await expect(software.getByText("Up to date", { exact: true })).toHaveCount(
     0,
   );
@@ -701,7 +701,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
     .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software).toContainText(
-    "Only administrators can review version status",
+    "Only the installation owner can review version status",
   );
   await expect(
     software.getByText("0.1.0 · Stable channel", { exact: true }),

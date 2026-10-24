@@ -281,7 +281,14 @@ test("record field ids on a page are listed once, and their names label the chan
 test("the Area filter names a kind and its page once", () => {
   expect(auditKindLabel("records")).toBe("Records · Sandbox");
   expect(auditKindLabel("in_app_notifications")).toBe("Notifications");
-  expect(auditKindLabel("unknown_table")).toBe("Other items");
+  expect(auditKindLabel("unknown_table")).toBe("Items · Other");
+  // Internal glossary words become the customer words (Phase 7, MG7).
+  expect(auditKindLabel("sandbox_bindings")).toBe("Live item links · Sandbox");
+  expect(auditKindLabel("sandbox_publications")).toBe(
+    "Published changes · Sandbox",
+  );
+  expect(auditKindLabel("memberships")).toBe("Organization members · Access");
+  expect(auditKindLabel("report_run_rows")).toBe("Report results · OpenView");
 });
 
 test("the area names the department, else the page of the kind", () => {
@@ -297,7 +304,7 @@ test("the area names the department, else the page of the kind", () => {
     auditArea(log({ entity_type: "in_app_notifications" }), departments),
   ).toBe("Notifications");
   expect(auditArea(log({ entity_type: "unknown_table" }), departments)).toBe(
-    "Workspace",
+    "Other",
   );
 });
 

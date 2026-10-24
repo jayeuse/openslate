@@ -282,33 +282,32 @@ const typeRows: {
   },
   {
     type: "user.authentication_activation",
-    label: "Authentication activation",
+    label: "Sign-in enabled",
     patch: { subject_id: jay },
-    success: "Mara activated authentication for Jay.",
+    success: "Mara enabled sign-in for Jay.",
     unfinished: {
       outcome: "failure",
-      sentence: "Authentication activation by Mara for Jay failed.",
+      sentence: "Enabling sign-in by Mara for Jay failed.",
     },
   },
   {
     type: "user.authentication_disable",
-    label: "Authentication disablement",
+    label: "Sign-in disabled",
     patch: { subject_id: jay },
-    success: "Mara disabled authentication for Jay.",
+    success: "Mara disabled sign-in for Jay.",
     unfinished: {
       outcome: "partial",
-      sentence:
-        "Authentication disablement by Mara for Jay was only partly completed.",
+      sentence: "Disabling sign-in by Mara for Jay was only partly completed.",
     },
   },
   {
     type: "user.authentication_restore",
-    label: "Authentication restoration",
+    label: "Sign-in restored",
     patch: { subject_id: jay },
-    success: "Mara restored authentication for Jay.",
+    success: "Mara restored sign-in for Jay.",
     unfinished: {
       outcome: "attempt",
-      sentence: "Authentication restoration by Mara for Jay was attempted.",
+      sentence: "Restoring sign-in by Mara for Jay was attempted.",
     },
   },
   {
@@ -370,27 +369,25 @@ const typeRows: {
   },
   {
     type: "records.aggregate_snapshot.authorized",
-    label: "Aggregate snapshot authorization",
+    label: "Record summary authorization",
     patch: { subject_id: operation, metadata: { bucket_count: 7 } },
-    success:
-      "Mara was authorized to create an aggregate snapshot with 7 buckets.",
+    success: "Mara was authorized to read a record summary with 7 groups.",
     unfinished: {
       outcome: "failure",
-      sentence: "Aggregate snapshot by Mara failed.",
+      sentence: "Record summary by Mara failed.",
     },
   },
   {
     type: "records.aggregate_snapshots.authorized",
-    label: "Aggregate snapshots authorization",
+    label: "Record summaries authorization",
     patch: {
       subject_id: null,
       metadata: { query_count: 2, bucket_count: 7, module_ids: [operation] },
     },
-    success:
-      "Mara was authorized to create 2 aggregate snapshots with 7 buckets.",
+    success: "Mara was authorized to read 2 record summaries with 7 groups.",
     unfinished: {
       outcome: "partial",
-      sentence: "Aggregate snapshots by Mara was only partly completed.",
+      sentence: "Record summaries by Mara was only partly completed.",
     },
   },
   {
@@ -596,8 +593,7 @@ const factRows: {
       event_type: "records.aggregate_snapshot.authorized",
       metadata: { bucket_count: 1 },
     },
-    sentence:
-      "Mara was authorized to create an aggregate snapshot with 1 bucket.",
+    sentence: "Mara was authorized to read a record summary with 1 group.",
   },
   {
     name: "a snapshot without a bucket count",
@@ -605,7 +601,7 @@ const factRows: {
       event_type: "records.aggregate_snapshot.authorized",
       metadata: {},
     },
-    sentence: "Mara was authorized to create an aggregate snapshot.",
+    sentence: "Mara was authorized to read a record summary.",
   },
   {
     name: "one snapshot with one bucket",
@@ -613,8 +609,7 @@ const factRows: {
       event_type: "records.aggregate_snapshots.authorized",
       metadata: { query_count: 1, bucket_count: 1 },
     },
-    sentence:
-      "Mara was authorized to create 1 aggregate snapshot with 1 bucket.",
+    sentence: "Mara was authorized to read 1 record summary with 1 group.",
   },
   {
     name: "snapshots with malformed counts",
@@ -630,7 +625,7 @@ const factRows: {
         module_ids: [unsafeEventCanary],
       },
     },
-    sentence: "Unknown person was authorized to create aggregate snapshots.",
+    sentence: "Unknown person was authorized to read record summaries.",
   },
   {
     name: "a report run retry",

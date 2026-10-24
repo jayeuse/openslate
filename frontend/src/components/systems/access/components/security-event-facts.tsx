@@ -122,7 +122,7 @@ function PersonFact({
   disabled: boolean;
   onPersonFilter: (personId: string) => void;
 }) {
-  if (!id) return <dd>No person recorded</dd>;
+  if (!id) return <dd>—</dd>;
   return (
     <dd className="min-w-0 space-y-1">
       <span className="block break-words">{personName(names, id)}</span>

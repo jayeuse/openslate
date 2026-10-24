@@ -602,7 +602,7 @@ test("Organization failed stale refresh blocks Save until an explicit Retry", as
   await save(page).click();
   await expect(
     page.getByText(
-      "Workspace settings changed, but the latest values could not be loaded. Retry before saving again.",
+      "Organization settings changed, but the latest values could not be loaded. Retry before saving again.",
       { exact: true },
     ),
   ).toBeVisible();

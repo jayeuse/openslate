@@ -7,6 +7,7 @@ import type {
 import { backupExportSourceAvailable } from "../../../src/components/systems/manage/adapters/backup-api";
 import {
   backupExportReason,
+  backupRestartWords,
   backupRunStatus,
   backupScheduleAtRequest,
   backupStatusFacts,
@@ -131,14 +132,14 @@ test("the service fact and its warning follow the runner state", () => {
     [
       "recovery_required",
       "2026-10-08T03:00:00Z",
-      "Operator recovery required · Checked in <2026-10-08T03:00:00Z>",
-      "The person who runs your server must fix the backup service. New requests wait in the queue.",
+      "Needs recovery on the server · Checked in <2026-10-08T03:00:00Z>",
+      "The person who runs your server must run backup recovery. New requests wait in the queue.",
     ],
     [
       "adoption_required",
       null,
-      "Operator adoption required · Never checked in",
-      "The person who runs your server must fix the backup service. New requests wait in the queue.",
+      "Needs confirmation after a restore · Never checked in",
+      "The person who runs your server must confirm backups after the restore. New requests wait in the queue.",
     ],
   ];
   for (const [state, last_seen_at, words, warning] of rows) {
@@ -233,7 +234,7 @@ test("a backup that cannot be exported says why, and only an exportable one has 
     [{ verified_at: null }, "This backup is not verified yet."],
     [
       { reconciled_at: null },
-      "This backup is waiting for the server's restart check.",
+      "This backup needs recovery on the server first.",
     ],
   ];
   for (const [values, reason] of rows) {
@@ -241,4 +242,31 @@ test("a backup that cannot be exported says why, and only an exportable one has 
     expect(backupExportReason(candidate), JSON.stringify(values)).toBe(reason);
     expect(backupExportSourceAvailable(candidate)).toBe(reason === null);
   }
+});
+
+test("the Server restart row says whether the runner recorded the restart", () => {
+  // `reconciled_at` is set when the runner closes the run out after it
+  // restarts the server; a finished run without it needs recovery.
+  const rows: [Partial<ManageBackupRun>, string][] = [
+    [{}, "Recorded · <2026-10-07T02:05:00Z>"],
+    [{ state: "failed", reconciled_at: null }, "Needs recovery on the server"],
+    [
+      { state: "interrupted", finished_at: null, reconciled_at: null },
+      "Needs recovery on the server",
+    ],
+    [
+      {
+        state: "queued",
+        started_at: null,
+        finished_at: null,
+        reconciled_at: null,
+      },
+      "—",
+    ],
+    [{ state: "running", finished_at: null, reconciled_at: null }, "—"],
+  ];
+  for (const [values, words] of rows)
+    expect(backupRestartWords(run(values), time), JSON.stringify(values)).toBe(
+      words,
+    );
 });

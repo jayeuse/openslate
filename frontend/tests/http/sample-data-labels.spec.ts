@@ -40,7 +40,7 @@ test("Manage Organization shows no data-source or example-data label", async ({
 }) => {
   await openSignedIn(page, "/manage?view=organization");
   await expect(
-    page.getByText("Make this workspace feel like your organization.", {
+    page.getByText("Set your organization’s name, region, and look.", {
       exact: true,
     }),
   ).toBeVisible();

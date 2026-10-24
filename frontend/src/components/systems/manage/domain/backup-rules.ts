@@ -28,12 +28,10 @@ const serviceWords: Record<ManageBackupStatus["runner"]["state"], string> = {
   unknown: "Unknown",
   available: "Available",
   stale: "Not checked in recently",
-  recovery_required: "Operator recovery required",
-  adoption_required: "Operator adoption required",
+  recovery_required: "Needs recovery on the server",
+  adoption_required: "Needs confirmation after a restore",
 };
 
-const operatorFix =
-  "The person who runs your server must fix the backup service. New requests wait in the queue.";
 const serviceWarnings: Record<
   ManageBackupStatus["runner"]["state"],
   string | null
@@ -41,8 +39,12 @@ const serviceWarnings: Record<
   unknown: "The backup service has not checked in yet.",
   available: null,
   stale: "The backup service has not checked in recently.",
-  recovery_required: operatorFix,
-  adoption_required: operatorFix,
+  // A backup that started but was never closed (`unresolved_run`).
+  recovery_required:
+    "The person who runs your server must run backup recovery. New requests wait in the queue.",
+  // A schedule that came from another installation in a restore.
+  adoption_required:
+    "The person who runs your server must confirm backups after the restore. New requests wait in the queue.",
 };
 
 function kept(days: number): string {
@@ -113,8 +115,28 @@ export function backupExportReason(run: ManageBackupRun): string | null {
       ? "This backup is not verified yet."
       : "This backup did not finish, so there is nothing to export.";
   if (!run.reconciled_at)
-    return "This backup is waiting for the server's restart check.";
+    return "This backup needs recovery on the server first.";
   return null;
+}
+
+/**
+ * The detail's Server restart row. `reconciled_at` is set when the backup
+ * runner closes the run out after it restarts the server
+ * (`backup_runner.py`); a run that started and ended without it needs
+ * recovery on the server. A run that has not ended has nothing to say yet.
+ */
+export function backupRestartWords(
+  run: Pick<ManageBackupRun, "state" | "started_at" | "reconciled_at">,
+  formatTime: (value: string) => string,
+): string {
+  if (run.reconciled_at) return `Recorded · ${formatTime(run.reconciled_at)}`;
+  if (
+    run.started_at === null ||
+    run.state === "queued" ||
+    run.state === "running"
+  )
+    return "—";
+  return "Needs recovery on the server";
 }
 
 /** A row's status as a word and a dot tone. Verified is a completed run with a check. */
@@ -138,7 +160,7 @@ export function backupRunStatus(
   }
 }
 
-/** The schedule and retention a run was requested under. */
+/** The schedule and retention a run was requested under ("Schedule then"). */
 export function backupScheduleAtRequest(
   run: Pick<ManageBackupRun, "schedule" | "retention_days">,
 ): string {

@@ -45,7 +45,7 @@ for (const row of [
     state: { version: version({}) },
     shown: [
       ">0.1.0 · Stable channel<",
-      "<span>Release information unavailable</span>",
+      "<span>The release check is not available</span>",
       ">· The release source was unavailable<",
       ">Last successful check — · Last attempt Oct 7, 2026, 11:00 PM<",
       license,
@@ -82,7 +82,7 @@ for (const row of [
       }),
     },
     shown: [
-      "<span>Release information is stale</span>",
+      "<span>The release check is out of date</span>",
       "<dt>Latest release</dt><dd>0.2.0</dd>",
     ],
     hidden: ["Up to date"],
@@ -120,7 +120,7 @@ for (const row of [
     },
     shown: [
       ">2.7.1-development · Stable channel<",
-      "<span>Version comparison unavailable</span>",
+      "<span>The versions could not be compared</span>",
       "<dt>Latest release</dt><dd>2.7.1</dd>",
       'href="https://github.com/jayeuse/openslate/releases/tag/v2.7.1"',
     ],
@@ -145,7 +145,7 @@ for (const row of [
       ">Last successful check — · Last attempt —<",
     ],
     hidden: [
-      "Version comparison unavailable",
+      "The versions could not be compared",
       "No release observation recorded",
       "Release notes",
       "Up to date",
@@ -153,9 +153,9 @@ for (const row of [
     ],
   },
   {
-    name: "a refused read shows the administrator-only message and no version",
+    name: "a refused read shows the owner-only message and no version",
     state: { version: null, refused: true },
-    shown: ["Only administrators can review version status.", license],
+    shown: ["Only the installation owner can review version status.", license],
     hidden: [">Version</dt>", "Release check", "Loading version status"],
   },
   {

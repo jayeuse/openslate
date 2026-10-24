@@ -239,11 +239,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
       await retryManageJob(actual, { key, signal: controller.signal });
       if (!owns(started)) return;
       storeRecovery({ ...attempt, confirmed: true });
-      setNotice(
-        actual.kind === "backup"
-          ? "Backup retry request confirmed."
-          : "Retry requested.",
-      );
+      setNotice("Retry requested.");
       if (actual.kind === "backup") {
         void client.invalidateQueries({ queryKey: manageKeys.backups() });
         void client.invalidateQueries({ queryKey: manageKeys.backupStatus() });
@@ -263,7 +259,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
         );
       } else {
         setCommandError(
-          "Retry outcome unconfirmed. Reload Jobs before checking this request.",
+          "The retry could not be confirmed. Reload Jobs to see its state.",
         );
         setRequiresRead(true);
       }
@@ -293,7 +289,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
     (query.error
       ? `Jobs could not be loaded. ${apiErrorMessage(query.error, "Try again.")}`
       : denied
-        ? "Jobs could not be loaded. Access is unavailable."
+        ? "Jobs could not be loaded. You do not have access."
         : "");
   const controlsLocked = pending !== null || recovery !== null || readBusy;
   const pendingRow = pending

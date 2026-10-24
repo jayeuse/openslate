@@ -12,7 +12,7 @@ export function formatBackupTime(
   value: string | null,
   region?: WorkspaceRegion,
 ): string {
-  if (value === null) return "Not recorded";
+  if (value === null) return "—";
   const options = { dateStyle: "medium", timeStyle: "short" } as const;
   if (region) return formatWorkspaceDateTime(value, region, options);
   const date = new Date(value);
