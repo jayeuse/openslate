@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ import {
   DialogFrameHeader,
   dialogFrameContentClass,
 } from "@/components/ui/dialog-frame";
+import { DiscardChangesDialog } from "../../access/components/people-fields";
 import { backupScheduleLabels } from "../adapters/backup-api";
 import type { useManageMaintenance } from "../state/controller";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
@@ -35,7 +36,9 @@ const RETENTION_LABELS = {
 /**
  * The schedule dialog (MD8, layout direction 8): a pinned header with a
  * named close, label-left rows, and a pinned footer that shows Close at
- * rest and the Save bar only after an edit (M-F10).
+ * rest and only Discard changes and Save schedule after an edit (M-F10).
+ * After an edit, the named close and Escape ask before the edit is lost, so
+ * no draft waits behind a closed dialog (Phase 8, MD20).
  */
 export function BackupScheduleDialog({
   maintenance,
@@ -54,191 +57,225 @@ export function BackupScheduleDialog({
   const current = status
     ? { ...(maintenance.draftPolicy ?? status.policy), ...maintenance.draft }
     : null;
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Keep editing returns to the field last changed; Discard closes the
+  // dialog, which returns focus to Edit schedule.
+  const lastEdited = useRef<"schedule" | "retention">("schedule");
+  const discarding = useRef(false);
   const close = () => onOpenChange(false);
+  // An edit is never dropped silently: closing asks first.
+  const requestClose = () => {
+    if (maintenance.pending) return;
+    discarding.current = false;
+    if (maintenance.dirty) setConfirmDiscard(true);
+    else close();
+  };
   const saveReason = maintenance.stale
     ? "Review the latest schedule first."
     : maintenance.actionsReason;
   return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      dismissible={!maintenance.pending}
-    >
-      <DialogContent
-        className={`${dialogFrameContentClass} max-w-xl`}
-        finalFocus={finalFocus}
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => (next ? onOpenChange(true) : requestClose())}
+        dismissible={!maintenance.pending}
       >
-        <DialogFrameHeader
-          title={<DialogTitle>Backup schedule</DialogTitle>}
-          description={
-            <DialogDescription>
-              Choose when backups run and how long they are kept.
-            </DialogDescription>
-          }
-          closeLabel="Close backup schedule"
-          closeDisabled={maintenance.pending}
-          onClose={close}
-        />
-        <form
-          id={`${id}-form`}
-          aria-busy={maintenance.pending}
-          className="flex min-w-0 flex-col gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void maintenance.savePolicy();
-          }}
+        <DialogContent
+          className={`${dialogFrameContentClass} max-w-xl`}
+          finalFocus={finalFocus}
         >
-          {!status || !current ? (
-            <Alert role="alert" variant="destructive">
-              <p>
-                {maintenance.policyRefused
-                  ? "Only the installation owner can review backup status."
-                  : "Backup status could not be loaded."}
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-2 min-h-11"
-                onClick={() => void maintenance.retryPolicy()}
-              >
-                Retry backup status
-              </Button>
-            </Alert>
-          ) : (
-            <>
-              {maintenance.stale ? (
-                <Alert
-                  role={maintenance.staleRevision ? "alert" : "status"}
-                  variant={
-                    maintenance.staleRevision ? "destructive" : "warning"
-                  }
+          <DialogFrameHeader
+            title={<DialogTitle>Backup schedule</DialogTitle>}
+            description={
+              <DialogDescription>
+                Old backups are removed only after a newer backup is checked.
+              </DialogDescription>
+            }
+            closeLabel="Close backup schedule"
+            closeDisabled={maintenance.pending}
+            onClose={requestClose}
+          />
+          <form
+            id={`${id}-form`}
+            aria-busy={maintenance.pending}
+            className="flex min-w-0 flex-col gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void maintenance.savePolicy();
+            }}
+          >
+            {!status || !current ? (
+              <Alert role="alert" variant="destructive">
+                <p>
+                  {maintenance.policyRefused
+                    ? "Only the installation owner can review backup status."
+                    : "Backup status could not be loaded."}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-2 min-h-11"
+                  onClick={() => void maintenance.retryPolicy()}
                 >
-                  <p>
-                    The backup schedule changed. Your draft is still here.
-                    Review the latest schedule before you save again.
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="mt-2 min-h-11"
-                    disabled={maintenance.pending}
-                    onClick={() => void maintenance.reviewLatestPolicy()}
-                  >
-                    Review latest schedule
-                  </Button>
-                </Alert>
-              ) : null}
-              {maintenance.error ? (
-                <Alert role="alert" variant="destructive">
-                  {maintenance.error}
-                </Alert>
-              ) : null}
-              <fieldset
-                disabled={maintenance.pending || !status.policy.adopted}
-                className="grid min-w-0 gap-3"
-              >
-                <ScheduleRow id={`${id}-schedule`} label="Schedule">
-                  <Select
-                    id={`${id}-schedule`}
-                    aria-label="Backup schedule"
-                    value={current.schedule}
-                    className="min-h-11"
-                    onValueChange={(value) => {
-                      if (
-                        value === "disabled" ||
-                        value === "daily" ||
-                        value === "weekly"
-                      )
-                        maintenance.changeDraft({ schedule: value });
-                    }}
-                  >
-                    {(["disabled", "daily", "weekly"] as const).map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {backupScheduleLabels[value]}
-                      </SelectItem>
-                    ))}
-                  </Select>
-                </ScheduleRow>
-                <ScheduleRow id={`${id}-retention`} label="Keep backups for">
-                  <Select
-                    id={`${id}-retention`}
-                    value={String(current.retention_days)}
-                    className="min-h-11"
-                    onValueChange={(value) => {
-                      const days = Number(value);
-                      if (days === 7 || days === 30 || days === 90)
-                        maintenance.changeDraft({ retention_days: days });
-                    }}
-                  >
-                    {(["7", "30", "90"] as const).map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {RETENTION_LABELS[value]}
-                      </SelectItem>
-                    ))}
-                  </Select>
-                </ScheduleRow>
-              </fieldset>
-              <dl className="grid min-w-0 gap-x-3 gap-y-2 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]">
-                <dt className="text-muted-foreground">Time zone</dt>
-                <dd>{status.policy.timezone}</dd>
-                <dt className="text-muted-foreground">Next backup</dt>
-                <dd className="tabular-nums">
-                  {status.policy.next_due_at
-                    ? formatBackupTime(status.policy.next_due_at, region)
-                    : "Not scheduled"}
-                </dd>
-              </dl>
-              <p className="text-muted-foreground text-sm">
-                Saving this schedule does not set up the backup service; the
-                person who runs your server does that. Old backups are removed
-                only after a newer backup is checked.
-              </p>
-            </>
-          )}
-        </form>
-        <DialogFrameFooter data-testid="backup-schedule-footer">
-          <DialogFooter className="mt-0 items-center">
-            {maintenance.dirty ? (
-              <Badge variant="warning" className="mr-auto">
-                Unsaved changes
-              </Badge>
-            ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              disabled={maintenance.pending}
-              onClick={close}
-            >
-              Close
-            </Button>
-            {maintenance.dirty ? (
+                  Retry backup status
+                </Button>
+              </Alert>
+            ) : (
               <>
+                {maintenance.stale ? (
+                  <Alert
+                    role={maintenance.staleRevision ? "alert" : "status"}
+                    variant={
+                      maintenance.staleRevision ? "destructive" : "warning"
+                    }
+                  >
+                    <p>
+                      The backup schedule changed. Your draft is still here.
+                      Review the latest schedule before you save again.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-2 min-h-11"
+                      disabled={maintenance.pending}
+                      onClick={() => void maintenance.reviewLatestPolicy()}
+                    >
+                      Review latest schedule
+                    </Button>
+                  </Alert>
+                ) : null}
+                {maintenance.error ? (
+                  <Alert role="alert" variant="destructive">
+                    {maintenance.error}
+                  </Alert>
+                ) : null}
+                <fieldset
+                  disabled={maintenance.pending || !status.policy.adopted}
+                  className="grid min-w-0 gap-3"
+                >
+                  <ScheduleRow id={`${id}-schedule`} label="Schedule">
+                    <Select
+                      id={`${id}-schedule`}
+                      aria-label="Backup schedule"
+                      value={current.schedule}
+                      className="min-h-11"
+                      onValueChange={(value) => {
+                        if (
+                          value === "disabled" ||
+                          value === "daily" ||
+                          value === "weekly"
+                        ) {
+                          lastEdited.current = "schedule";
+                          maintenance.changeDraft({ schedule: value });
+                        }
+                      }}
+                    >
+                      {(["disabled", "daily", "weekly"] as const).map(
+                        (value) => (
+                          <SelectItem key={value} value={value}>
+                            {backupScheduleLabels[value]}
+                          </SelectItem>
+                        ),
+                      )}
+                    </Select>
+                  </ScheduleRow>
+                  <ScheduleRow id={`${id}-retention`} label="Keep backups for">
+                    <Select
+                      id={`${id}-retention`}
+                      value={String(current.retention_days)}
+                      className="min-h-11"
+                      onValueChange={(value) => {
+                        const days = Number(value);
+                        if (days === 7 || days === 30 || days === 90) {
+                          lastEdited.current = "retention";
+                          maintenance.changeDraft({ retention_days: days });
+                        }
+                      }}
+                    >
+                      {(["7", "30", "90"] as const).map((value) => (
+                        <SelectItem key={value} value={value}>
+                          {RETENTION_LABELS[value]}
+                        </SelectItem>
+                      ))}
+                    </Select>
+                  </ScheduleRow>
+                </fieldset>
+                <dl className="grid min-w-0 gap-x-3 gap-y-2 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]">
+                  <dt className="text-muted-foreground">Time zone</dt>
+                  <dd>{status.policy.timezone}</dd>
+                  <dt className="text-muted-foreground">Next backup</dt>
+                  <dd className="tabular-nums">
+                    {status.policy.next_due_at
+                      ? formatBackupTime(status.policy.next_due_at, region)
+                      : "Not scheduled"}
+                  </dd>
+                </dl>
+              </>
+            )}
+          </form>
+          <DialogFrameFooter data-testid="backup-schedule-footer">
+            <DialogFooter className="mt-0 items-center">
+              {maintenance.dirty ? (
+                <Badge variant="warning" className="mr-auto">
+                  Unsaved changes
+                </Badge>
+              ) : null}
+              {maintenance.dirty ? null : (
                 <Button
                   type="button"
                   variant="outline"
                   className="min-h-11"
                   disabled={maintenance.pending}
-                  onClick={maintenance.discardDraft}
+                  onClick={close}
                 >
-                  Discard changes
+                  Close
                 </Button>
-                <DisabledReason reason={saveReason}>
+              )}
+              {maintenance.dirty ? (
+                <>
                   <Button
-                    type="submit"
-                    form={`${id}-form`}
+                    type="button"
+                    variant="outline"
                     className="min-h-11"
                     disabled={maintenance.pending}
+                    onClick={maintenance.discardDraft}
                   >
-                    {maintenance.pending ? "Saving…" : "Save schedule"}
+                    Discard changes
                   </Button>
-                </DisabledReason>
-              </>
-            ) : null}
-          </DialogFooter>
-        </DialogFrameFooter>
-      </DialogContent>
-    </Dialog>
+                  <DisabledReason reason={saveReason}>
+                    <Button
+                      type="submit"
+                      form={`${id}-form`}
+                      className="min-h-11"
+                      disabled={maintenance.pending}
+                    >
+                      {maintenance.pending ? "Saving…" : "Save schedule"}
+                    </Button>
+                  </DisabledReason>
+                </>
+              ) : null}
+            </DialogFooter>
+          </DialogFrameFooter>
+        </DialogContent>
+      </Dialog>
+      <DiscardChangesDialog
+        open={confirmDiscard}
+        title="Discard unsaved changes?"
+        description="Your backup schedule changes will be lost."
+        onKeep={() => setConfirmDiscard(false)}
+        finalFocus={() =>
+          discarding.current
+            ? false
+            : document.getElementById(`${id}-${lastEdited.current}`)
+        }
+        onDiscard={() => {
+          discarding.current = true;
+          setConfirmDiscard(false);
+          maintenance.discardDraft();
+          close();
+        }}
+      />
+    </>
   );
 }
 

@@ -165,8 +165,11 @@ const discard = (page: Page) =>
   page.getByRole("button", { name: "Discard changes", exact: true });
 const cached = (page: Page) =>
   page.evaluate((key) => localStorage.getItem(key), cacheKey);
+// The footer chip confirms a save; no page notice repeats it (Phase 8).
 const savedNotice = (page: Page) =>
-  page.getByText("Organization settings saved.", { exact: true });
+  page
+    .getByRole("group", { name: "Organization actions", exact: true })
+    .getByText("Saved", { exact: true });
 
 test("Organization preview stays out of committed cache and Discard restores the saved look", async ({
   page,

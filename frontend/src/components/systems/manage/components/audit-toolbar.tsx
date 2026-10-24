@@ -85,7 +85,7 @@ export function AuditToolbar({
     error?: string;
     onRetry: () => void;
   };
-  /** Shown only when the viewer manages more than one department. */
+  /** A manager's departments: one reads as text, two or more as a picker. */
   departments: {
     options: readonly { id: string; label: string }[];
     value: string;
@@ -130,7 +130,13 @@ export function AuditToolbar({
 
   const quickFilters = (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
-      {departments ? (
+      {departments?.options.length === 1 ? (
+        // One managed department: say which one Audit reads (Phase 8).
+        <span className="inline-flex min-h-11 items-center text-sm whitespace-pre xl:min-h-8">
+          <span className="text-muted-foreground">Department: </span>
+          <span className="font-medium">{departments.options[0]!.label}</span>
+        </span>
+      ) : departments ? (
         <Field className="flex-row items-center gap-2">
           <FieldLabel
             htmlFor={`${id}-department`}

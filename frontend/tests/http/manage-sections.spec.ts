@@ -224,6 +224,10 @@ test("an administrator who does not own the installation sees that the owner man
       page.getByRole("heading", { level: 1, name: title, exact: true }),
     ).toBeVisible();
     await expect(page.getByText(notice, { exact: true })).toBeVisible();
+    // The notice is the one line: no meta line names another person.
+    await expect(
+      page.getByRole("main").locator('header:has([data-slot="page-title"]) p'),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("main").getByRole("link", { name: "Go to Organization" }),
     ).toHaveAttribute("href", "/manage?view=organization");
@@ -264,6 +268,37 @@ test("a Backup refusal that names the installation owner shows the owner notice,
   await expect(
     page.getByRole("button", { name: "Back up now", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    page.getByText("The person who runs your server restores backups.", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+});
+
+test("a Backup or Updates refusal inside the section hides the meta line beside it", async ({
+  page,
+}) => {
+  const backup = await mockManageBackups(page);
+  backup.statusReadStatus = 403;
+  backup.historyReadStatus = 403;
+  backup.versionReadStatus = 403;
+  const header = page
+    .getByRole("main")
+    .locator('header:has([data-slot="page-title"])');
+  await page.goto("/manage?view=backup");
+  await expect(
+    page.getByText("Only the installation owner can review backup status.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(header.locator("p")).toHaveCount(0);
+  await page.goto("/manage?view=updates");
+  await expect(
+    page.getByText("Only the installation owner can review version status.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(header.locator("p")).toHaveCount(0);
 });
 
 test("each Manage section header is its title and one meta line, with no source chip", async ({
@@ -470,6 +505,35 @@ test("on a phone the Updates targets are at least 44px", async ({ page }) => {
   await openSection(page, sections[4]);
   expect(await smallTargets(main(page))).toEqual([]);
   await expectNoHorizontalScroll(page);
+});
+
+test("on a phone the shell's Open navigation and Search workspace stay 44px wide on every section", async ({
+  page,
+}) => {
+  await page.setViewportSize(phone);
+  await installEverySection(page);
+  for (const section of sections) {
+    await openSection(page, section);
+    for (const name of ["Open navigation", "Search workspace"]) {
+      const box = await page
+        .getByRole("button", { name, exact: true })
+        .or(page.getByRole("link", { name, exact: true }))
+        .boundingBox();
+      expect(
+        Math.round(Math.min(box?.width ?? 0, box?.height ?? 0)),
+        `${section.view}: ${name}`,
+      ).toBeGreaterThanOrEqual(44);
+    }
+  }
+});
+
+test("once the session is verified, no session check stays in the page", async ({
+  page,
+}) => {
+  await installEverySection(page);
+  await openSection(page, sections[0]);
+  // Not only hidden: a closed curtain kept its status text for screen readers.
+  await expect(page.getByText("Checking your session…")).toHaveCount(0);
 });
 
 test("on a phone the header is the title and meta line, then one row of quiet actions", async ({

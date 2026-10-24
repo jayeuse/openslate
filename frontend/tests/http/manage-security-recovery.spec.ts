@@ -3,7 +3,7 @@ import { mockManageSecurity } from "./helpers/manage-security";
 import { backupRun, mockManageBackups } from "./helpers/manage-backups";
 import { sendOpenViewEvent } from "./helpers/openview-event-source";
 
-test("Back up now queues real history, cancels without writes, and preserves policy drafts", async ({
+test("Back up now queues real history and cancels without writes", async ({
   page,
 }) => {
   const security = await mockManageSecurity(page);
@@ -13,17 +13,6 @@ test("Back up now queues real history, cancels without writes, and preserves pol
     .getByRole("list", { name: "Backup history", exact: true })
     .getByRole("listitem");
   await expect(rows).toHaveCount(6);
-  await page
-    .getByRole("button", { name: "Edit schedule", exact: true })
-    .click();
-  const policy = page.getByRole("dialog", {
-    name: "Backup schedule",
-    exact: true,
-  });
-  await policy
-    .getByLabel("Backup schedule", { exact: true })
-    .selectOption("weekly");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
 
   const opener = page.getByRole("button", { name: "Back up now", exact: true });
   await opener.click();
@@ -64,6 +53,8 @@ test("Back up now queues real history, cancels without writes, and preserves pol
   });
   await expect(inspector.getByText("Queued", { exact: true })).toBeVisible();
   await expect(inspector).toContainText("Not verified");
+  // Who restores is the Backup meta line's one fact; the detail does not repeat it.
+  await expect(inspector).not.toContainText("The person who runs your server");
   await expect(
     inspector.getByRole("link", { name: "Restore procedure" }),
   ).toHaveAttribute(
@@ -78,16 +69,9 @@ test("Back up now queues real history, cancels without writes, and preserves pol
   expect(backup.queueRequests).toHaveLength(1);
   expect(backup.queueRequests[0]?.name).toBe("Working recovery point");
   expect(backup.queueRequests[0]?.key).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
-  await page
-    .getByRole("button", { name: "Edit schedule", exact: true })
-    .click();
-  await expect(
-    policy.getByLabel("Backup schedule", { exact: true }),
-  ).toHaveValue("weekly");
   expect(security.writes).toEqual([]);
   expect(security.policyReads).toBe(0);
   expect(backup.patches).toEqual([]);
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
   await page.reload();
   await expect(
     page.getByRole("button", {
@@ -124,7 +108,7 @@ test("Backup request name validation and cancel restore focus without any local 
   expect(backup.queueRequests).toEqual([]);
 });
 
-test("Backup schedule saves revisioned real policy and keeps cancelled drafts without simulation", async ({
+test("Backup schedule saves revisioned real policy and discards drafts without simulation", async ({
   page,
 }) => {
   await mockManageSecurity(page);
@@ -142,11 +126,7 @@ test("Backup schedule saves revisioned real policy and keeps cancelled drafts wi
   await expect(schedule).toHaveValue("disabled");
   await schedule.selectOption("weekly");
   await retention.selectOption("90");
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
   expect(backup.patches).toEqual([]);
-  await page
-    .getByRole("button", { name: "Edit schedule", exact: true })
-    .click();
   await expect(schedule).toHaveValue("weekly");
   await dialog
     .getByRole("button", { name: "Discard changes", exact: true })
@@ -180,8 +160,9 @@ test("Backup schedule saves revisioned real policy and keeps cancelled drafts wi
     .click();
   await expect(dialog).toContainText("UTC");
   await expect(dialog).toContainText(
-    "Saving this schedule does not set up the backup service",
+    "Old backups are removed only after a newer backup is checked.",
   );
+  await expect(dialog).not.toContainText("does not set up the backup service");
   await expect(
     dialog.getByRole("button", {
       name: /Simulate|Preview retention candidates/,
@@ -768,13 +749,60 @@ test("the schedule dialog shows only Close at rest, and its Save bar after an ed
     .getByLabel("Backup schedule", { exact: true })
     .selectOption("weekly");
   await expect(footer.getByRole("button")).toHaveText([
-    "Close",
     "Discard changes",
     "Save schedule",
   ]);
   await expect(
     footer.getByText("Unsaved changes", { exact: true }),
   ).toBeVisible();
+  // After an edit, the named close and Escape ask before the edit is lost.
+  const ask = page.getByRole("alertdialog", {
+    name: "Discard unsaved changes?",
+  });
+  for (const close of ["Close backup schedule", "Escape", "outside"]) {
+    if (close === "Escape") await page.keyboard.press("Escape");
+    else if (close === "outside") await page.mouse.click(8, 8);
+    else await dialog.getByRole("button", { name: close, exact: true }).click();
+    await expect(ask, close).toBeVisible();
+    await ask
+      .getByRole("button", { name: "Keep editing", exact: true })
+      .click();
+    await expect(ask).toBeHidden();
+    await expect(dialog).toBeVisible();
+    // Focus returns to the field that was edited.
+    await expect(
+      dialog.getByLabel("Backup schedule", { exact: true }),
+      close,
+    ).toBeFocused();
+    await expect(
+      dialog.getByLabel("Backup schedule", { exact: true }),
+    ).toHaveValue("weekly");
+  }
+  await dialog
+    .getByRole("button", { name: "Close backup schedule", exact: true })
+    .click();
+  await ask
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Edit schedule", exact: true }),
+  ).toBeFocused();
+  // The edit is gone, so the Status panel shows no unsaved draft.
+  await expect(
+    page
+      .getByRole("region", { name: "Backup status", exact: true })
+      .getByText("Unsaved changes", { exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Edit schedule", exact: true })
+    .click();
+  await expect(
+    dialog.getByLabel("Backup schedule", { exact: true }),
+  ).toHaveValue("disabled");
+  await dialog
+    .getByLabel("Backup schedule", { exact: true })
+    .selectOption("weekly");
   await dialog
     .getByLabel("Backup schedule", { exact: true })
     .selectOption("disabled");
@@ -790,6 +818,24 @@ test("the schedule dialog shows only Close at rest, and its Save bar after an ed
     await expect(edit, close).toBeFocused();
     if (close !== "Escape") await edit.click();
   }
+});
+
+test("a schedule that needs confirmation after a restore says so on Edit schedule, and Back up now still queues", async ({
+  page,
+}) => {
+  await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
+  backup.policy.adopted = false;
+  backup.runner.state = "adoption_required";
+  await page.goto("/manage?view=backup");
+  const edit = page.getByRole("button", { name: "Edit schedule", exact: true });
+  await expect(edit).toBeDisabled();
+  await expect(edit).toHaveAccessibleDescription(
+    "Needs confirmation after a restore.",
+  );
+  await expect(
+    page.getByRole("button", { name: "Back up now", exact: true }),
+  ).toBeEnabled();
 });
 
 test("after a refusal, Back up now and Edit schedule stay disabled and say why", async ({

@@ -24,7 +24,10 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import { PaginationControls } from "@/components/ui/pagination-controls";
+import {
+  DEFAULT_TABLE_PAGE_SIZE,
+  TablePagination,
+} from "@/components/ui/table-pagination";
 import {
   Sheet,
   SheetContent,
@@ -56,7 +59,7 @@ import {
 import { openRowClassName, tintRowClassName } from "./row-open-button";
 import {
   EventTime,
-  Outcome,
+  OutcomeWord,
   SecurityEventFacts,
   eventName,
   localTime,
@@ -99,7 +102,7 @@ export function SecurityEventsView({
   const id = useId();
   const [filters, setFilters] = useState(initialFilters);
   const [offset, setOffset] = useState(0);
-  const [personMode, setPersonMode] = useState<"directory" | "id">("directory");
+  const [limit, setLimit] = useState(DEFAULT_TABLE_PAGE_SIZE);
   const [directoryRequested, setDirectoryRequested] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -118,10 +121,6 @@ export function SecurityEventsView({
     enabled: active && admitted,
   }).data;
   const displayRegion = useDisplayRegion(region);
-  const uuidError =
-    filters.person && !z.uuid().safeParse(filters.person).success
-      ? "Enter a valid person ID."
-      : "";
   const typeError =
     filters.type === "other" && !filters.exactType.trim()
       ? "Enter an exact event type."
@@ -133,11 +132,12 @@ export function SecurityEventsView({
       : filters.from && filters.through && filters.from > filters.through
         ? "Through must be on or after From."
         : "";
-  const invalid = Boolean(uuidError || typeError || dayError);
+  const invalid = Boolean(typeError || dayError);
   const nextDay =
     filters.through && !dayError ? dayStart(filters.through, region, 1) : "";
   const request = {
     ...defaultSecurityEventsRequest,
+    limit,
     offset,
     search: filters.search.trim(),
     event_type:
@@ -169,7 +169,7 @@ export function SecurityEventsView({
   const labelIds = (events.data?.items ?? [])
     .flatMap((event) => [event.actor_id, event.subject_id])
     .filter((value): value is string => Boolean(value));
-  if (filters.person && !uuidError) labelIds.push(filters.person);
+  if (filters.person) labelIds.push(filters.person);
   const people = usePeopleSearch({
     selectedIds: labelIds,
     enabled: active && admitted && !denied,
@@ -203,17 +203,16 @@ export function SecurityEventsView({
   const selectedPerson = people.selectedItems.find(
     (person) => person.id === filters.person,
   );
-  const selectedPersonOption =
-    filters.person && !uuidError
-      ? {
-          value: filters.person,
-          label: selectedPerson
-            ? selectedPerson.display_name || selectedPerson.username
-            : people.selectedLoading
-              ? "Loading person…"
-              : "Unknown person",
-        }
-      : undefined;
+  const selectedPersonOption = filters.person
+    ? {
+        value: filters.person,
+        label: selectedPerson
+          ? selectedPerson.display_name || selectedPerson.username
+          : people.selectedLoading
+            ? "Loading person…"
+            : `Person ${filters.person.slice(0, 8)}`,
+      }
+    : undefined;
 
   useLayoutEffect(() => {
     mounted.current = true;
@@ -360,11 +359,9 @@ export function SecurityEventsView({
           people={people}
           personOptions={personOptions}
           selectedPersonOption={selectedPersonOption}
-          personMode={personMode}
-          onPersonModeChange={setPersonMode}
           onDirectoryRequested={() => setDirectoryRequested(true)}
           directoryRequested={directoryRequested}
-          errors={{ uuid: uuidError, type: typeError, day: dayError }}
+          errors={{ type: typeError, day: dayError }}
         />
       </fieldset>
       {denied || events.isError ? (
@@ -450,7 +447,7 @@ export function SecurityEventsView({
                       className={cn(
                         openRowClassName,
                         tintRowClassName,
-                        "grid min-h-14 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-1.5 md:grid-cols-[10rem_minmax(0,1fr)_7rem] xl:h-10 xl:min-h-10 xl:py-0",
+                        "grid min-h-14 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-1.5 text-sm md:grid-cols-[10rem_minmax(0,1fr)_7rem] xl:h-10 xl:min-h-10 xl:py-0",
                       )}
                     >
                       <EventTime
@@ -466,36 +463,35 @@ export function SecurityEventsView({
                       >
                         {/* Below 1280px the sentence wraps, so it reads
                             in full on tablets and phones (MD19). */}
-                        <span className="font-medium break-words xl:truncate">
+                        <span className="break-words xl:truncate">
                           {securityEventSentence(event, names)}
                         </span>
                       </button>
-                      <span>
-                        <Outcome outcome={event.outcome} />
+                      <span className="min-w-0">
+                        <OutcomeWord outcome={event.outcome} />
                       </span>
                     </li>
                   ))}
                 </ul>
               </div>
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t px-3 py-2">
-                <p className="text-muted-foreground text-sm" role="status">
-                  {page.pagination.total} events · Showing{" "}
-                  {page.pagination.offset + 1}–
-                  {page.pagination.offset + page.pagination.count}
-                </p>
-                <PaginationControls
-                  ariaLabel="Security event pages"
-                  pageIndex={Math.floor(
-                    page.pagination.offset / page.pagination.limit,
-                  )}
-                  pageCount={Math.ceil(
-                    page.pagination.total / page.pagination.limit,
-                  )}
-                  onPageIndexChange={(index) => {
-                    if (!pending) setOffset(index * page.pagination.limit);
-                  }}
-                />
-              </div>
+              {/* The shared table footer, as on Activity (Phase 8). */}
+              <TablePagination
+                ariaLabel="Security event pages"
+                className="shrink-0 px-3 py-2 lg:py-2"
+                total={page.pagination.total}
+                offset={page.pagination.offset}
+                rowCount={page.pagination.count}
+                pageSize={page.pagination.limit}
+                disabled={pending}
+                onPageIndexChange={(index) => {
+                  if (!pending) setOffset(index * page.pagination.limit);
+                }}
+                onPageSizeChange={(size) => {
+                  if (pending) return;
+                  setLimit(size);
+                  setOffset(0);
+                }}
+              />
             </div>
           ) : null}
         </LoadingRegion>
@@ -568,7 +564,6 @@ export function SecurityEventsView({
                     onPersonFilter={(person) => {
                       if (pending) return;
                       closeDetail();
-                      setPersonMode("id");
                       changeFilters({ person });
                     }}
                   />

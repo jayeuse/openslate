@@ -232,7 +232,7 @@ test("Events filters serialize workspace-local day bounds and person values befo
       occurred_before: "2026-10-06T16:00:00Z",
       offset: "0",
     });
-  await expect(feed(page)).toContainText("25 events");
+  await expect(feed(page)).toContainText("Showing 1–10 of 25");
   await feed(page)
     .getByRole("navigation", { name: "Security event pages", exact: true })
     .getByRole("button", { name: "Go to next page", exact: true })
@@ -240,6 +240,13 @@ test("Events filters serialize workspace-local day bounds and person values befo
   await expect
     .poll(() => Number(state.reads.at(-1)?.get("offset")))
     .toBeGreaterThan(0);
+  // The shared table footer: rows per page is a fresh first page.
+  await feed(page)
+    .getByLabel("Rows per page", { exact: true })
+    .selectOption("25");
+  await expect
+    .poll(() => Object.fromEntries(state.reads.at(-1) ?? []))
+    .toMatchObject({ limit: "25", offset: "0" });
   await feed(page)
     .getByLabel("Sort security events", { exact: true })
     .selectOption("oldest");
@@ -300,18 +307,17 @@ test("Events unknown exact type and historical person UUID work independently of
   await controls
     .getByLabel("Exact event type", { exact: true })
     .fill("internal.controlled_check");
-  await controls
-    .getByRole("button", { name: "Enter a person ID", exact: true })
-    .click();
-  await controls
-    .getByLabel("Person ID", { exact: true })
-    .fill(historicalPersonId);
+  // Person is the searchable directory picker only; there is no ID field.
+  // A person outside the directory is filtered from an event's details.
+  await expect(
+    controls.getByRole("button", { name: "Enter a person ID", exact: true }),
+  ).toHaveCount(0);
+  await expect(controls.getByLabel("Person ID", { exact: true })).toHaveCount(
+    0,
+  );
   await expect
     .poll(() => Object.fromEntries(state.reads.at(-1) ?? []))
-    .toMatchObject({
-      event_type: "internal.controlled_check",
-      person_id: historicalPersonId,
-    });
+    .toMatchObject({ event_type: "internal.controlled_check" });
   await page.keyboard.press("Escape");
   await expect(controls).toBeHidden();
   await expect(feed(page)).toContainText("Other security event");
@@ -417,7 +423,7 @@ test("Events detail actor and subject filters use the recorded UUID and include 
     securityEvent(3),
   ];
   await page.goto("/manage?view=audit&audit=security-events");
-  await expect(feed(page)).toContainText("4 events");
+  await expect(feed(page)).toContainText("Showing 1–4 of 4");
   let dialog = await details(page, "Sign-in accepted");
   await expect(
     dialog.getByRole("button", { name: "Filter by who did it", exact: true }),
@@ -427,13 +433,13 @@ test("Events detail actor and subject filters use the recorded UUID and include 
     .click();
   await expect(dialog).toBeHidden();
   await expect.poll(() => state.reads.at(-1)?.get("person_id")).toBe(mfaUserA);
-  await expect(feed(page)).toContainText("2 events");
+  await expect(feed(page)).toContainText("Showing 1–2 of 2");
   // Both matches are the actor's sign-ins; the historical-only rows are gone.
   await expect(eventRows(page)).not.toContainText("Other security event");
   await feed(page)
     .getByRole("button", { name: "Remove Person filter", exact: true })
     .click();
-  await expect(feed(page)).toContainText("4 events");
+  await expect(feed(page)).toContainText("Showing 1–4 of 4");
   dialog = await details(page, "Sign-in accepted");
   await dialog
     .getByRole("button", { name: "Filter by who it affects", exact: true })
@@ -442,7 +448,11 @@ test("Events detail actor and subject filters use the recorded UUID and include 
   await expect
     .poll(() => state.reads.at(-1)?.get("person_id"))
     .toBe(historicalPersonId);
-  await expect(feed(page)).toContainText("3 events");
+  // Someone outside the directory reads as a short id, not "Unknown person".
+  await expect(
+    feed(page).getByRole("group", { name: "Active filters" }),
+  ).toContainText("Person: Person 00000000");
+  await expect(feed(page)).toContainText("Showing 1–3 of 3");
   await expect(
     eventRows(page).getByText("Other security event", { exact: true }),
   ).toHaveCount(2);
@@ -477,26 +487,12 @@ for (const outcome of ["attempt", "partial"] as const) {
   });
 }
 
-test("Events invalid UUID and reversed day range remain local with linked errors and no wrong-filter request", async ({
+test("Events reversed day range remains local with a linked error and no wrong-filter request", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
   await openFeed(page);
   const controls = await filters(page);
-  await controls
-    .getByRole("button", { name: "Enter a person ID", exact: true })
-    .click();
-  await controls
-    .getByLabel("Person ID", { exact: true })
-    .fill("not-a-person-id");
-  await expect(
-    controls.getByLabel("Person ID", { exact: true }),
-  ).toHaveAttribute("aria-invalid", "true");
-  await expect(controls).toContainText("Enter a valid person ID");
-  expect(
-    state.reads.some((query) => query.get("person_id") === "not-a-person-id"),
-  ).toBe(false);
-  await controls.getByLabel("Person ID", { exact: true }).fill("");
   await enterDay(page, "From", "2026-10-07");
   await enterDay(page, "Through", "2026-10-06");
   await expect(controls).toContainText("Through must be on or after From");
@@ -1113,7 +1109,7 @@ test("Events names offpage actors with bounded ID lookup without eager pages", a
   expect(
     state.userQueries.some((query) => query.getAll("ids").includes(late)),
   ).toBe(true);
-  await expect(feed(page)).toContainText("1 event");
+  await expect(feed(page)).toContainText("Showing 1–1 of 1");
   expect(state.userQueries.every((query) => query.get("offset") === "0")).toBe(
     true,
   );

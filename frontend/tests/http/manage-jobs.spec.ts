@@ -92,6 +92,14 @@ type Reply =
   | "409"
   | "404"
   | "422";
+
+/** The retry result is a toast (DESIGN Request feedback). */
+function retryToast(page: Page) {
+  return page
+    .getByRole("region", { name: "Status messages" })
+    .getByText("Retry requested.", { exact: true });
+}
+
 async function installJobs(
   page: Page,
   options: {
@@ -472,14 +480,15 @@ test("Jobs paging and kind/state/size filters retain exact server page identitie
   await expect(page.getByText("Owned job 2", { exact: true })).toBeVisible();
   expect(api.gets.at(-1)?.searchParams.get("offset")).toBe("0");
   // State is a quick filter.
+  // Waiting states first, then the run, then the ends (Phase 8).
   const state = page.getByRole("group", { name: "Job state", exact: true });
   await expect(state.getByRole("button")).toHaveText([
     "All",
     "Pending",
-    "Running",
-    "Failed",
-    "Succeeded",
     "Queued",
+    "Running",
+    "Succeeded",
+    "Failed",
     "Canceled",
     "Interrupted",
   ]);
@@ -515,9 +524,7 @@ test("report-run retry requires a matching 200 receipt and refreshes authoritati
       new URL(request.url()).pathname === "/api/jobs",
   );
   await (await retry(page, "Weekly Report")).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Retry requested." }),
-  ).toBeVisible();
+  await expect(retryToast(page)).toBeVisible();
   await expect(page.getByRole("table", { name: "Jobs" })).toContainText(
     "Pending",
   );
@@ -556,6 +563,10 @@ test("backup wrong-location receipt stays unresolved and blocks new retry keys",
   await expect(
     page.getByRole("alert").filter({ hasText: "could not be confirmed" }),
   ).toBeVisible();
+  // A failed retry request is an error, not a warning.
+  await expect(
+    page.getByRole("alert").filter({ hasText: "could not be confirmed" }),
+  ).toHaveAttribute("data-variant", "destructive");
   await expect(page.getByText("Retry requested.", { exact: true })).toHaveCount(
     0,
   );
@@ -591,9 +602,7 @@ test("uncertain backup first reads Jobs then explicitly recovers one accepted ru
   await page
     .getByRole("button", { name: "Check retry result", exact: true })
     .click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Retry requested." }),
-  ).toBeVisible();
+  await expect(retryToast(page)).toBeVisible();
   expect(api.posts).toHaveLength(2);
   expect(api.posts[1].key).toBe(key);
   await expect(
@@ -667,9 +676,7 @@ test("backup uncertainty survives same-account section remount without an automa
   await page
     .getByRole("button", { name: "Check retry result", exact: true })
     .click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Retry requested." }),
-  ).toBeVisible();
+  await expect(retryToast(page)).toBeVisible();
   expect(api.posts[1].key).toBe(api.posts[0].key);
 });
 
@@ -794,9 +801,7 @@ test("pending scheduled retry locks composite peers and never double-submits", a
   } finally {
     held.release();
   }
-  await expect(
-    page.getByRole("status").filter({ hasText: "Retry requested." }),
-  ).toBeVisible();
+  await expect(retryToast(page)).toBeVisible();
   await expect(await retry(page, "Meeting post")).toBeEnabled();
   await page.keyboard.press("Escape");
   expect(api.posts).toEqual([{ kind: "report-run", id: id(1), key: null }]);
@@ -835,9 +840,7 @@ test("a pending retry locks the Kind chip, Clear all and the state quick filters
   } finally {
     held.release();
   }
-  await expect(
-    page.getByRole("status").filter({ hasText: "Retry requested." }),
-  ).toBeVisible();
+  await expect(retryToast(page)).toBeVisible();
   await expect(remove).toBeEnabled();
 });
 
@@ -888,9 +891,7 @@ test("backup readback failure cannot offer recovery POST until a fresh GET succe
   await page
     .getByRole("button", { name: "Check retry result", exact: true })
     .click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Retry requested." }),
-  ).toBeVisible();
+  await expect(retryToast(page)).toBeVisible();
   expect(api.posts[1].key).toBe(api.posts[0].key);
 });
 

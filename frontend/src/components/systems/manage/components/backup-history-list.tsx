@@ -20,7 +20,8 @@ import {
   type ManageBackupsRequest,
 } from "../adapters/backup-api";
 import { backupRunStatus } from "../domain/backup-rules";
-import { StatusWord } from "./status-word";
+import { tintRowClassName } from "../../access/components/row-open-button";
+import { StatusWord } from "@/components/ui/status-word";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
 
 // The list pane of Backup history (MD8), after Sandbox History: the total in
@@ -303,11 +304,12 @@ function BackupRow({
       aria-describedby={metaId}
       // The open backup is current, as in Sandbox History.
       aria-current={selected ? "true" : undefined}
+      data-state={selected ? "selected" : undefined}
       className={cn(
         // One line per row, 40px from 1280px (DESIGN "Access rows"); two
         // lines on a phone. The open row is the tint only.
         "border-border grid h-auto w-full min-w-0 items-center justify-normal gap-x-3 rounded-none border-b px-3 text-left font-normal whitespace-nowrap",
-        "hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
+        tintRowClassName,
         phone
           ? "min-h-14 grid-cols-[minmax(0,1fr)_auto] py-2"
           : "min-h-11 grid-cols-[7rem_minmax(0,1fr)_auto] py-0 xl:h-10 xl:min-h-10",

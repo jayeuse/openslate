@@ -33,7 +33,7 @@ const pick = (
     .getByLabel("Organization logo", { exact: true })
     .setInputFiles({ name, mimeType, buffer });
 const preview = (page: Page) =>
-  page.getByRole("region", { name: "Workspace preview" });
+  page.getByRole("region", { name: "Preview", exact: true });
 const header = (page: Page) =>
   page.getByRole("complementary", { name: "Primary sidebar" });
 const patches = (api: Awaited<ReturnType<typeof installLogoApi>>) =>
@@ -80,7 +80,9 @@ test("Logo draft stays local until settings save, then saved header and removal 
   expect(api.writes).toEqual([]);
   await save(page).click();
   await expect(
-    page.getByText("Organization settings saved.", { exact: true }),
+    page
+      .getByRole("group", { name: "Organization actions", exact: true })
+      .getByText("Saved", { exact: true }),
   ).toBeVisible();
   // The fake File API names its first reservation with this id.
   const committed = "44444444-4444-4444-8444-000000000001";
@@ -651,7 +653,10 @@ test("Logo pending upload blocks duplicate Save and departure without publishing
     await pick(page);
     await save(page).click();
     await uploading.released;
-    await expect(save(page)).toBeDisabled();
+    // While it saves, Save reads "Saving…" and cannot be pressed again.
+    await expect(
+      page.getByRole("button", { name: "Saving…", exact: true }),
+    ).toBeDisabled();
     await header(page)
       .getByRole("link", { name: "Harbor Services workspace", exact: true })
       .click();
@@ -664,7 +669,9 @@ test("Logo pending upload blocks duplicate Save and departure without publishing
     expect(patches(api)).toEqual([]);
     gate.release();
     await expect(
-      page.getByText("Organization settings saved.", { exact: true }),
+      page
+        .getByRole("group", { name: "Organization actions", exact: true })
+        .getByText("Saved", { exact: true }),
     ).toBeVisible();
     expect(api.writes.filter(({ path }) => path === "/files")).toHaveLength(1);
     expect(patches(api)).toHaveLength(1);
@@ -728,7 +735,9 @@ test("Logo delayed admitted B receipt cannot replace newer C brand, theme or rev
       .fill("Explicit next change");
     await save(page).click();
     await expect(
-      page.getByText("Organization settings saved.", { exact: true }),
+      page
+        .getByRole("group", { name: "Organization actions", exact: true })
+        .getByText("Saved", { exact: true }),
     ).toBeVisible();
     expect(patches(api)).toHaveLength(2);
     expect(patches(api)[1].body?.revision).toBe(6);
@@ -753,12 +762,14 @@ for (const status of [503, 403]) {
       .getByLabel("Description", { exact: true })
       .fill("Committed description");
     await save(page).click();
+    // The partial failure is an error beside Save, not a success notice.
     await expect(
-      page.getByText(
-        "Settings saved. Current organization settings could not be loaded. Retry before making another change.",
-        { exact: true },
-      ),
-    ).toBeVisible();
+      page
+        .getByRole("group", { name: "Organization actions", exact: true })
+        .getByRole("alert"),
+    ).toHaveText(
+      "Settings saved. Current organization settings could not be loaded. Retry before making another change.",
+    );
     await expect(
       page.getByText("The settings could not be saved. Try again.", {
         exact: true,

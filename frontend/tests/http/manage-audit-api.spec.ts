@@ -540,7 +540,7 @@ test("Audit rows are 40px sentences, each whole row opens its event, and paging 
     exact: true,
   });
   const first = table.locator("tbody tr").first();
-  await expect(first).toContainText("Changed Status · Record 00002001");
+  await expect(first).toContainText("Changed Status · Record");
   expect((await first.boundingBox())?.height).toBe(40);
   // One open target per row, named by the sentence and made unique by the
   // person and time; no per-row "View details" button.
@@ -551,14 +551,14 @@ test("Audit rows are 40px sentences, each whole row opens its event, and paging 
   await expect(open).toHaveCount(1);
   await expect(open).toHaveAccessibleName(
     // MD16: a period for the dot, and seconds keep names unique.
-    /^Changed Status\. Record 00002001, Mara Santos, .+ \d{1,2}:\d{2}:\d{2}$/,
+    /^Changed Status\. Record, Mara Santos, .+ \d{1,2}:\d{2}:\d{2}$/,
   );
   // The target covers the row: a click on the area cell opens the event.
   const area = first.getByRole("cell").last();
   const box = (await area.boundingBox())!;
   await page.mouse.click(box.x + 8, box.y + box.height / 2);
   const sheet = page.getByRole("dialog", {
-    name: "Changed Record 00002001",
+    name: "Changed Record",
     exact: true,
   });
   await expect(sheet).toBeVisible();
@@ -661,6 +661,42 @@ test("the event sheet lists changed values only, as words, then the record and r
   await expect(sheet.getByText('"sent_at": null')).toBeHidden();
   await sheet.getByRole("button", { name: /^Advanced/ }).click();
   await expect(sheet.getByText(/"sent_at": null/)).toBeVisible();
+  // The record id is in Advanced, never in the row or the title.
+  await expect(
+    sheet.getByText(logs[0]!.entity_id!, { exact: true }),
+  ).toBeVisible();
+});
+
+test("bookkeeping values stay in Advanced, and the organization reads as its name", async ({
+  page,
+}) => {
+  const logs = makeAuditLogs(1);
+  logs[0]!.entity_type = "organizations";
+  logs[0]!.entity_id = fixtureId(77);
+  logs[0]!.target_label = "Organizations · name unavailable";
+  logs[0]!.before = { revision: 8, updated_at: "2026-09-12T12:00:00Z" };
+  logs[0]!.after = { revision: 9, updated_at: "2026-09-12T12:30:00Z" };
+  const api = createAuditRoute(logs);
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
+  await page.goto("/manage?view=audit");
+  const row = page
+    .getByRole("table", { name: "Activity history table", exact: true })
+    .getByRole("row")
+    .filter({ hasText: "Organization" });
+  await expect(row).toContainText(
+    "Changed settings · Organization Harbor workspace",
+  );
+  await row.getByRole("button").click();
+  const sheet = page.getByRole("dialog", {
+    name: "Changed Organization Harbor workspace",
+  });
+  const changed = sheet.getByRole("region", { name: "What changed" });
+  await expect(changed).toHaveText(
+    "What changedOnly system values changed. Advanced shows them.",
+  );
+  await expect(changed).not.toContainText("Revision");
+  await sheet.getByRole("button", { name: /^Advanced/ }).click();
+  await expect(sheet.getByText(/"revision": 9/)).toBeVisible();
 });
 
 test("record values read by field name, a deleted field keeps its name, and an unreadable field keeps its short id", async ({
@@ -741,6 +777,64 @@ test("record values read by field name, a deleted field keeps its name, and an u
   ]);
 });
 
+test("a select value reads its option label, and a person without a loaded name reads Set, never an id", async ({
+  page,
+}) => {
+  const status = "9e8d7c01-0000-4000-8000-00000000000a";
+  const owner = "9e8d7c01-0000-4000-8000-00000000000b";
+  const open = "0b0b0b0b-0000-4000-8000-000000000001";
+  const logs = makeAuditLogs(1);
+  logs[0]!.entity_type = "records";
+  logs[0]!.action = "create";
+  logs[0]!.target_label = "SC-120";
+  logs[0]!.before = null;
+  logs[0]!.after = {
+    data: { [status]: open, [owner]: "01a15e0a-0444-7650-bab2-d6f9d32fa48a" },
+  };
+  const api = createAuditRoute(logs);
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
+  await page.route("**/api/fields/*", async (route) => {
+    const id = new URL(route.request().url()).pathname.split("/").pop()!;
+    const select = id === status;
+    await route.fulfill({
+      json: {
+        id,
+        module_id: "00000000-0000-4000-8000-000000000301",
+        name: select ? "Status" : "Assigned to",
+        type: select ? "select" : "user",
+        required: false,
+        position: 0,
+        audit_redacted: false,
+        config: select ? { options: [{ id: open, label: "Open" }] } : {},
+        relationship_target_module_id: null,
+        relationship_multiple_targets: null,
+        relationship_multiple_sources: null,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        deleted_at: null,
+        is_deleted: false,
+        performed_by: null,
+      },
+    });
+  });
+  await page.goto("/manage?view=audit");
+  await page
+    .getByRole("table", { name: "Activity history table", exact: true })
+    .getByRole("row")
+    .filter({ hasText: "SC-120" })
+    .getByRole("button")
+    .click();
+  const changed = page
+    .getByRole("dialog", { name: "Created SC-120" })
+    .getByRole("region", { name: "What changed" });
+  await expect(changed.getByRole("listitem")).toHaveText([
+    "Status Not set to Open",
+    "Assigned to Set",
+  ]);
+  await expect(changed).not.toContainText("01a15e0a");
+  await expect(changed).not.toContainText(open);
+});
+
 test("a system kind chosen as the Area lists its events instead of one fold row", async ({
   page,
 }) => {
@@ -768,7 +862,7 @@ test("a system kind chosen as the Area lists its events instead of one fold row"
     .toBe("in_app_notifications");
   await expect(fold).toHaveCount(0);
   await expect(
-    table.getByRole("button", { name: /^Changed Read at\. Notification / }),
+    table.getByRole("button", { name: /^Changed Read at\. Notification, / }),
   ).toHaveCount(4);
 });
 
@@ -800,7 +894,7 @@ test("system events fold into one row with Show, the choice is remembered, and a
   await fold.getByRole("button", { name: "Show system events" }).click();
   await expect(table.locator("tbody tr")).toHaveCount(7);
   await expect(
-    table.getByRole("button", { name: /^Changed Read at\. Notification / }),
+    table.getByRole("button", { name: /^Changed Read at\. Notification, / }),
   ).toHaveCount(3);
   await expect(table).not.toContainText("name unavailable");
 
@@ -929,6 +1023,34 @@ test("a department manager reads Audit for the departments they manage, with no 
   ).toHaveCount(0);
 });
 
+test("a manager of one department sees which department Audit reads", async ({
+  page,
+}) => {
+  await signedInAs(page, {
+    id: "00000000-0000-4000-8000-000000000301",
+    role: "member",
+    access: [{ department_id: SALES_ID, module_id: null, level: "manage" }],
+  });
+  const logs = makeAuditLogs(2).map((log) => ({
+    ...log,
+    department_id: SALES_ID,
+  }));
+  const api = createAuditRoute(logs);
+  await page.route("**/api/audit-logs**", (route) => api.handle(route));
+  await page.goto("/manage?view=audit");
+  await expect(
+    page
+      .getByRole("table", { name: "Activity history table", exact: true })
+      .locator("tbody tr"),
+  ).toHaveCount(2);
+  await expect(
+    page.getByRole("main").getByText("Department: Sales", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Department" })).toHaveCount(
+    0,
+  );
+});
+
 test("on a phone Activity is a list of two-line rows, and a row opens its event as a full sheet", async ({
   page,
 }) => {
@@ -943,12 +1065,12 @@ test("on a phone Activity is a list of two-line rows, and a row opens its event 
   const list = page.getByRole("list", { name: "Activity history" });
   await expect(list.getByRole("listitem")).toHaveCount(3);
   const first = list.getByRole("listitem").first();
-  await expect(first).toContainText("Changed Status · Record 00002001");
+  await expect(first).toContainText("Changed Status · Record");
   await expect(first).toContainText("Mara Santos · Sales");
   expect((await first.boundingBox())!.height).toBeGreaterThanOrEqual(56);
   await first.getByRole("button").click();
   const sheet = page.getByRole("dialog", {
-    name: "Changed Record 00002001",
+    name: "Changed Record",
     exact: true,
   });
   await expect(sheet).toBeVisible();
@@ -1006,6 +1128,8 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
   await expect(preview.getByLabel("CSV preview")).toContainText("Mara Santos");
   await expect(preview.getByLabel("CSV preview")).not.toContainText("Source");
   await expect(preview).toContainText("Showing the first 10 of 123 entries");
+  // The description already says the download holds every entry.
+  await expect(preview).not.toContainText("The CSV download includes");
   await expect(preview.getByLabel("CSV preview")).not.toContainText(
     logs[122]!.entity_id!,
   );
@@ -1581,7 +1705,7 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
   ).toBeVisible();
   await expect(
     table.getByRole("button", {
-      name: /^Created\. Record 00002003, Unknown person, /,
+      name: /^Created\. Record, Unknown person, /,
     }),
   ).toBeVisible();
   await expect(

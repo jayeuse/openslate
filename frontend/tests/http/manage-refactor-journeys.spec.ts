@@ -131,6 +131,47 @@ test.beforeEach(async ({ page }) => {
   installWorkspaceRoute(page);
 });
 
+test("Organization Save says Saving…, keeps focus, locks only the editor, and the chip confirms the save", async ({
+  page,
+}) => {
+  installWorkspaceRoute(page);
+  const held = heldResponse();
+  await page.route("**/api/workspace", async (route) => {
+    if (route.request().method() === "PATCH") {
+      held.enter();
+      await held.released;
+    }
+    await route.fallback();
+  });
+  await page.goto("/manage?view=organization");
+  const name = page.getByRole("textbox", {
+    name: "Organization name",
+    exact: true,
+  });
+  await name.fill("Harbor Ops");
+  const actions = page.getByRole("group", {
+    name: "Organization actions",
+    exact: true,
+  });
+  await actions.getByRole("button", { name: "Save settings" }).focus();
+  await page.keyboard.press("Enter");
+  await held.entered;
+  const saving = actions.getByRole("button", { name: "Saving…" });
+  await expect(saving).toBeFocused();
+  await expect(name).toBeDisabled();
+  // No page-wide status line above the header.
+  await expect(page.getByText("Saving changes…")).toHaveCount(0);
+  // The chip still says unsaved while the save runs, then turns Saved.
+  await expect(actions.getByRole("status")).toHaveText("1 unsaved change");
+  held.release();
+  await expect(actions.getByRole("status")).toHaveText("Saved");
+  const save = actions.getByRole("button", { name: "Save settings" });
+  await expect(save).toBeFocused();
+  await expect(name).toBeEnabled();
+  // The chip is the confirmation; no page Alert repeats it.
+  await expect(page.getByText("Organization settings saved.")).toHaveCount(0);
+});
+
 test("Manage organization loads and saves all seven workspace fields", async ({
   page,
 }) => {
@@ -371,12 +412,14 @@ test.describe("Organization regional choices", () => {
       /UTC-04:00.*America\/New York/,
     );
     await chooseRegionalOption(page, "Currency", "Yen", /JPY.*Yen/);
+    const chip = page
+      .getByRole("group", { name: "Organization actions", exact: true })
+      .getByRole("status");
+    await expect(chip).toHaveText("3 unsaved changes");
     await page
       .getByRole("button", { name: "Save settings", exact: true })
       .click();
-    await expect(
-      page.getByText("Organization settings saved.", { exact: true }),
-    ).toBeVisible();
+    await expect(chip).toHaveText("Saved");
     expect(workspace.patches).toEqual([
       {
         revision: 4,

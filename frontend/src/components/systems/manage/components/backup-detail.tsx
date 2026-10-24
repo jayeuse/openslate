@@ -20,7 +20,7 @@ import {
   backupScheduleAtRequest,
   shortSnapshotId,
 } from "../domain/backup-rules";
-import { StatusWord } from "./status-word";
+import { StatusWord } from "@/components/ui/status-word";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
 
 // One backup's detail (MD8), after Sandbox History: the name, status and
@@ -115,10 +115,6 @@ export function BackupDetail({
         Restore procedure
         <ExternalLink aria-hidden="true" className="size-3.5" />
       </a>
-      <span className="text-muted-foreground block text-xs">
-        Use the steps for this release. The person who runs your server follows
-        them.
-      </span>
     </span>,
   ]);
   return (

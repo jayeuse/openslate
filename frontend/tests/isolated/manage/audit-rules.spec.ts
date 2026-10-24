@@ -8,6 +8,7 @@ import {
   auditFieldIds,
   auditKindLabel,
   auditListEntries,
+  auditOnlySystemChanges,
   auditRowTime,
   auditSentenceName,
   auditSentenceText,
@@ -196,7 +197,7 @@ test("targets use the record name, else the kind and the record id, never a tabl
         target_label: "In App Notifications · name unavailable",
       }),
     ),
-  ).toBe("Notification 3f2a1b9c");
+  ).toBe("Notification");
   expect(
     auditTargetName(
       log({ target_label: "Records · name unavailable", entity_id: null }),
@@ -205,11 +206,48 @@ test("targets use the record name, else the kind and the record id, never a tabl
   expect(
     auditTargetName(
       log({
-        entity_type: "unknown_table",
-        target_label: "Unknown Table · name unavailable",
+        entity_type: "unknown_tables",
+        target_label: "Unknown Tables · name unavailable",
       }),
     ),
-  ).toBe("Item 3f2a1b9c");
+  ).toBe("Unknown table");
+});
+
+test("a target with no name is the kind alone and shows no hex id", () => {
+  const hexId = /[0-9a-f]{8}/i;
+  for (const [entity_type, kind] of [
+    ["sandbox_test_runs", "Test run"],
+    ["group_members", "Group member"],
+    ["memberships", "Organization member"],
+    ["in_app_notifications", "Notification"],
+  ] as const) {
+    const unnamed = log({
+      action: "create",
+      entity_type,
+      entity_id: "01a16a64-0000-4000-8000-000000000001",
+      target_label: "X · name unavailable",
+      after: { result: {} },
+    });
+    expect(auditTargetName(unnamed)).toBe(kind);
+    expect(auditSentenceText(unnamed)).toBe(`Created · ${kind}`);
+    expect(auditSentenceText(unnamed)).not.toMatch(hexId);
+  }
+});
+
+test("an organization target reads the organization's loaded name, not its id", () => {
+  const orgId = "01a14acf-466b-7235-8367-6fa78cc3d7df";
+  const organization = log({
+    entity_type: "organizations",
+    entity_id: orgId,
+    target_label: "Organizations · name unavailable",
+  });
+  expect(
+    auditTargetName(organization, {
+      organizations: new Map([[orgId, "Harbor Operations Group"]]),
+    }),
+  ).toBe("Organization Harbor Operations Group");
+  // Another organization's id, or no loaded name: the kind alone.
+  expect(auditTargetName(organization)).toBe("Organization");
 });
 
 test("the sentence names the change, up to two changed fields and the target, in the dot form", () => {
@@ -278,10 +316,379 @@ test("record field ids on a page are listed once, and their names label the chan
   ).toEqual(["Quantity", "Field 9e8d7c6b"]);
 });
 
+// Every table the server audits (`__audit_enabled__` is not False), read
+// from backend/app/systems on 2026-10-24.
+const AUDITED_TABLES = [
+  "backup_export_operations",
+  "backup_policies",
+  "backup_runs",
+  "board_attachments",
+  "board_event_reminders",
+  "board_events",
+  "board_groups",
+  "board_post_revision_attachments",
+  "board_post_revision_record_links",
+  "board_post_revisions",
+  "board_posts",
+  "board_record_links",
+  "board_widgets",
+  "boards",
+  "charts",
+  "comms_capability_grants",
+  "comms_categories",
+  "comms_channel_access",
+  "comms_conversations",
+  "comms_direct_blocks",
+  "comms_exports",
+  "comms_members",
+  "comms_mentions",
+  "comms_message_attachments",
+  "comms_message_record_links",
+  "comms_message_revisions",
+  "comms_messages",
+  "comms_reactions",
+  "comms_reports",
+  "comms_retention_policies",
+  "comms_retention_sweeps",
+  "comms_schedules",
+  "comms_setting_locks",
+  "comms_settings",
+  "comms_templates",
+  "comms_threads",
+  "dashboard_widgets",
+  "dashboards",
+  "departments",
+  "fields",
+  "files",
+  "group_access",
+  "group_members",
+  "groups",
+  "in_app_notifications",
+  "memberships",
+  "modules",
+  "organizations",
+  "platform_operators",
+  "platform_settings",
+  "record_trigger_actions",
+  "record_trigger_conditions",
+  "record_trigger_events",
+  "record_trigger_runs",
+  "record_triggers",
+  "records",
+  "relationship_edges",
+  "report_run_rows",
+  "report_runs",
+  "report_schedules",
+  "reports",
+  "sandbox_bindings",
+  "sandbox_documents",
+  "sandbox_publications",
+  "sandbox_test_runs",
+  "sandbox_versions",
+  "saved_views",
+  "update_statuses",
+  "users",
+];
+
+test("every audited table has its own Area option, never a shared Other", () => {
+  expect(AUDITED_TABLES).toHaveLength(69);
+  const labels = AUDITED_TABLES.map(auditKindLabel);
+  const repeated = labels.filter(
+    (label, index) => labels.indexOf(label) !== index,
+  );
+  expect(repeated).toEqual([]);
+  expect(labels.filter((label) => label.endsWith(" · Other"))).toEqual([]);
+  // The kinds the hands-on pass found as "Other items".
+  expect(auditKindLabel("comms_members")).toBe(
+    "Conversation members · OpenComms",
+  );
+  expect(auditKindLabel("board_posts")).toBe("Posts · Boards");
+  expect(auditKindLabel("platform_operators")).toBe(
+    "Installation owners · Manage",
+  );
+});
+
+test("system fields leave What changed and the sentence; a person id reads as a loaded name", () => {
+  const orgId = "01a14acf-466b-7235-8367-6fa78cc3d7df";
+  const userId = "01a15e0a-0444-7650-bab2-d6f9d32fa48a";
+  const conversationId = "01a163e8-1436-7fc9-883d-6fdc17759a47";
+  const organization = log({
+    entity_type: "organizations",
+    entity_id: orgId,
+    target_label: "Organizations · name unavailable",
+    before: { revision: 8, description: "Hands-on test note" },
+    after: { revision: 9, description: null },
+  });
+  const names = {
+    organizations: new Map([[orgId, "Harbor Operations Group"]]),
+  };
+  expect(auditChanges(organization, manila).map(({ label }) => label)).toEqual([
+    "Description",
+  ]);
+  expect(auditSentenceText(organization, new Map(), names)).toBe(
+    "Changed Description · Organization Harbor Operations Group",
+  );
+  expect(auditOnlySystemChanges(organization)).toBe(false);
+
+  // Only bookkeeping changed: the row says settings, the sheet lists nothing.
+  const bookkeeping = log({
+    entity_type: "organizations",
+    entity_id: orgId,
+    target_label: "Organizations · name unavailable",
+    before: { revision: 9, updated_at: "2026-10-24T07:00:00Z" },
+    after: { revision: 10, updated_at: "2026-10-24T07:07:00Z" },
+  });
+  expect(auditSentenceText(bookkeeping, new Map(), names)).toBe(
+    "Changed settings · Organization Harbor Operations Group",
+  );
+  expect(auditChanges(bookkeeping, manila)).toEqual([]);
+  expect(auditOnlySystemChanges(bookkeeping)).toBe(true);
+
+  // A created conversation member: ids and hashes are system values.
+  const member = log({
+    action: "create",
+    entity_type: "comms_members",
+    entity_id: conversationId,
+    target_label: "Comms Members · name unavailable",
+    after: {
+      role: "member",
+      org_id: orgId,
+      user_id: userId,
+      joined_at: "2026-10-22T13:58:00Z",
+      conversation_id: conversationId,
+      content_hash: "ab12",
+      idempotency_key: "k-1",
+    },
+  });
+  const rows = (people?: ReadonlyMap<string, string>) =>
+    auditChanges(member, manila, new Map(), { people }).map(
+      ({ label, before, after }) => [label, before, after],
+    );
+  // The member and the conversation are references: a loaded name, else Set.
+  expect(rows()).toEqual([
+    ["Role", "Not set", "member"],
+    ["Person", null, "Set"],
+    ["Joined at", "Not set", "Oct 22, 2026, 9:58 PM"],
+    ["Conversation", null, "Set"],
+  ]);
+  expect(rows(new Map([[userId, "HO Manager"]]))).toEqual([
+    ["Role", "Not set", "member"],
+    ["Person", "Not set", "HO Manager"],
+    ["Joined at", "Not set", "Oct 22, 2026, 9:58 PM"],
+    ["Conversation", null, "Set"],
+  ]);
+  // Record values keyed by field id are the record's own fields, not ids.
+  const fieldId = "9e8d7c6b-0000-4000-8000-000000000009";
+  expect(
+    auditChanges(
+      log({
+        before: { data: { [fieldId]: 1 } },
+        after: { data: { [fieldId]: 2 } },
+      }),
+      manila,
+    ).map(({ label }) => label),
+  ).toEqual(["Field 9e8d7c6b"]);
+});
+
+test("reference columns read as names, or Set, Changed or Removed without an id; only bookkeeping goes to Advanced", () => {
+  const groupId = "01a1682c-0000-4000-8000-000000000001";
+  const sales = "01a10000-0000-4000-8000-0000000000aa";
+  const service = "01a10000-0000-4000-8000-0000000000bb";
+  const userId = "01a15e0a-0444-7650-bab2-d6f9d32fa48a";
+  const departments = new Map([
+    [sales, "Sales"],
+    [service, "Service"],
+  ]);
+  const rows = (changes: ReturnType<typeof auditChanges>) =>
+    changes.map(({ label, before, after }) => [label, before, after]);
+  const created = log({
+    action: "create",
+    entity_type: "group_access",
+    target_label: "Group Access · name unavailable",
+    after: {
+      org_id: sales,
+      group_id: groupId,
+      department_id: sales,
+      module_id: null,
+      level: "write",
+    },
+  });
+  expect(
+    rows(auditChanges(created, manila, new Map(), { departments })),
+  ).toEqual([
+    ["Group", null, "Set"],
+    ["Department", "Not set", "Sales"],
+    ["Level", "Not set", "write"],
+  ]);
+  const moved = log({
+    entity_type: "group_access",
+    target_label: "Group Access · name unavailable",
+    before: { department_id: sales, module_id: groupId, revision: 1 },
+    after: { department_id: service, module_id: null, revision: 2 },
+  });
+  expect(rows(auditChanges(moved, manila, new Map(), { departments }))).toEqual(
+    [
+      ["Department", "Sales", "Service"],
+      ["Module", null, "Removed"],
+    ],
+  );
+  expect(auditSentenceText(moved, new Map(), { departments })).toBe(
+    "Changed Department, Module · Group access",
+  );
+  // `*_by` and blocked_user_id are people; client_key is bookkeeping.
+  const conversation = log({
+    action: "create",
+    entity_type: "comms_conversations",
+    target_label: "general",
+    after: {
+      created_by: userId,
+      blocked_user_id: userId,
+      client_key: "client-1",
+    },
+  });
+  expect(rows(auditChanges(conversation, manila))).toEqual([
+    ["Created by", null, "Set"],
+    ["Blocked person", null, "Set"],
+  ]);
+  expect(
+    rows(
+      auditChanges(conversation, manila, new Map(), {
+        people: new Map([[userId, "HO Manager"]]),
+      }),
+    ),
+  ).toEqual([
+    ["Created by", "Not set", "HO Manager"],
+    ["Blocked person", "Not set", "HO Manager"],
+  ]);
+  const changedOwner = log({
+    entity_type: "groups",
+    target_label: "Sales Desk",
+    before: { owner_user_id: userId },
+    after: { owner_user_id: groupId },
+  });
+  expect(rows(auditChanges(changedOwner, manila))).toEqual([
+    ["Owner", null, "Changed"],
+  ]);
+});
+
+test("record values read as option labels and names, or Set without an id", () => {
+  const statusField = "9e8d7c6b-0000-4000-8000-00000000000a";
+  const ownerField = "9e8d7c6b-0000-4000-8000-00000000000b";
+  const unreadField = "9e8d7c6b-0000-4000-8000-00000000000c";
+  const quantityField = "9e8d7c6b-0000-4000-8000-00000000000d";
+  const openOption = "0b0b0b0b-0000-4000-8000-000000000001";
+  const userId = "01a15e0a-0444-7650-bab2-d6f9d32fa48a";
+  const created = log({
+    action: "create",
+    after: {
+      data: {
+        [statusField]: openOption,
+        [ownerField]: userId,
+        [unreadField]: "0c0c0c0c-0000-4000-8000-000000000001",
+        [quantityField]: 3,
+      },
+    },
+  });
+  const fieldNames = new Map([
+    [statusField, "Status"],
+    [ownerField, "Assigned to"],
+    [quantityField, "Quantity"],
+  ]);
+  const fields = new Map([
+    [statusField, { type: "select", options: new Map([[openOption, "Open"]]) }],
+    [ownerField, { type: "user", options: new Map<string, string>() }],
+    [quantityField, { type: "int", options: new Map<string, string>() }],
+  ]);
+  expect(
+    auditChanges(created, manila, fieldNames, { fields }).map(
+      ({ label, before, after }) => [label, before, after],
+    ),
+  ).toEqual([
+    ["Status", "Not set", "Open"],
+    ["Assigned to", null, "Set"],
+    ["Field 9e8d7c6b", null, "Set"],
+    ["Quantity", "Not set", "3"],
+  ]);
+  expect(
+    auditChanges(created, manila, fieldNames, {
+      fields,
+      people: new Map([[userId, "HO Manager"]]),
+    })[1],
+  ).toMatchObject({
+    label: "Assigned to",
+    before: "Not set",
+    after: "HO Manager",
+  });
+});
+
+test("a target without a record name reads a name from its own values before a short id", () => {
+  const userId = "01a15e0a-0444-7650-bab2-d6f9d32fa48a";
+  const people = new Map([[userId, "HO Manager"]]);
+  const unnamed = { target_label: "X · name unavailable" };
+  expect(
+    auditTargetName(
+      log({
+        ...unnamed,
+        action: "create",
+        entity_type: "group_members",
+        after: { group_id: "g", user_id: userId },
+      }),
+      { people },
+    ),
+  ).toBe("Group member HO Manager");
+  expect(
+    auditTargetName(
+      log({
+        ...unnamed,
+        entity_type: "users",
+        after: { display_name: "Rosa Reyes" },
+      }),
+    ),
+  ).toBe("Person Rosa Reyes");
+  expect(
+    auditTargetName(
+      log({
+        ...unnamed,
+        entity_type: "platform_settings",
+        after: { key: "locale" },
+      }),
+    ),
+  ).toBe("Setting locale");
+  // Nothing names a test run: the kind alone is the last resort.
+  expect(
+    auditTargetName(
+      log({
+        ...unnamed,
+        entity_type: "sandbox_test_runs",
+        after: { result: {}, module_id: userId },
+      }),
+    ),
+  ).toBe("Test run");
+});
+
+test("retired and future OpenComms tables read in OpenComms words, never Comms", () => {
+  expect(auditKindLabel("comms_admissions")).toBe("Join requests · OpenComms");
+  expect(auditKindLabel("comms_conversation_groups")).toBe(
+    "Conversation group access · OpenComms",
+  );
+  expect(auditKindLabel("comms_future_things")).toBe(
+    "Future things · OpenComms",
+  );
+  for (const table of [
+    "comms_member_preferences",
+    "comms_personal_preferences",
+    "comms_read_states",
+    "comms_thread_follows",
+    ...AUDITED_TABLES,
+  ])
+    expect(auditKindLabel(table), table).not.toMatch(/^Comms /);
+});
+
 test("the Area filter names a kind and its page once", () => {
   expect(auditKindLabel("records")).toBe("Records · Sandbox");
   expect(auditKindLabel("in_app_notifications")).toBe("Notifications");
-  expect(auditKindLabel("unknown_table")).toBe("Items · Other");
+  expect(auditKindLabel("unknown_tables")).toBe("Unknown tables · Other");
+  expect(auditKindLabel("other_things")).toBe("Other things · Other");
   // Internal glossary words become the customer words (Phase 7, MG7).
   expect(auditKindLabel("sandbox_bindings")).toBe("Live item links · Sandbox");
   expect(auditKindLabel("sandbox_publications")).toBe(
@@ -303,7 +710,7 @@ test("the area names the department, else the page of the kind", () => {
   expect(
     auditArea(log({ entity_type: "in_app_notifications" }), departments),
   ).toBe("Notifications");
-  expect(auditArea(log({ entity_type: "unknown_table" }), departments)).toBe(
+  expect(auditArea(log({ entity_type: "unknown_tables" }), departments)).toBe(
     "Other",
   );
 });

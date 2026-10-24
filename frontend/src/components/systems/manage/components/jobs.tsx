@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TablePagination } from "@/components/ui/table-pagination";
+import { toast } from "@/components/ui/toast";
 import { workspaceCalendarQueryOptions } from "../adapters/workspace-api";
 import {
   manageJobIdentity,
@@ -62,7 +63,6 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
   const [pending, setPending] = useState<string | null>(null);
   const [readError, setReadError] = useState("");
   const [commandError, setCommandError] = useState("");
-  const [notice, setNotice] = useState("");
   const live = useRef(false);
   const epoch = useRef(0);
   const admission = useRef(admitted);
@@ -117,7 +117,6 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
       setPending(null);
       reading.current = false;
       setReadBusy(false);
-      setNotice("");
     }
   }, [admitted, denied, client]);
   useEffect(() => {
@@ -234,12 +233,11 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
     storeRecovery(attempt);
     setPending(manageJobIdentity(actual));
     setCommandError("");
-    setNotice("");
     try {
       await retryManageJob(actual, { key, signal: controller.signal });
       if (!owns(started)) return;
       storeRecovery({ ...attempt, confirmed: true });
-      setNotice("Retry requested.");
+      toast.add({ title: "Retry requested.", type: "success" });
       if (actual.kind === "backup") {
         void client.invalidateQueries({ queryKey: manageKeys.backups() });
         void client.invalidateQueries({ queryKey: manageKeys.backupStatus() });
@@ -323,13 +321,9 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
           {pendingRow ? `Retrying ${jobSubject(pendingRow)}…` : "Retrying…"}
         </p>
       ) : null}
-      {notice ? (
-        <p role="status" className="shrink-0 text-sm">
-          {notice}
-        </p>
-      ) : null}
       {commandError ? (
-        <Alert role="alert" variant="warning" className="shrink-0">
+        // A retry that failed or could not be confirmed is an error.
+        <Alert role="alert" variant="destructive" className="shrink-0">
           {commandError}
         </Alert>
       ) : null}
@@ -351,18 +345,19 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
           Check retry result
         </Button>
       ) : null}
+      {/* The toolbar sits above the table card, as on Audit (Phase 8). */}
+      <div className="shrink-0">
+        <JobsToolbar
+          kind={kind}
+          state={state}
+          onKindChange={(value) => changeFilters({ kind: value })}
+          onStateChange={(value) => changeFilters({ state: value })}
+          locked={controlsLocked}
+          refreshDisabled={pending !== null || readBusy}
+          onRefresh={() => void freshRead()}
+        />
+      </div>
       <div className="bg-card border-border manage-fill flex min-w-0 flex-col overflow-clip rounded-[var(--radius)] border">
-        <div className="border-border shrink-0 border-b p-3">
-          <JobsToolbar
-            kind={kind}
-            state={state}
-            onKindChange={(value) => changeFilters({ kind: value })}
-            onStateChange={(value) => changeFilters({ state: value })}
-            locked={controlsLocked}
-            refreshDisabled={pending !== null || readBusy}
-            onRefresh={() => void freshRead()}
-          />
-        </div>
         {error ? (
           <Alert
             role="alert"

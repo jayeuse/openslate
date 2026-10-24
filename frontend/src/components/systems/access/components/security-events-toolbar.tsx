@@ -92,8 +92,6 @@ export function SecurityEventsToolbar({
   people,
   personOptions,
   selectedPersonOption,
-  personMode,
-  onPersonModeChange,
   onDirectoryRequested,
   directoryRequested,
   errors,
@@ -109,11 +107,9 @@ export function SecurityEventsToolbar({
   people: People;
   personOptions: readonly { value: string; label: string }[];
   selectedPersonOption: { value: string; label: string } | undefined;
-  personMode: "directory" | "id";
-  onPersonModeChange: (mode: "directory" | "id") => void;
   onDirectoryRequested: () => void;
   directoryRequested: boolean;
-  errors: { uuid: string; type: string; day: string };
+  errors: { type: string; day: string };
 }) {
   const id = useId();
   const dayText = (day: string) =>
@@ -133,10 +129,7 @@ export function SecurityEventsToolbar({
     chips.push({
       key: "person",
       label: "Person",
-      value:
-        personMode === "id"
-          ? filters.person
-          : (selectedPersonOption?.label ?? "Unknown person"),
+      value: selectedPersonOption?.label ?? "Unknown person",
       onRemove: () => onChange({ person: "" }),
     });
   if (filters.from)
@@ -248,82 +241,38 @@ export function SecurityEventsToolbar({
         </Field>
       ) : null}
       <div className="grid min-w-0 gap-1" onFocusCapture={onDirectoryRequested}>
-        {personMode === "directory" ? (
-          <FilterRow>
-            <SearchSelect
-              label="Person"
-              popupClassName="slim-ui"
-              value={filters.person}
-              options={personOptions}
-              onValueChange={(person) => onChange({ person })}
-              search={people.search}
-              onSearchChange={people.onSearchChange}
-              selectedOption={selectedPersonOption}
-              loading={people.loading}
-              error={people.error}
-              onRetry={people.retry}
-              hasMore={people.hasMore}
-              onLoadMore={() => void people.loadMore()}
-              loadingMore={people.loadingMore}
-              disabled={pending || denied}
-              placeholder="All people"
-              emptyMessage={
-                people.loading ? "Loading people…" : "No one matches."
-              }
-            />
-          </FilterRow>
-        ) : (
-          <Field className={filterRowClassName}>
-            <FieldLabel
-              htmlFor={`${id}-person-id`}
-              className="md:text-muted-foreground"
-            >
-              Person ID
-            </FieldLabel>
-            <div className="min-w-0">
-              <Input
-                id={`${id}-person-id`}
-                value={filters.person}
-                maxLength={36}
-                className="min-h-11"
-                aria-invalid={Boolean(errors.uuid)}
-                aria-describedby={`${id}-person-help${errors.uuid ? ` ${id}-person-error` : ""}`}
-                onChange={(event) => onChange({ person: event.target.value })}
-              />
-              <p
-                id={`${id}-person-help`}
-                className="text-muted-foreground mt-1 text-xs"
-              >
-                Use the ID shown in an event&apos;s details. This also finds
-                people no longer in the directory.
-              </p>
-              {errors.uuid ? (
-                <FieldError id={`${id}-person-error`}>{errors.uuid}</FieldError>
-              ) : null}
-            </div>
-          </Field>
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          className="text-action-text min-h-11 w-fit justify-start px-0 text-sm underline underline-offset-4 hover:bg-transparent md:ml-[6.75rem] xl:min-h-8"
-          onClick={() =>
-            onPersonModeChange(personMode === "directory" ? "id" : "directory")
-          }
-        >
-          {personMode === "directory"
-            ? "Enter a person ID"
-            : "Choose from directory"}
-        </Button>
+        {/* Person is the searchable directory (Phase 8). A person outside
+            it is filtered from an event's details, which hold the id. */}
+        <FilterRow>
+          <SearchSelect
+            label="Person"
+            popupClassName="slim-ui"
+            value={filters.person}
+            options={personOptions}
+            onValueChange={(person) => onChange({ person })}
+            search={people.search}
+            onSearchChange={people.onSearchChange}
+            selectedOption={selectedPersonOption}
+            loading={people.loading}
+            error={people.error}
+            onRetry={people.retry}
+            hasMore={people.hasMore}
+            onLoadMore={() => void people.loadMore()}
+            loadingMore={people.loadingMore}
+            disabled={pending || denied}
+            placeholder="All people"
+            emptyMessage={
+              people.loading ? "Loading people…" : "No one matches."
+            }
+          />
+        </FilterRow>
         {people.error && directoryRequested ? (
           <Alert
             role="alert"
             variant="destructive"
             className="space-y-2 text-sm"
           >
-            <p>
-              The person list could not load. Enter a person ID, or try again.
-            </p>
+            <p>The person list could not load. Try again.</p>
             <Button
               variant="ghost"
               className="min-h-11 px-0"

@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-/** The tones a Manage status dot takes (Backup, Jobs, Audit). */
+/** The tones a status dot takes (Manage Backup, Jobs, Audit; Security events). */
 export type StatusTone = "flow" | "action" | "danger" | "warn" | "muted";
 
 /** The dot fill of each tone; "muted" is a hollow ring. */

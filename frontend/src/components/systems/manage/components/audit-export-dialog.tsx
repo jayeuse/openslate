@@ -184,8 +184,7 @@ export function AuditExportDialog({
         )}
         {preview.isSuccess ? (
           <p className="text-muted-foreground text-sm">
-            Showing the first {Math.min(10, count)} of {count} entries. The CSV
-            download includes all {count} entries.
+            Showing the first {Math.min(10, count)} of {count} entries.
           </p>
         ) : null}
         {downloadPending ? (

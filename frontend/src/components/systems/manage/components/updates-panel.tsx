@@ -17,7 +17,7 @@ import type { useManageMaintenance } from "../state/controller";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
 
 const linkClassName =
-  "text-action-text inline-flex min-h-11 items-center gap-1 underline-offset-4 hover:underline xl:min-h-0";
+  "text-action-text inline-flex min-h-11 items-center gap-1 text-sm underline-offset-4 hover:underline xl:min-h-0";
 
 /**
  * Updates & licensing (MD10): one summary of label-left rows (Version,

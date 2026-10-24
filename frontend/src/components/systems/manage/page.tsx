@@ -495,6 +495,12 @@ function ManageContent() {
   const jobsAccessUnchecked = tab === "Jobs" && identity.isError;
   const unavailable =
     sectionClosed || ownerRefused || jobsRefused || jobsAccessUnchecked;
+  // A refusal inside Backup or Updates names the installation owner; the
+  // meta line beside it would name another person, so it hides (Phase 8).
+  const sectionRefused =
+    (tab === "Backup" &&
+      (maintenance.policyRefused || maintenance.historyRefused)) ||
+    (tab === "Updates & licensing" && maintenance.versionRefused);
   const sectionShown = sectionOpen && !unavailable;
   const organizationErrorInFooter =
     sectionShown && tab === "Organization" && !organizationReader;
@@ -750,7 +756,7 @@ function ManageContent() {
       acknowledgedRevision.current = null;
       setCommittedReadbackRequired(false);
       setWorkspaceStale(false);
-      setNotice("Organization settings saved.");
+      setError("");
     }
     workspaceNeedsReadback.current = false;
     if (workspaceRefreshRequired && !committedReadbackRequired) {
@@ -995,8 +1001,9 @@ function ManageContent() {
       workspaceNeedsReadback.current = true;
       setWorkspaceRefreshRequired(true);
       setCommittedReadbackRequired(true);
-      setNotice(COMMITTED_READBACK_MESSAGE);
-      setError("");
+      // A partial failure, beside Save in the footer, not a success notice.
+      setNotice("");
+      setError(COMMITTED_READBACK_MESSAGE);
     };
     const adoptCurrent = (
       current: ReturnType<typeof newestManageWorkspace>,
@@ -1086,8 +1093,8 @@ function ManageContent() {
         }
       }
       if (!ownsCommand()) return;
+      // The footer chip turning "Saved" is the confirmation (Phase 8).
       finishDraft();
-      setNotice("Organization settings saved.");
     } catch (caught) {
       if (!ownsCommand()) return;
       workspaceNeedsReadback.current = attemptedPatch !== null;
@@ -1146,7 +1153,6 @@ function ManageContent() {
             );
           if (adoptCurrent(current) && (knownCommitted || matches)) {
             finishDraft();
-            setNotice(partial ? "" : "Organization settings saved.");
             // A lost response needs old-File readback; a confirmed 200 already
             // guarantees cleanup. No public origin field grants client authority.
             if (capturedOldLogo && (partial || !knownCommitted)) {
@@ -1218,7 +1224,7 @@ function ManageContent() {
         >
           {pageTitle}
         </h1>
-        {unavailable || !sectionDecided ? null : (
+        {unavailable || sectionRefused || !sectionDecided ? null : (
           <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
             {pageDescription}
           </p>
@@ -1244,16 +1250,13 @@ function ManageContent() {
     // `manage-ui` scopes the still-page chain and `slim-ui` the slim controls
     // (MD1); dialogs and popups carry `slim-ui` themselves (portals).
     <div className="manage-ui slim-ui min-w-0 space-y-6 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
+      {/* A Backup command locks the section; an Organization save locks
+          only its editor and keeps focus on Save (Phase 8). */}
       <fieldset
-        disabled={livePending}
-        aria-busy={livePending}
+        disabled={maintenance.pending}
+        aria-busy={maintenance.pending}
         className="manage-fill min-w-0 space-y-6"
       >
-        {livePending ? (
-          <p role="status" className="text-muted-foreground text-sm">
-            Saving changes…
-          </p>
-        ) : null}
         {tab !== "Audit" || !sectionShown
           ? renderPageHeader(
               tab === "Backup" && canEditOrganization ? (
@@ -1411,7 +1414,9 @@ function ManageContent() {
               }
               onThemeChange={changeOrganizationTheme}
               readOnly={organizationReader}
+              saving={workspaceSavePending}
               editDisabled={
+                workspaceSavePending ||
                 !canEditLoadedOrganization ||
                 !workspaceQuery.data ||
                 workspaceQuery.isError ||

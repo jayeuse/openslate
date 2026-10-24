@@ -985,7 +985,9 @@ export function AppPage({ children }: AppPageProps) {
       >
         <div className="grid min-h-full place-items-center">
           <div className="w-full max-w-xl space-y-5">
-            {verification}
+            {/* The closed curtain keeps no "Checking your session…" status:
+                once the session is verified, nothing stays announced. */}
+            {checking ? verification : null}
             <MfaCleanupNotice flow={mfa} />
           </div>
         </div>

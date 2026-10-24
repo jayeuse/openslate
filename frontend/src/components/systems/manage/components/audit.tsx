@@ -62,6 +62,7 @@ import {
   auditRowTime,
   readShowSystemEvents,
   writeShowSystemEvents,
+  type AuditKnownNames,
 } from "../domain/audit-rules";
 import { initialActivityFilters } from "./audit-data";
 import { AuditEventSheet } from "./audit-event-sheet";
@@ -396,10 +397,37 @@ export default function ManageAudit({
   });
   const fieldNames = new Map(
     fieldIds.flatMap((fieldId, index) => {
-      const name = fieldQueries[index]?.data;
-      return name ? [[fieldId, name] as const] : [];
+      const field = fieldQueries[index]?.data;
+      return field ? [[fieldId, field.name] as const] : [];
     }),
   );
+  // The same reads give select option labels and which fields hold people.
+  const fieldKinds = new Map(
+    fieldIds.flatMap((fieldId, index) => {
+      const field = fieldQueries[index]?.data;
+      return field
+        ? [[fieldId, { type: field.type, options: field.options }] as const]
+        : [];
+    }),
+  );
+  // Names this page already holds (Phase 8): the organization, which the
+  // server cannot name, and the people the Person filter lists.
+  const knownNames: AuditKnownNames = {
+    departments: departmentNames,
+    fields: fieldKinds,
+    organizations: workspaceQuery.data
+      ? new Map([[workspaceQuery.data.id, workspaceQuery.data.display_name]])
+      : undefined,
+    // The unsearched options, so a Person search does not change the sheet.
+    people: new Map(
+      (auditConcealed ? [] : (optionsQuery.data?.actors ?? [])).flatMap(
+        (actor) => {
+          const name = actor.actor_name?.trim();
+          return name ? [[actor.performed_by, name] as const] : [];
+        },
+      ),
+    ),
+  };
   const total = auditConcealed ? 0 : (listQuery.data?.pagination.total ?? 0);
   const serverOffset =
     listQuery.data?.pagination.offset ?? pageIndex * pageSize;
@@ -737,7 +765,7 @@ export default function ManageAudit({
                 onRetry: () => void optionsQuery.refetch(),
               }}
               departments={
-                managedDepartments && managedDepartments.length > 1
+                managedDepartments && managedDepartments.length > 0
                   ? {
                       options: (managedByName ?? []).map((id) => ({
                         id,
@@ -832,6 +860,7 @@ export default function ManageAudit({
                       entries={entries}
                       textFor={textFor}
                       fieldNames={fieldNames}
+                      names={knownNames}
                       selectedId={selected?.id ?? null}
                       onOpen={(log, opener) => {
                         detailTrigger.current = opener;
@@ -862,6 +891,7 @@ export default function ManageAudit({
               person={selectedText?.person ?? ""}
               area={selectedText?.area ?? ""}
               fieldNames={fieldNames}
+              names={knownNames}
               region={displayRegion}
               admin={exportAdmitted}
               onClose={() => setSelected(null)}

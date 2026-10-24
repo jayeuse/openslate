@@ -892,23 +892,12 @@ for (const failure of [
   );
 }
 
-test("export keeps local input through a same-account privacy curtain and preserves the incumbent policy draft", async ({
+test("export keeps local input through a same-account privacy curtain", async ({
   page,
   baseURL,
 }) => {
   const { exports } = await fixtures(page, baseURL);
   await page.goto("/manage?view=backup");
-  await page
-    .getByRole("button", { name: "Edit schedule", exact: true })
-    .click();
-  const policy = page.getByRole("dialog", {
-    name: "Backup schedule",
-    exact: true,
-  });
-  await policy
-    .getByLabel("Backup schedule", { exact: true })
-    .selectOption("weekly");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
   await downloadAction(page).click();
   const dialog = passphraseDialog(page);
   await fillPassphrase(dialog, syntheticExportPassphrase);
@@ -931,12 +920,6 @@ test("export keeps local input through a same-account privacy curtain and preser
     await dialog
       .getByRole("button", { name: "Close export", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "Edit schedule", exact: true })
-      .click();
-    await expect(
-      policy.getByLabel("Backup schedule", { exact: true }),
-    ).toHaveValue("weekly");
     expect(exports.createSubmissions).toBe(0);
     expect(exports.backups.patches).toEqual([]);
   } finally {

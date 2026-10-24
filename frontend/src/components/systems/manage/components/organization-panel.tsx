@@ -53,6 +53,8 @@ type OrganizationPanelProps = {
   /** A verified account that cannot change the settings (MD5). */
   readOnly: boolean;
   editDisabled: boolean;
+  /** A save is running: Save reads "Saving…" and keeps focus. */
+  saving: boolean;
   profile: WorkspaceProfileFormFields | undefined;
   profileErrors: Partial<Record<WorkspaceProfileField, string>>;
   onProfileChange: (key: WorkspaceProfileField, value: string) => void;
@@ -84,6 +86,7 @@ export function OrganizationPanel({
   onThemeChange,
   readOnly,
   editDisabled,
+  saving,
   profile,
   profileErrors,
   onProfileChange,
@@ -175,7 +178,14 @@ export function OrganizationPanel({
               <OrganizationFooter
                 unsavedCount={unsavedCount}
                 checkingSaved={checkingSaved}
-                saveLabel={staleRevision ? "Save again" : "Save settings"}
+                saveLabel={
+                  saving
+                    ? "Saving…"
+                    : staleRevision
+                      ? "Save again"
+                      : "Save settings"
+                }
+                saving={saving}
                 saveError={saveError}
                 disabled={editDisabled}
                 onDiscard={() => clearDraft("organization")}
@@ -233,7 +243,7 @@ function OrganizationPreview({
           id="manage-organization-preview-title"
           className="text-base font-semibold"
         >
-          Workspace preview
+          Preview
         </h2>
         {live ? (
           <p className="text-muted-foreground text-xs">Updates as you edit</p>

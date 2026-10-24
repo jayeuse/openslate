@@ -19,6 +19,7 @@ export function OrganizationFooter({
   checkingSaved,
   saveLabel,
   saveError,
+  saving,
   disabled,
   onDiscard,
 }: {
@@ -31,6 +32,11 @@ export function OrganizationFooter({
   checkingSaved: boolean;
   saveLabel: string;
   saveError: string;
+  /**
+   * A save is running. Save stays focusable (`aria-disabled`, through its
+   * reason) so focus does not drop to the page while it runs (Phase 8).
+   */
+  saving: boolean;
   /** The settings cannot be saved now (loading, a refusal, a pending save). */
   disabled: boolean;
   onDiscard: () => void;
@@ -72,12 +78,15 @@ export function OrganizationFooter({
           </Button>
         ) : null}
         <DisabledReason
+          stable
           reason={
-            checkingSaved
-              ? "Checking the saved changes first."
-              : dirty
-                ? null
-                : "No changes to save."
+            saving
+              ? "Saving the settings."
+              : checkingSaved
+                ? "Checking the saved changes first."
+                : dirty
+                  ? null
+                  : "No changes to save."
           }
         >
           <Button

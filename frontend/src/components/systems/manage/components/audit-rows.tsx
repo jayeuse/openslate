@@ -24,9 +24,10 @@ import {
   auditSentence,
   auditSentenceName,
   type AuditFieldNames,
+  type AuditKnownNames,
   type AuditListEntry,
 } from "../domain/audit-rules";
-import { StatusDot, type StatusTone } from "./status-word";
+import { StatusDot, type StatusTone } from "@/components/ui/status-word";
 
 /** The words a row shows; the parent formats time and names the area. */
 export type AuditRowText = {
@@ -46,14 +47,19 @@ const dotTone: Record<ManageAuditLog["action"], StatusTone> = {
 function Sentence({
   log,
   fieldNames,
+  names,
 }: {
   log: ManageAuditLog;
   fieldNames: AuditFieldNames;
+  names: AuditKnownNames;
 }) {
-  const { verb, fields, target } = auditSentence(log, fieldNames);
+  const { verb, fields, target } = auditSentence(log, fieldNames, names);
   return (
-    <span className="flex min-w-0 items-center gap-1.5">
-      <StatusDot tone={dotTone[log.action]} />
+    // Below 1280px the sentence wraps, so the dot sits on its first line.
+    <span className="flex min-w-0 items-start gap-1.5 xl:items-center">
+      <span className="flex h-lh shrink-0 items-center xl:h-auto">
+        <StatusDot tone={dotTone[log.action]} />
+      </span>
       {/* Below 1280px the sentence wraps, as on Security events (MD19). */}
       <span className="min-w-0 break-words xl:truncate">
         <b className="font-medium">{verb}</b>
@@ -80,21 +86,23 @@ function OpenEvent({
   log,
   text,
   fieldNames,
+  names,
   onOpen,
 }: {
   log: ManageAuditLog;
   text: AuditRowText;
   fieldNames: AuditFieldNames;
+  names: AuditKnownNames;
   onOpen: (log: ManageAuditLog, opener: HTMLButtonElement) => void;
 }) {
   return (
     <button
       type="button"
-      aria-label={`${auditSentenceName(log, fieldNames)}, ${text.person}, ${text.exactTime}`}
+      aria-label={`${auditSentenceName(log, fieldNames, names)}, ${text.person}, ${text.exactTime}`}
       className="focus-visible:outline-ring -mx-1 flex min-h-11 w-full min-w-0 items-center rounded-md px-1 text-left after:absolute after:inset-0 after:content-[''] focus-visible:outline-2 xl:min-h-8"
       onClick={(event) => onOpen(log, event.currentTarget)}
     >
-      <Sentence log={log} fieldNames={fieldNames} />
+      <Sentence log={log} fieldNames={fieldNames} names={names} />
     </button>
   );
 }
@@ -139,6 +147,7 @@ export function AuditRows({
   entries,
   textFor,
   fieldNames,
+  names,
   selectedId,
   onOpen,
   onToggleSystem,
@@ -146,6 +155,7 @@ export function AuditRows({
   entries: readonly AuditListEntry[];
   textFor: (log: ManageAuditLog) => AuditRowText;
   fieldNames: AuditFieldNames;
+  names: AuditKnownNames;
   selectedId: string | null;
   onOpen: (log: ManageAuditLog, opener: HTMLButtonElement) => void;
   onToggleSystem: () => void;
@@ -219,6 +229,7 @@ export function AuditRows({
                       log={log}
                       text={text}
                       fieldNames={fieldNames}
+                      names={names}
                       onOpen={onOpen}
                     />
                   </TableCell>
@@ -272,6 +283,7 @@ export function AuditRows({
                   log={log}
                   text={text}
                   fieldNames={fieldNames}
+                  names={names}
                   onOpen={onOpen}
                 />
                 <time

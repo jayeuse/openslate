@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { ApiError } from "../../../src/lib/api";
-import { getAuditFieldName } from "../../../src/components/systems/manage/adapters/audit-fields-api";
+import { getAuditField } from "../../../src/components/systems/manage/adapters/audit-fields-api";
 import { installFetch } from "../platform/fixtures";
 
 // Audit names a record's changed values by their field (MD16): one
@@ -36,7 +36,11 @@ function field(patch: Record<string, unknown> = {}) {
 test("a field id resolves to the field's name with one read of that field", async () => {
   const mock = installFetch(() => Response.json(field()));
   try {
-    expect(await getAuditFieldName(fieldId)).toBe("Status");
+    expect(await getAuditField(fieldId)).toEqual({
+      name: "Status",
+      type: "text",
+      options: new Map(),
+    });
     expect(mock.requests.map(({ input }) => String(input))).toEqual([
       `/api/fields/${fieldId}`,
     ]);
@@ -56,7 +60,28 @@ test("a deleted field still names its old values", async () => {
     ),
   );
   try {
-    expect(await getAuditFieldName(fieldId)).toBe("Old notes");
+    expect((await getAuditField(fieldId))?.name).toBe("Old notes");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a select field gives its option labels by id", async () => {
+  const option = "0b0b0b0b-0000-4000-8000-000000000001";
+  const mock = installFetch(() =>
+    Response.json(
+      field({
+        type: "select",
+        config: { options: [{ id: option, label: "Open" }] },
+      }),
+    ),
+  );
+  try {
+    expect(await getAuditField(fieldId)).toEqual({
+      name: "Status",
+      type: "select",
+      options: new Map([[option, "Open"]]),
+    });
   } finally {
     mock.restore();
   }
@@ -68,7 +93,7 @@ for (const status of [403, 404]) {
       Response.json({ detail: "Field not found" }, { status }),
     );
     try {
-      expect(await getAuditFieldName(fieldId)).toBeNull();
+      expect(await getAuditField(fieldId)).toBeNull();
     } finally {
       mock.restore();
     }
@@ -80,7 +105,7 @@ test("another field read failure stays an error", async () => {
     Response.json({ detail: "Unavailable" }, { status: 503 }),
   );
   try {
-    await expect(getAuditFieldName(fieldId)).rejects.toBeInstanceOf(ApiError);
+    await expect(getAuditField(fieldId)).rejects.toBeInstanceOf(ApiError);
   } finally {
     mock.restore();
   }
@@ -91,7 +116,7 @@ test("a response for another field is refused", async () => {
     Response.json(field({ id: "9e8d7c6b-0000-4000-8000-000000000010" })),
   );
   try {
-    await expect(getAuditFieldName(fieldId)).rejects.toThrow();
+    await expect(getAuditField(fieldId)).rejects.toThrow();
   } finally {
     mock.restore();
   }

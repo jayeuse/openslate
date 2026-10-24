@@ -10,15 +10,16 @@ export const JOB_EMPTY = "—";
 export type JobTone = "flow" | "action" | "danger" | "warn" | "muted";
 
 /**
- * The states the server can return: the scheduled-work states, then the two
- * that only backups have. The quick filters list them in this order.
+ * The states the server can return, in the order a job moves through them:
+ * waiting (Pending, Queued), Running, then how it ended. The quick filters
+ * list them in this order (Phase 8).
  */
 export const JOB_STATES = [
   { value: "pending", word: "Pending", tone: "muted" },
-  { value: "running", word: "Running", tone: "action" },
-  { value: "failed", word: "Failed", tone: "danger" },
-  { value: "succeeded", word: "Succeeded", tone: "flow" },
   { value: "queued", word: "Queued", tone: "muted" },
+  { value: "running", word: "Running", tone: "action" },
+  { value: "succeeded", word: "Succeeded", tone: "flow" },
+  { value: "failed", word: "Failed", tone: "danger" },
   { value: "canceled", word: "Canceled", tone: "muted" },
   { value: "interrupted", word: "Interrupted", tone: "warn" },
 ] as const satisfies readonly { value: string; word: string; tone: JobTone }[];

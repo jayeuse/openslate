@@ -35,7 +35,7 @@ import {
   jobSubject,
   jobTime,
 } from "../domain/job-rules";
-import { StatusWord } from "./status-word";
+import { StatusWord } from "@/components/ui/status-word";
 
 /** A job state as a dot and a word. */
 function JobStatusWord({ state }: { state: string }) {

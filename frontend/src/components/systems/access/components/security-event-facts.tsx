@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { StatusWord, type StatusTone } from "@/components/ui/status-word";
 import { Button } from "@/components/ui/button";
 import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 
@@ -107,6 +108,26 @@ export function EventTime({
 export function Outcome({ outcome }: { outcome: AccessSecurityEventOutcome }) {
   const style = outcomes[outcome];
   return <Badge variant={style.variant}>{style.label}</Badge>;
+}
+
+/** The dot of each outcome in a row: the shared row pattern (Phase 8). */
+const outcomeTones: Record<AccessSecurityEventOutcome, StatusTone> = {
+  success: "flow",
+  failure: "danger",
+  denied: "warn",
+  partial: "warn",
+  attempt: "muted",
+};
+
+/** A row's outcome as the shared dot and word; the sheet keeps its Badge. */
+export function OutcomeWord({
+  outcome,
+}: {
+  outcome: AccessSecurityEventOutcome;
+}) {
+  return (
+    <StatusWord word={outcomes[outcome].label} tone={outcomeTones[outcome]} />
+  );
 }
 
 function PersonFact({

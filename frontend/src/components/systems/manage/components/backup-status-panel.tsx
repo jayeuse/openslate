@@ -4,7 +4,6 @@ import type { Ref } from "react";
 import { AlertTriangle, HardDrive } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 
@@ -52,16 +51,13 @@ export function BackupStatusPanel({
         <h2 data-slot="section-title" className="mr-auto font-semibold">
           Status
         </h2>
-        {maintenance.dirty ? (
-          <Badge variant="warning">Unsaved changes</Badge>
-        ) : null}
-        <DisabledReason reason={reason}>
+        <DisabledReason reason={reason ?? maintenance.scheduleReason}>
           <Button
             ref={scheduleRef}
             type="button"
             variant="ghost"
             className="min-h-11"
-            disabled={!ready}
+            disabled={!ready || Boolean(maintenance.scheduleReason)}
             onClick={onEditSchedule}
           >
             Edit schedule

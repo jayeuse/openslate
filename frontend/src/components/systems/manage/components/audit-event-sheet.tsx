@@ -22,8 +22,10 @@ import type { ManageAuditLog } from "../adapters/audit-api";
 import {
   auditChanges,
   auditKind,
+  auditOnlySystemChanges,
   auditSentence,
   type AuditFieldNames,
+  type AuditKnownNames,
 } from "../domain/audit-rules";
 
 /** Where the record opens, when this viewer has a page for it. */
@@ -62,6 +64,7 @@ export function AuditEventSheet({
   person,
   area,
   fieldNames,
+  names,
   region,
   admin,
   onClose,
@@ -72,13 +75,16 @@ export function AuditEventSheet({
   area: string;
   /** Record field names by id; an unread field keeps its short id. */
   fieldNames: AuditFieldNames;
+  /** The organization and people names the page already loaded. */
+  names: AuditKnownNames;
   region: WorkspaceRegion | undefined;
   admin: boolean;
   onClose: () => void;
   finalFocus: () => HTMLElement | null;
 }) {
-  const sentence = log ? auditSentence(log) : null;
-  const changes = log ? auditChanges(log, region, fieldNames) : [];
+  const sentence = log ? auditSentence(log, fieldNames, names) : null;
+  const changes = log ? auditChanges(log, region, fieldNames, names) : [];
+  const onlySystem = log ? auditOnlySystemChanges(log, names) : false;
   const href = log ? recordHref(log, admin) : null;
   const kind = log ? auditKind(log.entity_type) : null;
   const when =
@@ -141,29 +147,39 @@ export function AuditEventSheet({
                           {change.label}
                         </span>{" "}
                         <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 break-words">
-                          <span
-                            className={
-                              change.before === "Not set" ||
-                              change.before === "Hidden"
-                                ? "text-muted-foreground"
-                                : "text-muted-foreground line-through"
-                            }
-                          >
-                            {change.before}
-                          </span>{" "}
-                          <span className="sr-only">to</span>
-                          <ArrowRight
-                            aria-hidden="true"
-                            className="size-3.5 shrink-0"
-                          />{" "}
-                          <b className="font-semibold">{change.after}</b>
+                          {change.before === null ? (
+                            // A reference without a loaded name says what
+                            // happened, never its id (MD20).
+                            <b className="font-semibold">{change.after}</b>
+                          ) : (
+                            <>
+                              <span
+                                className={
+                                  change.before === "Not set" ||
+                                  change.before === "Hidden"
+                                    ? "text-muted-foreground"
+                                    : "text-muted-foreground line-through"
+                                }
+                              >
+                                {change.before}
+                              </span>{" "}
+                              <span className="sr-only">to</span>
+                              <ArrowRight
+                                aria-hidden="true"
+                                className="size-3.5 shrink-0"
+                              />{" "}
+                              <b className="font-semibold">{change.after}</b>
+                            </>
+                          )}
                         </span>
                       </li>
                     ))}
                   </ul>
                 ) : (
                   <p className="text-muted-foreground text-sm">
-                    No changed values were recorded.
+                    {onlySystem
+                      ? "Only system values changed. Advanced shows them."
+                      : "No changed values were recorded."}
                   </p>
                 )}
               </section>
@@ -223,6 +239,15 @@ export function AuditEventSheet({
                       </pre>
                     </dd>
                   </div>
+                  {log.entity_id ? (
+                    // The record's id lives here, not in the row (MD20).
+                    <div>
+                      <dt className="text-muted-foreground mb-1">Record ID</dt>
+                      <dd className="font-mono text-xs break-all">
+                        {log.entity_id}
+                      </dd>
+                    </div>
+                  ) : null}
                   {log.request_method && log.request_path ? (
                     <div>
                       <dt className="text-muted-foreground mb-1">Request</dt>

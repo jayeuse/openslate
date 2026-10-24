@@ -564,7 +564,7 @@ export function AppShell({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-11 lg:hidden"
+                  className="size-11 min-w-11 shrink-0 lg:hidden"
                   aria-label="Open navigation"
                   aria-expanded={mobileOpen}
                   aria-controls="mobile-navigation"
@@ -823,7 +823,7 @@ function AppHeaderActions({
         href={"/platform" as Route}
         aria-label="Search workspace"
         title="Search workspace"
-        className="text-muted-foreground hover:bg-muted flex min-h-11 items-center gap-2 rounded-md px-3 text-sm sm:min-w-52 sm:border"
+        className="text-muted-foreground hover:bg-muted flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-2 rounded-md px-3 text-sm sm:min-w-52 sm:justify-start sm:border"
       >
         <Search className="size-4" aria-hidden="true" />
         <span className="hidden sm:inline">Search workspace…</span>

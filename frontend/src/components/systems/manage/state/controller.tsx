@@ -253,6 +253,12 @@ export function useManageMaintenance({
     : !acceptedStatus && (status.isError || policyRefused)
       ? "Retry the backup status first."
       : null;
+  // A schedule from another installation (after a restore) cannot be edited
+  // until the server confirms it; requests still queue (MG6, Phase 8).
+  const scheduleReason =
+    acceptedStatus && !acceptedStatus.policy.adopted
+      ? "Needs confirmation after a restore."
+      : null;
   const patch = draftPolicy ? backupPolicyPatch(draftPolicy, draft) : null;
   const dirty = patch !== null;
   const stale =
@@ -617,6 +623,7 @@ export function useManageMaintenance({
       history.isError || historyRefused ? undefined : history.data,
     acceptedVersion:
       version.isError || versionRefused ? undefined : version.data,
+    scheduleReason,
     policyRefused,
     historyRefused,
     versionRefused,

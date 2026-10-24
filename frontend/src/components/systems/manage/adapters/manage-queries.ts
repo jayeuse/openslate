@@ -3,7 +3,7 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { accessKeys } from "../../access/adapters/access-keys";
 import { listAccessDepartments } from "../../access/state/api";
-import { getAuditFieldName } from "./audit-fields-api";
+import { getAuditField } from "./audit-fields-api";
 
 import {
   getManageWorkspace,
@@ -306,7 +306,7 @@ export const manageAuditDepartmentsOptions = () =>
 export const manageAuditFieldOptions = (fieldId: string) =>
   queryOptions({
     queryKey: [...manageKeys.audit(), "field", fieldId] as const,
-    queryFn: ({ signal }) => getAuditFieldName(fieldId, signal),
+    queryFn: ({ signal }) => getAuditField(fieldId, signal),
     staleTime: 5 * 60_000,
   });
 

@@ -146,8 +146,11 @@ const field = (page: Page, name: string) =>
   page.getByLabel(name, { exact: true });
 const save = (page: Page) =>
   page.getByRole("button", { name: "Save settings", exact: true });
+// The footer chip confirms a save; no page notice repeats it (Phase 8).
 const saved = (page: Page) =>
-  page.getByText("Organization settings saved.", { exact: true });
+  page
+    .getByRole("group", { name: "Organization actions", exact: true })
+    .getByText("Saved", { exact: true });
 
 test("Organization profile fields load, save and clear without changing omitted values", async ({
   page,
@@ -405,7 +408,10 @@ test("Organization pending profile save blocks duplicate commands and navigation
     await openProfile(page);
     await field(page, "Legal name").fill("Pending legal name");
     await save(page).click();
-    await expect(save(page)).toBeDisabled();
+    // While it saves, Save reads "Saving…" and cannot be pressed again.
+    await expect(
+      page.getByRole("button", { name: "Saving…", exact: true }),
+    ).toBeDisabled();
     await expect(field(page, "Contact email")).toBeDisabled();
     await page.getByRole("link", { name: "Organization", exact: true }).click();
     await expect(page).toHaveURL(/\/manage\?view=organization$/);
