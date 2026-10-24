@@ -8,7 +8,7 @@ import type {
   Message,
 } from "../contract/types";
 import { realtimeEventSchemaFor } from "../contract/schemas";
-import type { createCommsQueryScope } from "./comms-queries";
+import { querySettled, type createCommsQueryScope } from "./comms-queries";
 import {
   heartbeatPresenceResponseSchemaFor,
   type HttpHeartbeatResponse,
@@ -225,6 +225,21 @@ export function createCommsCacheBridge(
       await enqueue(async () => {
         if (event.event === "message") {
           const { conversation_id: id, seq, kind } = event.payload;
+          // A first history read sent before this message may land after its
+          // event. Wait for it, then judge the gap against what it loaded.
+          await Promise.all(
+            cache
+              .getQueryCache()
+              .findAll({ queryKey: scope.keys.conversation(id) })
+              .filter(
+                (query) =>
+                  query.queryKey[5] === "history" &&
+                  query.state.data === undefined &&
+                  query.state.fetchStatus === "fetching",
+              )
+              .map((query) => querySettled(cache, query.queryKey)),
+          );
+          scope.signal.throwIfAborted();
           const open = windows(true).filter(
             (query) => query.queryKey[4] === id,
           );
