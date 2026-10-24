@@ -265,7 +265,8 @@ class CiWorkflowContractTests(unittest.TestCase):
             (isolated, "- name: Run isolated frontend tests\n        timeout-minutes: 10\n"),
             (
                 http,
-                "- name: Run browser tests against the static export\n        timeout-minutes: 15\n",
+                "- name: Run browser tests against the static export\n"
+                "        timeout-minutes: 15\n",
             ),
         ):
             with self.subTest(step=step.split("\n", 1)[0]):
