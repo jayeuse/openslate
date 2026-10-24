@@ -104,7 +104,7 @@ test("Person card guest DTO omits private keys and nullable member values remain
   await visit(page, api);
   await trigger(page).click();
   await expect(card(page)).toContainText("Equipment coordinator");
-  await expect(card(page).getByText(/Email|Phone|Short bio/)).toHaveCount(0);
+  await expect(card(page).getByText(/Email|Phone|Bio/)).toHaveCount(0);
   expect(Object.keys(api.cards.get(cardTarget) as object).sort()).toEqual([
     "avatar_url",
     "display_name",
@@ -132,6 +132,12 @@ test("Person card guest DTO omits private keys and nullable member values remain
   await expect(
     card(page).getByText("Not provided", { exact: true }),
   ).toHaveCount(4);
+  // One name for the bio everywhere: the card, Profile and Account settings.
+  await expect(card(page).getByRole("term")).toHaveText([
+    "Email",
+    "Phone",
+    "Bio",
+  ]);
   await expect(card(page).getByText("ana@example.test")).toHaveCount(0);
   const bounds = await card(page).boundingBox();
   expect(bounds).not.toBeNull();

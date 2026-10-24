@@ -35,7 +35,9 @@ export function SettingsPreview({
       className="bg-card border-border min-w-0 rounded-[var(--radius)] border text-sm xl:min-h-0 xl:overflow-y-auto xl:overscroll-contain"
     >
       <div className="border-border border-b px-4 py-3">
-        <h2 className="text-base font-semibold">Preview</h2>
+        <h2 data-slot="section-title" className="text-base font-semibold">
+          Preview
+        </h2>
       </div>
       <section
         aria-labelledby="preview-person"

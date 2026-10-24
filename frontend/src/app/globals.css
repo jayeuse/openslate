@@ -859,6 +859,12 @@ html[data-density="spacious"]
     height: 2rem;
     min-height: 2rem;
   }
+  /* SearchSelect options are slim rows too, so a list of 400 timezones
+     opens below its field (PD55). */
+  :is(#main-content .slim-ui, .slim-ui) [role="option"] {
+    min-height: 2rem;
+    padding-block: 0.375rem;
+  }
   /* :where keeps this end padding weaker than the select rules below, so
      a select keeps room for its chevron. */
   :is(#main-content .slim-ui, .slim-ui)

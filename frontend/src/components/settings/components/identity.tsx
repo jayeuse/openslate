@@ -14,17 +14,11 @@ import {
 } from "../hooks/use-identity-editor";
 import { RowError, RowNote, SettingsRow, SettingsSection } from "./rows";
 
-const rowLabels: Record<IdentityField, string> = {
-  display_name: "Name",
-  job_title: "Job title",
-  phone: "Phone",
-  bio: "Short bio",
-};
-
 /**
- * Identity (PD10): the photo, which saves at once, then Name, Job title,
- * Phone and Short bio, which save through the pinned footer (the form is
- * `identity-form`), and the sign-in email with its quiet Change.
+ * Identity (PD10): the photo, which saves at once with its own status words
+ * (PD54), then Display name, Job title, Phone and Bio, which save through the
+ * pinned footer (the form is `identity-form`), and the sign-in email with its
+ * quiet Change. Each row label is the field's full name (PD58).
  */
 export function IdentitySection({
   editor,
@@ -83,7 +77,7 @@ export function IdentitySection({
             disabled={editor.photoDisabled}
             onClick={() => input.current?.click()}
           >
-            Choose photo
+            {editor.uploading ? "Uploading…" : "Choose photo"}
           </Button>
           {/* The native input stays in the DOM, unseen, so its label and
               the browser's file chooser still work. */}
@@ -115,6 +109,18 @@ export function IdentitySection({
               Remove
             </Button>
           ) : null}
+          {/* The button already shows "Uploading…", so that word is heard,
+              not shown twice; the result is shown. */}
+          <span
+            role="status"
+            className="text-muted-foreground text-[0.8125rem]"
+          >
+            {editor.uploading ? (
+              <span className="sr-only">{editor.photoStatus}</span>
+            ) : (
+              editor.photoStatus
+            )}
+          </span>
         </div>
         <RowNote id="profile-photo-note">PNG or JPEG, up to 2 MB.</RowNote>
         {editor.retryable ? null : (
@@ -127,7 +133,7 @@ export function IdentitySection({
         onSubmit={editor.submit}
         className="contents"
       >
-        {(Object.keys(rowLabels) as IdentityField[]).map((key) => {
+        {(Object.keys(identityLabels) as IdentityField[]).map((key) => {
           const id = `profile-${key}`;
           const errorId = `${id}-error`;
           const props = {
@@ -141,7 +147,7 @@ export function IdentitySection({
               editor.change(key, event.target.value),
           };
           return (
-            <SettingsRow key={key} label={rowLabels[key]} htmlFor={id}>
+            <SettingsRow key={key} label={identityLabels[key]} htmlFor={id}>
               {key === "bio" ? (
                 <Textarea
                   {...props}

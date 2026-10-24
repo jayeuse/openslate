@@ -452,7 +452,7 @@ function PersonCardDetails({
             [
               ["Email", privateData.email],
               ["Phone", privateData.phone],
-              ["Short bio", privateData.bio],
+              ["Bio", privateData.bio],
             ] as const
           ).map(([name, value]) => (
             <div key={name}>

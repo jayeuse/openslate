@@ -3,7 +3,7 @@
 import { Suspense, useEffect, type ReactNode } from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Settings } from "lucide-react";
+import { UserCog } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -191,7 +191,7 @@ function ProfileDetails({
   const { about, bio, fillHint } = profileFacts(profile, own);
   const photo = avatarThumbnailUrl(profile.avatarUrl, 256);
   return (
-    <div className="slim-ui flex min-h-0 flex-1 flex-col gap-5 px-4 pb-6 sm:px-5 xl:grid xl:grid-cols-[18.75rem_minmax(0,1fr)] xl:gap-8 xl:px-7">
+    <div className="slim-ui flex min-h-0 flex-1 flex-col gap-5 px-4 pb-6 text-sm sm:px-5 xl:grid xl:grid-cols-[18.75rem_minmax(0,1fr)] xl:gap-8 xl:px-7">
       <section
         aria-labelledby="profile-name"
         className="-mt-12 flex min-w-0 flex-col items-start"
@@ -217,7 +217,7 @@ function ProfileDetails({
         {own ? (
           <Button asChild variant="secondary" className="mt-4 min-h-11">
             <GuardedWorkspaceLink href={"/settings" as Route}>
-              <Settings aria-hidden="true" />
+              <UserCog aria-hidden="true" />
               Account settings
             </GuardedWorkspaceLink>
           </Button>
@@ -245,6 +245,15 @@ function ProfileDetails({
                             </li>
                           ))}
                         </ul>
+                      ) : "href" in row ? (
+                        // A phone can call the number (PD59); a 44px target
+                        // below 1280px, as the hint link is (PD50).
+                        <a
+                          href={row.href}
+                          className="text-action-text focus-visible:outline-ring inline-flex min-h-11 items-center rounded-sm tabular-nums underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 xl:inline xl:min-h-0"
+                        >
+                          {row.value}
+                        </a>
                       ) : (
                         row.value
                       )}
@@ -295,7 +304,11 @@ function ProfilePanel({
       className="bg-card border-border shrink-0 rounded-[var(--radius)] border"
     >
       <div className="border-border flex min-h-10 items-center border-b px-4 py-2">
-        <h2 id={id} data-slot="section-title" className="font-semibold">
+        <h2
+          id={id}
+          data-slot="section-title"
+          className="text-base font-semibold"
+        >
           {title}
         </h2>
       </div>

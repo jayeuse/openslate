@@ -1,5 +1,9 @@
-import { expect, test, type Page } from "./helpers/test";
-import { installProfileApi } from "./helpers/profile-api";
+import { expect, heldResponse, test, type Page } from "./helpers/test";
+import {
+  avatarFileId,
+  avatarPng,
+  installProfileApi,
+} from "./helpers/profile-api";
 import { smallTargets } from "./helpers/layout";
 import { mockMfa } from "./helpers/mfa";
 
@@ -106,6 +110,10 @@ test("from 1280px the page is still, rows are label-left, and Save profile is th
     ),
   ).toBeLessThan(4);
   expect(fieldBox.height).toBe(32);
+  // The visible word is the start of the field's name (PD36, PD58).
+  await expect(
+    settingsPanel(page).locator("label", { hasText: /^Display name$/ }),
+  ).toBeVisible();
   await expect(
     page
       .getByRole("main")
@@ -166,6 +174,7 @@ test("the timezone select lists the organization timezone first and saves each c
   page,
 }) => {
   const api = await installProfileApi(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/settings#regional");
   const timezone = page.getByRole("combobox", {
     name: "Timezone",
@@ -178,6 +187,18 @@ test("the timezone select lists the organization timezone first and saves each c
   await expect(options.first()).toHaveText(
     "Organization timezone (Asia/Manila)",
   );
+  // The open list covers at most 20rem, wherever it opens.
+  expect(
+    (await page.locator('[data-slot="combobox-popup"]').boundingBox())?.height,
+  ).toBeLessThanOrEqual(320);
+  // From 1280px the options are slim rows, and the chosen one has a check.
+  expect((await options.nth(1).boundingBox())?.height).toBe(32);
+  await expect(
+    options.first().locator('[data-slot="combobox-item-indicator"] svg'),
+  ).toBeVisible();
+  await expect(
+    options.nth(1).locator('[data-slot="combobox-item-indicator"]'),
+  ).toHaveCount(0);
   await page
     .getByRole("combobox", { name: "Search timezone", exact: true })
     .fill("Los Angeles");
@@ -215,6 +236,8 @@ test("the password dialog is framed, closes by name, and says other devices sign
   });
   await expect(dialog.getByLabel("Current password")).toBeVisible();
   await expect(dialog.getByLabel("New password")).toBeVisible();
+  // The dialog opens on its first field.
+  await expect(dialog.getByLabel("Current password")).toBeFocused();
   const notice = dialog.getByText("Other devices sign out after the change.", {
     exact: true,
   });
@@ -263,6 +286,8 @@ test("the email dialog is framed with a named close and Cancel beside its action
   await expect(
     dialog.getByRole("button", { name: "Send confirmation emails" }),
   ).toBeVisible();
+  // The dialog opens on its first field.
+  await expect(dialog.getByLabel("New email")).toBeFocused();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(
@@ -300,7 +325,8 @@ test("sessions are one-line rows with This device and an End session named for t
     })
     .click();
   const confirm = page.getByRole("alertdialog", {
-    name: "End session?",
+    name: "End the session on Chrome, Windows?",
+    exact: true,
   });
   await confirm
     .getByRole("button", { name: "End session", exact: true })
@@ -571,6 +597,12 @@ test("on a phone Account settings is one column, and the pinned footer never cov
   ]);
   expect(row!.y + row!.height).toBeLessThanOrEqual(cover!.y);
   expect((await documentSize(page))[0]).toBe(390);
+  // 16px text, so iOS Safari does not zoom the page when a field takes focus.
+  for (const name of ["Display name", "Job title", "Phone", "Bio"])
+    await expect(page.getByLabel(name, { exact: true }), name).toHaveCSS(
+      "font-size",
+      "16px",
+    );
 });
 
 test("on a phone the framed dialogs fill the width inside the 16px gutter and keep their footers in view", async ({
@@ -624,4 +656,148 @@ test("without an organization Account settings is still at 1280×720 and one col
   expect(await smallTargets(page.locator("main"), '[role="radio"]')).toEqual(
     [],
   );
+});
+
+test("Sign out other sessions says why it waits when no other device is signed in", async ({
+  page,
+}) => {
+  await installProfileApi(page);
+  await page.route("**/api/auth/sessions", (route) =>
+    route.fulfill({ json: [session(1, safariMac, "127.0.0.1", true)] }),
+  );
+  await page.goto("/settings#security");
+  await expect(
+    settingsPanel(page)
+      .getByRole("list", { name: "Active sessions", exact: true })
+      .getByRole("listitem"),
+  ).toHaveCount(1);
+  const others = settingsPanel(page).getByRole("button", {
+    name: "Sign out other sessions",
+    exact: true,
+  });
+  await expect(others).toHaveAttribute("aria-disabled", "true");
+  await expect(others).toHaveAccessibleDescription("No other sessions.");
+  // It stays focusable, so a keyboard user reaches the reason; it does nothing.
+  await others.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+});
+
+test("ending a session names the device and reads Ending… while it runs", async ({
+  page,
+}) => {
+  await installProfileApi(page);
+  await installSessions(page);
+  const hold = heldResponse();
+  await page.route("**/api/auth/sessions/*", async (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    hold.enter();
+    await hold.released;
+    await route.fulfill({ status: 204, body: "" });
+  });
+  await page.goto("/settings#security");
+  await settingsPanel(page)
+    .getByRole("button", {
+      name: "Session actions, Chrome on Windows",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("menuitem", {
+      name: "End session, Chrome on Windows",
+      exact: true,
+    })
+    .click();
+  const confirm = page.getByRole("alertdialog", {
+    name: "End the session on Chrome, Windows?",
+    exact: true,
+  });
+  await expect(confirm).toContainText("That device signs out.");
+  await confirm
+    .getByRole("button", { name: "End session", exact: true })
+    .click();
+  await hold.entered;
+  await expect(
+    confirm.getByRole("button", { name: "Ending…", exact: true }),
+  ).toBeDisabled();
+  hold.release();
+  await expect(confirm).toBeHidden();
+});
+
+test("the photo saves at once, with its own status words beside it", async ({
+  page,
+}) => {
+  const api = await installProfileApi(page);
+  const hold = heldResponse();
+  api.holdUpload = hold;
+  await page.goto("/settings");
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
+    "Maya Chen",
+  );
+  const identity = settingsPanel(page).getByRole("region", {
+    name: "Identity",
+    exact: true,
+  });
+  await page.getByLabel("Upload photo", { exact: true }).setInputFiles({
+    name: "portrait.png",
+    mimeType: "image/png",
+    buffer: avatarPng,
+  });
+  await hold.entered;
+  await expect(
+    identity.getByRole("button", { name: "Uploading…", exact: true }),
+  ).toBeDisabled();
+  await expect(identity.getByRole("status")).toHaveText("Uploading…");
+  hold.release();
+  await expect(identity.getByRole("status")).toHaveText("Photo saved");
+  // The photo is not a draft field, so the Save profile chip stays at rest.
+  await expect(footer(page).getByRole("status")).toHaveText("Saved");
+  expect(api.writes.at(-1)?.body).toEqual({ avatar_file_id: avatarFileId });
+  await identity
+    .getByRole("button", { name: "Remove photo", exact: true })
+    .click();
+  await expect(identity.getByRole("status")).toHaveText("Photo removed");
+  await expect(footer(page).getByRole("status")).toHaveText("Saved");
+});
+
+test("the Appearance status says nothing at rest and Saved after a change", async ({
+  page,
+}) => {
+  await installProfileApi(page);
+  await page.goto("/settings#look");
+  const appearance = settingsPanel(page).getByRole("region", {
+    name: "Appearance",
+    exact: true,
+  });
+  const motion = appearance.getByRole("switch", { name: "Reduce motion" });
+  await expect(motion).toBeEnabled();
+  await expect(appearance.getByText("Saved", { exact: true })).toHaveCount(0);
+  await motion.click();
+  await expect(appearance.getByRole("status")).toHaveText("Saved");
+});
+
+test("Start page lists only the sections this account can open, and keeps a hidden saved one readable", async ({
+  page,
+}) => {
+  const api = await installProfileApi(page, { role: "member" });
+  api.appearance.start_page = "sandbox";
+  await page.goto("/settings#look");
+  const start = page.getByRole("combobox", {
+    name: "Start page after sign-in",
+    exact: true,
+  });
+  await expect(start).toBeEnabled();
+  await expect(start).toHaveValue("sandbox");
+  await expect(start.getByRole("option")).toHaveText([
+    "Automatic",
+    "Sandbox (not available)",
+    "Boards",
+    "OpenComms",
+    "OpenView",
+    "Manage",
+    "Platform",
+  ]);
+  await expect(
+    start.getByRole("option", { name: "Sandbox (not available)" }),
+  ).toBeDisabled();
 });

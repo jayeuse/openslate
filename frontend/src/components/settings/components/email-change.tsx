@@ -136,6 +136,8 @@ export default function EmailChange() {
       >
         <DialogContent
           className={`${dialogFrameContentClass} max-w-lg`}
+          // The dialog opens on its first field (PD61).
+          initialFocus={() => document.getElementById("email-change-new")}
           finalFocus={() => focusReturn(opener.current, "identity")()}
         >
           <DialogFrameHeader

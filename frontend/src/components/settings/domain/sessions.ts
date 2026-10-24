@@ -70,3 +70,14 @@ export function sessionRowWords(
     endLabel: `End session, ${named}`,
   };
 }
+
+/**
+ * The end-session confirmation names the device it signs out (PD60):
+ * "End the session on Safari, macOS?".
+ */
+export function endSessionTitle(userAgent: string | null): string {
+  const device = accountDeviceLabel(userAgent);
+  return device === "Unknown device"
+    ? "End the session on an unknown device?"
+    : `End the session on ${device.replace(" on ", ", ")}?`;
+}

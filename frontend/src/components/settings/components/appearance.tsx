@@ -8,6 +8,10 @@ import { Switch } from "@/components/ui/switch";
 import { useUserPreferences } from "@/components/theme-provider";
 import type { DeviceTextSize, PageDensity } from "@/lib/appearance-preferences";
 import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
+import { accessNavigationFor } from "@/components/workspace-navigation";
+import { startPageOptions } from "../domain/start-page";
 import { RowNote, SettingsRow, SettingsSection } from "./rows";
 
 const modes = [
@@ -33,6 +37,10 @@ export function AppearanceSection({
   onChange: () => void;
 }) {
   const preference = useUserPreferences();
+  const saved = preference.regional?.start_page;
+  // Start page lists what the sidebar shows this person (PD62).
+  const identity = useQuery(authMeOptions());
+  const access = accessNavigationFor(identity.data);
   const [deviceReducesMotion, setDeviceReducesMotion] = useState(false);
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -147,7 +155,7 @@ export function AppearanceSection({
             aria-label="Start page after sign-in"
             className="min-h-11"
             disabled={preference.disabled}
-            value={preference.regional?.start_page ?? ""}
+            value={saved ?? ""}
             onValueChange={(value) => {
               onChange();
               preference.setRegional({
@@ -157,17 +165,20 @@ export function AppearanceSection({
               });
             }}
           >
-            <SelectItem value="" disabled>
-              Not loaded
-            </SelectItem>
-            <SelectItem value="automatic">Automatic</SelectItem>
-            <SelectItem value="sandbox">Sandbox</SelectItem>
-            <SelectItem value="boards">Boards</SelectItem>
-            <SelectItem value="comms">OpenComms</SelectItem>
-            <SelectItem value="access">Access</SelectItem>
-            <SelectItem value="openview">OpenView</SelectItem>
-            <SelectItem value="manage">Manage</SelectItem>
-            <SelectItem value="platform">Platform</SelectItem>
+            {saved === undefined ? (
+              <SelectItem value="" disabled>
+                Unavailable
+              </SelectItem>
+            ) : null}
+            {startPageOptions(access, saved).map((option) => (
+              <SelectItem
+                key={option.value}
+                value={option.value}
+                disabled={option.disabled}
+              >
+                {option.label}
+              </SelectItem>
+            ))}
           </Select>
         </div>
       </SettingsRow>

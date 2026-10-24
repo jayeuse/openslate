@@ -42,6 +42,7 @@ export function SettingsSection({
         <h2
           id={titleId}
           tabIndex={-1}
+          data-slot="section-title"
           className="text-base font-semibold outline-none"
         >
           {title}

@@ -78,6 +78,10 @@ test("your own profile shows your facts and Account settings, and the account ro
   const about = page.getByRole("region", { name: "About", exact: true });
   await expect(about.getByRole("term")).toHaveText(["Phone", "Role", "Groups"]);
   await expect(about.getByRole("definition").nth(0)).toHaveText("+1 555 0101");
+  // A phone can call the number.
+  await expect(
+    about.getByRole("link", { name: "+1 555 0101", exact: true }),
+  ).toHaveAttribute("href", "tel:+15550101");
   await expect(about.getByRole("definition").nth(1)).toHaveText("Member");
   await expect(about.getByRole("listitem")).toHaveText([
     "Field Ops",
@@ -503,6 +507,20 @@ test("your own bare profile says where to add a job title, phone and bio; anothe
   await page.goto(`/profile?person=${profileUserB}`);
   await expect(
     page.getByRole("heading", { level: 1, name: "Rosa Reyes", exact: true }),
+  ).toBeVisible();
+  await expect(main(page)).not.toContainText("Add your job title");
+});
+
+test("a guest's own profile never asks for fields the guest view cannot show", async ({
+  page,
+}) => {
+  await installProfileApi(page, { role: "guest" });
+  await serveProfile(page, profileUserA, {
+    json: { display_name: "Maya Chen", job_title: null, avatar_url: null },
+  });
+  await page.goto("/profile");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Maya Chen", exact: true }),
   ).toBeVisible();
   await expect(main(page)).not.toContainText("Add your job title");
 });

@@ -68,7 +68,7 @@ for (const role of ["member", "guest"] as const) {
     for (const [label, value] of [
       ["Display name", "Maya Chen"],
       ["Job title", "Equipment coordinator"],
-      ["Short bio", "Coordinates shared equipment."],
+      ["Bio", "Coordinates shared equipment."],
     ])
       await expect(page.getByLabel(label, { exact: true })).toHaveValue(value);
     await expect(save).toBeDisabled();
@@ -162,7 +162,7 @@ test("Profile clears nullable values explicitly and rejects overlong Unicode bef
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect.poll(() => api.people.get(profileUserA)?.phone).toBeNull();
   expect(api.writes[0]?.body).toEqual({ phone: null });
-  const bio = page.getByLabel("Short bio", { exact: true });
+  const bio = page.getByLabel("Bio", { exact: true });
   await bio.fill("🌱".repeat(281));
   await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect(

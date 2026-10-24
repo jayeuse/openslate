@@ -9,7 +9,11 @@ import {
   ORGANIZATION_TIMEZONE,
   personalTimezoneOptions,
 } from "../../../src/components/settings/domain/regional";
-import { sessionRowWords } from "../../../src/components/settings/domain/sessions";
+import {
+  endSessionTitle,
+  sessionRowWords,
+} from "../../../src/components/settings/domain/sessions";
+import { startPageOptions } from "../../../src/components/settings/domain/start-page";
 import { twoStepWord } from "../../../src/components/settings/domain/two-step";
 import type { ProfileSelf } from "../../../src/components/profile/adapters/profile-api";
 import type { MfaStatus } from "../../../src/lib/mfa-api";
@@ -149,3 +153,86 @@ test("the two-step status word is On only for a verified authenticator", () => {
   // A failed read is a warning, not a quiet Off.
   expect(twoStepWord(null)).toEqual({ word: "Unavailable", tone: "warn" });
 });
+
+test("the end-session confirmation names the device it signs out", () => {
+  expect(
+    endSessionTitle(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+    ),
+  ).toBe("End the session on Safari, macOS?");
+  expect(endSessionTitle(null)).toBe("End the session on an unknown device?");
+});
+
+// Start page lists the sections the sidebar shows this person (PD62): only
+// the Sandbox (administrators) and Access (administrators and managers) are
+// gated. A saved section the person can no longer open stays readable.
+const startPageRows = [
+  {
+    name: "an administrator sees every section",
+    access: "all",
+    saved: "automatic",
+    options: [
+      "Automatic",
+      "Sandbox",
+      "Boards",
+      "OpenComms",
+      "Access",
+      "OpenView",
+      "Manage",
+      "Platform",
+    ],
+    disabled: [],
+  },
+  {
+    name: "a manager sees Access but not the Sandbox",
+    access: "groups",
+    saved: "boards",
+    options: [
+      "Automatic",
+      "Boards",
+      "OpenComms",
+      "Access",
+      "OpenView",
+      "Manage",
+      "Platform",
+    ],
+    disabled: [],
+  },
+  {
+    name: "a reader or a guest sees neither the Sandbox nor Access",
+    access: "none",
+    saved: undefined,
+    options: [
+      "Automatic",
+      "Boards",
+      "OpenComms",
+      "OpenView",
+      "Manage",
+      "Platform",
+    ],
+    disabled: [],
+  },
+  {
+    name: "a saved section that is now hidden stays, marked and not choosable",
+    access: "none",
+    saved: "access",
+    options: [
+      "Automatic",
+      "Boards",
+      "OpenComms",
+      "Access (not available)",
+      "OpenView",
+      "Manage",
+      "Platform",
+    ],
+    disabled: ["Access (not available)"],
+  },
+] as const;
+for (const row of startPageRows)
+  test(`Start page: ${row.name}`, () => {
+    const options = startPageOptions(row.access, row.saved);
+    expect(options.map((option) => option.label)).toEqual(row.options);
+    expect(
+      options.filter((option) => option.disabled).map(({ label }) => label),
+    ).toEqual(row.disabled);
+  });

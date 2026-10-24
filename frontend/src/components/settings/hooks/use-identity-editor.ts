@@ -44,7 +44,7 @@ export const identityLabels: Record<IdentityField, string> = {
   display_name: "Display name",
   job_title: "Job title",
   phone: "Phone",
-  bio: "Short bio",
+  bio: "Bio",
 };
 
 const PHOTO_UNCERTAIN =
@@ -72,6 +72,12 @@ export function useIdentityEditor() {
   const [photoLocked, setPhotoLocked] = useState(false);
   const [photoReadError, setPhotoReadError] = useState("");
   const [saved, setSaved] = useState(false);
+  // The Photo row's own words after a photo command (PD54): the photo saves
+  // at once, so it never moves the Save profile chip.
+  const [photoDone, setPhotoDone] = useState<"saved" | "removed" | null>(null);
+  const [photoRunning, setPhotoRunning] = useState<"upload" | "remove" | null>(
+    null,
+  );
   const [invalid, setInvalid] = useState<IdentityField | null>(null);
   const [pending, setPending] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -184,6 +190,7 @@ export function useIdentityEditor() {
     setInvalid(null);
     setSaveError("");
     setSaved(false);
+    setPhotoDone(null);
   }
   function discard() {
     setDraft(null);
@@ -204,7 +211,11 @@ export function useIdentityEditor() {
     setPending(true);
     setSaved(false);
     setSaveError("");
-    if (photoCommand) setPhotoError("");
+    setPhotoDone(null);
+    if (photoCommand) {
+      setPhotoError("");
+      setPhotoRunning(file ? "upload" : "remove");
+    }
     const submitted = draft;
     try {
       await client.cancelQueries({
@@ -241,7 +252,8 @@ export function useIdentityEditor() {
           "Profile saved, but the old photo could not be deleted. Ask your administrator to delete it.",
         );
         setPhotoLocked(true);
-      } else setSaved(true);
+      } else if (photoCommand) setPhotoDone(file ? "saved" : "removed");
+      else setSaved(true);
       // An accepted self edit changes the directory rows and this account's
       // own Profile view, so both reads refetch on their next use. The shell's
       // identity read (account row, header avatar) refetches now.
@@ -263,7 +275,10 @@ export function useIdentityEditor() {
       if (profileNeedsSessionRecheck(failure)) requestSessionRecheck();
     } finally {
       if (operation.current === controller) operation.current = null;
-      if (mounted.current) setPending(false);
+      if (mounted.current) {
+        setPending(false);
+        setPhotoRunning(null);
+      }
     }
   }
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -281,6 +296,7 @@ export function useIdentityEditor() {
   }
   function choosePhoto(file: File) {
     if (!validAvatarSelection(file)) {
+      setPhotoDone(null);
       setPhotoError("Choose a PNG or JPEG photo up to 2 MB.");
       return;
     }
@@ -307,6 +323,18 @@ export function useIdentityEditor() {
     loadError,
     photo: photo && self?.avatar_file_id === photo.id ? photo : null,
     photoError,
+    /** The Photo row's status words: during, then after a photo command. */
+    photoStatus:
+      photoRunning === "upload"
+        ? "Uploading…"
+        : photoRunning === "remove"
+          ? "Removing…"
+          : photoDone === "saved"
+            ? "Photo saved"
+            : photoDone === "removed"
+              ? "Photo removed"
+              : "",
+    uploading: photoRunning === "upload",
     photoDisabled: blocked || photoLocked,
     retryable: Boolean(loadError) || photoLocked,
     retrying: verifying,

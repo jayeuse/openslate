@@ -7,13 +7,16 @@ import { installProfileApi, profileUserB } from "./helpers/profile-api";
 // names that the relayout retired must not come back in any rendered state.
 // "Workspace" stays out of this list: the shell keeps "Search workspace"
 // (PD21) and "Workspace home" (PD26) on every page (glossary row PG23).
+// Words that only another spec can reach stay with that spec: the photo
+// cleanup alert with profile.spec.ts, and the email errors after a session
+// check with auth-email-change.spec.ts.
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
 const INTERNAL =
   /\b(bindings?|operators?|reconcil\w*|polic(?:y|ies)|authentication|authorization|memberships?|installations?|providers?|revocations?|MFA|TOTP|IANA)\b/i;
 const RETIRED =
-  /Look & behavior|Sign-in & security|Convenience shortcuts|Reload profile|Save identity|Live preview|Save timezone|Use organization timezone|\bMiB\b|Preferences unavailable|reverification|sign-in context|storage deletion|Confirm account action|current session/i;
+  /Look & behavior|Sign-in & security|Convenience shortcuts|Reload profile|Save identity|Live preview|Save timezone|Use organization timezone|\bMiB\b|Preferences unavailable|Not loaded|Short bio|devices that are signed in|sign-in context|Confirm account action|current session/i;
 
 async function expectCustomerWords(page: Page, state: string) {
   const shown = await page.locator("body").innerText();
@@ -120,12 +123,15 @@ test("no Account settings state shows an internal or retired word", async ({
     .getByRole("button", { name: "Sign out other sessions" })
     .click();
   await expect(confirm).toBeVisible();
+  // Not the closing End session dialog: the one the button opened.
+  await expect(confirm).toHaveAccessibleName("Sign out other sessions?");
   await expectCustomerWords(page, "Sign out other sessions confirmation");
   await confirm.getByRole("button", { name: "Cancel" }).click();
 
   // An unsaved change, then leaving through the account menu.
   await page.getByLabel("Phone", { exact: true }).fill("+1 555 0102");
   await page.getByRole("button", { name: "Account", exact: true }).click();
+  await expect(page.getByRole("menu", { name: "Account" })).toBeVisible();
   await expectCustomerWords(page, "Account menu");
   await page.getByRole("menuitem", { name: "Your profile" }).click();
   await expect(page.getByRole("alertdialog")).toContainText("Keep editing");

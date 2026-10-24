@@ -409,6 +409,21 @@ test("on a phone the Profile and Account settings title is whole under the bar, 
       path,
     ).toBe(390);
   }
+  // Only these two routes, and only below 768px, leave the bar without a
+  // page name: from 768px the profile is named again, and Access keeps its
+  // name on a phone.
+  const crumb = page
+    .getByRole("navigation", { name: "Breadcrumb", exact: true })
+    .locator('[aria-current="page"]');
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await page.goto("/profile");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Maya Chen", exact: true }),
+  ).toBeVisible();
+  await expect(crumb).toHaveText("Your profile");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/access");
+  await expect(crumb).toHaveText("Access");
 });
 
 test("on a phone every target in the header, the account menu and the drawer is at least 44px", async ({

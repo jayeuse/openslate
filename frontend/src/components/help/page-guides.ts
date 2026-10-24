@@ -73,7 +73,7 @@ export const PAGE_GUIDES = {
   profile: {
     title: "Profile",
     entries: [
-      "Your profile shows your photo, name, job title, phone, role, groups, and short bio, as people in your organization see them.",
+      "Your profile shows your photo, name, job title, phone, role, groups, and bio, as people in your organization see them.",
       "View profile on a person card opens that person's profile. Guests see only the photo, name, and job title.",
       "Account settings holds your profile details, sign-in, appearance, and regional preferences. Open it from your profile or the account menu.",
     ],
@@ -81,8 +81,8 @@ export const PAGE_GUIDES = {
   "account-settings": {
     title: "Account settings",
     entries: [
-      "Identity holds your photo, name, job title, phone, short bio, and sign-in email. Save profile saves only the fields you changed; the photo saves at once.",
-      "Sign-in holds your password, two-step verification, and the devices that are signed in.",
+      "Identity holds your photo, display name, job title, phone, bio, and sign-in email. Save profile saves only the fields you changed; the photo saves at once.",
+      "Sign-in holds your password, two-step verification, and your sessions.",
       "Appearance holds your color mode, reduced-motion choice, and keyboard shortcuts, and saves each choice at once. Text size and page spacing apply to this device.",
       "Regional holds your timezone and date, time, and week formats, and saves each choice at once. Organization defaults remain in Manage.",
     ],

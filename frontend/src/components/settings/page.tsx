@@ -54,6 +54,7 @@ export default function AccountSettings() {
   const preference = useUserPreferences();
   // The one preference status shows in the group changed last (PD43).
   const [statusGroup, setStatusGroup] = useState<"look" | "regional">("look");
+  const [preferenceChanged, setPreferenceChanged] = useState(false);
   const [leaving, setLeaving] = useState<(() => void) | null>(null);
   const passwordOpener = useRef<HTMLButtonElement | null>(null);
   const dirty = editor.dirty;
@@ -78,7 +79,7 @@ export default function AccountSettings() {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, pending]);
-  const status = <PreferenceStatus />;
+  const status = <PreferenceStatus changed={preferenceChanged} />;
   return (
     <SettingsFrame>
       <header className="shrink-0">
@@ -141,12 +142,18 @@ export default function AccountSettings() {
             </SettingsSection>
             <AppearanceSection
               status={statusGroup === "look" ? status : null}
-              onChange={() => setStatusGroup("look")}
+              onChange={() => {
+                setStatusGroup("look");
+                setPreferenceChanged(true);
+              }}
             />
             <RegionalSection
               status={statusGroup === "regional" ? status : null}
               organizationZone={region.organizationZone}
-              onChange={() => setStatusGroup("regional")}
+              onChange={() => {
+                setStatusGroup("regional");
+                setPreferenceChanged(true);
+              }}
             />
           </div>
           <IdentityFooter editor={editor} />

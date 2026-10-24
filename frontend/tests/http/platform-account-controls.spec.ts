@@ -266,6 +266,12 @@ test("password changes send the API payload, show status-specific feedback, clea
       message:
         "The new password was not accepted. Check the password requirements and try again.",
     },
+    // The request never got an answer.
+    {
+      status: 0,
+      body: null,
+      message: "The password could not be changed. Try again.",
+    },
   ] as const;
   let activeSessions = [currentSession, otherSession];
   let sessionReads = 0;
@@ -281,6 +287,10 @@ test("password changes send the API payload, show status-specific feedback, clea
     if (!current) throw new Error("Unexpected password change request");
     passwordAttempts += 1;
     activeSessions = activeSessions.filter((session) => session.current);
+    if (current.status === 0) {
+      await route.abort("failed");
+      return;
+    }
     await route.fulfill({
       status: current.status,
       json: current.body,
@@ -310,11 +320,17 @@ test("password changes send the API payload, show status-specific feedback, clea
     await expect(
       page.getByRole("alert").filter({ hasText: response.message }),
     ).toBeVisible();
-    await expect(
-      page.getByText("Other devices may be signed out."),
-    ).toBeVisible();
+    // Only an unanswered request or a server failure can have ended other
+    // sessions; a refusal changed nothing.
+    const note = page.getByText("Other devices may be signed out.");
+    if (response.status === 0 || response.status >= 500)
+      await expect(note).toBeVisible();
+    else await expect(note).toHaveCount(0);
     await expect(currentPassword).toHaveValue("");
-    await expect(newPassword).toHaveValue("");
+    // A wrong current password keeps the new one, so only it is typed again.
+    await expect(newPassword).toHaveValue(
+      response.status === 403 ? "new test password 123" : "",
+    );
     const currentPasswordHasError = response.status === 403;
     const newPasswordHasError = response.status === 422;
     await expect(currentPassword).toHaveAttribute(
@@ -421,15 +437,13 @@ test("serializes password changes and session revocations", async ({
     ).toBeDisabled();
 
     passwordChange.release();
+    // A change that succeeded closes the dialog and says so in a notice.
     await expect(
-      page.getByText(
-        "Password changed. Other devices are signed out; this device stays signed in.",
-        { exact: true },
-      ),
+      page.getByText("Password changed. Other devices are signed out.", {
+        exact: true,
+      }),
     ).toBeVisible();
-    await dialog
-      .getByRole("button", { name: "Close password", exact: true })
-      .click();
+    await expect(dialog).toBeHidden();
     const other = page
       .getByRole("listitem")
       .filter({ hasText: "Firefox on Android" });
@@ -445,7 +459,9 @@ test("serializes password changes and session revocations", async ({
           `/api/auth/sessions/${otherSession.id}`,
     );
     await page
-      .getByRole("alertdialog", { name: "End session?" })
+      .getByRole("alertdialog", {
+        name: "End the session on Firefox, Android?",
+      })
       .getByRole("button", { name: "End session", exact: true })
       .click();
     await sessionRequest;
@@ -579,7 +595,7 @@ test("moves a short-password error to the current field after a denied change", 
     "new-password-guidance",
   );
   await expect(current).toHaveValue("");
-  await expect(next).toHaveValue("");
+  await expect(next).toHaveValue("new test password 123");
   await expect(
     page.getByText("Use 12 to 128 characters.", {
       exact: true,
@@ -686,7 +702,9 @@ test("keeps password and session controls reachable on mobile with full device d
   await firefox.getByRole("button", { name: /^Session actions, / }).click();
   await chooseEndSession(page);
   const confirmation = page.getByRole("alertdialog");
-  await expect(confirmation).toHaveAccessibleName("End session?");
+  await expect(confirmation).toHaveAccessibleName(
+    "End the session on Firefox, Android?",
+  );
   await expect(confirmation).toContainText("That device signs out.");
   await confirmation
     .getByRole("button", { name: "End session", exact: true })
@@ -745,7 +763,7 @@ test("warns before ending the current session and routes to sign-in after confir
   await current.getByRole("button", { name: /^Session actions, / }).click();
   await chooseEndSession(page);
   const confirmation = page.getByRole("alertdialog", {
-    name: "End session?",
+    name: "End the session on Chrome, macOS?",
   });
   await expect(confirmation).toContainText("You sign out on this device.");
   await confirmation.getByRole("button", { name: "Cancel" }).click();
@@ -990,7 +1008,7 @@ test("failed current-session revocation keeps drafts active and restores focus a
   await trigger.click();
   await chooseEndSession(page);
   const dialog = page.getByRole("alertdialog", {
-    name: "End session?",
+    name: "End the session on Chrome, macOS?",
     exact: true,
   });
   await expect(dialog).toBeVisible();

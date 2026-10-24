@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useWorkspaceSignOut } from "@/components/systems/shared/runtime/workspace-identity";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { accessKeys } from "@/components/systems/access/adapters/access-queries";
+import { toast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api";
 import {
   changeAccountPassword,
@@ -35,6 +36,15 @@ function passwordErrorMessage(error: unknown): string {
       return "The new password was not accepted. Check the password requirements and try again.";
   }
   return "The password could not be changed. Try again.";
+}
+
+/**
+ * Whether a failed change may still have run on the server (PD53): no answer
+ * came back, or the server failed. A refusal (403, 422, 429) changed nothing,
+ * so it says nothing about other devices.
+ */
+function passwordOutcomeUncertain(error: unknown): boolean {
+  return !(error instanceof ApiError) || error.status >= 500;
 }
 
 function passwordErrorField(error: unknown): "current" | "new" | null {
@@ -129,23 +139,35 @@ export function useAccountSecurity() {
       return;
     }
 
+    let keepNewPassword = false;
     try {
       await passwordMutation.mutateAsync({ currentPassword, newPassword });
-      setPasswordFeedback(
-        "Password changed. Other devices are signed out; this device stays signed in.",
-      );
+      // Done: the dialog closes and a notice says so (PD53). Without the
+      // shell (no organization) there is no notice, so the dialog says it.
+      const notice = toast.add({
+        title: "Password changed. Other devices are signed out.",
+        type: "success",
+      });
+      if (notice) setPasswordOpen(false);
+      else
+        setPasswordFeedback(
+          "Password changed. Other devices are signed out; this device stays signed in.",
+        );
     } catch (error) {
       const message = passwordErrorMessage(error);
       const field = passwordErrorField(error);
       if (field === "current") setCurrentPasswordError(message);
       else if (field === "new") setNewPasswordError(message);
       else setPasswordFormError(message);
-      setPasswordSessionNote(
-        "Other devices may be signed out. Check Sessions.",
-      );
+      // A wrong current password keeps the new one, so only it is typed again.
+      keepNewPassword = field === "current";
+      if (passwordOutcomeUncertain(error))
+        setPasswordSessionNote(
+          "Other devices may be signed out. Check Sessions.",
+        );
     } finally {
       setCurrentPassword("");
-      setNewPassword("");
+      if (!keepNewPassword) setNewPassword("");
       if (accountId) {
         setRefreshingAfterPassword(true);
         try {
@@ -247,6 +269,8 @@ export function useAccountSecurity() {
       actionFeedback: sessionActionFeedback,
     },
     busy: securityMutationPending,
+    /** A session end (one or all others) is running. */
+    ending: sessionActionPending,
     confirmation,
     actionTrigger,
     askEndSession: (session: AccountSession, trigger: HTMLElement | null) => {

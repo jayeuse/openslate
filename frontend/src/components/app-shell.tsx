@@ -12,8 +12,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RotateCcw,
-  Settings,
   UserCircle,
+  UserCog,
   X,
 } from "lucide-react";
 import {
@@ -647,6 +647,8 @@ function AppSidebarHeader({
       name={name}
       mark={brand?.mark ?? "OS"}
       hidden={concealed}
+      // 9px holds a three-letter mark ("HOG") in 24px; the 12px badge size
+      // clips it by 2px, and no smaller type token exists (PD65).
       className="size-6 text-[0.5625rem]"
     />
   );
@@ -956,7 +958,7 @@ function AppHeaderActions({
                 />
               }
             >
-              <Settings aria-hidden="true" />
+              <UserCog aria-hidden="true" />
               Account settings
             </DropdownMenuItem>
             <DropdownMenuItem

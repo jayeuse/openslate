@@ -800,7 +800,7 @@ const factRows: {
     name: "every filled field",
     profile: mapped,
     about: [
-      { label: "Phone", value: "+63 917 555 0118" },
+      { label: "Phone", value: "+63 917 555 0118", href: "tel:+639175550118" },
       { label: "Role", value: "Member" },
       { label: "Groups", groups: mapped.groups },
     ],
@@ -838,6 +838,20 @@ const factRows: {
     about: [{ label: "Role", value: "Administrator" }],
     bio: null,
     fillHint: true,
+  },
+  {
+    name: "no fill hint on a guest's own profile, whose view has no phone or bio",
+    profile: {
+      ...mapped,
+      jobTitle: null,
+      phone: null,
+      bio: null,
+      role: null,
+      groups: [],
+    },
+    own: true,
+    about: [],
+    bio: null,
   },
   {
     name: "no fill hint on your own profile once one of them is filled",

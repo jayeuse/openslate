@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,7 +25,7 @@ import {
   sessionLoadErrorMessage,
   type AccountSecurity,
 } from "../hooks/use-account-security";
-import { sessionRowWords } from "../domain/sessions";
+import { endSessionTitle, sessionRowWords } from "../domain/sessions";
 import type { SettingsRegion } from "../hooks/use-settings-region";
 
 /**
@@ -121,22 +122,36 @@ export function Sessions({
         </p>
       )}
       <div>
-        <Button
-          ref={othersTrigger}
-          type="button"
-          variant="outline"
-          className="min-h-11 xl:min-h-8"
-          disabled={
-            !security.accountId ||
-            sessions.loading ||
-            Boolean(sessions.error) ||
-            sessions.othersCount === 0 ||
-            security.busy
+        {/* With the list loaded and no other device, the button says why it
+            waits (PD60); while anything loads or runs it waits in silence. */}
+        <DisabledReason
+          reason={
+            security.accountId &&
+            !sessions.loading &&
+            !sessions.error &&
+            !security.busy &&
+            sessions.othersCount === 0
+              ? "No other sessions."
+              : null
           }
-          onClick={() => security.askEndOthers(othersTrigger.current)}
         >
-          Sign out other sessions
-        </Button>
+          <Button
+            ref={othersTrigger}
+            type="button"
+            variant="outline"
+            className="min-h-11 xl:min-h-8"
+            disabled={
+              !security.accountId ||
+              sessions.loading ||
+              Boolean(sessions.error) ||
+              sessions.othersCount === 0 ||
+              security.busy
+            }
+            onClick={() => security.askEndOthers(othersTrigger.current)}
+          >
+            Sign out other sessions
+          </Button>
+        </DisabledReason>
       </div>
       <SessionConfirmation security={security} />
     </div>
@@ -175,7 +190,8 @@ function SessionRow({
             {words.device}
           </span>
           {words.here ? (
-            <Badge variant="secondary" className="shrink-0">
+            // The comp's action tint marks this browser's session (PD63).
+            <Badge className="bg-action-tint text-action-text shrink-0 font-medium">
               This device
             </Badge>
           ) : null}
@@ -243,7 +259,7 @@ function SessionConfirmation({ security }: { security: AccountSecurity }) {
           <AlertDialogTitle>
             {confirmation?.type === "other-sessions"
               ? "Sign out other sessions?"
-              : "End session?"}
+              : endSessionTitle(confirmation?.session.user_agent ?? null)}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {confirmation?.type === "other-sessions"
@@ -269,11 +285,13 @@ function SessionConfirmation({ security }: { security: AccountSecurity }) {
             disabled={busy}
             onClick={security.confirm}
           >
-            {confirmation?.type === "other-sessions"
-              ? "Sign out other sessions"
-              : confirmation?.session.current
-                ? "End session and sign out"
-                : "End session"}
+            {security.ending
+              ? "Ending…"
+              : confirmation?.type === "other-sessions"
+                ? "Sign out other sessions"
+                : confirmation?.session.current
+                  ? "End session and sign out"
+                  : "End session"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
