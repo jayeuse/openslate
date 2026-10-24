@@ -28,6 +28,11 @@ import {
   useWorkspaceNavigationGuard,
   useWorkspaceNavigationRequest,
 } from "@/components/workspace-navigation-guard";
+import {
+  accessNavigationFor,
+  getWorkspaceNavigation,
+  installationOwnerFor,
+} from "@/components/workspace-navigation";
 import { DiscardChangesDialog } from "../access/components/people-fields";
 import { useOrganizationTheme } from "@/components/organization-theme-provider";
 import {
@@ -89,6 +94,7 @@ import {
   isManageBackupExportId,
 } from "./adapters/backup-api";
 import { UpdatesPanel } from "./components/updates-panel";
+import { ManageUnavailable } from "./components/manage-unavailable";
 import { LicensingPanel } from "./components/licensing-panel";
 
 type ViewTab =
@@ -174,6 +180,15 @@ const manageTabs: readonly ViewTab[] = [
   "Jobs",
   "Updates & licensing",
 ];
+
+/** Each tab's navigation id (`workspace-navigation.ts`). */
+const manageSectionIds: Readonly<Record<ViewTab, string>> = {
+  Organization: "organization",
+  Audit: "audit",
+  Backup: "backup",
+  Jobs: "jobs",
+  "Updates & licensing": "updates",
+};
 
 function manageTabFromQuery(value: string | null): ViewTab {
   const normalized = value?.toLowerCase();
@@ -286,10 +301,35 @@ function ManageContent() {
       cancelled = true;
     };
   }, [suspended, roleAwaitingVerification, queryClient]);
+  // Decide from the identity first (MD3): a section the account cannot open
+  // shows a notice and sends no request to be refused. Jobs keeps its own
+  // admission. Reads wait for a loading identity; a failed identity opens the
+  // section, where a real refusal still shows the notice.
+  const knownIdentity =
+    identity.isSuccess && identity.data.id === userId
+      ? identity.data
+      : undefined;
+  const openSections =
+    getWorkspaceNavigation(
+      "/manage",
+      new URLSearchParams(),
+      accessNavigationFor(knownIdentity),
+      true,
+      installationOwnerFor(knownIdentity),
+    ).find((group) => group.id === "manage")?.items ?? [];
+  const sectionDecided =
+    requestedTab === "Organization" ||
+    requestedTab === "Jobs" ||
+    knownIdentity !== undefined ||
+    identity.isError;
+  const sectionClosed =
+    knownIdentity !== undefined &&
+    !openSections.some((item) => item.id === manageSectionIds[requestedTab]);
+  const sectionOpen = sectionDecided && !sectionClosed;
   const maintenance = useManageMaintenance({
-    recoveryActive: requestedTab === "Backup",
-    historyActive: requestedTab === "Backup",
-    versionActive: requestedTab === "Updates & licensing",
+    recoveryActive: requestedTab === "Backup" && sectionOpen,
+    historyActive: requestedTab === "Backup" && sectionOpen,
+    versionActive: requestedTab === "Updates & licensing" && sectionOpen,
     exportId:
       searchParams.get("export") !== null &&
       isManageBackupExportId(searchParams.get("export")!)
@@ -444,28 +484,26 @@ function ManageContent() {
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const recoveryView = tab === "Backup";
   const pageTitle = tab;
-  const liveSourceStatus =
+  // One meta line under the title (MD2): what the section is for, or the one
+  // fact a reader needs. Where data comes from is not repeated.
+  const pageDescription =
     tab === "Organization"
       ? organizationReadOnly
         ? "Only an administrator can change these settings."
-        : "Settings save to the organization."
-      : tab === "Jobs"
-        ? "Job state and retries come from your server."
-        : tab === "Audit"
-          ? "Audit entries are loaded from your organization."
-          : recoveryView
-            ? "Backup policy and backup history are loaded from your server."
-            : "The running version and the latest release check come from your server. No license is required.";
-  const pageDescription =
-    tab === "Organization"
-      ? "Make this workspace feel like your organization."
+        : "Make this workspace feel like your organization."
       : tab === "Jobs"
         ? "See scheduled work, attempts, and problems."
         : tab === "Audit"
           ? "See who changed what, then inspect the details."
           : tab === "Updates & licensing"
-            ? "Your running version and license status, together in one place."
-            : "Manage backup schedules and requests.";
+            ? "The person who runs your server installs updates."
+            : "Restoring a backup is done on the server itself.";
+  // A real owner-only refusal (a stale identity) lands on the same notice.
+  const ownerRefused =
+    (tab === "Backup" || tab === "Updates & licensing") &&
+    maintenance.ownerRefused;
+  const unavailable = sectionClosed || ownerRefused;
+  const sectionShown = sectionOpen && !unavailable;
 
   const workspacePatch = workspaceQuery.data
     ? workspaceSettingsPatch(
@@ -1166,39 +1204,23 @@ function ManageContent() {
     "min-w-0 w-full rounded-[var(--radius)] border-border bg-card";
 
   const renderPageHeader = (actions?: ReactNode) => (
-    <header className="flex flex-wrap items-center justify-between gap-3">
+    <header className="flex shrink-0 flex-wrap items-center justify-between gap-3">
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1
-            ref={headingRef}
-            data-slot="page-title"
-            tabIndex={-1}
-            className="text-2xl font-semibold tracking-tight sm:text-3xl"
-          >
-            {pageTitle}
-          </h1>
-        </div>
-        <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
-          {pageDescription}
-        </p>
-        <p
-          role="note"
-          aria-label={
-            tab === "Backup" || tab === "Updates & licensing"
-              ? "Server data"
-              : "Organization data"
-          }
-          className="text-muted-foreground mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+        <h1
+          ref={headingRef}
+          data-slot="page-title"
+          tabIndex={-1}
+          className="text-2xl font-semibold tracking-tight sm:text-3xl"
         >
-          <Badge variant="outline">
-            {tab === "Backup" || tab === "Updates & licensing"
-              ? "Server"
-              : "Organization"}
-          </Badge>
-          <span> {liveSourceStatus}</span>
-        </p>
+          {pageTitle}
+        </h1>
+        {unavailable || !sectionDecided ? null : (
+          <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
+            {pageDescription}
+          </p>
+        )}
       </div>
-      {actions ? (
+      {actions && !unavailable ? (
         <div className="flex shrink-0 items-center gap-2">{actions}</div>
       ) : null}
     </header>
@@ -1208,20 +1230,32 @@ function ManageContent() {
     return <p role="status">Opening Access Security…</p>;
 
   return (
-    <div className="min-w-0 space-y-6">
+    // `manage-ui` scopes the still-page chain and `slim-ui` the slim controls
+    // (MD1); dialogs and popups carry `slim-ui` themselves (portals).
+    <div className="manage-ui slim-ui min-w-0 space-y-6 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
       <fieldset
         disabled={livePending}
         aria-busy={livePending}
-        className="min-w-0 space-y-6"
+        className="manage-fill min-w-0 space-y-6"
       >
         {livePending ? (
           <p role="status" className="text-muted-foreground text-sm">
             Saving changes…
           </p>
         ) : null}
-        {tab !== "Audit" ? renderPageHeader() : null}
+        {tab !== "Audit" || !sectionShown
+          ? renderPageHeader(
+              tab === "Backup" && canEditOrganization ? (
+                <Button asChild variant="outline" className="min-h-11">
+                  <GuardedWorkspaceLink href="/access?view=security">
+                    Access security
+                  </GuardedWorkspaceLink>
+                </Button>
+              ) : null,
+            )
+          : null}
 
-        <div className="flex flex-col gap-6">
+        <div className="manage-fill flex flex-col gap-6">
           {navigationNotice ? (
             <Alert role="status" variant="warning">
               {navigationNotice}
@@ -1257,7 +1291,15 @@ function ManageContent() {
               {error}
             </Alert>
           ) : null}
-          {tab === "Organization" ? (
+          {unavailable ? (
+            <ManageUnavailable section={tab} home={openSections[0] ?? null} />
+          ) : !sectionDecided ? (
+            <div role="status" className="flex flex-col gap-4">
+              <span className="sr-only">Checking your access…</span>
+              <Skeleton className="h-48 w-full" />
+            </div>
+          ) : null}
+          {sectionShown && tab === "Organization" ? (
             <OrganizationPanel
               form={{
                 dirty,
@@ -1325,6 +1367,7 @@ function ManageContent() {
               profileErrors={{ ...errors, ...profileServerErrors }}
               onProfileChange={changeProfileField}
               contactsVisible={contactsVisible}
+              relatedAreasVisible={accessNavigationFor(knownIdentity) === "all"}
               onRetryWorkspace={retryWorkspace}
               staleRevision={workspaceStale}
               theme={
@@ -1342,24 +1385,11 @@ function ManageContent() {
             />
           ) : null}
 
-          {recoveryView ? (
+          {sectionShown && recoveryView ? (
             <section
               aria-label="Backup workspace"
-              className="min-w-0 space-y-5"
+              className="manage-scroll min-w-0 space-y-5"
             >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <Alert role="note" className="min-w-0 sm:flex-1">
-                  Your server makes the backups you request here. Restoring a
-                  backup and installing updates are done on the server itself.
-                </Alert>
-                {canEditOrganization ? (
-                  <Button asChild variant="outline" className="min-h-11">
-                    <GuardedWorkspaceLink href="/access?view=security">
-                      Security
-                    </GuardedWorkspaceLink>
-                  </Button>
-                ) : null}
-              </div>
               <div className="min-w-0">
                 <div className="bg-card flex flex-wrap items-center gap-4 rounded-lg border p-5">
                   <Database
@@ -1419,11 +1449,13 @@ function ManageContent() {
             </section>
           ) : null}
 
-          {tab === "Jobs" ? (
-            <ManageJobs admitted={verifiedOrganizationRole === "admin"} />
+          {sectionShown && tab === "Jobs" ? (
+            <div className="manage-scroll min-w-0">
+              <ManageJobs admitted={verifiedOrganizationRole === "admin"} />
+            </div>
           ) : null}
 
-          {tab === "Audit" ? (
+          {sectionShown && tab === "Audit" ? (
             <ManageAudit
               renderHeader={renderPageHeader}
               securityEventsAdmitted={verifiedOrganizationRole === "admin"}
@@ -1442,13 +1474,8 @@ function ManageContent() {
             />
           ) : null}
 
-          {tab === "Updates & licensing" ? (
-            <div className="min-w-0 space-y-5">
-              <Alert role="note">
-                This page shows the running version and the latest release
-                check. The person who runs your server installs updates. No
-                license is required.
-              </Alert>
+          {sectionShown && tab === "Updates & licensing" ? (
+            <div className="manage-scroll min-w-0">
               <div className="bg-card grid min-w-0 divide-y overflow-hidden rounded-lg border xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:divide-x xl:divide-y-0">
                 <UpdatesPanel maintenance={maintenance} />
                 <LicensingPanel />
@@ -1463,7 +1490,7 @@ function ManageContent() {
         dismissible={!maintenance.pending}
       >
         <DialogContent
-          className="max-w-3xl"
+          className="slim-ui max-w-3xl"
           finalFocus={() => scheduleOpener.current}
         >
           <DialogHeader className="mb-5">

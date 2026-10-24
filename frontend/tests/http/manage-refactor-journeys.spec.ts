@@ -176,9 +176,7 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   await expect(currency).toContainText("SGD");
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("08:00–17:00");
-  await expect(
-    page.getByRole("note", { name: "Organization data", exact: true }),
-  ).not.toContainText("are examples");
+  await expect(page.getByRole("main")).not.toContainText("are examples");
   await expect(name).toHaveValue("Harbor workspace");
   await expect(locale).toContainText("English (Philippines)");
   await expect(timezone).toContainText("Asia/Manila");

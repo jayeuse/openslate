@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 
 export const backupScheduleSchema = z.enum(["disabled", "daily", "weekly"]);
 const retentionSchema = z.union([z.literal(7), z.literal(30), z.literal(90)]);
@@ -218,6 +218,17 @@ export function backupPolicyPatch(
   )
     patch.retention_days = draft.retention_days;
   return Object.keys(patch).length > 1 ? patch : null;
+}
+
+/** Backup and Updates belong to the installation owner (`operator_required`). */
+export const OWNER_REFUSAL_MESSAGE = "Only the installation owner can do this.";
+
+export function isOwnerRefusal(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    error.code === "operator_required"
+  );
 }
 
 export function backupNameError(name: string): string | null {

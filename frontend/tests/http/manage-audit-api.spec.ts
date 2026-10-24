@@ -388,8 +388,10 @@ test("Audit uses server filters, sort and page requests, with server-named actor
     0,
   );
   await expect(
-    page.getByRole("note", { name: "Organization data", exact: true }),
-  ).toHaveText("Organization Audit entries are loaded from your organization.");
+    page.getByText("See who changed what, then inspect the details.", {
+      exact: true,
+    }),
+  ).toBeVisible();
 
   expect(api.requests[0]?.searchParams.get("limit")).toBe("10");
   expect(api.requests[0]?.searchParams.get("offset")).toBe("0");

@@ -85,6 +85,8 @@ type OrganizationPanelProps = {
   profileErrors: Partial<Record<WorkspaceProfileField, string>>;
   onProfileChange: (key: WorkspaceProfileField, value: string) => void;
   contactsVisible: boolean;
+  /** Access People and the Sandbox open only for an administrator (MD3). */
+  relatedAreasVisible: boolean;
   logo: {
     blob: Blob | null | undefined;
     concealed: boolean;
@@ -120,6 +122,7 @@ export function OrganizationPanel({
   profileErrors,
   onProfileChange,
   contactsVisible,
+  relatedAreasVisible,
   logo,
 }: OrganizationPanelProps) {
   const { dirty, saveSection, current, changeSetting, errors, clearDraft } =
@@ -168,7 +171,7 @@ export function OrganizationPanel({
 
   return (
     <section
-      className="grid min-w-0 gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(18.75rem,0.9fr)] lg:gap-10 xl:gap-12"
+      className="manage-scroll grid min-w-0 content-start gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(18.75rem,0.9fr)] lg:gap-10 xl:gap-12"
       aria-label="Organization settings"
     >
       {workspaceLoadFailed ? (
@@ -431,6 +434,7 @@ export function OrganizationPanel({
               {workspaceFields ? (
                 <SearchSelect
                   id="locale"
+                  popupClassName="slim-ui"
                   label="Regional format"
                   value={current.locale}
                   disabled={editDisabled}
@@ -452,6 +456,7 @@ export function OrganizationPanel({
               {workspaceFields ? (
                 <SearchSelect
                   id="timezone"
+                  popupClassName="slim-ui"
                   label="Timezone"
                   value={current.timezone}
                   disabled={editDisabled}
@@ -470,6 +475,7 @@ export function OrganizationPanel({
               {workspaceFields ? (
                 <SearchSelect
                   id="currency"
+                  popupClassName="slim-ui"
                   label="Currency"
                   value={current.currency}
                   disabled={editDisabled}
@@ -628,45 +634,47 @@ export function OrganizationPanel({
           </CardContent>
         </Card>
 
-        <nav
-          aria-label="Related workspace areas"
-          className="divide-border divide-y"
-        >
-          <Button
-            asChild
-            variant="ghost"
-            className="h-auto min-h-12 w-full justify-start gap-3 rounded-lg px-3 py-3 text-left whitespace-normal"
+        {relatedAreasVisible ? (
+          <nav
+            aria-label="Related workspace areas"
+            className="divide-border divide-y"
           >
-            <GuardedWorkspaceLink href="/access?view=people">
-              <UsersRound className="size-5 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1">
-                <span className="block font-medium">People and groups</span>
-                <span className="text-muted-foreground block text-sm font-normal">
-                  Invite people and choose what they can open.
+            <Button
+              asChild
+              variant="ghost"
+              className="h-auto min-h-12 w-full justify-start gap-3 rounded-lg px-3 py-3 text-left whitespace-normal"
+            >
+              <GuardedWorkspaceLink href="/access?view=people">
+                <UsersRound className="size-5 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium">People and groups</span>
+                  <span className="text-muted-foreground block text-sm font-normal">
+                    Invite people and choose what they can open.
+                  </span>
                 </span>
-              </span>
-              <ArrowUpRight className="size-4 shrink-0" aria-hidden="true" />
-            </GuardedWorkspaceLink>
-          </Button>
-          <Button
-            asChild
-            variant="ghost"
-            className="h-auto min-h-12 w-full justify-start gap-3 rounded-lg px-3 py-3 text-left whitespace-normal"
-          >
-            <GuardedWorkspaceLink href="/sandbox?section=build">
-              <Workflow className="size-5 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1">
-                <span className="block font-medium">
-                  App design and workflows
+                <ArrowUpRight className="size-4 shrink-0" aria-hidden="true" />
+              </GuardedWorkspaceLink>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className="h-auto min-h-12 w-full justify-start gap-3 rounded-lg px-3 py-3 text-left whitespace-normal"
+            >
+              <GuardedWorkspaceLink href="/sandbox?section=build">
+                <Workflow className="size-5 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium">
+                    App design and workflows
+                  </span>
+                  <span className="text-muted-foreground block text-sm font-normal">
+                    Customize how your workspace works.
+                  </span>
                 </span>
-                <span className="text-muted-foreground block text-sm font-normal">
-                  Customize how your workspace works.
-                </span>
-              </span>
-              <ArrowUpRight className="size-4 shrink-0" aria-hidden="true" />
-            </GuardedWorkspaceLink>
-          </Button>
-        </nav>
+                <ArrowUpRight className="size-4 shrink-0" aria-hidden="true" />
+              </GuardedWorkspaceLink>
+            </Button>
+          </nav>
+        ) : null}
       </aside>
     </section>
   );

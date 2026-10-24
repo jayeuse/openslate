@@ -45,6 +45,8 @@ export type SignedInIdentity = {
   id: string;
   role: AccountRole;
   access?: readonly AccessRow[];
+  /** Owns the installation; defaults to true for an administrator. */
+  operator?: boolean;
 };
 
 /**

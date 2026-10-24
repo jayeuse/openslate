@@ -965,7 +965,10 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
           if (!open) cancelExport();
         }}
       >
-        <DialogContent finalFocus={() => exportOpener.current}>
+        <DialogContent
+          className="slim-ui"
+          finalFocus={() => exportOpener.current}
+        >
           <DialogHeader>
             <DialogTitle>Prepare encrypted backup</DialogTitle>
             <DialogDescription>
@@ -1091,6 +1094,7 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
         }}
       >
         <DialogContent
+          className="slim-ui"
           finalFocus={() => passwordOpener.current ?? downloadLink.current}
         >
           <DialogHeader>
@@ -1165,7 +1169,10 @@ export function BackupPanel({ maintenance }: { maintenance: Maintenance }) {
           if (!maintenance.pending) setCreateOpen(open);
         }}
       >
-        <DialogContent finalFocus={() => createOpener.current}>
+        <DialogContent
+          className="slim-ui"
+          finalFocus={() => createOpener.current}
+        >
           <DialogHeader>
             <DialogTitle>Back up now</DialogTitle>
             <DialogDescription>

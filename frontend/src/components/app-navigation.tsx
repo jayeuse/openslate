@@ -17,6 +17,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import {
   accessNavigationFor,
+  installationOwnerFor,
   currentNavigationKey,
   getWorkspaceNavigation,
   isWorkspaceNavigationGroupActive,
@@ -138,6 +139,7 @@ export function AppNavigation({
     // Roles belong to memberships: the current organization's role decides.
     accessNavigationFor(identity.data),
     jobsAdmitted,
+    installationOwnerFor(identity.data),
   );
   const search = searchParams.toString();
   const activeGroupId = groups.find((group) =>

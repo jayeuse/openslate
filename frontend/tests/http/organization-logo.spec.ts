@@ -490,8 +490,12 @@ for (const role of ["member", "guest"] as const) {
       page.getByRole("button", { name: "Remove logo", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("note", { name: "Organization data", exact: true }),
-    ).toContainText("Only an administrator can change these settings.");
+      page
+        .getByRole("main")
+        .getByText("Only an administrator can change these settings.", {
+          exact: true,
+        }),
+    ).toBeVisible();
     // Profile fields are read-only, and a guest reply carries no contacts.
     await expect(field(page, "Legal name")).toHaveValue("Harbor Services Ltd");
     await expect(field(page, "Legal name")).toBeDisabled();

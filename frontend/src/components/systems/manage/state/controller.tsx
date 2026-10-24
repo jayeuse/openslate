@@ -21,6 +21,8 @@ import {
   admitManageBackupExportDownload,
   defaultManageBackupsRequest,
   getManageBackupStatus,
+  isOwnerRefusal,
+  OWNER_REFUSAL_MESSAGE,
   queueManageBackup,
   queueManageBackupExport,
   updateManageBackupPolicy,
@@ -207,6 +209,11 @@ export function useManageMaintenance({
   const versionRefused =
     versionDenied ||
     (version.error instanceof ApiError && version.error.status === 403);
+  // A refusal that names the installation owner can never pass on Retry; the
+  // page shows its notice instead of the section (MD3).
+  const ownerRefused = [status.error, history.error, version.error].some(
+    isOwnerRefusal,
+  );
   if (policyRefused && !policyDenied) setPolicyDenied(true);
   if (historyRefused && !historyDenied) setHistoryDenied(true);
   if (versionRefused && !versionDenied) setVersionDenied(true);
@@ -312,9 +319,11 @@ export function useManageMaintenance({
         await status.refetch();
       } else
         setError(
-          caught instanceof ApiError && caught.status === 403
-            ? "Only administrators can change backup policy."
-            : "Backup policy could not be saved. Your draft is still here.",
+          isOwnerRefusal(caught)
+            ? OWNER_REFUSAL_MESSAGE
+            : caught instanceof ApiError && caught.status === 403
+              ? "Only administrators can change backup policy."
+              : "Backup policy could not be saved. Your draft is still here.",
         );
       return false;
     } finally {
@@ -398,9 +407,11 @@ export function useManageMaintenance({
     } catch (caught) {
       if (operation.signal.aborted) return false;
       setError(
-        caught instanceof ApiError && caught.status === 403
-          ? "Only administrators can request a backup."
-          : "The backup request could not be confirmed. Retry the same name to check the same request.",
+        isOwnerRefusal(caught)
+          ? OWNER_REFUSAL_MESSAGE
+          : caught instanceof ApiError && caught.status === 403
+            ? "Only administrators can request a backup."
+            : "The backup request could not be confirmed. Retry the same name to check the same request.",
       );
       return false;
     } finally {
@@ -456,9 +467,11 @@ export function useManageMaintenance({
     } catch (caught) {
       if (!owns()) return false;
       setExportError(
-        caught instanceof ApiError && caught.status === 403
-          ? "Only an eligible administrator can request an export."
-          : "The export request could not be confirmed. Retry without changing the passphrase to check the same request.",
+        isOwnerRefusal(caught)
+          ? OWNER_REFUSAL_MESSAGE
+          : caught instanceof ApiError && caught.status === 403
+            ? "Only an eligible administrator can request an export."
+            : "The export request could not be confirmed. Retry without changing the passphrase to check the same request.",
       );
       return false;
     } finally {
@@ -561,6 +574,7 @@ export function useManageMaintenance({
     policyRefused,
     historyRefused,
     versionRefused,
+    ownerRefused,
     request,
     setRequest,
     draft,

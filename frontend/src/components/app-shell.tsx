@@ -591,7 +591,7 @@ export function AppShell({
                   : isSandbox
                     ? "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7 xl:flex xl:h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-col xl:overflow-hidden"
                     : isManage
-                      ? "min-h-[calc(100vh-3.5rem)] p-3 sm:px-5 sm:py-3"
+                      ? "min-h-[calc(100vh-3.5rem)] p-3 sm:px-5 sm:py-3 xl:flex xl:h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-col xl:overflow-hidden"
                       : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
               )}
             >

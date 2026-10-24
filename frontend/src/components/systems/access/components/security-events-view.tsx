@@ -830,7 +830,7 @@ export function SecurityEventsView({
         }}
       >
         <DialogContent
-          className="max-h-[85dvh] max-w-2xl overflow-y-auto"
+          className="slim-ui max-h-[85dvh] max-w-2xl overflow-y-auto"
           finalFocus={() =>
             detailOpener.current?.isConnected
               ? detailOpener.current

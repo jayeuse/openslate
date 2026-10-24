@@ -146,16 +146,50 @@ export function accessNavigationFor(
   return "none";
 }
 
+/**
+ * Whether the signed-in person sees Manage's Backup and Updates & licensing.
+ * Their APIs require an administrator of the bound organization who also owns
+ * the installation (`require_fresh_exact_admin`, then
+ * `require_platform_operator`). A loading or failed identity sees neither.
+ */
+export function installationOwnerFor(
+  identity: Pick<AuthMe, "role" | "operator"> | undefined,
+): boolean {
+  return identity?.role === "admin" && identity.operator;
+}
+
+/**
+ * Which Manage sections a person sees (MD3, docs/specs/manage-relayout.md):
+ * Organization for everyone; Audit for an administrator (`require_admin`; a
+ * manager's department audit waits for MD12, since the page does not send a
+ * department yet); Jobs for a verified administrator; Backup and Updates for
+ * the installation owner.
+ */
+function visibleManageItem(
+  id: string,
+  access: AccessNavigation,
+  jobsAdmitted: boolean,
+  installationOwner: boolean,
+): boolean {
+  if (id === "audit") return access === "all";
+  if (id === "jobs") return jobsAdmitted;
+  if (id === "backup" || id === "updates") return installationOwner;
+  return true;
+}
+
 function visibleItems(
   definition: WorkspaceNavigationDefinition,
   access: AccessNavigation,
   jobsAdmitted: boolean,
+  installationOwner: boolean,
 ): readonly { id: string; label: string }[] {
   const items = definition.items;
   // Every Sandbox API requires an administrator (`require_admin`).
   if (definition.id === "sandbox") return access === "all" ? items : [];
   if (definition.id === "manage")
-    return items.filter((item) => item.id !== "jobs" || jobsAdmitted);
+    return items.filter((item) =>
+      visibleManageItem(item.id, access, jobsAdmitted, installationOwner),
+    );
   if (definition.id !== "access" || access === "all") return items;
   if (access === "groups") return items.filter((item) => item.id === "groups");
   return [];
@@ -259,17 +293,21 @@ export function getWorkspaceNavigation(
   searchParams: URLSearchParams,
   access: AccessNavigation,
   jobsAdmitted = false,
+  installationOwner = false,
 ): readonly WorkspaceNavigationGroup[] {
   return workspaceNavigationDefinitions.flatMap((definition) => {
-    const items = visibleItems(definition, access, jobsAdmitted).map(
-      (item) => ({
-        ...item,
-        href: href(
-          definition.pathname,
-          paramsFor(definition, item.id, pathname, searchParams),
-        ),
-      }),
-    );
+    const items = visibleItems(
+      definition,
+      access,
+      jobsAdmitted,
+      installationOwner,
+    ).map((item) => ({
+      ...item,
+      href: href(
+        definition.pathname,
+        paramsFor(definition, item.id, pathname, searchParams),
+      ),
+    }));
     if (items.length === 0) return [];
     // The workspace link opens its default section, or the first section
     // this person sees when the default is hidden.
@@ -304,14 +342,20 @@ export function getWorkspaceLocation(
   );
   if (!definition) return null;
   const sectionId = sectionFor(definition, searchParams, hash, access);
-  // A current URL's breadcrumb names its section; it does not admit a menu or read.
+  // A current URL's breadcrumb names its section; it does not admit a menu or
+  // read. Manage names every section, since a link to one this person cannot
+  // open lands on a notice with that section's title.
   const group = getWorkspaceNavigation(
     pathname,
     searchParams,
     access,
-    definition.id === "manage" && sectionId === "jobs",
+    definition.id === "manage",
+    definition.id === "manage",
   ).find((candidate) => candidate.id === definition.id);
-  const section = group?.items.find((item) => item.id === sectionId);
+  const section =
+    definition.id === "manage"
+      ? definition.items.find((item) => item.id === sectionId)
+      : group?.items.find((item) => item.id === sectionId);
   if (!group || !section) return null;
   return {
     workspace: { label: group.label, href: group.href },

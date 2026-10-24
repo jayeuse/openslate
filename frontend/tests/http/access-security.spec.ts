@@ -1500,8 +1500,8 @@ test("legacy Manage Security opens Access Security and Backup has no privileged 
   expect(state.sessionReads).toHaveLength(sessionReads);
   await expect(
     page
-      .getByRole("region", { name: "Backup workspace", exact: true })
-      .getByRole("link", { name: "Security", exact: true }),
+      .getByRole("main")
+      .getByRole("link", { name: "Access security", exact: true }),
   ).toHaveAttribute("href", "/access?view=security");
 });
 

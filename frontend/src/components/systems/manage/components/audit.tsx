@@ -797,6 +797,7 @@ export default function ManageAudit({
 
   return (
     <Tabs
+      className="manage-fill"
       value={
         securityEventsAdmitted && securityEventsSelected
           ? "security"
@@ -806,7 +807,7 @@ export default function ManageAudit({
     >
       <section
         aria-labelledby="audit-region-label"
-        className="flex min-w-0 flex-col gap-3"
+        className="manage-fill flex min-w-0 flex-col gap-3"
       >
         <h2 id="audit-region-label" className="sr-only">
           {securityActive ? "Audit sections" : "Activity history"}
@@ -838,7 +839,7 @@ export default function ManageAudit({
         ) : null}
 
         {securityEventsAdmitted && securityEventsSelected ? (
-          <TabsContent value="security" className="min-w-0">
+          <TabsContent value="security" className="manage-scroll min-w-0">
             <SecurityEventsView
               active={securityActive}
               admitted={securityEventsAdmitted && !workspaceSuspended}
@@ -847,7 +848,10 @@ export default function ManageAudit({
             />
           </TabsContent>
         ) : (
-          <TabsContent value="history" className="flex min-w-0 flex-col gap-3">
+          <TabsContent
+            value="history"
+            className="manage-scroll flex min-w-0 flex-col gap-3 xl:*:shrink-0"
+          >
             <AccessSearchToolbar
               searchLabel="Search activity"
               placeholder="Search activity, people, or records..."
@@ -864,6 +868,7 @@ export default function ManageAudit({
             >
               <SearchSelect
                 id="audit-user"
+                popupClassName="slim-ui"
                 label="Person"
                 value={filters.user}
                 options={[
@@ -906,6 +911,7 @@ export default function ManageAudit({
               />
               <SearchSelect
                 id="audit-entity"
+                popupClassName="slim-ui"
                 label="Entity"
                 value={filters.entity}
                 options={[
@@ -1240,7 +1246,7 @@ export default function ManageAudit({
               }}
             >
               <DialogContent
-                className="sm:max-w-xl"
+                className="slim-ui sm:max-w-xl"
                 finalFocus={() => detailTrigger.current}
               >
                 <DialogHeader>
@@ -1330,7 +1336,7 @@ export default function ManageAudit({
               }}
             >
               <DialogContent
-                className="sm:max-w-3xl"
+                className="slim-ui sm:max-w-3xl"
                 finalFocus={() => exportTrigger.current}
               >
                 <DialogHeader>
