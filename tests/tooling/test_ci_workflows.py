@@ -168,9 +168,10 @@ class CiWorkflowContractTests(unittest.TestCase):
         source = self.source("frontend.yml")
 
         self.assertEqual(
-            self.jobs(source), ["changes", "check", "build", "isolated", "test", "verify"]
+            self.jobs(source),
+            ["changes", "check", "build", "isolated", "test", "verify", "measure"],
         )
-        self.assertEqual(source.count("npm ci --prefer-offline --no-audit --no-fund"), 4)
+        self.assertEqual(source.count("npm ci --prefer-offline --no-audit --no-fund"), 5)
         self.assertIn("npm run check", source)
         self.assertIn("npm run build", source)
         self.assertIn("npm test -- --project=http --workers=2 --test-list=", source)
@@ -215,13 +216,27 @@ class CiWorkflowContractTests(unittest.TestCase):
         source = self.source("frontend.yml")
         verify = source.split("\n  verify:\n", 1)[1]
 
-        self.assertIn("needs: [changes, check, build, isolated, test]", verify)
+        self.assertIn("needs: [changes, check, build, isolated, test, measure]", verify)
         self.assertIn("if: ${{ always() }}", verify)
         self.assertIn('test "$CHANGES" = "success"', verify)
-        for result in ("CHECK", "BUILD", "ISOLATED", "TEST"):
+        for result in ("CHECK", "BUILD", "ISOLATED", "TEST", "MEASURE"):
             with self.subTest(result=result):
                 self.assertIn(f'test "${result}" = "success"', verify)
                 self.assertIn(f'test "${result}" = "skipped"', verify)
+
+    def test_frontend_runs_wall_clock_measurements_alone(self):
+        source = self.source("frontend.yml")
+        measure = source.split("\n  measure:\n", 1)[1]
+        config = (ROOT / "frontend" / "playwright.config.ts").read_text(encoding="utf-8")
+
+        self.assertIn("needs: [changes, build]", measure)
+        self.assertIn("name: frontend-export", measure)
+        self.assertIn("run: npm test -- --project=measure --no-deps --reporter=line", measure)
+        self.assertNotIn("--workers", measure)
+        self.assertIn('name: "measure"', config)
+        self.assertIn("workers: 1", config)
+        self.assertIn("testIgnore: measuredSpecs", config)
+        self.assertIn("testMatch: measuredSpecs", config)
 
     def test_frontend_installs_the_locked_playwright_chromium_browser(self):
         source = self.source("frontend.yml")
@@ -244,9 +259,9 @@ class CiWorkflowContractTests(unittest.TestCase):
         test = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
         upload = test.split("uses: actions/upload-artifact@", 1)
 
-        # The export, the client build manifests and two native reports supplement
-        # the existing failure context.
-        self.assertEqual(source.count("upload-artifact"), 5)
+        # The export, the client build manifests, two native reports and the
+        # measurement failure context supplement the existing failure context.
+        self.assertEqual(source.count("upload-artifact"), 6)
         self.assertEqual(test.count("upload-artifact"), 2)
         self.assertIn("if: failure()", upload[0].rsplit("- name:", 1)[1])
         self.assertIn("path: frontend/test-results/playwright/", upload[1])

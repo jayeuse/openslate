@@ -114,6 +114,46 @@ test("runner infers isolated-only setup from one exact project selection", () =>
   }
 });
 
+test("runner runs a targeted measurement without its dependency projects", () => {
+  const fixture = createRunnerFixture();
+  const spec = "tests/http/comms-timeline-performance.spec.ts";
+  const selections: Array<[string[], string[]]> = [
+    [["--project=measure"], ["--project=measure", "--no-deps"]],
+    [
+      ["--project", "measure"],
+      ["--project", "measure", "--no-deps"],
+    ],
+    [[spec], [spec, "--no-deps"]],
+    [
+      [`${spec}:126`, "--repeat-each=3"],
+      [`${spec}:126`, "--repeat-each=3", "--no-deps"],
+    ],
+    [
+      ["--project=measure", "--no-deps"],
+      ["--project=measure", "--no-deps"],
+    ],
+    [[], []],
+    [["--project=http"], ["--project=http"]],
+    [["tests/http/comms-search.spec.ts"], ["tests/http/comms-search.spec.ts"]],
+    [
+      ["--project=measure", "--project=http"],
+      ["--project=measure", "--project=http"],
+    ],
+  ];
+
+  try {
+    for (const [arguments_, forwarded] of selections) {
+      const result = invokeRunner(fixture, arguments_);
+      expect(result.status, result.stderr).toBe(0);
+      expect(
+        JSON.parse(readFileSync(fixture.capturePath, "utf8")).arguments,
+      ).toEqual(["test", ...forwarded]);
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("route warmup stops after the shared deadline expires during a request", async () => {
   const originalTimeout = AbortSignal.timeout;
   const originalFetch = globalThis.fetch;

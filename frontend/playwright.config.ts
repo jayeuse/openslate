@@ -111,6 +111,20 @@ function isolatedCommand(command: string): string {
   return ["env", "-i", ...pathAssignment, ...environment, command].join(" ");
 }
 
+// Wall-clock measurements run alone: on a shared CPU other workers' tasks land
+// inside the measured interval. The measure project starts after every other
+// project in the same run; target it with `--project=measure --no-deps`.
+const measuredSpecs = /comms-timeline-performance\.spec\.ts$/;
+const httpProjects =
+  testLayer === "all" || testLayer === "http"
+    ? httpBrowsers.map((browserName) => ({
+        name: browserName === "chromium" ? "http" : `http-${browserName}`,
+        testDir: "./tests/http",
+        testIgnore: measuredSpecs,
+        use: { browserName },
+      }))
+    : [];
+
 export default defineConfig({
   testDir: "./tests",
   outputDir: "test-results/playwright",
@@ -142,12 +156,21 @@ export default defineConfig({
     ...(testLayer === "all" || testLayer === "isolated"
       ? [{ name: "isolated", testDir: "./tests/isolated" }]
       : []),
-    ...(testLayer === "all" || testLayer === "http"
-      ? httpBrowsers.map((browserName) => ({
-          name: browserName === "chromium" ? "http" : `http-${browserName}`,
-          testDir: "./tests/http",
-          use: { browserName },
-        }))
+    ...httpProjects,
+    ...(httpProjects.length
+      ? [
+          {
+            name: "measure",
+            testDir: "./tests/http",
+            testMatch: measuredSpecs,
+            use: { browserName: "chromium" as const },
+            workers: 1,
+            dependencies: [
+              ...(testLayer === "all" ? ["isolated"] : []),
+              ...httpProjects.map((project) => project.name),
+            ],
+          },
+        ]
       : []),
   ],
   globalSetup:

@@ -41,7 +41,33 @@ function selectsOnlyIsolatedProject(arguments_) {
   return projects.length === 1 && projects[0] === "isolated";
 }
 
-const arguments_ = process.argv.slice(2);
+// The measure project depends on every other project so that a full run starts
+// it alone, and Playwright runs dependencies whole, ignoring file filters. A
+// run that targets only the measurement skips them.
+const measuredSpec = /(^|\/)comms-timeline-performance\.spec\.ts(:\d+)*$/;
+function targetsOnlyMeasurement(arguments_) {
+  if (arguments_.includes("--no-deps")) return false;
+  const projects = [];
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (argument === "--project")
+      while (
+        index + 1 < arguments_.length &&
+        !arguments_[index + 1].startsWith("-")
+      )
+        projects.push(arguments_[(index += 1)]);
+    else if (argument.startsWith("--project="))
+      projects.push(argument.slice("--project=".length));
+  }
+  return projects.length
+    ? projects.every((project) => project === "measure")
+    : arguments_.some((argument) => measuredSpec.test(argument));
+}
+
+const requested = process.argv.slice(2);
+const arguments_ = targetsOnlyMeasurement(requested)
+  ? [...requested, "--no-deps"]
+  : requested;
 const environment =
   layer === "all" && selectsOnlyIsolatedProject(arguments_)
     ? { ...process.env, TEST_LAYER: "isolated" }

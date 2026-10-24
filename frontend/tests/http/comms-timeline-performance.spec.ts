@@ -7,6 +7,8 @@ type Metrics = {
   dataAt: number | null;
   readyAt: number | null;
   renderedRows: number;
+  /** Rendered messages unmounted between data arrival and readiness: wasted work. */
+  removedRows: number;
   newestVisible: boolean;
   tasks: { start: number; duration: number }[];
 };
@@ -146,9 +148,19 @@ for (const mode of openingDiagnostic
         dataAt: null,
         readyAt: null,
         renderedRows: 0,
+        removedRows: 0,
         newestVisible: false,
         tasks: [],
       };
+      new MutationObserver((records) => {
+        if (metrics.dataAt === null || metrics.readyAt !== null) return;
+        for (const record of records)
+          for (const node of record.removedNodes)
+            if (node instanceof HTMLElement)
+              metrics.removedRows +=
+                Number(node.matches("[data-message-id]")) +
+                node.querySelectorAll("[data-message-id]").length;
+      }).observe(document, { childList: true, subtree: true });
       (window as unknown as MeasuredWindow).commsTimelineMeasurement = metrics;
       new PerformanceObserver((list) => {
         for (const task of list.getEntries())
@@ -330,11 +342,15 @@ for (const mode of openingDiagnostic
         JSON.stringify(report, null, 2),
       );
       console.info(JSON.stringify(report));
-      // Owner decision 2026-10-23: 200 ms stays the plan section 6 goal (about
-      // 100 ms alone on the development machine); the suite and CI runners share
-      // the CPU, so this check fails above 300 ms.
+      // Owner decision 2026-10-23: 200 ms stays the plan section 6 goal; this
+      // check fails above 300 ms. The spec runs alone in the `measure` project
+      // (playwright.config.ts), so no other worker shares the CPU.
       expect.soft(opening.readyAt! - opening.dataAt!).toBeLessThanOrEqual(300);
       expect.soft(opening.newestVisible).toBe(true);
+      // The first history page renders its newest rows directly; it never
+      // mounts the oldest rows (12 here before the fix) and replaces them after
+      // scrolling to the end. Measured heights may still move one overscan edge.
+      expect.soft(opening.removedRows).toBeLessThanOrEqual(2);
       if (scroll) {
         expect.soft(scroll.wheel_delta_pixels).toBe(-3000);
         expect.soft(scroll.observed_scroll_delta).toBeGreaterThan(0);

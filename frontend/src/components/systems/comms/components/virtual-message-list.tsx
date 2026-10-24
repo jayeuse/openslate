@@ -1,6 +1,7 @@
 "use client";
 import {
   useLayoutEffect,
+  useReducer,
   useState,
   useRef,
   type ReactNode,
@@ -9,6 +10,7 @@ import {
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import type { Message } from "../domain/view-model";
 const estimatedRowHeight = 72;
+const endThreshold = 120;
 
 export function VirtualMessageList({
   messages,
@@ -58,7 +60,7 @@ export function VirtualMessageList({
       estimatedRowHeight,
     anchorTo: targetId ? "start" : "end",
     followOnAppend: followLatest && !targetId,
-    scrollEndThreshold: 120,
+    scrollEndThreshold: endThreshold,
     overscan: 2,
     rangeExtractor: (range) =>
       [
@@ -80,6 +82,48 @@ export function VirtualMessageList({
   const lastId = messages.at(-1)?.id;
   const positionRef = useRef({ targetId, lastId, followLatest });
   const alignedTarget = useRef("");
+  // While a target is being aligned, its row and its neighbours are measured
+  // for the first time above the viewport. Size-change scroll adjustments would
+  // keep the old position, and virtual-core retries a clamped one after
+  // scrollToIndex, pulling the view back. The alignment below places the target.
+  virtual.shouldAdjustScrollPositionOnItemSizeChange =
+    targetId && alignedTarget.current !== targetId ? () => false : undefined;
+  // When a list that was empty gets its first page at the latest message, the
+  // virtualizer still holds the empty list's top offset until the scroll below
+  // lands. Rows rendered before then are the oldest ones, which that scroll
+  // replaces. Until the offset reaches the end, their wrappers render empty at
+  // the estimated height, so the virtualizer measures and scrolls exactly as
+  // before without rendering messages nobody sees. The scroll event renders
+  // the newest messages before paint; a frame later they render anyway.
+  const awaitingEnd = useRef(count === 0);
+  const positioning =
+    awaitingEnd.current &&
+    count > 0 &&
+    followLatest &&
+    !targetId &&
+    virtual.getTotalSize() +
+      margin -
+      (virtual.scrollOffset ?? 0) -
+      (virtual.scrollRect?.height ?? 0) >
+      endThreshold;
+  const [, renderRows] = useReducer((tick: number) => tick + 1, 0);
+  useLayoutEffect(() => {
+    if (count === 0) awaitingEnd.current = true;
+    else if (!positioning) awaitingEnd.current = false;
+  });
+  const fallbackFrame = useRef(0);
+  useLayoutEffect(() => {
+    if (!positioning) {
+      cancelAnimationFrame(fallbackFrame.current);
+      fallbackFrame.current = 0;
+    } else if (!fallbackFrame.current)
+      fallbackFrame.current = requestAnimationFrame(() => {
+        fallbackFrame.current = 0;
+        awaitingEnd.current = false;
+        renderRows();
+      });
+  });
+  useLayoutEffect(() => () => cancelAnimationFrame(fallbackFrame.current), []);
   useLayoutEffect(() => {
     restoreAnchor?.((id, top) => {
       const viewport = viewportRef.current,
@@ -178,9 +222,14 @@ export function VirtualMessageList({
             ref={virtual.measureElement}
             data-index={item.index}
             className="absolute top-0 left-0 flow-root w-full"
-            style={{ transform: `translateY(${item.start - margin}px)` }}
+            style={{
+              transform: `translateY(${item.start - margin}px)`,
+              height: positioning ? estimatedRowHeight : undefined,
+            }}
           >
-            {children(item.index, item.index === tabStop ? 0 : -1)}
+            {positioning
+              ? null
+              : children(item.index, item.index === tabStop ? 0 : -1)}
           </div>
         ))}
       </div>
