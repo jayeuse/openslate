@@ -401,10 +401,11 @@ function ManageContent() {
       verifiedOrganizationRole === "member") &&
     !workspaceHasContacts(workspaceQuery.data);
   const canEditLoadedOrganization = canEditOrganization && !profileMismatch;
-  // Only a verified non-administrator is told the settings are read only; an
-  // unverified or loading role keeps the neutral source line.
-  const organizationReadOnly =
-    verifiedOrganizationRole !== null && verifiedOrganizationRole !== "admin";
+  // The reader view (MD5): a verified account that cannot change the loaded
+  // settings. Its body and its meta line both follow this one decision; an
+  // unverified or loading role keeps the editor, disabled.
+  const organizationReader =
+    verifiedOrganizationRole !== null && !canEditLoadedOrganization;
   const contactsVisible =
     (verifiedOrganizationRole === "admin" ||
       verifiedOrganizationRole === "member") &&
@@ -488,7 +489,7 @@ function ManageContent() {
   // fact a reader needs. Where data comes from is not repeated.
   const pageDescription =
     tab === "Organization"
-      ? organizationReadOnly
+      ? organizationReader
         ? "Only an administrator can change these settings."
         : "Make this workspace feel like your organization."
       : tab === "Jobs"
@@ -504,6 +505,8 @@ function ManageContent() {
     maintenance.ownerRefused;
   const unavailable = sectionClosed || ownerRefused;
   const sectionShown = sectionOpen && !unavailable;
+  const organizationErrorInFooter =
+    sectionShown && tab === "Organization" && !organizationReader;
 
   const workspacePatch = workspaceQuery.data
     ? workspaceSettingsPatch(
@@ -518,12 +521,23 @@ function ManageContent() {
   const workspaceFields = workspaceQuery.data
     ? workspaceSettingsFormFields(workspaceQuery.data)
     : null;
-  const current: ManageSettings = {
+  const savedSettings: ManageSettings = {
     ...initialManageSettings,
     ...workspaceFields,
-    ...workspaceDraft,
   };
+  // A reader sees the saved settings, never a draft an editor role left (MD5).
+  const current: ManageSettings = organizationReader
+    ? savedSettings
+    : { ...savedSettings, ...workspaceDraft };
   const dirty = workspaceDraftDirty && !committedReadbackRequired;
+  // Each changed field, plus a logo choice, is one unsaved change.
+  const unsavedCount = dirty
+    ? Math.max(
+        1,
+        Object.keys(workspacePatch ?? {}).filter((key) => key !== "revision")
+          .length + (logoDraft ? 1 : 0),
+      )
+    : 0;
   const errors = organizationErrors(
     workspaceDraft,
     workspaceQuery.data !== undefined,
@@ -1200,9 +1214,6 @@ function ManageContent() {
     }
   }
 
-  const panelClass =
-    "min-w-0 w-full rounded-[var(--radius)] border-border bg-card";
-
   const renderPageHeader = (actions?: ReactNode) => (
     <header className="flex shrink-0 flex-wrap items-center justify-between gap-3">
       <div className="min-w-0 flex-1">
@@ -1281,7 +1292,9 @@ function ManageContent() {
               {notice || maintenance.notice}
             </Alert>
           ) : null}
-          {error ? (
+          {/* The Organization editor shows its errors in its pinned footer,
+              beside Save (MD4); a reader and other sections show them here. */}
+          {error && !organizationErrorInFooter ? (
             <Alert
               role="alert"
               variant="destructive"
@@ -1302,14 +1315,15 @@ function ManageContent() {
           {sectionShown && tab === "Organization" ? (
             <OrganizationPanel
               form={{
-                dirty,
                 saveSection,
                 current,
                 changeSetting,
                 errors,
                 clearDraft,
               }}
-              panelClass={panelClass}
+              unsavedCount={unsavedCount}
+              checkingSaved={committedReadbackRequired && workspaceDraftDirty}
+              saveError={organizationErrorInFooter ? error : ""}
               regionalDate={regionalDate}
               regionalCurrency={regionalCurrency}
               workspace={workspaceQuery.data}
@@ -1361,7 +1375,9 @@ function ManageContent() {
               }}
               profile={
                 workspaceFields && !profileMismatch
-                  ? { ...workspaceFields, ...workspaceDraft }
+                  ? organizationReader
+                    ? workspaceFields
+                    : { ...workspaceFields, ...workspaceDraft }
                   : undefined
               }
               profileErrors={{ ...errors, ...profileServerErrors }}
@@ -1371,11 +1387,13 @@ function ManageContent() {
               onRetryWorkspace={retryWorkspace}
               staleRevision={workspaceStale}
               theme={
-                (canEditOrganization ? workspaceDraft.theme : undefined) ??
-                organizationTheme.theme
+                organizationReader
+                  ? (workspaceQuery.data?.theme ?? organizationTheme.theme)
+                  : ((canEditOrganization ? workspaceDraft.theme : undefined) ??
+                    organizationTheme.theme)
               }
               onThemeChange={changeOrganizationTheme}
-              readOnly={!canEditLoadedOrganization}
+              readOnly={organizationReader}
               editDisabled={
                 !canEditLoadedOrganization ||
                 !workspaceQuery.data ||

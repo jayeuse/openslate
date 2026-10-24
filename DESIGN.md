@@ -853,7 +853,7 @@ The Sandbox uses the Access grammar around its canvas (`docs/specs/sandbox-relay
 
 ### Organization look picker
 
-A radio group of four tiles (two columns from 640px, four from 1280px). Each tile shows a small canvas swatch drawn with that look's own tokens (`data-theme-preview`): a department head with its identity mark, and a table card with a header and two field rows. The checked tile takes an `--action` border and ring. The look is saved for the workspace; each person keeps their own color mode.
+A radio group of four tiles (two columns below 1440px, four from 1440px). Each tile shows a small canvas swatch drawn with that look's own tokens (`data-theme-preview`): a department head with its identity mark, and a table card with a header and two field rows. The checked tile takes an `--action` border and ring. The look is saved for the workspace; each person keeps their own color mode.
 
 ### Access overview (dashboard)
 

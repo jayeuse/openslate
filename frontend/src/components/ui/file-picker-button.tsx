@@ -19,6 +19,8 @@ type FilePickerButtonProps = {
   id?: string;
   variant?: ButtonProps["variant"];
   className?: string;
+  /** Names the file input when its visible label is shorter (a label-left row). */
+  "aria-label"?: string;
   "aria-describedby"?: string;
   "aria-invalid"?: boolean;
   onFiles: (files: File[], event: ChangeEvent<HTMLInputElement>) => void;
@@ -67,6 +69,7 @@ export function FilePickerButton({
         disabled={disabled}
         className="sr-only"
         tabIndex={-1}
+        aria-label={aria["aria-label"]}
         aria-describedby={aria["aria-describedby"]}
         aria-invalid={aria["aria-invalid"]}
         onChange={(event) => {

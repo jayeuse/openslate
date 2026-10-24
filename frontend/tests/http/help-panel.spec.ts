@@ -7,6 +7,7 @@ import {
   type Page,
   type Route,
 } from "./helpers/test";
+import { openProfile } from "./helpers/manage-organization";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -551,6 +552,7 @@ test("Help opaque workspace invalidation refreshes contacts but never discards a
   await expect(page.getByLabel("Legal name", { exact: true })).toHaveValue(
     "Private legal name",
   );
+  await openProfile(page);
   await page
     .getByLabel("Legal name", { exact: true })
     .fill("Retained organization draft");
@@ -595,6 +597,7 @@ test("Help Profile link asks before discarding a Manage draft and resumes only o
   api.role = "admin";
   api.shortcuts = false;
   await page.goto("/manage?view=organization");
+  await openProfile(page);
   await page
     .getByLabel("Legal name", { exact: true })
     .fill("Retained Help navigation draft");

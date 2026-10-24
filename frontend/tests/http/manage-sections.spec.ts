@@ -120,7 +120,7 @@ async function installEverySection(page: Page) {
 }
 
 const sections = [
-  { view: "organization", title: "Organization", ready: "Organization name" },
+  { view: "organization", title: "Organization", ready: "Identity" },
   { view: "backup", title: "Backup", ready: "Back up now" },
   { view: "audit", title: "Audit", ready: "Quote Q-1000" },
   { view: "jobs", title: "Jobs", ready: "Weekly report 1" },
@@ -270,7 +270,7 @@ test("Manage fields and buttons are 32px tall at 1440", async ({ page }) => {
     (await locator.boundingBox())?.height;
   expect(await height(page.getByLabel("Organization name"))).toBe(32);
   expect(
-    await height(page.getByRole("button", { name: "Discard changes" })),
+    await height(page.getByRole("button", { name: "Save settings" })),
   ).toBe(32);
   await openSection(page, sections[1]);
   expect(await height(page.getByRole("button", { name: "Back up now" }))).toBe(

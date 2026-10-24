@@ -154,6 +154,11 @@ async function choose(page: Page, name: string) {
   await expect(radio(page, name)).toBeEnabled();
   await look(page).locator("label").filter({ hasText: name }).click();
 }
+/** A reader's saved look: one tile with no other look to choose (MD5). */
+const readerLook = (page: Page) =>
+  page
+    .getByRole("region", { name: "Organization settings", exact: true })
+    .getByRole("group", { name: "Look", exact: true });
 const save = (page: Page) =>
   page.getByRole("button", { name: "Save settings", exact: true });
 const discard = (page: Page) =>
@@ -174,6 +179,12 @@ test("Organization preview stays out of committed cache and Discard restores the
   await expect(page.locator("html")).toHaveAttribute("data-theme", "stockroom");
   expect(await cached(page)).toBe("slate");
   expect(api.writes).toEqual([]);
+  // The pinned footer reads the same draft as the preview.
+  await expect(
+    page
+      .getByRole("group", { name: "Organization actions", exact: true })
+      .getByRole("status"),
+  ).toHaveText("1 unsaved change");
   await expect(save(page)).toBeEnabled();
   await discard(page).click();
   await expect(radio(page, "Slate")).toBeChecked();
@@ -616,10 +627,22 @@ test("Organization verified role loss removes the preview and disallows a theme 
   await seedCache(page, "slate");
   await page.goto("/manage?view=organization");
   await choose(page, "Stockroom");
+  await page
+    .getByRole("textbox", { name: "Organization name" })
+    .fill("Unsaved draft name");
   api.role = "member";
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  await expect(radio(page, "Whiteboard")).toBeDisabled();
-  await expect(radio(page, "Slate")).toBeChecked();
+  await expect(look(page)).toHaveCount(0);
+  // The reader sees the saved settings, never the draft left behind.
+  await expect(
+    page
+      .getByRole("region", { name: "Organization settings", exact: true })
+      .locator('dt:text-is("Name") + dd'),
+  ).toHaveText("Organization theme journey");
+  await expect(page.getByText("Unsaved draft name")).toHaveCount(0);
+  await expect(
+    readerLook(page).getByText("Slate", { exact: true }),
+  ).toBeVisible();
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/);
   expect(await cached(page)).toBe("slate");
   expect(api.writes).toEqual([]);
@@ -653,8 +676,10 @@ test("Organization cached administrator role cannot admit edits while its fresh 
     await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/);
     expect(api.writes).toEqual([]);
     gate.release();
-    await expect(radio(page, "Slate")).toBeChecked();
-    await expect(radio(page, "Whiteboard")).toBeDisabled();
+    await expect(look(page)).toHaveCount(0);
+    await expect(
+      readerLook(page).getByText("Slate", { exact: true }),
+    ).toBeVisible();
     expect(api.writes).toEqual([]);
   } finally {
     gate.release();
@@ -742,8 +767,10 @@ test("Organization keeps a trusted background role refresh interactive but requi
     await expect(radio(page, "Stockroom")).toBeDisabled();
     await expect.poll(() => reads).toBeGreaterThan(1);
     freshRead.release();
-    await expect(radio(page, "Slate")).toBeChecked();
-    await expect(radio(page, "Whiteboard")).toBeDisabled();
+    await expect(look(page)).toHaveCount(0);
+    await expect(
+      readerLook(page).getByText("Slate", { exact: true }),
+    ).toBeVisible();
     expect(api.writes).toEqual([]);
   } finally {
     oldRead.release();

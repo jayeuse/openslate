@@ -1,14 +1,11 @@
 "use client";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { CardFooter } from "@/components/ui/card";
 import {
   Field,
   FieldDescription,
   FieldError,
   FieldLabel,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { Select, SelectItem } from "@/components/ui/select";
 import type { ManageSection, ManageSettings } from "../state/model";
 export function SettingSelect({
@@ -68,92 +65,6 @@ export function SettingSelect({
   );
 }
 
-export function SettingInput({
-  id,
-  label,
-  value,
-  onChange,
-  description,
-  error,
-  required = false,
-  placeholder,
-  maxLength,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  description?: string;
-  error?: string | null;
-  required?: boolean;
-  placeholder?: string;
-  maxLength?: number;
-}) {
-  const descriptionId = description ? `${id}-description` : undefined;
-  const errorId = error ? `${id}-error` : undefined;
-  const describedBy = [descriptionId, errorId].filter(Boolean).join(" ");
-
-  return (
-    <Field data-invalid={Boolean(error)}>
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Input
-        id={id}
-        value={value}
-        required={required}
-        maxLength={maxLength}
-        placeholder={placeholder}
-        aria-invalid={Boolean(error)}
-        aria-describedby={describedBy || undefined}
-        onChange={(event) => onChange(event.target.value)}
-        className="min-h-11"
-      />
-      {description ? (
-        <FieldDescription id={descriptionId}>{description}</FieldDescription>
-      ) : null}
-      <FieldError id={errorId}>{error}</FieldError>
-    </Field>
-  );
-}
-
-export function SettingActions({
-  dirty,
-  onDiscard,
-  onSave,
-  saveLabel = "Save settings",
-}: {
-  dirty: boolean;
-  onDiscard: () => void;
-  onSave: () => void;
-  saveLabel?: string;
-}) {
-  return (
-    <CardFooter className="flex flex-wrap justify-end gap-2 px-0 pt-4">
-      {dirty ? (
-        <Badge variant="warning">Unsaved changes</Badge>
-      ) : (
-        <Badge variant="outline">Saved</Badge>
-      )}
-      <Button
-        type="button"
-        variant="outline"
-        className="min-h-11"
-        onClick={onDiscard}
-        disabled={!dirty}
-      >
-        Discard changes
-      </Button>
-      <Button
-        type="button"
-        className="min-h-11"
-        onClick={onSave}
-        disabled={!dirty}
-      >
-        {saveLabel}
-      </Button>
-    </CardFooter>
-  );
-}
-
 export function SectionHeading({
   title,
   description,
@@ -197,7 +108,6 @@ export function SummaryItem({
 }
 
 export type SettingsPanelForm = {
-  dirty: boolean;
   current: ManageSettings;
   errors: Partial<Record<keyof ManageSettings, string>>;
   changeSetting: (

@@ -62,6 +62,11 @@ export interface AdvancedSectionProps {
    * panel's lifecycle actions: "Disable, Delete"). It replaces the count.
    */
   summary?: string;
+  /**
+   * The block's name when it is not "Advanced": an optional group that
+   * follows the same rule (Manage › Organization's "Profile").
+   */
+  title?: string;
   children: ReactNode;
   className?: string;
 }
@@ -77,6 +82,7 @@ export function AdvancedSection({
   storageKey,
   setCount = 0,
   summary,
+  title = "Advanced",
   forceOpen = false,
   children,
   className,
@@ -104,12 +110,12 @@ export function AdvancedSection({
       }}
       className={cn("border-border border-t pt-2", className)}
     >
-      <CollapsibleTrigger className="group text-muted-foreground hover:text-foreground focus-visible:outline-ring flex min-h-9 w-full items-center gap-1.5 rounded-sm text-left text-sm font-medium transition-colors duration-(--motion-fast) outline-none focus-visible:outline-2 focus-visible:outline-offset-2">
+      <CollapsibleTrigger className="group text-muted-foreground hover:text-foreground focus-visible:outline-ring flex min-h-11 w-full items-center gap-1.5 rounded-sm text-left text-sm font-medium transition-colors duration-(--motion-fast) outline-none focus-visible:outline-2 focus-visible:outline-offset-2 xl:min-h-9">
         <ChevronRight
           aria-hidden="true"
           className="size-4 shrink-0 transition-transform duration-(--motion-fast) group-data-[panel-open]:rotate-90 motion-reduce:transition-none"
         />
-        <span>Advanced</span>
+        <span>{title}</span>
         {!open && summary ? (
           <span
             className="min-w-0 truncate text-xs font-normal"
