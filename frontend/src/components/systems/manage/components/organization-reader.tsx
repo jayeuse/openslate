@@ -13,7 +13,8 @@ import {
   PROFILE_FIELDS,
   profileHasValues,
 } from "../state/organization-profile";
-import { currencyLabel, readableTimezone } from "./organization-editor";
+import { readableTimezone } from "@/lib/timezone-options";
+import { currencyLabel } from "./organization-editor";
 import { OrganizationLookTile } from "./organization-look";
 import { ReaderRow, ReaderRows, SettingsGroup } from "./organization-rows";
 import type { OrganizationLogoProps } from "./organization-panel";

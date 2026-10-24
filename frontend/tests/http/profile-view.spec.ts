@@ -318,9 +318,7 @@ test("a name saved in Account settings shows on your profile at once", async ({
     .getByRole("link", { name: "Account settings", exact: true })
     .click();
   await page.getByLabel("Display name", { exact: true }).fill("Maya Reyes");
-  await page
-    .getByRole("button", { name: "Save identity", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect(
     page.getByRole("status").filter({ hasText: /profile saved/i }),
   ).toBeVisible();
@@ -344,9 +342,7 @@ test("the account row and header show a name saved in Account settings without a
   const header = page.getByRole("button", { name: "Account", exact: true });
   await expect(header).toContainText("MC");
   await page.getByLabel("Display name", { exact: true }).fill("Maya Reyes");
-  await page
-    .getByRole("button", { name: "Save identity", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect(
     page.getByRole("status").filter({ hasText: /profile saved/i }),
   ).toBeVisible();

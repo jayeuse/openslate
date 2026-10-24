@@ -1,10 +1,19 @@
-import { expect, heldResponse, test } from "./helpers/test";
+import { expect, heldResponse, test, type Page } from "./helpers/test";
 import {
   installProfileApi,
   profilePreferences,
   profileSelf,
 } from "./helpers/profile-api";
 import { ids, mockAccessApi } from "./helpers/access-api";
+
+/** Choose a zone in the searchable Timezone select; each choice saves at once. */
+async function chooseTimezone(page: Page, search: string, option: RegExp) {
+  await page.getByRole("combobox", { name: "Timezone", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Search timezone", exact: true })
+    .fill(search);
+  await page.getByRole("listbox").getByRole("option", { name: option }).click();
+}
 
 test.use({
   trace: "off",
@@ -14,30 +23,29 @@ test.use({
   timezoneId: "Pacific/Auckland",
 });
 
-test("Profile Regional keeps an unsaved timezone through section navigation and guards leaving", async ({
+test("Profile Regional saves a timezone at once, so leaving after it needs no guard", async ({
   page,
 }) => {
-  await installProfileApi(page);
+  const api = await installProfileApi(page);
   await page.goto("/settings#regional");
-  const timezone = page.getByLabel("Timezone", { exact: true });
+  const timezone = page.getByRole("combobox", {
+    name: "Timezone",
+    exact: true,
+  });
   await expect(timezone).toBeEnabled();
-  await timezone.fill("Europe/London");
-  await page
-    .getByRole("navigation", { name: "Profile sections" })
-    .getByRole("link", { name: "Identity", exact: true })
-    .click();
-  await expect(timezone).toHaveValue("Europe/London");
+  await chooseTimezone(page, "London", /Europe\/London$/);
+  await expect(timezone).toContainText("Europe/London");
+  await expect
+    .poll(() => api.writes.map(({ body }) => body))
+    .toEqual([{ appearance: { timezone: "Europe/London" } }]);
   await page
     .getByRole("complementary", { name: "Primary sidebar", exact: true })
     .getByRole("link", { name: "OpenComms", exact: true })
     .click();
-  const dialog = page.getByRole("alertdialog").filter({ hasText: /unsaved/i });
-  await expect(dialog).toBeVisible();
-  await dialog
-    .getByRole("button", { name: "Keep editing", exact: true })
-    .click();
-  await expect(page).toHaveURL(/\/settings#identity$/);
-  await expect(timezone).toHaveValue("Europe/London");
+  await expect(page).toHaveURL(/\/comms$/);
+  await expect(
+    page.getByRole("alertdialog").filter({ hasText: /unsaved/i }),
+  ).toHaveCount(0);
 });
 
 test("Profile Regional confirms personal choices with partial writes", async ({
@@ -70,24 +78,14 @@ test("Profile Regional confirms personal choices with partial writes", async ({
   await expect(page.getByLabel("Time format", { exact: true })).toHaveValue(
     "24h",
   );
-  await page
-    .getByLabel("First day of the week", { exact: true })
-    .selectOption("sunday");
-  await expect(
-    page.getByLabel("First day of the week", { exact: true }),
-  ).toHaveValue("sunday");
-  await page
-    .getByLabel("Timezone", { exact: true })
-    .fill("America/Los_Angeles");
-  await page
-    .getByRole("button", { name: "Save timezone", exact: true })
-    .click();
-  await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue(
-    "America/Los_Angeles",
+  await page.getByLabel("Week starts", { exact: true }).selectOption("sunday");
+  await expect(page.getByLabel("Week starts", { exact: true })).toHaveValue(
+    "sunday",
   );
+  await chooseTimezone(page, "Los Angeles", /America\/Los Angeles$/);
   await expect(
-    page.getByRole("button", { name: "Save timezone", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("combobox", { name: "Timezone", exact: true }),
+  ).toContainText("America/Los Angeles");
   await expect(
     page.getByLabel("Start page after sign-in", { exact: true }),
   ).toBeEnabled();
@@ -122,7 +120,7 @@ test("Profile Regional confirms personal choices with partial writes", async ({
     page.getByRole("switch", { name: "Reduce motion" }),
   ).not.toBeChecked();
   await expect(
-    page.getByRole("switch", { name: "Convenience shortcuts" }),
+    page.getByRole("switch", { name: "Use shortcuts" }),
   ).toBeChecked();
 });
 
@@ -130,7 +128,7 @@ for (const [dateFormat, timeFormat] of [
   ["mdy", "12h"],
   ["ymd", "24h"],
 ] as const) {
-  test(`Profile Regional rejects an invalid IANA timezone and restores explicit organization inheritance from ${dateFormat}/${timeFormat}`, async ({
+  test(`Profile Regional restores explicit organization inheritance from ${dateFormat}/${timeFormat}`, async ({
     page,
   }) => {
     const api = await installProfileApi(page);
@@ -146,9 +144,11 @@ for (const [dateFormat, timeFormat] of [
         workspaceRequests.push(request.method());
     });
     await page.goto("/settings#regional");
-    await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue(
-      "America/Los_Angeles",
-    );
+    const timezone = page.getByRole("combobox", {
+      name: "Timezone",
+      exact: true,
+    });
+    await expect(timezone).toContainText("America/Los Angeles");
     const sessions = page.getByRole("list", {
       name: "Active sessions",
       exact: true,
@@ -158,24 +158,16 @@ for (const [dateFormat, timeFormat] of [
       await expect(sessions).toContainText("2026-09-30");
       await expect(sessions).toContainText("17:30");
     }
-    await page.getByLabel("Timezone", { exact: true }).fill("+08:00");
+    // The options come from the zone catalog, so an offset such as "+08:00"
+    // cannot be chosen (isolated/shell/account-settings.spec.ts).
+    await timezone.click();
     await page
-      .getByRole("button", { name: "Save timezone", exact: true })
-      .click();
-    await expect(
-      page.getByRole("alert").filter({ hasText: /IANA/i }),
-    ).toBeVisible();
-    expect(api.writes).toEqual([]);
-    await page
-      .getByRole("button", { name: "Use organization timezone", exact: true })
+      .getByRole("listbox")
+      .getByRole("option", { name: "Organization timezone (Asia/Manila)" })
       .click();
     await expect.poll(() => api.appearance.timezone).toBeNull();
     await expect(page.getByLabel("Date format", { exact: true })).toBeEnabled();
-    for (const label of [
-      "Date format",
-      "Time format",
-      "First day of the week",
-    ]) {
+    for (const label of ["Date format", "Time format", "Week starts"]) {
       await page
         .getByLabel(label, { exact: true })
         .selectOption("organization");
@@ -193,8 +185,8 @@ for (const [dateFormat, timeFormat] of [
       start_page: "automatic",
     });
     await page.reload();
-    await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue("");
-    for (const label of ["Date format", "Time format", "First day of the week"])
+    await expect(timezone).toHaveText("Organization timezone (Asia/Manila)");
+    for (const label of ["Date format", "Time format", "Week starts"])
       await expect(page.getByLabel(label, { exact: true })).toHaveValue(
         "organization",
       );
@@ -305,15 +297,10 @@ test("confirmed Profile Regional choices reach Access people and sessions withou
   await expect(regional.getByLabel("Time format", { exact: true })).toHaveValue(
     "24h",
   );
-  await regional
-    .getByLabel("Timezone", { exact: true })
-    .fill("America/Los_Angeles");
-  await regional
-    .getByRole("button", { name: "Save timezone", exact: true })
-    .click();
+  await chooseTimezone(page, "Los Angeles", /America\/Los Angeles$/);
   await expect(
-    regional.getByRole("button", { name: "Save timezone", exact: true }),
-  ).toBeDisabled();
+    regional.getByRole("combobox", { name: "Timezone", exact: true }),
+  ).toContainText("America/Los Angeles");
   await expect(
     regional.getByLabel("Date format", { exact: true }),
   ).toBeEnabled();

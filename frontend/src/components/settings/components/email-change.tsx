@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { Mail } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import {
   useVerifiedWorkspaceUserId,
@@ -13,15 +14,25 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldLabel } from "@/components/ui/field";
+import {
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { requestEmailChange } from "@/lib/auth-api";
 import { profileSelfOptions } from "@/components/profile/adapters/profile-queries";
+import { DialogRows } from "./dialog-rows";
+import { FactValue, focusReturn } from "./rows";
 
+/**
+ * The Email row (PD12): the saved address as plain text and a quiet Change…
+ * that opens the framed email dialog. Acceptance only requests confirmation;
+ * the saved address changes after both links are confirmed.
+ */
 export default function EmailChange() {
   const userId = useVerifiedWorkspaceUserId();
   const suspended = useWorkspaceInteractionSuspended();
@@ -34,6 +45,7 @@ export default function EmailChange() {
   const [accepted, setAccepted] = useState(false);
   const version = useRef(0);
   const operation = useRef<AbortController | null>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
   const blocked = suspended || pending || !self.data || Boolean(self.error);
   useLayoutEffect(() => {
     version.current += 1;
@@ -87,79 +99,114 @@ export default function EmailChange() {
       }
     }
   }
+  function close() {
+    setOpen(false);
+    setPassword("");
+    setEmail("");
+  }
   return (
-    <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border p-4">
-      <p className="text-muted-foreground max-w-prose text-sm">
-        Changing your sign-in email requires your current password and
-        confirmation at both addresses. Your saved email stays unchanged until
-        confirmation is complete.
-      </p>
-      <Button
-        variant="outline"
-        className="min-h-11"
-        disabled={blocked}
-        onClick={() => {
-          setOpen(true);
-          setEmail("");
-          setPassword("");
-          setAccepted(false);
-          setError("");
-        }}
-      >
-        Change email
-      </Button>
+    <FactValue
+      action={
+        <Button
+          ref={opener}
+          variant="outline"
+          aria-label="Change email"
+          className="min-h-11 xl:min-h-8"
+          disabled={blocked}
+          onClick={() => {
+            setOpen(true);
+            setEmail("");
+            setPassword("");
+            setAccepted(false);
+            setError("");
+          }}
+        >
+          Change…
+        </Button>
+      }
+    >
+      <span className="break-all">{self.data?.email ?? "Unavailable"}</span>
       <Dialog
         open={open && !suspended}
         dismissible={!pending}
         onOpenChange={(next) => {
-          setOpen(next);
-          if (!next) {
-            setPassword("");
-            setEmail("");
-          }
+          if (next) setOpen(true);
+          else close();
         }}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Change email</DialogTitle>
-            <DialogDescription>
-              Enter your new email and current password. Confirm both email
-              links in a signed-out browser context.
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent
+          className={`${dialogFrameContentClass} max-w-lg`}
+          finalFocus={() => focusReturn(opener.current, "identity")()}
+        >
+          <DialogFrameHeader
+            title={<DialogTitle>Change email</DialogTitle>}
+            description={
+              <DialogDescription>
+                You may need to sign in again after you confirm.
+              </DialogDescription>
+            }
+            closeLabel="Close email"
+            closeDisabled={pending}
+            onClose={close}
+          />
           <form
-            className="space-y-4"
+            id="email-change-form"
+            className="flex min-w-0 flex-col gap-4"
             onSubmit={(event) => {
               void submit(event);
             }}
           >
-            <Field>
-              <FieldLabel htmlFor="email-change-new">New email</FieldLabel>
-              <Input
-                id="email-change-new"
-                type="email"
-                autoComplete="email"
-                maxLength={255}
-                required
-                value={email}
-                disabled={blocked || accepted}
-                onChange={(event) => setEmail(event.target.value)}
+            <DialogRows
+              rows={[
+                {
+                  label: "Current email",
+                  value: (
+                    <span className="break-all">{self.data?.email ?? ""}</span>
+                  ),
+                },
+                {
+                  label: "New email",
+                  htmlFor: "email-change-new",
+                  value: (
+                    <Input
+                      id="email-change-new"
+                      type="email"
+                      autoComplete="email"
+                      maxLength={255}
+                      required
+                      className="min-h-11"
+                      placeholder="name@example.com"
+                      value={email}
+                      disabled={blocked || accepted}
+                      onChange={(event) => setEmail(event.target.value)}
+                    />
+                  ),
+                },
+                {
+                  label: "Current password",
+                  htmlFor: "email-change-password",
+                  value: (
+                    <Input
+                      id="email-change-password"
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                      className="min-h-11"
+                      value={password}
+                      disabled={blocked || accepted}
+                      onChange={(event) => setPassword(event.target.value)}
+                    />
+                  ),
+                },
+              ]}
+            />
+            <p className="bg-muted flex items-center gap-2 rounded-[var(--radius)] px-3 py-2 text-sm">
+              <Mail
+                aria-hidden="true"
+                className="text-muted-foreground size-4 shrink-0"
               />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="email-change-password">
-                Current password
-              </FieldLabel>
-              <Input
-                id="email-change-password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                disabled={blocked || accepted}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </Field>
+              The change finishes when you confirm both emails.
+            </p>
             {error && (
               <Alert role="alert" variant="destructive">
                 {error}
@@ -171,22 +218,21 @@ export default function EmailChange() {
                 each link. This request has not changed your saved email.
               </p>
             )}
-            <DialogFooter>
+          </form>
+          <DialogFrameFooter>
+            <DialogFooter className="mt-0">
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11"
                 disabled={pending}
-                onClick={() => {
-                  setOpen(false);
-                  setPassword("");
-                  setEmail("");
-                }}
+                onClick={close}
               >
-                Close
+                Cancel
               </Button>
               <Button
                 type="submit"
+                form="email-change-form"
                 aria-label="Send confirmation emails"
                 className="min-h-11"
                 disabled={blocked || accepted || !email.trim() || !password}
@@ -194,9 +240,9 @@ export default function EmailChange() {
                 {pending ? "Requesting…" : "Send confirmation emails"}
               </Button>
             </DialogFooter>
-          </form>
+          </DialogFrameFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </FactValue>
   );
 }

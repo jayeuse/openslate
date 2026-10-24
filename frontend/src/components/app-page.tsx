@@ -39,6 +39,7 @@ import { OrganizationGate } from "@/components/organization-gate";
 import { toast } from "@/components/ui/toast";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   WorkspaceNavigationGuardProvider,
   GuardedWorkspaceLink,
@@ -941,7 +942,13 @@ export function AppPage({ children }: AppPageProps) {
                   complete={async () => finishFactorRemoval()}
                 >
                   <main className="bg-background text-foreground min-h-screen px-4 py-6 sm:px-8">
-                    <div className="mx-auto max-w-5xl space-y-6">
+                    <div
+                      // Account settings keeps its two panes from 1280px.
+                      className={cn(
+                        "mx-auto max-w-5xl space-y-6",
+                        pathname === "/settings" && "xl:max-w-[75rem]",
+                      )}
+                    >
                       <Button asChild variant="outline" className="min-h-11">
                         <GuardedWorkspaceLink href="/boards">
                           Your organizations

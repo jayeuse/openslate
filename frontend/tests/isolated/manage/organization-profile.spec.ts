@@ -3,8 +3,8 @@ import { expect, test } from "@playwright/test";
 import {
   profileHasValues,
   profileSummary,
-  unsavedChangesLabel,
 } from "../../../src/components/systems/manage/state/organization-profile";
+import { unsavedChangesLabel } from "../../../src/lib/unsaved-changes";
 
 // The closed Profile block on Manage › Organization names what it holds and
 // marks each field with a value "(set)" (the Advanced Last Rule, DESIGN.md),

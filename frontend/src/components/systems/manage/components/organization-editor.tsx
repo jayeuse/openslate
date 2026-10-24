@@ -7,14 +7,12 @@ import { Button } from "@/components/ui/button";
 import { FilePickerButton } from "@/components/ui/file-picker-button";
 import { Input } from "@/components/ui/input";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import {
-  SearchSelect,
-  type SearchSelectOption,
-} from "@/components/ui/search-select";
+import { SearchSelect } from "@/components/ui/search-select";
 import { Select, SelectItem } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type { OrganizationTheme } from "@/lib/appearance-preferences";
+import { timezoneCatalog, timezoneOption } from "@/lib/timezone-options";
 
 import { WorkspaceLogo } from "../../shared/runtime/workspace-logo";
 import {
@@ -38,24 +36,6 @@ import type { OrganizationLogoProps } from "./organization-panel";
 
 /** The row label names the field; the control keeps its full name. */
 const hiddenFieldLabel = "[&_[data-slot=field-label]]:sr-only";
-
-function timezoneOption(timezone: string, reference: Date): SearchSelectOption {
-  const offset = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    timeZoneName: "longOffset",
-  })
-    .formatToParts(reference)
-    .find((part) => part.type === "timeZoneName")?.value;
-  return {
-    value: timezone,
-    label: `${offset === "GMT" ? "UTC+00:00" : offset?.replace("GMT", "UTC")} · ${readableTimezone(timezone)}`,
-  };
-}
-
-/** IANA names use underscores for spaces; show them as people write them. */
-export function readableTimezone(timezone: string): string {
-  return timezone.replaceAll("_", " ");
-}
 
 export function currencyLabel(code: string): string {
   const known = activeCurrencies.find((currency) => currency.code === code);
@@ -106,23 +86,19 @@ export function OrganizationEditor({
     localeOptions.push(current.locale);
   // Keep one current instant/list while a draft changes. Offset labels describe
   // this visit; choosing a zone still saves its original IANA identifier.
-  const [timezoneCatalog] = useState(() => {
+  const [zones] = useState(() => {
     const reference = new Date();
     return {
       reference,
-      options: [...Intl.supportedValuesOf("timeZone"), "UTC"]
-        .sort()
-        .map((timezone) => timezoneOption(timezone, reference)),
+      options: timezoneCatalog(reference),
     };
   });
-  const timezoneOptions = [...timezoneCatalog.options];
+  const timezoneOptions = [...zones.options];
   if (
     current.timezone &&
     !timezoneOptions.some((option) => option.value === current.timezone)
   )
-    timezoneOptions.push(
-      timezoneOption(current.timezone, timezoneCatalog.reference),
-    );
+    timezoneOptions.push(timezoneOption(current.timezone, zones.reference));
   const currencyOptions = activeCurrencies.map(({ code, name }) => ({
     value: code,
     label: `${code} · ${name}`,

@@ -48,8 +48,3 @@ export function profileHasValues(
     holdsText(profile[key]),
   );
 }
-
-/** The footer chip while the draft differs from the saved settings. */
-export function unsavedChangesLabel(count: number): string {
-  return `${count} unsaved ${count === 1 ? "change" : "changes"}`;
-}

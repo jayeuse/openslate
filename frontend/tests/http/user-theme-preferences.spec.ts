@@ -99,12 +99,12 @@ async function openAccount(page: Page) {
     .getByRole("menuitem", { name: "Account settings", exact: true })
     .click();
   await expect(
-    page.getByRole("region", { name: "Look & behavior", exact: true }),
+    page.getByRole("region", { name: "Appearance", exact: true }),
   ).toBeVisible();
 }
 
 const look = (page: Page) =>
-  page.getByRole("region", { name: "Look & behavior", exact: true });
+  page.getByRole("region", { name: "Appearance", exact: true });
 
 const light = (page: Page) =>
   page.getByRole("radio", { name: "Light", exact: true });
@@ -255,10 +255,10 @@ test("legacy Appearance and Your profile share only confirmed theme saves, prese
     // Account settings owns a pending-navigation guard. Section anchors
     // still keep the incumbent controls mounted while the save is in flight.
     await expect(page).toHaveURL(/\/settings#look$/);
-    await page
-      .getByRole("navigation", { name: "Profile sections", exact: true })
-      .getByRole("link", { name: "Sign-in & security", exact: true })
-      .click();
+    // The group anchors are in-page links; the section link bar is gone.
+    await page.evaluate(() => {
+      window.location.hash = "security";
+    });
     await expect(page).toHaveURL(/\/settings#security$/);
     const control = dark(page);
     await expect(light(page)).toBeChecked();
@@ -705,13 +705,16 @@ test("additive regional appearance remains display-only while partial theme and 
     page.getByRole("switch", { name: "Reduce motion" }),
   ).toBeChecked();
   await expect(
-    page.getByRole("switch", { name: "Convenience shortcuts" }),
+    page.getByRole("switch", { name: "Use shortcuts" }),
   ).toBeChecked();
+  // The timezone is a searchable select; its trigger shows the saved zone.
+  await expect(
+    page.getByRole("combobox", { name: "Timezone", exact: true }),
+  ).toContainText("Europe/London");
   for (const [label, value] of [
-    ["Timezone", "Europe/London"],
     ["Date format", "dmy"],
     ["Time format", "24h"],
-    ["First day of the week", "sunday"],
+    ["Week starts", "sunday"],
     ["Start page after sign-in", "manage"],
   ])
     await expect(page.getByLabel(label, { exact: true })).toHaveValue(value);
@@ -799,9 +802,9 @@ test("account motion and shortcut commands are partial and confirmed before prev
       "data-motion",
       "reduced",
     );
-    await page.getByRole("switch", { name: "Convenience shortcuts" }).click();
+    await page.getByRole("switch", { name: "Use shortcuts" }).click();
     await expect(
-      page.getByRole("switch", { name: "Convenience shortcuts" }),
+      page.getByRole("switch", { name: "Use shortcuts" }),
     ).not.toBeChecked();
     expect(writes).toEqual([
       { appearance: { motion: "reduce" } },
@@ -816,7 +819,7 @@ test("account motion and shortcut commands are partial and confirmed before prev
       page.getByRole("switch", { name: "Reduce motion" }),
     ).toBeChecked();
     await expect(
-      page.getByRole("switch", { name: "Convenience shortcuts" }),
+      page.getByRole("switch", { name: "Use shortcuts" }),
     ).not.toBeChecked();
   } finally {
     hold.release();
@@ -856,10 +859,8 @@ test("device text and density scale pages without changing account preferences",
   await expect(
     page.getByRole("combobox", { name: "Page spacing" }),
   ).toHaveValue("spacious");
-  for (const name of ["Color", "Text and display", "Motion", "Keyboard"])
-    await expect(
-      page.getByRole("heading", { name, exact: true }),
-    ).toBeVisible();
+  for (const name of ["Color", "Motion", "Keyboard shortcuts"])
+    await expect(page.getByRole("group", { name, exact: true })).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Appearance preview" }),
   ).toBeVisible();
@@ -1042,6 +1043,8 @@ test("forced colors and increased contrast keep focus and borders visible at Lar
   page,
 }) => {
   await installIdentity(page);
+  // Below 1280px, where controls keep the 44px floor (slim from 1280px).
+  await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto("/settings/appearance");
   const select = page.getByRole("combobox", { name: "Text size" });
   await select.selectOption("125");
@@ -1201,7 +1204,7 @@ test("appearance switches keep their thumbs inside the track and a 44 pixel hit 
   await page
     .getByRole("combobox", { name: "Page spacing" })
     .selectOption("spacious");
-  const toggle = page.getByRole("switch", { name: "Convenience shortcuts" });
+  const toggle = page.getByRole("switch", { name: "Use shortcuts" });
   await expect(toggle).toBeEnabled();
   // Measure the layout these settings produce, not the frame before they apply.
   await expect(page.locator("html")).toHaveAttribute("data-text-size", "125");

@@ -203,7 +203,7 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
     Number(localStorage.getItem("openslate-sidebar-width")),
   );
   expect(stored).toBeCloseTo((increased + 40) / 1.25, 0);
-  const keyboard = page.getByRole("switch", { name: "Convenience shortcuts" });
+  const keyboard = page.getByRole("switch", { name: "Use shortcuts" });
   await keyboard.evaluate((el) => el.scrollIntoView({ block: "start" }));
   await keyboard.focus();
   const top = await page

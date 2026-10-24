@@ -27,14 +27,9 @@ for (const role of ["member", "guest"] as const) {
     await expect(
       page.getByRole("heading", { name: "Account settings", exact: true }),
     ).toBeVisible();
-    for (const name of [
-      "Identity",
-      "Sign-in & security",
-      "Look & behavior",
-      "Regional",
-    ]) {
+    for (const name of ["Identity", "Sign-in", "Appearance", "Regional"]) {
       await expect(
-        page.getByRole("heading", { name, exact: true }),
+        page.getByRole("heading", { name, exact: true, level: 2 }),
       ).toBeVisible();
     }
     await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(
@@ -47,7 +42,7 @@ for (const role of ["member", "guest"] as const) {
       page.getByRole("button", { name: /change email/i }),
     ).toBeEnabled();
     const save = page.getByRole("button", {
-      name: "Save identity",
+      name: "Save profile",
       exact: true,
     });
     await expect(save).toBeDisabled();
@@ -139,13 +134,11 @@ test("Profile email request needs the current password and keeps saved email rea
       page.getByRole("textbox", { name: "Email", exact: true }),
     ).toHaveCount(0);
     await dialog.getByRole("button", { name: /close/i }).click();
-    // A later provider-confirmed admission has committed. The existing Reload
-    // profile read, never the request acknowledgment, supplies the saved email.
+    // A later provider-confirmed admission has committed. A fresh profile
+    // read, never the request acknowledgment, supplies the saved email.
     profile.people.get(profileUserA)!.email = changedEmail;
     const reads = profile.selfReads.length;
-    await page
-      .getByRole("button", { name: "Reload profile", exact: true })
-      .click();
+    await page.reload();
     await expect.poll(() => profile.selfReads.length).toBeGreaterThan(reads);
     await expect(page.getByText(changedEmail, { exact: true })).toBeVisible();
     await expect(
@@ -166,16 +159,12 @@ test("Profile clears nullable values explicitly and rejects overlong Unicode bef
   const phone = page.getByLabel("Phone", { exact: true });
   await expect(phone).toHaveValue("+1 555 0101");
   await phone.fill("");
-  await page
-    .getByRole("button", { name: "Save identity", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect.poll(() => api.people.get(profileUserA)?.phone).toBeNull();
   expect(api.writes[0]?.body).toEqual({ phone: null });
   const bio = page.getByLabel("Short bio", { exact: true });
   await bio.fill("🌱".repeat(281));
-  await page
-    .getByRole("button", { name: "Save identity", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: /280/ }),
   ).toBeVisible();
@@ -184,7 +173,7 @@ test("Profile clears nullable values explicitly and rejects overlong Unicode bef
 });
 
 for (const failure of [422, 503] as const) {
-  test(`Profile ${failure} preserves a text draft and a read Retry never replays a write`, async ({
+  test(`Profile ${failure} preserves a text draft and sends it again only on Save`, async ({
     page,
   }) => {
     const api = await installProfileApi(page);
@@ -194,7 +183,7 @@ for (const failure of [422, 503] as const) {
     await expect(phone).toHaveValue("+1 555 0101");
     await phone.fill("Retained draft");
     await page
-      .getByRole("button", { name: "Save identity", exact: true })
+      .getByRole("button", { name: "Save profile", exact: true })
       .click();
     await expect(
       page.getByRole("alert").filter({
@@ -208,13 +197,18 @@ for (const failure of [422, 503] as const) {
     await expect(page.getByText("Profile saved.", { exact: true })).toHaveCount(
       0,
     );
-    api.patchStatus = 200;
-    await page
-      .getByRole("button", { name: "Reload profile", exact: true })
-      .click();
-    await expect(phone).toHaveValue("Retained draft");
+    // Nothing is sent again until the person saves again.
     expect(api.writes).toHaveLength(1);
     expect(api.people.get(profileUserA)?.phone).toBe("+1 555 0101");
+    api.patchStatus = 200;
+    await page
+      .getByRole("button", { name: "Save profile", exact: true })
+      .click();
+    await expect(
+      page.getByText("Profile saved.", { exact: true }),
+    ).toBeVisible();
+    expect(api.writes).toHaveLength(2);
+    expect(api.people.get(profileUserA)?.phone).toBe("Retained draft");
     await page.setViewportSize({ width: 390, height: 844 });
     await expect
       .poll(() =>
@@ -273,11 +267,11 @@ test("Profile serializes pending edits and ignores a late old-account completion
   try {
     await page.getByLabel("Phone", { exact: true }).fill("Owned delayed edit");
     await page
-      .getByRole("button", { name: "Save identity", exact: true })
+      .getByRole("button", { name: "Save profile", exact: true })
       .click();
     await hold.entered;
     await expect(
-      page.getByRole("button", { name: "Save identity", exact: true }),
+      page.getByRole("button", { name: "Save profile", exact: true }),
     ).toBeDisabled();
     await expect(
       page.getByLabel("Upload photo", { exact: true }),
@@ -314,10 +308,9 @@ test("Profile section anchors keep an unsaved identity draft and guarded navigat
   await page
     .getByLabel("Display name", { exact: true })
     .fill("Unsaved owned name");
-  await page
-    .getByRole("navigation", { name: "Profile sections", exact: true })
-    .getByRole("link", { name: "Regional", exact: true })
-    .click();
+  await page.evaluate(() => {
+    window.location.hash = "regional";
+  });
   await expect(page).toHaveURL(/\/settings#regional$/);
   await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
     "Unsaved owned name",
@@ -446,9 +439,7 @@ test("Profile explains committed avatar cleanup 503 and never reserves or binds 
   ).toBeVisible();
   expect(api.people.get(profileUserA)?.avatar_file_id).toBe(avatarFileId);
   const count = api.writes.length;
-  await page
-    .getByRole("button", { name: "Reload profile", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
     "Maya Chen",
   );
@@ -475,28 +466,30 @@ test("Profile refuses private avatar mime delivery without clearing the saved bi
   expect(api.writes).toEqual([]);
   expect(api.people.get(profileUserA)?.avatar_file_id).toBe(avatarFileId);
   api.avatarFault = null;
-  await page
-    .getByRole("button", { name: "Reload profile", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
     page.getByRole("img", { name: "Your profile photo", exact: true }),
   ).toBeVisible();
   expect(api.writes).toEqual([]);
 });
 
-test("Profile avatar refusal rechecks once and stays usable until explicit reload", async ({
+test("Profile avatar refusal rechecks once and stays usable until explicit Retry", async ({
   page,
 }) => {
   const api = await installProfileApi(page, { session: false });
   api.people.get(profileUserA)!.avatar_file_id = avatarFileId;
   const recheck = heldResponse();
-  let sessionChecks = 0;
-  let refused = false;
+  // Session checks after the first refused photo read: the one recheck.
+  let rechecks = 0;
+  let refused = true;
+  let reads = 0;
   await page.route("**/api/auth/session", async (route) => {
-    sessionChecks += 1;
-    if (refused && sessionChecks === 1) {
-      recheck.enter();
-      await recheck.released;
+    if (refused && reads > 0) {
+      rechecks += 1;
+      if (rechecks === 1) {
+        recheck.enter();
+        await recheck.released;
+      }
     }
     await route.fulfill({
       json: {
@@ -507,7 +500,6 @@ test("Profile avatar refusal rechecks once and stays usable until explicit reloa
       },
     });
   });
-  let reads = 0;
   await page.route(`**/api/users/${profileUserA}/avatar`, async (route) => {
     if (!refused) return route.fallback();
     reads += 1;
@@ -523,14 +515,6 @@ test("Profile avatar refusal rechecks once and stays usable until explicit reloa
   });
   try {
     await page.goto("/settings");
-    await expect(
-      page.getByRole("img", { name: "Your profile photo", exact: true }),
-    ).toBeVisible();
-    refused = true;
-    sessionChecks = 0;
-    await page
-      .getByRole("button", { name: "Reload profile", exact: true })
-      .click();
     await recheck.entered;
     const alert = page
       .getByRole("alert")
@@ -542,16 +526,17 @@ test("Profile avatar refusal rechecks once and stays usable until explicit reloa
       .getByLabel("Phone", { exact: true })
       .fill("Retained during refusal");
     expect(reads).toBe(1);
-    expect(sessionChecks).toBe(1);
+    expect(rechecks).toBe(1);
     expect(api.writes).toEqual([]);
     expect(api.people.get(profileUserA)?.avatar_file_id).toBe(avatarFileId);
     refused = false;
-    await page
-      .getByRole("button", { name: "Reload profile", exact: true })
-      .click();
+    await alert.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(
       page.getByRole("img", { name: "Your profile photo", exact: true }),
     ).toBeVisible();
+    await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(
+      "Retained during refusal",
+    );
     expect(api.writes).toEqual([]);
   } finally {
     recheck.release();
@@ -593,9 +578,7 @@ test("Profile uncertain upload preserves the existing photo and text draft witho
   ]);
   expect(api.people.get(profileUserA)?.avatar_file_id).toBe(profileUserB);
   api.uploadStatus = 200;
-  await page
-    .getByRole("button", { name: "Reload profile", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByLabel("Upload photo", { exact: true })).toBeEnabled();
   await expect(photo).toBeVisible();
   await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(
@@ -863,7 +846,7 @@ for (const viewport of [
         .getByLabel("Phone", { exact: true })
         .fill("Retained phone draft");
       await page
-        .getByRole("button", { name: "Save identity", exact: true })
+        .getByRole("button", { name: "Save profile", exact: true })
         .click();
       await expect(
         page

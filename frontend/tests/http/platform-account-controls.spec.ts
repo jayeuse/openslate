@@ -166,6 +166,19 @@ async function openAccount(
   await expect(page).toHaveURL(/\/settings#security$/);
 }
 
+/** The framed password dialog, opened from the Password row (PD12). */
+async function openPasswordDialog(page: Page) {
+  await page
+    .getByRole("button", { name: "Change password", exact: true })
+    .click();
+  return page.getByRole("dialog", { name: "Change password", exact: true });
+}
+
+/** Choose End session in the open ⋯ menu of a session row (PD11). */
+async function chooseEndSession(page: Page) {
+  await page.getByRole("menuitem", { name: /^End session, / }).click();
+}
+
 test("loads own sessions and exposes a retryable denied and empty state", async ({
   page,
 }) => {
@@ -193,7 +206,7 @@ test("loads own sessions and exposes a retryable denied and empty state", async 
     await expect(page.getByText("Loading active sessions…")).toBeVisible();
     sessionsList.release();
     await expect(
-      page.getByRole("listitem").filter({ hasText: "Current session" }),
+      page.getByRole("listitem").filter({ hasText: "This device" }),
     ).toContainText("Chrome on macOS");
     await expect(
       page.getByText("Chrome on macOS", { exact: true }),
@@ -276,8 +289,11 @@ test("password changes send the API payload, show status-specific feedback, clea
 
   await openAccount(page);
   await expect(page.getByText("Chrome on macOS")).toBeVisible();
-  const currentPassword = page.getByLabel("Current password", { exact: true });
-  const newPassword = page.getByLabel("New password", { exact: true });
+  const dialog = await openPasswordDialog(page);
+  const currentPassword = dialog.getByLabel("Current password", {
+    exact: true,
+  });
+  const newPassword = dialog.getByLabel("New password", { exact: true });
   await expect(newPassword).toHaveAttribute("minlength", "12");
   await expect(newPassword).toHaveAttribute("maxlength", "128");
 
@@ -285,7 +301,9 @@ test("password changes send the API payload, show status-specific feedback, clea
     const readsBefore = sessionReads;
     await currentPassword.fill("current test password");
     await newPassword.fill("new test password 123");
-    await page.getByRole("button", { name: "Change password" }).click();
+    await dialog
+      .getByRole("button", { name: "Change password", exact: true })
+      .click();
     await expect(
       page.getByText(response.message, { exact: true }),
     ).toBeVisible();
@@ -321,8 +339,9 @@ test("password changes send the API payload, show status-specific feedback, clea
     );
     await expect.poll(() => sessionReads).toBe(readsBefore + 1);
     if (index === 0)
+      // The list sits behind the open dialog, so read it as markup.
       await expect(
-        page.getByRole("listitem").filter({ hasText: "Firefox on Android" }),
+        page.locator("li").filter({ hasText: "Firefox on Android" }),
       ).toHaveCount(0);
   }
 
@@ -368,8 +387,11 @@ test("serializes password changes and session revocations", async ({
   try {
     await openAccount(page);
     await expect(page.getByText("Chrome on macOS")).toBeVisible();
-    await page.getByLabel("Current password", { exact: true }).fill("current");
-    await page
+    const dialog = await openPasswordDialog(page);
+    await dialog
+      .getByLabel("Current password", { exact: true })
+      .fill("current");
+    await dialog
       .getByLabel("New password", { exact: true })
       .fill("new password 123");
     const passwordRequest = page.waitForRequest(
@@ -377,16 +399,25 @@ test("serializes password changes and session revocations", async ({
         request.method() === "POST" &&
         new URL(request.url()).pathname === "/api/auth/password/change",
     );
-    await page.getByRole("button", { name: "Change password" }).click();
+    await dialog
+      .getByRole("button", { name: "Change password", exact: true })
+      .click();
     await passwordRequest;
+    // The session controls wait behind the open dialog.
     await expect(
-      page.getByRole("button", { name: "End all other sessions" }),
+      page.getByRole("button", {
+        name: "Sign out other sessions",
+        includeHidden: true,
+      }),
     ).toBeDisabled();
     await expect(
       page
-        .getByRole("listitem")
+        .locator("li")
         .filter({ hasText: "Firefox on Android" })
-        .getByRole("button", { name: "End session" }),
+        .getByRole("button", {
+          name: /^Session actions, /,
+          includeHidden: true,
+        }),
     ).toBeDisabled();
 
     passwordChange.release();
@@ -396,13 +427,17 @@ test("serializes password changes and session revocations", async ({
         { exact: true },
       ),
     ).toBeVisible();
+    await dialog
+      .getByRole("button", { name: "Close password", exact: true })
+      .click();
     const other = page
       .getByRole("listitem")
       .filter({ hasText: "Firefox on Android" });
     await expect(
-      other.getByRole("button", { name: "End session" }),
+      other.getByRole("button", { name: /^Session actions, / }),
     ).toBeEnabled();
-    await other.getByRole("button", { name: "End session" }).click();
+    await other.getByRole("button", { name: /^Session actions, / }).click();
+    await chooseEndSession(page);
     const sessionRequest = page.waitForRequest(
       (request) =>
         request.method() === "DELETE" &&
@@ -417,6 +452,7 @@ test("serializes password changes and session revocations", async ({
     await expect(
       page.getByRole("button", {
         name: "Change password",
+        exact: true,
         includeHidden: true,
       }),
     ).toBeDisabled();
@@ -441,17 +477,21 @@ test("associates missing and short password errors with only their input", async
   });
   await openAccount(page);
   await expect(
-    page.getByText(
-      "Your identity, sign-in security, and personal preferences. Organization settings stay in Manage.",
-      { exact: true },
-    ),
-  ).toContainText("Organization settings stay in Manage.");
+    page.getByText("Your name, sign-in, and personal preferences.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const dialog = await openPasswordDialog(page);
 
-  await page.getByLabel("Current password", { exact: true }).fill("current");
-  const newPassword = page.getByLabel("New password", { exact: true });
-  const currentPassword = page.getByLabel("Current password", { exact: true });
+  await dialog.getByLabel("Current password", { exact: true }).fill("current");
+  const newPassword = dialog.getByLabel("New password", { exact: true });
+  const currentPassword = dialog.getByLabel("Current password", {
+    exact: true,
+  });
   await newPassword.fill("too short");
-  await page.getByRole("button", { name: "Change password" }).click();
+  await dialog
+    .getByRole("button", { name: "Change password", exact: true })
+    .click();
 
   await expect(
     page.getByRole("alert").filter({ hasText: "Use 12 to 128 characters." }),
@@ -469,7 +509,9 @@ test("associates missing and short password errors with only their input", async
 
   await newPassword.fill("valid new password 123");
   await currentPassword.fill("");
-  await page.getByRole("button", { name: "Change password" }).click();
+  await dialog
+    .getByRole("button", { name: "Change password", exact: true })
+    .click();
   await expect(
     page.getByRole("alert").filter({ hasText: "Enter your current password." }),
   ).toBeVisible();
@@ -501,11 +543,12 @@ test("moves a short-password error to the current field after a denied change", 
     return route.fulfill({ status: 403, json: { detail: "Rejected" } });
   });
   await openAccount(page);
-  const current = page.getByLabel("Current password", { exact: true });
-  const next = page.getByLabel("New password", { exact: true });
+  const dialog = await openPasswordDialog(page);
+  const current = dialog.getByLabel("Current password", { exact: true });
+  const next = dialog.getByLabel("New password", { exact: true });
   await current.fill("current test password");
   await next.fill("short");
-  await page
+  await dialog
     .getByRole("button", { name: "Change password", exact: true })
     .click();
   await expect(
@@ -517,7 +560,7 @@ test("moves a short-password error to the current field after a denied change", 
   expect(await current.getAttribute("aria-describedby")).toBeNull();
   expect(changes).toBe(0);
   await next.fill("new test password 123");
-  await page
+  await dialog
     .getByRole("button", { name: "Change password", exact: true })
     .click();
   await expect(
@@ -592,9 +635,9 @@ test("keeps password and session controls reachable on mobile with full device d
     page.getByText("Chrome on macOS", { exact: true }),
   ).toHaveAttribute("title", currentUserAgent);
   const list = page.getByRole("list", { name: "Active sessions", exact: true });
-  await expect(list).toContainText("Sign-in IP: 198.51.100.101");
-  await expect(list).toContainText("Sign-in IP: 2001:db8::102");
-  await expect(list).toContainText("Sign-in IP: Unknown");
+  await expect(list).toContainText("198.51.100.101");
+  await expect(list).toContainText("2001:db8::102");
+  await expect(list).toContainText("Unknown address");
   await expect
     .poll(() =>
       page.evaluate(
@@ -605,32 +648,43 @@ test("keeps password and session controls reachable on mobile with full device d
     )
     .toBeLessThanOrEqual(1);
 
-  const currentPassword = page.getByLabel("Current password", { exact: true });
-  const newPassword = page.getByLabel("New password", { exact: true });
   for (const control of [
-    currentPassword,
-    newPassword,
-    page.getByRole("button", { name: "Change password" }),
-    page.getByRole("button", { name: "End all other sessions" }),
+    page.getByRole("button", { name: "Change password", exact: true }),
+    page.getByRole("button", { name: "Sign out other sessions" }),
   ]) {
     await control.scrollIntoViewIfNeeded();
     await expect(control).toBeInViewport({ ratio: 1 });
   }
+  const dialog = await openPasswordDialog(page);
+  const currentPassword = dialog.getByLabel("Current password", {
+    exact: true,
+  });
+  const newPassword = dialog.getByLabel("New password", { exact: true });
+  for (const control of [
+    currentPassword,
+    newPassword,
+    dialog.getByRole("button", { name: "Change password", exact: true }),
+  ])
+    await expect(control).toBeInViewport({ ratio: 1 });
   await currentPassword.fill("current test password");
   await newPassword.fill("new test password 123");
   await expect(currentPassword).toHaveValue("current test password");
   await expect(newPassword).toHaveValue("new test password 123");
+  await dialog
+    .getByRole("button", { name: "Close password", exact: true })
+    .click();
 
   const firefox = page
     .getByRole("listitem")
     .filter({ hasText: "Firefox on Android" });
   await firefox
-    .getByRole("button", { name: "End session" })
+    .getByRole("button", { name: /^Session actions, / })
     .scrollIntoViewIfNeeded();
   await expect(
-    firefox.getByRole("button", { name: "End session" }),
+    firefox.getByRole("button", { name: /^Session actions, / }),
   ).toBeInViewport({ ratio: 1 });
-  await firefox.getByRole("button", { name: "End session" }).click();
+  await firefox.getByRole("button", { name: /^Session actions, / }).click();
+  await chooseEndSession(page);
   const confirmation = page.getByRole("alertdialog", {
     name: "Confirm account action",
   });
@@ -643,17 +697,17 @@ test("keeps password and session controls reachable on mobile with full device d
   await expect(firefox).toHaveCount(0);
   await expect(list).not.toContainText("2001:db8::102");
   await expect(
-    page.getByRole("listitem").filter({ hasText: "Current session" }),
+    page.getByRole("listitem").filter({ hasText: "This device" }),
   ).toContainText("Chrome on macOS");
   await expect(
     list
       .getByRole("listitem")
-      .filter({ hasText: "Current session" })
-      .getByRole("button", { name: "End session", exact: true }),
+      .filter({ hasText: "This device" })
+      .getByRole("button", { name: /^Session actions, / }),
   ).toBeEnabled();
   await expectNoHorizontalScroll(page);
 
-  await page.getByRole("button", { name: "End all other sessions" }).click();
+  await page.getByRole("button", { name: "Sign out other sessions" }).click();
   await expect(confirmation).toContainText(
     "Your current session will remain active.",
   );
@@ -691,10 +745,9 @@ test("warns before ending the current session and routes to sign-in after confir
   });
   await openAccount(page);
 
-  const current = page
-    .getByRole("listitem")
-    .filter({ hasText: "Current session" });
-  await current.getByRole("button", { name: "End session" }).click();
+  const current = page.getByRole("listitem").filter({ hasText: "This device" });
+  await current.getByRole("button", { name: /^Session actions, / }).click();
+  await chooseEndSession(page);
   const confirmation = page.getByRole("alertdialog", {
     name: "Confirm account action",
   });
@@ -704,7 +757,9 @@ test("warns before ending the current session and routes to sign-in after confir
   await confirmation.getByRole("button", { name: "Cancel" }).click();
   expect(requests).toEqual([]);
 
-  await current.getByRole("button", { name: "End session" }).click();
+  await current.getByRole("button", { name: /^Session actions, / }).click();
+
+  await chooseEndSession(page);
   await confirmation
     .getByRole("button", { name: "End this session and sign out" })
     .click();
@@ -793,9 +848,10 @@ test("current-session revocation clears owned drafts and attachment URLs through
   expect(persistedComms.length).toBeGreaterThan(0);
   await page
     .getByRole("listitem")
-    .filter({ hasText: "Current session" })
-    .getByRole("button", { name: "End session" })
+    .filter({ hasText: "This device" })
+    .getByRole("button", { name: /^Session actions, / })
     .click();
+  await chooseEndSession(page);
   await page
     .getByRole("button", {
       name: /^(Confirm end session|End this session and sign out)$/,
@@ -862,9 +918,10 @@ for (const [index, failure] of ["Access", "workspace", "Comms"].entries()) {
     );
     await page
       .getByRole("listitem")
-      .filter({ hasText: "Current session" })
-      .getByRole("button", { name: "End session" })
+      .filter({ hasText: "This device" })
+      .getByRole("button", { name: /^Session actions, / })
       .click();
+    await chooseEndSession(page);
     await page
       .getByRole("button", {
         name: /^(Confirm end session|End this session and sign out)$/,
@@ -929,14 +986,15 @@ test("failed current-session revocation keeps drafts active and restores focus a
   await openAccount(page);
   const trigger = page
     .getByRole("listitem")
-    .filter({ hasText: "Current session" })
-    .getByRole("button", { name: "End session" });
+    .filter({ hasText: "This device" })
+    .getByRole("button", { name: /^Session actions, / });
   await expect(trigger).toBeEnabled();
   await page.evaluate((keys) => {
     for (const key of keys)
       sessionStorage.setItem(key, "Retained before rejection");
   }, cleanupKeys);
   await trigger.click();
+  await chooseEndSession(page);
   const dialog = page.getByRole("alertdialog", {
     name: "Confirm account action",
     exact: true,
@@ -948,7 +1006,9 @@ test("failed current-session revocation keeps drafts active and restores focus a
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
+  // Enter opens the row menu again; End session opens the confirmation.
   await page.keyboard.press("Enter");
+  await chooseEndSession(page);
   await expect(dialog).toBeVisible();
   await dialog
     .getByRole("button", { name: "End this session and sign out", exact: true })
@@ -994,7 +1054,7 @@ test.describe("organization-local device session dates", () => {
 
     const current = page
       .getByRole("listitem")
-      .filter({ hasText: "Current session" });
+      .filter({ hasText: "This device" });
     await expect(current).toContainText("Last active 1 Oct 2026, 10:00");
     await expect(
       current.getByText("Chrome on macOS", { exact: true }),
@@ -1018,12 +1078,12 @@ test("keeps session controls usable while organization date settings load", asyn
   try {
     const current = page
       .getByRole("listitem")
-      .filter({ hasText: "Current session" });
+      .filter({ hasText: "This device" });
     await expect(current).toContainText(
       "Last active Loading organization date settings…",
     );
     await expect(
-      current.getByRole("button", { name: "End session" }),
+      current.getByRole("button", { name: /^Session actions, / }),
     ).toBeEnabled();
     workspace.release();
     await expect(current).toContainText("Last active 1 Oct 2026, 10:00");
@@ -1046,18 +1106,16 @@ test("retries failed organization date settings without disabling session contro
     }
     await route.fulfill({ json: workspaceSettings });
   });
-  const current = page
-    .getByRole("listitem")
-    .filter({ hasText: "Current session" });
+  const current = page.getByRole("listitem").filter({ hasText: "This device" });
   await expect(
     page.getByRole("alert").filter({
       hasText:
         "Organization date settings could not be loaded. Retry to format session times.",
     }),
   ).toBeVisible();
-  await expect(current).toContainText("Last active Date settings unavailable");
+  await expect(current).toContainText("Last active Time unavailable");
   await expect(
-    current.getByRole("button", { name: "End session" }),
+    current.getByRole("button", { name: /^Session actions, / }),
   ).toBeEnabled();
   workspaceRetryAllowed = true;
   await page.getByRole("button", { name: "Retry date settings" }).click();
@@ -1149,8 +1207,9 @@ test("accepted Account remote-session end refreshes the cached People count", as
   await sessions
     .getByRole("listitem")
     .filter({ hasText: "Firefox on Android" })
-    .getByRole("button", { name: "End session", exact: true })
+    .getByRole("button", { name: /^Session actions, / })
     .click();
+  await chooseEndSession(page);
   await page
     .getByRole("alertdialog")
     .getByRole("button", { name: "Confirm end session", exact: true })

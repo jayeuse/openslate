@@ -60,7 +60,7 @@ for (const [width, theme] of [
     ).toHaveCount(0);
     await page.getByLabel("Phone", { exact: true }).fill("+1 555 0199");
     await page
-      .getByRole("button", { name: "Save identity", exact: true })
+      .getByRole("button", { name: "Save profile", exact: true })
       .click();
     await expect(
       page.getByText("Profile saved.", { exact: true }),

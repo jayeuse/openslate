@@ -75,16 +75,16 @@ export const PAGE_GUIDES = {
     entries: [
       "Your profile shows your photo, name, job title, phone, role, groups, and short bio, as people in your organization see them.",
       "View profile on a person card opens that person's profile. Guests see only the photo, name, and job title.",
-      "Account settings holds your identity, sign-in, look, and regional preferences. Open it from your profile or the account menu.",
+      "Account settings holds your identity, sign-in, appearance, and regional preferences. Open it from your profile or the account menu.",
     ],
   },
   "account-settings": {
     title: "Account settings",
     entries: [
-      "Identity holds your display name, job title, phone, short bio, and photo. Save identity confirms only your changed fields.",
-      "Sign-in & security shows your sign-in information, sessions, and available two-step verification controls.",
-      "Look & behavior holds your color mode, reduced-motion choice, and keyboard shortcuts. Text size and density apply to this device.",
-      "Regional holds your personal display preferences. Organization defaults remain in Manage.",
+      "Identity holds your photo, name, job title, phone, short bio, and sign-in email. Save profile confirms only your changed fields; the photo saves at once.",
+      "Sign-in holds your password, two-step verification, and the devices that are signed in.",
+      "Appearance holds your color mode, reduced-motion choice, and keyboard shortcuts, and saves each choice at once. Text size and page spacing apply to this device.",
+      "Regional holds your timezone and date, time, and week formats, and saves each choice at once. Organization defaults remain in Manage.",
     ],
   },
 } as const satisfies Record<string, PageGuide>;

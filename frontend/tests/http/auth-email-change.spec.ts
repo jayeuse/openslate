@@ -158,9 +158,9 @@ test("same-account reverification discards a delayed request without leaving the
       page.getByRole("status").filter({ hasText: /confirmation requested/i }),
     ).toHaveCount(0);
     await expect(
-      dialog.getByRole("button", { name: "Close", exact: true }),
+      dialog.getByRole("button", { name: "Cancel", exact: true }),
     ).toBeEnabled();
-    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await page
       .getByRole("button", { name: "Change email", exact: true })
       .click();
