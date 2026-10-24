@@ -23,6 +23,7 @@ def test_realtime_seed_transition_never_restarts_or_extends_the_startup_budget(
         runtime = supabase_runtime.DisposablePostgres(
             tmp_path, "a" * 32, {}, log, template_port=8008
         )
+        monkeypatch.setattr(runtime, "_pull_images", lambda: None)
         monkeypatch.setattr(runtime, "_free_network_block", lambda: 1)
         monkeypatch.setattr(runtime, "_write_inputs", lambda: None)
         monkeypatch.setattr(runtime, "_ownership", lambda: {"service_ids": {"db": "a" * 64}})

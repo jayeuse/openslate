@@ -559,6 +559,7 @@ def test_disposable_supabase_starts_pinned_compose_and_writes_private_manifest(
             output = f"127.0.0.1:{mapped}\n" if arguments[0] == "port" else ""
             return subprocess.CompletedProcess(arguments, 0, output)
 
+        monkeypatch.setattr(runtime, "_pull_images", lambda: None)
         monkeypatch.setattr(runtime, "_compose", compose)
         monkeypatch.setattr(runtime, "_free_network_block", lambda: 7)
         monkeypatch.setattr(
@@ -635,6 +636,7 @@ def test_disposable_supabase_rejects_non_loopback_provider_mapping(
                 arguments, 0, "0.0.0.0:49152\n" if arguments[0] == "port" else ""
             ),
         )
+        monkeypatch.setattr(runtime, "_pull_images", lambda: None)
         monkeypatch.setattr(runtime, "_free_network_block", lambda: 7)
         with pytest.raises(RuntimeError, match="unexpected host port"):
             runtime.start()
