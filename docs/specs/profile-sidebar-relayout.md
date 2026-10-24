@@ -309,7 +309,7 @@ Each phase ends with:
 | EXIT-7  | Pass. A hands-on pass as `owner-admin`, `ho-admin`, `ho-manager`, `ho-reader`, and `ho-guest` found no blocking defect. Not covered by hand: a guest with narrow reach (every development guest reads all departments) and an account with no organization; HTTP tests cover both. |
 | EXIT-8  | Pass. `/profile`, `/settings`, `/access`, `/sandbox`, and `/manage` do not scroll at 1280×720 and 1440×900; no sideways scroll at 390.                                                                                                                                             |
 | EXIT-9  | Pass. Targets are at least 44px at 390, the drawer included; field edges are 3.3–4.4:1 in the four looks.                                                                                                                                                                          |
-| EXIT-10 | Pending: the owner's review of the live app.                                                                                                                                                                                                                                       |
+| EXIT-10 | Pass. The owner reviewed the live app and approved the result (2026-10-25).                                                                                                                                                                                                        |
 
 ## Phase 6 glossary (decided under the owner's delegation, 2026-10-25)
 
