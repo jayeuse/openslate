@@ -1066,7 +1066,7 @@ test("separate retention days use Save and Discard without changing Backup", asy
     name: "Backup schedule",
     exact: true,
   });
-  const backupRetention = backupPolicy.getByLabel("Retention period", {
+  const backupRetention = backupPolicy.getByLabel("Keep backups for", {
     exact: true,
   });
   await expect(backupRetention).toHaveValue("30");
@@ -1500,8 +1500,8 @@ test("legacy Manage Security opens Access Security and Backup has no privileged 
   expect(state.sessionReads).toHaveLength(sessionReads);
   await expect(
     page
-      .getByRole("region", { name: "Backup workspace", exact: true })
-      .getByRole("link", { name: "Security", exact: true }),
+      .getByRole("main")
+      .getByRole("link", { name: "Access security", exact: true }),
   ).toHaveAttribute("href", "/access?view=security");
 });
 

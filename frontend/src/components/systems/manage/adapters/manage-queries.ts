@@ -2,6 +2,8 @@
 
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { accessKeys } from "../../access/adapters/access-keys";
+import { listAccessDepartments } from "../../access/state/api";
+import { getAuditField } from "./audit-fields-api";
 
 import {
   getManageWorkspace,
@@ -25,7 +27,6 @@ import {
   type ManageJobIdentity,
 } from "./jobs-api";
 import {
-  getManageAuditLog,
   getManageAuditOptions,
   getManageAuditExportPreview,
   listManageAuditLogs,
@@ -80,7 +81,6 @@ export const manageKeys = {
   auditList: (request: ManageAuditListRequest) =>
     ["manage", "audit-logs", "list", request] as const,
   auditOptions: () => ["manage", "audit-logs", "options"] as const,
-  auditDetail: (id: string) => ["manage", "audit-logs", "detail", id] as const,
   auditExport: (request: Omit<ManageAuditListRequest, "limit" | "offset">) =>
     ["manage", "audit-logs", "export", request] as const,
   jobs: () => ["manage", "jobs"] as const,
@@ -274,17 +274,40 @@ export const manageAuditListOptions = (request: ManageAuditListRequest) =>
     queryFn: ({ signal }) => listManageAuditLogs(request, signal),
   });
 
-export const manageAuditOptionsOptions = (search = "") =>
+export const manageAuditOptionsOptions = (search = "", departmentId?: string) =>
   queryOptions({
-    queryKey: [...manageKeys.auditOptions(), search.trim()],
-    queryFn: ({ signal }) => getManageAuditOptions(signal, search),
+    queryKey: [...manageKeys.auditOptions(), search.trim(), departmentId ?? ""],
+    queryFn: ({ signal }) =>
+      getManageAuditOptions(signal, search, departmentId),
   });
 
-export const manageAuditDetailOptions = (id: string) =>
+/**
+ * The departments the viewer can read, which name the Activity area and a
+ * manager's Department picker. One page of 100 covers ordinary
+ * organizations; a department beyond it reads as its kind's page.
+ */
+export const manageAuditDepartmentsOptions = () =>
   queryOptions({
-    queryKey: manageKeys.auditDetail(id),
-    queryFn: ({ signal }) => getManageAuditLog(id, signal),
-    enabled: Boolean(id),
+    queryKey: [...manageKeys.audit(), "departments"] as const,
+    queryFn: ({ signal }) =>
+      listAccessDepartments({
+        limit: 100,
+        offset: 0,
+        sort_by: "department_name",
+        sort_order: "asc",
+        signal,
+      }),
+  });
+
+/**
+ * One record field's name for the audit rows (MD16). Names rarely change, so
+ * a read stays fresh for five minutes across pages and sheets.
+ */
+export const manageAuditFieldOptions = (fieldId: string) =>
+  queryOptions({
+    queryKey: [...manageKeys.audit(), "field", fieldId] as const,
+    queryFn: ({ signal }) => getAuditField(fieldId, signal),
+    staleTime: 5 * 60_000,
   });
 
 export const manageAuditExportOptions = (

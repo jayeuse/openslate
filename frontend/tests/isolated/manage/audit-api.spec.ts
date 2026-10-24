@@ -16,8 +16,8 @@ import { installFetch } from "../platform/fixtures";
 // whole, so nothing is downloaded. The http journeys keep the 503 and the
 // 409 cap examples with their exact bodies: "Audit CSV failure retains its
 // pinned preview and Retry refuses malformed or oversized responses" and
-// "Audit export refuses more than 10000 rows and exports the header after
-// filters narrow to zero".
+// "Audit Export is disabled with its reason above 10,000 events and exports
+// the header after filters narrow to zero".
 
 const userId = "00000000-0000-4000-8000-000000000201";
 const filters = {

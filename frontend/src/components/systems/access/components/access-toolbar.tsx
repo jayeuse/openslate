@@ -42,50 +42,102 @@ export type FilterChip = {
   onRemove: () => void;
 };
 
-type AccessToolbarProps<T extends string> = {
-  searchLabel: string;
-  /** The search box's id, so a view can return focus to it. */
-  searchId?: string;
-  placeholder: string;
-  query: string;
-  onQueryChange: (query: string) => void;
-  sortLabel?: string;
-  searchMaxLength?: number;
-  sortDisabled?: boolean;
-  filtersDisabled?: boolean;
-  sort: T;
-  sortOptions: readonly { value: T; label: string; disabled?: boolean }[];
-  onSortChange: (sort: T) => void;
-  /** The active filters; the Filters button counts them. */
-  chips: readonly FilterChip[];
-  /** Clears every chip's filter; the search, status and sort stay. */
-  onClearFilters: () => void;
-  /**
-   * Below the md breakpoint, show only the search and the Filters button,
-   * and move Sort into the filters. Off by default.
-   */
-  sortInFiltersBelowMd?: boolean;
-  /** Quick filters beside the search (People's status). */
-  quickFilters?: ReactNode;
-  /** The view's own actions at the end of the row. */
-  actions?: ReactNode;
-  /** The Filters rows (`FilterRow`, `FilterSelect`). */
-  children: ReactNode;
-};
+/**
+ * The search box. A list the API cannot search (Manage Jobs) passes
+ * `search={false}` and shows none; `searchLabel` still names the controls.
+ */
+type ToolbarSearch =
+  | {
+      search?: true;
+      placeholder: string;
+      query: string;
+      onQueryChange: (query: string) => void;
+    }
+  | {
+      search: false;
+      placeholder?: never;
+      query?: never;
+      onQueryChange?: never;
+    };
+
+/** The Sort select; a list with one fixed order (Manage Jobs) omits it. */
+type ToolbarSort<T extends string> =
+  | {
+      sort: T;
+      sortOptions: readonly { value: T; label: string; disabled?: boolean }[];
+      onSortChange: (sort: T) => void;
+    }
+  | { sort?: never; sortOptions?: never; onSortChange?: never };
+
+type AccessToolbarProps<T extends string> = ToolbarSearch &
+  ToolbarSort<T> & {
+    searchLabel: string;
+    /** The search box's id, so a view can return focus to it. */
+    searchId?: string;
+    sortLabel?: string;
+    searchMaxLength?: number;
+    sortDisabled?: boolean;
+    filtersDisabled?: boolean;
+    /** The active filters; the Filters button counts them. */
+    chips: readonly FilterChip[];
+    /** Clears every chip's filter; the search, status and sort stay. */
+    onClearFilters: () => void;
+    /**
+     * Below the md breakpoint, show only the search and the Filters button,
+     * and move Sort into the filters. Off by default.
+     */
+    sortInFiltersBelowMd?: boolean;
+    /**
+     * The same up to 1280px, so a tablet toolbar keeps one line instead of
+     * wrapping Sort onto a line of its own (Manage Audit). Off by default.
+     */
+    sortInFiltersBelowXl?: boolean;
+    /** Quick filters beside the search (People's status). */
+    quickFilters?: ReactNode;
+    /**
+     * Put the quick filters on their own row under the search, still before
+     * the chips, for a toolbar in a narrow pane (Manage Backup). Off by default.
+     */
+    quickFiltersBelow?: boolean;
+    /**
+     * From 768px keep the row on one line: the quick filters shrink and
+     * scroll sideways in their strip instead of pushing Filters onto a line
+     * of its own (Manage Jobs at 1024). Off by default.
+     */
+    quickFiltersScroll?: boolean;
+    /** The view's own actions at the end of the row. */
+    actions?: ReactNode;
+    /** The Filters rows (`FilterRow`, `FilterSelect`). */
+    children: ReactNode;
+  };
 
 const WIDE_QUERY = "(min-width: 48rem)";
+const DESKTOP_QUERY = "(min-width: 80rem)";
 
-function subscribeWide(onChange: () => void) {
-  const query = window.matchMedia(WIDE_QUERY);
-  query.addEventListener("change", onChange);
-  return () => query.removeEventListener("change", onChange);
+function subscribeTo(media: string) {
+  return (onChange: () => void) => {
+    const query = window.matchMedia(media);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  };
 }
+const subscribeWide = subscribeTo(WIDE_QUERY);
+const subscribeDesktop = subscribeTo(DESKTOP_QUERY);
 
 /** True at the md breakpoint and wider; the first render assumes wide. */
 function useWideScreen(): boolean {
   return useSyncExternalStore(
     subscribeWide,
     () => window.matchMedia(WIDE_QUERY).matches,
+    () => true,
+  );
+}
+
+/** True at the xl breakpoint and wider; the first render assumes it. */
+function useDesktopScreen(): boolean {
+  return useSyncExternalStore(
+    subscribeDesktop,
+    () => window.matchMedia(DESKTOP_QUERY).matches,
     () => true,
   );
 }
@@ -167,9 +219,12 @@ function FilterChips({
   chips,
   onClearFilters,
   triggerRef,
+  disabled,
 }: {
   chips: readonly FilterChip[];
   onClearFilters: () => void;
+  /** Locks the chips with the Filters button (`filtersDisabled`). */
+  disabled: boolean;
   /** The Filters button, which takes focus when the last chip goes. */
   triggerRef: RefObject<HTMLButtonElement | null>;
 }) {
@@ -209,6 +264,7 @@ function FilterChips({
             }}
             type="button"
             aria-label={`Remove ${chip.label} filter`}
+            disabled={disabled}
             className="text-muted-foreground hover:text-foreground focus-visible:outline-ring inline-grid size-11 shrink-0 place-items-center rounded-full outline-none hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] focus-visible:outline-2 xl:size-5"
             onClick={() => {
               focusAfter.current =
@@ -224,6 +280,7 @@ function FilterChips({
         type="button"
         variant="ghost"
         className="min-h-11 px-2 xl:min-h-7"
+        disabled={disabled}
         onClick={() => {
           focusAfter.current = "";
           onClearFilters();
@@ -257,17 +314,28 @@ export function AccessToolbar<T extends string>({
   onSortChange,
   chips,
   onClearFilters,
-  sortInFiltersBelowMd = false,
+  sortInFiltersBelowMd: sortBelowMd = false,
+  sortInFiltersBelowXl = false,
   quickFilters,
+  quickFiltersBelow = false,
+  quickFiltersScroll = false,
   actions,
   children,
 }: AccessToolbarProps<T>) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const wide = useWideScreen();
-  const sortInFilters = sortInFiltersBelowMd && !wide;
+  const desktop = useDesktopScreen();
+  // Below xl implies below md: the phone layout of the search stays.
+  const sortInFiltersBelowMd = sortBelowMd || sortInFiltersBelowXl;
+  const sortInFilters = sortInFiltersBelowXl
+    ? !desktop
+    : sortInFiltersBelowMd && !wide;
   const count = chips.length;
-  const sortSelect = (inToolbar: boolean) => (
+  const sortSelect = (
+    inToolbar: boolean,
+    options: NonNullable<typeof sortOptions>,
+  ) => (
     <NativeSelect
       id={`${id}-sort`}
       aria-label={sortLabel}
@@ -282,13 +350,13 @@ export function AccessToolbar<T extends string>({
       value={sort}
       disabled={sortDisabled}
       onChange={(event) => {
-        const option = sortOptions.find(
+        const option = options.find(
           (item) => item.value === event.target.value,
         );
-        if (option) onSortChange(option.value);
+        if (option) onSortChange?.(option.value);
       }}
     >
-      {sortOptions.map((option) => (
+      {options.map((option) => (
         <NativeSelectOption
           key={option.value}
           value={option.value}
@@ -301,12 +369,12 @@ export function AccessToolbar<T extends string>({
   );
   // One Sort control; a compact toolbar moves it into the filters as a
   // row, never copies it.
-  const sortField = sortInFilters ? (
+  const sortField = !sortOptions ? null : sortInFilters ? (
     <Field className={filterRowClassName}>
       <FieldLabel htmlFor={`${id}-sort`} className={filterLabelClassName}>
         Sort
       </FieldLabel>
-      {sortSelect(false)}
+      {sortSelect(false, sortOptions)}
     </Field>
   ) : (
     <div className="flex shrink-0 items-center gap-2 md:ml-auto">
@@ -316,7 +384,7 @@ export function AccessToolbar<T extends string>({
       >
         Sort:
       </label>
-      {sortSelect(true)}
+      {sortSelect(true, sortOptions)}
     </div>
   );
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -373,34 +441,41 @@ export function AccessToolbar<T extends string>({
       className="flex min-w-0 shrink-0 flex-col gap-2"
     >
       {/* From 1280px one row: the search gives way to the other controls. */}
-      <div className="flex min-w-0 flex-wrap items-end gap-3 xl:flex-nowrap xl:gap-2">
-        <Field
-          className={cn(
-            "min-w-0 gap-1.5",
-            sortInFiltersBelowMd
-              ? "flex-1 md:w-72 md:flex-none xl:w-auto xl:max-w-72 xl:min-w-28 xl:flex-1"
-              : "w-full sm:w-72 xl:w-auto xl:max-w-72 xl:min-w-28 xl:flex-1",
-          )}
-        >
-          <FieldLabel htmlFor={searchId ?? `${id}-search`}>Search</FieldLabel>
-          <div className="relative">
-            <Search
-              aria-hidden="true"
-              className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-            />
-            <Input
-              id={searchId ?? `${id}-search`}
-              aria-label={searchLabel}
-              type="search"
-              maxLength={searchMaxLength}
-              className="min-h-11 pl-9"
-              placeholder={placeholder}
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
-            />
-          </div>
-        </Field>
-        {quickFilters ? (
+      <div
+        className={cn(
+          "flex min-w-0 flex-wrap items-end gap-3 xl:flex-nowrap xl:gap-2",
+          quickFiltersScroll && "md:flex-nowrap",
+        )}
+      >
+        {onQueryChange ? (
+          <Field
+            className={cn(
+              "min-w-0 gap-1.5",
+              sortInFiltersBelowMd
+                ? "flex-1 md:w-72 md:flex-none xl:w-auto xl:max-w-72 xl:min-w-28 xl:flex-1"
+                : "w-full sm:w-72 xl:w-auto xl:max-w-72 xl:min-w-28 xl:flex-1",
+            )}
+          >
+            <FieldLabel htmlFor={searchId ?? `${id}-search`}>Search</FieldLabel>
+            <div className="relative">
+              <Search
+                aria-hidden="true"
+                className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+              />
+              <Input
+                id={searchId ?? `${id}-search`}
+                aria-label={searchLabel}
+                type="search"
+                maxLength={searchMaxLength}
+                className="min-h-11 pl-9"
+                placeholder={placeholder}
+                value={query}
+                onChange={(event) => onQueryChange(event.target.value)}
+              />
+            </div>
+          </Field>
+        ) : null}
+        {quickFilters && !quickFiltersBelow ? (
           <div className="order-last w-full min-w-0 md:order-none md:w-auto xl:shrink-0">
             {quickFilters}
           </div>
@@ -445,10 +520,14 @@ export function AccessToolbar<T extends string>({
           </div>
         ) : null}
       </div>
+      {quickFilters && quickFiltersBelow ? (
+        <div className="min-w-0">{quickFilters}</div>
+      ) : null}
       <FilterChips
         chips={chips}
         onClearFilters={onClearFilters}
         triggerRef={triggerRef}
+        disabled={filtersDisabled}
       />
     </section>
   );

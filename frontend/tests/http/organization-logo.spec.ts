@@ -5,6 +5,7 @@ import {
   test,
   type Page,
 } from "./helpers/test";
+import { openProfile } from "./helpers/manage-organization";
 import { installSeededComms } from "./helpers/comms-seeded-world";
 import {
   installLogoApi,
@@ -32,7 +33,7 @@ const pick = (
     .getByLabel("Organization logo", { exact: true })
     .setInputFiles({ name, mimeType, buffer });
 const preview = (page: Page) =>
-  page.getByRole("region", { name: "Workspace preview" });
+  page.getByRole("region", { name: "Preview", exact: true });
 const header = (page: Page) =>
   page.getByRole("complementary", { name: "Primary sidebar" });
 const patches = (api: Awaited<ReturnType<typeof installLogoApi>>) =>
@@ -79,7 +80,9 @@ test("Logo draft stays local until settings save, then saved header and removal 
   expect(api.writes).toEqual([]);
   await save(page).click();
   await expect(
-    page.getByText("Organization settings saved.", { exact: true }),
+    page
+      .getByRole("group", { name: "Organization actions", exact: true })
+      .getByText("Saved", { exact: true }),
   ).toBeVisible();
   // The fake File API names its first reservation with this id.
   const committed = "44444444-4444-4444-8444-000000000001";
@@ -214,6 +217,7 @@ for (const [name, buffer, mimeType] of [
   }) => {
     const api = await installLogoApi(page);
     await page.goto("/manage?view=organization");
+    await openProfile(page);
     await page
       .getByLabel("Description", { exact: true })
       .fill("Retained draft");
@@ -281,6 +285,7 @@ for (const committed of [true, false]) {
     api.failure = committed ? "lost" : "before";
     await page.goto("/manage?view=organization");
     await pick(page);
+    await openProfile(page);
     await page
       .getByLabel("Description", { exact: true })
       .fill("Readback description");
@@ -372,12 +377,15 @@ test("Logo stale revision preserves the ready candidate and settings draft for e
   api.failure = "stale";
   await page.goto("/manage?view=organization");
   await pick(page);
+  await openProfile(page);
   await page
     .getByLabel("Description", { exact: true })
     .fill("Preserved on conflict");
   await save(page).click();
   await expect(
-    page.getByText(/Workspace settings changed\. The latest values are loaded/),
+    page.getByText(
+      /Organization settings changed\. The latest values are loaded/,
+    ),
   ).toBeVisible();
   await expect(page.getByLabel("Description", { exact: true })).toHaveValue(
     "Preserved on conflict",
@@ -421,7 +429,9 @@ test("Logo retained-candidate refusal rechecks the session before any further pu
   await pick(page);
   await save(page).click();
   await expect(
-    page.getByText(/Workspace settings changed\. The latest values are loaded/),
+    page.getByText(
+      /Organization settings changed\. The latest values are loaded/,
+    ),
   ).toBeVisible();
   const sessionsBeforeRefusal = api.sessionReads;
   const gate = heldResponse();
@@ -490,34 +500,35 @@ for (const role of ["member", "guest"] as const) {
       page.getByRole("button", { name: "Remove logo", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("note", { name: "Organization data", exact: true }),
-    ).toContainText("Only an administrator can change these settings.");
-    // Profile fields are read-only, and a guest reply carries no contacts.
-    await expect(field(page, "Legal name")).toHaveValue("Harbor Services Ltd");
-    await expect(field(page, "Legal name")).toBeDisabled();
-    await expect(field(page, "Description")).toBeDisabled();
+      page
+        .getByRole("main")
+        .getByText("Only an administrator can change these settings.", {
+          exact: true,
+        }),
+    ).toBeVisible();
+    // Profile values read as text, and a guest reply carries no contacts.
+    const settings = page.getByRole("region", {
+      name: "Organization settings",
+      exact: true,
+    });
+    const value = (label: string) =>
+      settings.locator(`dt:text-is("${label}") + dd`);
+    await expect(value("Legal name")).toHaveText("Harbor Services Ltd");
+    await expect(settings.getByRole("textbox")).toHaveCount(0);
     if (role === "guest") {
-      await expect(field(page, "Contact email")).toHaveCount(0);
-      await expect(field(page, "Contact phone")).toHaveCount(0);
-      await expect(field(page, "Postal address")).toHaveCount(0);
+      await expect(value("Contact email")).toHaveCount(0);
+      await expect(value("Contact phone")).toHaveCount(0);
+      await expect(value("Postal address")).toHaveCount(0);
     } else {
-      await expect(field(page, "Contact email")).toHaveValue(
-        "contact@example.test",
-      );
-      await expect(field(page, "Contact email")).toBeDisabled();
+      await expect(value("Contact email")).toHaveText("contact@example.test");
     }
-    // The saved look shows; a pointer click on another look changes nothing.
-    await expect(radio(page, "Stockroom")).toBeChecked();
-    await expect(radio(page, "Whiteboard")).toBeDisabled();
-    const whiteboard = (await look(page)
-      .locator("label")
-      .filter({ hasText: "Whiteboard" })
-      .boundingBox())!;
-    await page.mouse.click(
-      whiteboard.x + whiteboard.width / 2,
-      whiteboard.y + whiteboard.height / 2,
-    );
-    await expect(radio(page, "Stockroom")).toBeChecked();
+    // The saved look shows as one tile, with no other look to choose.
+    await expect(
+      settings
+        .getByRole("group", { name: "Look", exact: true })
+        .getByText("Stockroom", { exact: true }),
+    ).toBeVisible();
+    await expect(look(page)).toHaveCount(0);
     await expect(page.locator("html")).toHaveAttribute(
       "data-theme",
       "stockroom",
@@ -642,7 +653,10 @@ test("Logo pending upload blocks duplicate Save and departure without publishing
     await pick(page);
     await save(page).click();
     await uploading.released;
-    await expect(save(page)).toBeDisabled();
+    // While it saves, Save reads "Saving…" and cannot be pressed again.
+    await expect(
+      page.getByRole("button", { name: "Saving…", exact: true }),
+    ).toBeDisabled();
     await header(page)
       .getByRole("link", { name: "Harbor Services workspace", exact: true })
       .click();
@@ -655,7 +669,9 @@ test("Logo pending upload blocks duplicate Save and departure without publishing
     expect(patches(api)).toEqual([]);
     gate.release();
     await expect(
-      page.getByText("Organization settings saved.", { exact: true }),
+      page
+        .getByRole("group", { name: "Organization actions", exact: true })
+        .getByText("Saved", { exact: true }),
     ).toBeVisible();
     expect(api.writes.filter(({ path }) => path === "/files")).toHaveLength(1);
     expect(patches(api)).toHaveLength(1);
@@ -713,12 +729,15 @@ test("Logo delayed admitted B receipt cannot replace newer C brand, theme or rev
     await expect(save(page)).toBeDisabled();
     expect(patches(api)).toHaveLength(1);
     api.onPatch = null;
+    await openProfile(page);
     await page
       .getByLabel("Description", { exact: true })
       .fill("Explicit next change");
     await save(page).click();
     await expect(
-      page.getByText("Organization settings saved.", { exact: true }),
+      page
+        .getByRole("group", { name: "Organization actions", exact: true })
+        .getByText("Saved", { exact: true }),
     ).toBeVisible();
     expect(patches(api)).toHaveLength(2);
     expect(patches(api)[1].body?.revision).toBe(6);
@@ -738,22 +757,36 @@ for (const status of [503, 403]) {
     };
     await page.goto("/manage?view=organization");
     await pick(page);
+    await openProfile(page);
     await page
       .getByLabel("Description", { exact: true })
       .fill("Committed description");
     await save(page).click();
+    // The partial failure is an error beside Save, not a success notice.
     await expect(
-      page.getByText(
-        "Settings saved. Current organization settings could not be loaded. Retry before making another change.",
-        { exact: true },
-      ),
-    ).toBeVisible();
+      page
+        .getByRole("group", { name: "Organization actions", exact: true })
+        .getByRole("alert"),
+    ).toHaveText(
+      "Settings saved. Current organization settings could not be loaded. Retry before making another change.",
+    );
     await expect(
       page.getByText("The settings could not be saved. Try again.", {
         exact: true,
       }),
     ).toHaveCount(0);
     await expect(save(page)).toBeDisabled();
+    // The footer does not call the held draft saved while it is checked.
+    const actions = page.getByRole("group", {
+      name: "Organization actions",
+      exact: true,
+    });
+    await expect(actions.getByRole("status")).toHaveText(
+      "Checking saved changes…",
+    );
+    await expect(save(page)).toHaveAccessibleDescription(
+      "Checking the saved changes first.",
+    );
     expect(patches(api)).toHaveLength(1);
     api.readStatus = 200;
     api.onPatch = null;
@@ -815,6 +848,7 @@ test("Logo privacy curtain conceals a selected preview and restores only the sam
   );
   await page.goto("/manage?view=organization");
   // One session check conceals three drafts: a contact, a look and a logo.
+  await openProfile(page);
   await field(page, "Contact email").fill("retained@example.com");
   await expect(radio(page, "Stockroom")).toBeEnabled();
   await look(page).locator("label").filter({ hasText: "Stockroom" }).click();

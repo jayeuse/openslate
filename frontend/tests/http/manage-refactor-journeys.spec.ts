@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/test";
+import { expect, heldResponse, signedInAs, test } from "./helpers/test";
 import type { Page } from "./helpers/test";
 import { mockManageBackups } from "./helpers/manage-backups";
 import { sendOpenViewEvent } from "./helpers/openview-event-source";
@@ -131,6 +131,47 @@ test.beforeEach(async ({ page }) => {
   installWorkspaceRoute(page);
 });
 
+test("Organization Save says Saving…, keeps focus, locks only the editor, and the chip confirms the save", async ({
+  page,
+}) => {
+  installWorkspaceRoute(page);
+  const held = heldResponse();
+  await page.route("**/api/workspace", async (route) => {
+    if (route.request().method() === "PATCH") {
+      held.enter();
+      await held.released;
+    }
+    await route.fallback();
+  });
+  await page.goto("/manage?view=organization");
+  const name = page.getByRole("textbox", {
+    name: "Organization name",
+    exact: true,
+  });
+  await name.fill("Harbor Ops");
+  const actions = page.getByRole("group", {
+    name: "Organization actions",
+    exact: true,
+  });
+  await actions.getByRole("button", { name: "Save settings" }).focus();
+  await page.keyboard.press("Enter");
+  await held.entered;
+  const saving = actions.getByRole("button", { name: "Saving…" });
+  await expect(saving).toBeFocused();
+  await expect(name).toBeDisabled();
+  // No page-wide status line above the header.
+  await expect(page.getByText("Saving changes…")).toHaveCount(0);
+  // The chip still says unsaved while the save runs, then turns Saved.
+  await expect(actions.getByRole("status")).toHaveText("1 unsaved change");
+  held.release();
+  await expect(actions.getByRole("status")).toHaveText("Saved");
+  const save = actions.getByRole("button", { name: "Save settings" });
+  await expect(save).toBeFocused();
+  await expect(name).toBeEnabled();
+  // The chip is the confirmation; no page Alert repeats it.
+  await expect(page.getByText("Organization settings saved.")).toHaveCount(0);
+});
+
 test("Manage organization loads and saves all seven workspace fields", async ({
   page,
 }) => {
@@ -176,9 +217,7 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   await expect(currency).toContainText("SGD");
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("08:00–17:00");
-  await expect(
-    page.getByRole("note", { name: "Organization data", exact: true }),
-  ).not.toContainText("are examples");
+  await expect(page.getByRole("main")).not.toContainText("are examples");
   await expect(name).toHaveValue("Harbor workspace");
   await expect(locale).toContainText("English (Philippines)");
   await expect(timezone).toContainText("Asia/Manila");
@@ -200,7 +239,7 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   await expect(name).toHaveValue("Harbor operations");
   await expect(
     page.getByRole("button", { name: "Discard changes", exact: true }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   expect(workspace.patches).toEqual([
     {
       revision: 4,
@@ -225,7 +264,7 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(
     page.getByRole("button", { name: "Discard changes", exact: true }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   expect(workspace.patches[1]).toEqual({ revision: 5, mark: "" });
   await page.reload();
   await expect(mark).toHaveValue("");
@@ -373,12 +412,14 @@ test.describe("Organization regional choices", () => {
       /UTC-04:00.*America\/New York/,
     );
     await chooseRegionalOption(page, "Currency", "Yen", /JPY.*Yen/);
+    const chip = page
+      .getByRole("group", { name: "Organization actions", exact: true })
+      .getByRole("status");
+    await expect(chip).toHaveText("3 unsaved changes");
     await page
       .getByRole("button", { name: "Save settings", exact: true })
       .click();
-    await expect(
-      page.getByText("Organization settings saved.", { exact: true }),
-    ).toBeVisible();
+    await expect(chip).toHaveText("Saved");
     expect(workspace.patches).toEqual([
       {
         revision: 4,
@@ -509,7 +550,7 @@ test("Manage organization keeps all its draft fields after a failed save", async
     .click();
   await expect(
     page.getByRole("button", { name: "Discard changes", exact: true }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await page.reload();
   await expect(name).toHaveValue("Pending workspace");
   await expect(mark).toHaveValue("HOP");
@@ -579,7 +620,7 @@ test("Manage preserves section drafts without saving on leave or discard, valida
     .click();
   await expect(
     page.getByRole("button", { name: "Discard changes", exact: true }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await page.reload();
   await expect(name).toHaveValue("Accepted journey workspace");
 });
@@ -597,16 +638,28 @@ test("Updates and licensing share a real read-only destination and never simulat
   await expect(
     page.getByRole("heading", { level: 1, name: "Updates & licensing" }),
   ).toBeVisible();
+  // One summary of label-left rows holds the version and the license.
   const software = page.getByRole("region", {
-    name: "Software version",
+    name: "Installation",
     exact: true,
   });
-  const license = page.getByRole("region", {
-    name: "License & usage",
-    exact: true,
-  });
-  await expect(software.getByText("0.1.0", { exact: true })).toBeVisible();
-  await expect(software).toContainText("Release information unavailable");
+  const license = software;
+  await expect(software.getByRole("term")).toHaveText([
+    "Version",
+    "Release check",
+    "License",
+    "Limits",
+  ]);
+  await expect(software.getByRole("definition")).toHaveText([
+    "0.1.0 · Stable channel",
+    /^The release check is not available/,
+    "No license required · Self-hosted",
+    "None · capacity depends on your server",
+  ]);
+  await expect(
+    page.getByRole("heading", { name: /Software version|License & usage/ }),
+  ).toHaveCount(0);
+  await expect(software).toContainText("The release check is not available");
   await expect(license).toContainText("No license required");
   await expect(
     license.getByText(
@@ -625,9 +678,12 @@ test("Updates and licensing share a real read-only destination and never simulat
     .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await refreshed;
-  await expect(software).toContainText("Release information unavailable");
+  await expect(software).toContainText("The release check is not available");
   await expect(
-    software.getByRole("link", { name: "Update procedure", exact: true }),
+    software.getByRole("link", {
+      name: "Update procedure for this release",
+      exact: true,
+    }),
   ).toHaveAttribute(
     "href",
     "https://github.com/jayeuse/openslate/blob/main/infra/supabase/README.md#operator-updates",
@@ -663,7 +719,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   state.versionReadStatus = 503;
   await page.goto("/manage?view=updates");
   const software = page.getByRole("region", {
-    name: "Software version",
+    name: "Installation",
     exact: true,
   });
   await expect(software).toContainText("Version status could not be loaded");
@@ -672,12 +728,14 @@ test("Recorded version loading, denial, stale and current observations remain ho
   await software
     .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
-  await expect(software.getByText("0.1.0", { exact: true })).toBeVisible();
+  await expect(
+    software.getByText("0.1.0 · Stable channel", { exact: true }),
+  ).toBeVisible();
   state.version.status = "stale";
   state.version.latest_version = "0.2.0";
   state.version.observed_at = "2026-10-01T00:00:00Z";
   await sendOpenViewEvent(page, "invalidate", { entity: "update_statuses" });
-  await expect(software).toContainText("Release information is stale");
+  await expect(software).toContainText("The release check is out of date");
   await expect(software.getByText("Up to date", { exact: true })).toHaveCount(
     0,
   );
@@ -686,18 +744,39 @@ test("Recorded version loading, denial, stale and current observations remain ho
     .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
   await expect(software).toContainText(
-    "Only administrators can review version status",
+    "Only the installation owner can review version status",
   );
-  await expect(software.getByText("0.1.0", { exact: true })).toHaveCount(0);
+  await expect(
+    software.getByText("0.1.0 · Stable channel", { exact: true }),
+  ).toHaveCount(0);
   state.versionReadStatus = 200;
   state.version.status = "current";
   state.version.latest_version = "0.1.0";
   state.version.failure_code = null;
   state.version.observed_at = "2026-10-08T04:00:00Z";
-  await software
-    .getByRole("button", { name: "Refresh release status", exact: true })
-    .click();
+  // While the release check runs, Refresh waits and says so.
+  const held = heldResponse();
+  await page.route("**/api/version", async (route) => {
+    held.enter();
+    await held.released;
+    await route.fallback();
+  });
+  const refresh = software.getByRole("button", {
+    name: "Refresh release status",
+    exact: true,
+  });
+  await refresh.click();
+  try {
+    await held.entered;
+    await expect(refresh).toBeDisabled();
+    await expect(software.getByRole("status")).toHaveText(
+      "Checking release status…",
+    );
+  } finally {
+    held.release();
+  }
   await expect(software.getByText("Up to date", { exact: true })).toBeVisible();
+  await expect(software.getByRole("status")).toHaveCount(0);
   await expect(software).toContainText("Release check");
 });
 
@@ -746,4 +825,221 @@ test("Organization Larger text reflows at 1024 and phone widths with all setting
       page.getByRole("combobox", { name: "Timezone", exact: true }),
     ).toBeInViewport();
   }
+});
+
+// The Organization relayout (MD4, MD5 in docs/specs/manage-relayout.md):
+// label-left groups, a pinned footer, a still page from 1280px, and a reader
+// who sees plain text.
+const settingsPanel = (page: Page) =>
+  page.getByRole("region", { name: "Organization settings", exact: true });
+const settingsActions = (page: Page) =>
+  page.getByRole("group", { name: "Organization actions", exact: true });
+
+test("Organization settings read as label-left rows in Identity, Region and Look at 1440", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/manage?view=organization");
+  const settings = settingsPanel(page);
+  for (const group of ["Identity", "Region", "Look"])
+    await expect(
+      settings.getByRole("heading", { level: 2, name: group, exact: true }),
+    ).toBeVisible();
+  for (const [label, control] of [
+    ["Name", settings.getByRole("textbox", { name: "Organization name" })],
+    ["Currency", settings.getByRole("combobox", { name: "Currency" })],
+  ] as const) {
+    // The row label comes first; a search select keeps its own hidden one.
+    const labelBox = (await settings
+      .locator("label")
+      .getByText(label, { exact: true })
+      .first()
+      .boundingBox())!;
+    const controlBox = (await control.boundingBox())!;
+    expect(labelBox.x + labelBox.width, label).toBeLessThan(controlBox.x);
+    expect(
+      Math.abs(
+        labelBox.y +
+          labelBox.height / 2 -
+          (controlBox.y + controlBox.height / 2),
+      ),
+      label,
+    ).toBeLessThan(8);
+  }
+  // Each Region row holds one control whose name contains its visible label.
+  const labels = settings
+    .getByRole("group", { name: "Region", exact: true })
+    .locator("label[for]:not([data-slot])");
+  await expect(labels).toHaveText([
+    "Format",
+    "Timezone",
+    "Currency",
+    "Week starts",
+    "Business hours",
+  ]);
+  for (const label of await labels.all()) {
+    const text = (await label.textContent()) ?? "";
+    await expect(
+      page.locator(`[id="${await label.getAttribute("for")}"]`),
+      text,
+    ).toHaveAccessibleName(new RegExp(text, "i"));
+  }
+  // Four look tiles fit across at 1440, each swatch whole.
+  const tiles = settings
+    .getByRole("radiogroup", { name: "Organization look" })
+    .locator("label");
+  const tops = await tiles.evaluateAll((all) =>
+    all.map((tile) => Math.round(tile.getBoundingClientRect().top)),
+  );
+  expect(new Set(tops).size).toBe(1);
+  expect(
+    await tiles
+      .locator("span:not(.sr-only)")
+      .evaluateAll(
+        (parts) =>
+          parts.filter((part) => part.scrollWidth > part.clientWidth).length,
+      ),
+  ).toBe(0);
+  await expect(
+    settings.getByRole("textbox", { name: "Business hours" }),
+  ).toHaveAccessibleDescription(
+    "Use 24-hour time and a dash, for example 09:00–18:00.",
+  );
+});
+
+test("Organization keeps the page still at 1280 by 720 while its settings panel scrolls under a pinned footer", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto("/manage?view=organization");
+  const save = settingsActions(page).getByRole("button", {
+    name: "Save settings",
+  });
+  await expect(save).toBeInViewport();
+  // The timezone reads in full at the narrower width.
+  expect(
+    await settingsPanel(page)
+      .getByRole("combobox", { name: "Timezone" })
+      .locator("span")
+      .first()
+      .evaluate((value) => value.scrollWidth > value.clientWidth),
+  ).toBe(false);
+  // Each look tile shows its whole swatch, text included, at 1280.
+  expect(
+    await page
+      .getByRole("radiogroup", { name: "Organization look" })
+      .locator("label, label span:not(.sr-only)")
+      .evaluateAll(
+        (parts) =>
+          parts.filter((part) => part.scrollWidth > part.clientWidth).length,
+      ),
+  ).toBe(0);
+  const profile = settingsPanel(page).getByRole("button", { name: /^Profile/ });
+  await profile.scrollIntoViewIfNeeded();
+  await expect(profile).toBeInViewport();
+  await expect(save).toBeInViewport();
+  expect(
+    await page.evaluate(() => ({
+      document:
+        document.documentElement.scrollHeight -
+        document.documentElement.clientHeight,
+      scrolled: window.scrollY,
+    })),
+  ).toEqual({ document: 0, scrolled: 0 });
+});
+
+test("Organization footer offers Discard only for a draft, says why Save waits, and shows a save error in place", async ({
+  page,
+}) => {
+  await page.goto("/manage?view=organization");
+  const actions = settingsActions(page);
+  const save = actions.getByRole("button", { name: "Save settings" });
+  await expect(actions.getByRole("status")).toHaveText("Saved");
+  await expect(
+    actions.getByRole("button", { name: "Discard changes" }),
+  ).toHaveCount(0);
+  await expect(save).toHaveAttribute("aria-disabled", "true");
+  await expect(save).toHaveAccessibleDescription("No changes to save.");
+
+  await page.route("**/api/workspace", (route) =>
+    route.request().method() === "PATCH"
+      ? route.fulfill({ status: 503, json: { detail: "Unavailable" } })
+      : route.fallback(),
+  );
+  const name = page.getByRole("textbox", { name: "Organization name" });
+  await name.fill("Riverside Field Services");
+  await expect(actions.getByRole("status")).toHaveText("1 unsaved change");
+  await expect(save).not.toHaveAttribute("aria-disabled", "true");
+  await save.click();
+  await expect(actions.getByRole("alert")).toHaveText(
+    "The settings could not be saved. Try again.",
+  );
+  await expect(name).toHaveValue("Riverside Field Services");
+  await actions.getByRole("button", { name: "Discard changes" }).click();
+  await expect(name).toHaveValue("Riverside Services");
+  await expect(
+    actions.getByRole("button", { name: "Discard changes" }),
+  ).toHaveCount(0);
+});
+
+test("a member reads Organization as plain text with one look tile and no footer", async ({
+  page,
+}) => {
+  installWorkspaceRoute(page, {
+    ...initialWorkspace,
+    mark: "",
+    legal_name: "Riverside Services Ltd",
+    theme: "stockroom",
+  });
+  await signedInAs(page, {
+    id: "00000000-0000-4000-8000-000000000301",
+    role: "member",
+  });
+  await page.goto("/manage?view=organization");
+  const settings = settingsPanel(page);
+  const value = (label: string) =>
+    settings.locator(`dt:text-is("${label}") + dd`);
+  await expect(value("Name")).toHaveText("Riverside Services");
+  await expect(value("Mark")).toHaveText("Not set");
+  await expect(value("Currency")).toHaveText("PHP · Philippine Peso");
+  await expect(value("Legal name")).toHaveText("Riverside Services Ltd");
+  await expect(value("Contact phone")).toHaveText("Not set");
+  await expect(settings.getByRole("textbox")).toHaveCount(0);
+  await expect(settings.getByRole("combobox")).toHaveCount(0);
+  const look = settings.getByRole("group", { name: "Look", exact: true });
+  await expect(look.getByText("Stockroom", { exact: true })).toBeVisible();
+  await expect(look.getByRole("radio")).toHaveCount(0);
+  await expect(settingsActions(page)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save settings" })).toHaveCount(
+    0,
+  );
+});
+
+test("Organization on a phone stacks labels above fields and keeps the footer at the bottom", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/manage?view=organization");
+  const settings = settingsPanel(page);
+  const labelBox = (await settings
+    .locator("label")
+    .getByText("Name", { exact: true })
+    .boundingBox())!;
+  const nameBox = (await settings
+    .getByRole("textbox", { name: "Organization name" })
+    .boundingBox())!;
+  expect(labelBox.y + labelBox.height).toBeLessThanOrEqual(nameBox.y);
+  const save = settingsActions(page).getByRole("button", {
+    name: "Save settings",
+  });
+  await expect(save).toBeInViewport();
+  expect((await save.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  // The shared Advanced header (here "Profile") is a 44px target below 1280.
+  const profile = settings.getByRole("button", { name: /^Profile/ });
+  await profile.scrollIntoViewIfNeeded();
+  expect((await profile.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(save).toBeInViewport();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(390);
 });

@@ -846,8 +846,9 @@ html[data-density="spacious"]
   height: max(44px, 2.75rem);
 }
 
-/* Slim controls, in Access and the Sandbox (A8, docs/specs/access-ui-ux-pass.md;
-   S1, docs/specs/sandbox-relayout.md). `slim-ui` sits on each page's control
+/* Slim controls, in Access, the Sandbox and Manage (A8,
+   docs/specs/access-ui-ux-pass.md; S1, docs/specs/sandbox-relayout.md; MD1,
+   docs/specs/manage-relayout.md). `slim-ui` sits on each page's control
    areas and on the content of every sheet, dialog, popover and menu, which
    render in portals outside #main-content; the Sandbox canvas never carries
    it. `access-ui` keeps only the Access page layout below. :is() takes its
@@ -962,6 +963,24 @@ html[data-density="spacious"]
     [data-slot="switch"][data-checked]
     [data-slot="switch-thumb"] {
     translate: 0.75rem 0;
+  }
+
+  /* The Still Page Rule in Manage (MD1, docs/specs/manage-relayout.md): from
+     1280px each section fills the viewport under its header, each link of the
+     chain shrinks, and the section body is the panel that scrolls. Scroll
+     panels are relative so screen-reader text cannot stretch the page. */
+  .manage-ui .manage-fill {
+    display: flex;
+    flex: 1 1 0%;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .manage-ui .manage-scroll {
+    position: relative;
+    flex: 1 1 0%;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   /* The Still Page Rule: from 1280px People, Groups and Security fill the

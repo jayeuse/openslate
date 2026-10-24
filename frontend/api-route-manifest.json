@@ -1513,12 +1513,6 @@
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
-    "function": "getManageAuditLog",
-    "method": "GET",
-    "path": "/api/audit-logs/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
     "function": "getManageAuditOptions",
     "method": "GET",
     "path": "/api/audit-logs/options"
@@ -1528,6 +1522,12 @@
     "function": "listManageAuditLogs",
     "method": "GET",
     "path": "/api/audit-logs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/manage/adapters/audit-fields-api.ts",
+    "function": "getAuditField",
+    "method": "GET",
+    "path": "/api/fields/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/manage/adapters/backup-api.ts",

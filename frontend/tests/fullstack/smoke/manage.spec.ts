@@ -20,7 +20,7 @@ test("Manage Audit finds an entry and opens its details @manage", async ({
   await search.press("Enter");
   const entry = page.getByRole("row", { name: /Northstar/ }).first();
   await expect(entry).toBeVisible();
-  await entry.getByRole("button", { name: /^View audit/ }).click();
+  await entry.getByRole("button").click();
   await expect(page.getByRole("dialog")).toContainText("Northstar");
 });
 

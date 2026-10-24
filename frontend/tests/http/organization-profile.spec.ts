@@ -8,6 +8,10 @@ import {
   type Page,
   type Route,
 } from "./helpers/test";
+import {
+  openProfile,
+  organizationProfile,
+} from "./helpers/manage-organization";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
@@ -142,14 +146,18 @@ const field = (page: Page, name: string) =>
   page.getByLabel(name, { exact: true });
 const save = (page: Page) =>
   page.getByRole("button", { name: "Save settings", exact: true });
+// The footer chip confirms a save; no page notice repeats it (Phase 8).
 const saved = (page: Page) =>
-  page.getByText("Organization settings saved.", { exact: true });
+  page
+    .getByRole("group", { name: "Organization actions", exact: true })
+    .getByText("Saved", { exact: true });
 
 test("Organization profile fields load, save and clear without changing omitted values", async ({
   page,
 }) => {
   const api = await installProfile(page);
   await page.goto("/manage?view=organization");
+  await openProfile(page);
   await expect(
     page.getByRole("group", { name: "Organization profile", exact: true }),
   ).toBeVisible();
@@ -184,6 +192,7 @@ test("Organization profile fields load, save and clear without changing omitted 
   await expect(field(page, "Postal address")).toHaveValue(
     "New street\nNew city",
   );
+  await openProfile(page);
   await field(page, "Contact phone").fill("   ");
   await save(page).click();
   await expect(field(page, "Contact phone")).toHaveValue("");
@@ -205,6 +214,7 @@ test("Organization profile Discard keeps saved values and sends no command", asy
 }) => {
   const api = await installProfile(page);
   await page.goto("/manage?view=organization");
+  await openProfile(page);
   await field(page, "Description").fill("Unsaved profile description");
   await field(page, "Contact email").fill("unsaved@example.com");
   await page
@@ -242,9 +252,20 @@ test("Organization invalid email keeps the draft with a safe linked field error"
       },
     });
   await page.goto("/manage?view=organization");
+  // The optional profile starts closed and names what it holds.
+  const block = organizationProfile(page);
+  await expect(block).toHaveAttribute("aria-expanded", "false");
+  await expect(block).toContainText(
+    "Legal name (set), Description (set), Contact email (set), Contact phone (set), Postal address (set)",
+  );
+  await openProfile(page);
   const email = field(page, "Contact email");
   await email.fill("invalid address");
+  await block.click();
+  await expect(email).toBeHidden();
   await save(page).click();
+  // The refused field opens the block, so the person sees what failed.
+  await expect(block).toHaveAttribute("aria-expanded", "true");
   await expect(email).toHaveValue("invalid address");
   await expect(email).toHaveAttribute("aria-invalid", "true");
   await expect(
@@ -271,6 +292,7 @@ test("Organization full null profile remains an editable full response", async (
     postal_address: null,
   });
   await page.goto("/manage?view=organization");
+  await openProfile(page);
   await expect(field(page, "Contact email")).toHaveValue("");
   await expect(field(page, "Contact email")).toBeEnabled();
   await field(page, "Legal name").fill("New nullable profile");
@@ -295,8 +317,16 @@ test("Organization malformed contact guest shape for admin is unavailable rather
     }),
   ).toBeVisible();
   await expect(field(page, "Contact email")).toHaveCount(0);
-  // A guest-shaped body makes the form read-only, which hides Save.
+  // A guest-shaped body makes the form read-only, which hides Save, and the
+  // header says so as it does for every reader.
   await expect(save(page)).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("main")
+      .getByText("Only an administrator can change these settings.", {
+        exact: true,
+      }),
+  ).toBeVisible();
   api.onGet = (route) =>
     route.fulfill({
       json: { ...api.workspace, unrelated_metadata: { accepted: true } },
@@ -313,6 +343,7 @@ test("Organization malformed full PATCH keeps its draft until explicit readback"
   const api = await installProfile(page);
   api.onPatch = (route) => route.fulfill({ json: guestBody(api.workspace) });
   await page.goto("/manage?view=organization");
+  await openProfile(page);
   await field(page, "Description").fill("Uncertain description");
   await save(page).click();
   await expect(
@@ -336,6 +367,7 @@ test("Organization stale and failed profile saves preserve the draft and current
 }) => {
   const api = await installProfile(page);
   await page.goto("/manage?view=organization");
+  await openProfile(page);
   await field(page, "Legal name").fill("Retained legal draft");
   api.workspace = {
     ...api.workspace,
@@ -373,9 +405,13 @@ test("Organization pending profile save blocks duplicate commands and navigation
   };
   try {
     await page.goto("/manage?view=organization");
+    await openProfile(page);
     await field(page, "Legal name").fill("Pending legal name");
     await save(page).click();
-    await expect(save(page)).toBeDisabled();
+    // While it saves, Save reads "Saving…" and cannot be pressed again.
+    await expect(
+      page.getByRole("button", { name: "Saving…", exact: true }),
+    ).toBeDisabled();
     await expect(field(page, "Contact email")).toBeDisabled();
     await page.getByRole("link", { name: "Organization", exact: true }).click();
     await expect(page).toHaveURL(/\/manage\?view=organization$/);
@@ -418,6 +454,7 @@ for (const delayed of ["GET", "PATCH"] as const) {
     try {
       await page.goto("/manage?view=organization");
       if (delayed === "PATCH") {
+        await openProfile(page);
         await field(page, "Description").fill("Late accepted change");
         await save(page).click();
       }
@@ -426,11 +463,16 @@ for (const delayed of ["GET", "PATCH"] as const) {
       api.role = "guest";
       api.workspace = { ...api.workspace, legal_name: "Guest legal name" };
       await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-      await expect(field(page, "Legal name")).toHaveValue("Guest legal name");
+      // A guest reads the profile as text, without the contact rows.
+      const value = (label: string) =>
+        page
+          .getByRole("region", { name: "Organization settings", exact: true })
+          .locator(`dt:text-is("${label}") + dd`);
+      await expect(value("Legal name")).toHaveText("Guest legal name");
       pending.release();
-      await expect(field(page, "Contact email")).toHaveCount(0);
-      await expect(field(page, "Contact phone")).toHaveCount(0);
-      await expect(field(page, "Postal address")).toHaveCount(0);
+      await expect(value("Contact email")).toHaveCount(0);
+      await expect(value("Contact phone")).toHaveCount(0);
+      await expect(value("Postal address")).toHaveCount(0);
       await expect(saved(page)).toHaveCount(0);
       const values = await page
         .locator("input,textarea")
@@ -454,6 +496,7 @@ test("Organization profile long text reflows on phone and labelled controls rema
   );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/manage?view=organization");
+  await openProfile(page);
   const address = field(page, "Postal address");
   await address.scrollIntoViewIfNeeded();
   await expect(address).toBeInViewport();

@@ -18,9 +18,12 @@ import {
   backupExportSourceAvailable,
   exportPassphraseError,
   backupPolicyPatch,
+  backupStateLabels,
   admitManageBackupExportDownload,
   defaultManageBackupsRequest,
   getManageBackupStatus,
+  isOwnerRefusal,
+  OWNER_REFUSAL_MESSAGE,
   queueManageBackup,
   queueManageBackupExport,
   updateManageBackupPolicy,
@@ -29,6 +32,17 @@ import {
   type ManageBackupRun,
 } from "../adapters/backup-api";
 import { isStaleWorkspaceRevision } from "../adapters/workspace-api";
+import type { LastGoodBackup } from "../domain/backup-rules";
+
+/** The newest completed backup of this installation, for the status panel. */
+const lastGoodRequest = {
+  ...defaultManageBackupsRequest,
+  limit: 1,
+  state: "succeeded",
+  installation: "current",
+  sort_by: "finished_at",
+  sort_order: "desc",
+} as const;
 /** Owns live maintenance reads and commands. */
 export function useManageMaintenance({
   recoveryActive,
@@ -62,6 +76,9 @@ export function useManageMaintenance({
   const [policyDenied, setPolicyDenied] = useState(false);
   const [historyDenied, setHistoryDenied] = useState(false);
   const [versionDenied, setVersionDenied] = useState(false);
+  // A command the server refused for the installation owner: Back up now and
+  // Edit schedule stay disabled with the reason (M-F15).
+  const [commandOwnerRefused, setCommandOwnerRefused] = useState(false);
   const command = useRef<AbortController | null>(null);
   const queueAttempt = useRef<{ name: string; key: string } | null>(null);
   const [exportDenied, setExportDenied] = useState(false);
@@ -142,6 +159,10 @@ export function useManageMaintenance({
     ...manageBackupListOptions(request),
     enabled: historyActive && !historyDenied,
   });
+  const lastGood = useQuery({
+    ...manageBackupListOptions(lastGoodRequest),
+    enabled: historyActive && !historyDenied && !policyDenied,
+  });
   const version = useQuery({
     ...manageVersionOptions(),
     enabled: versionActive && !versionDenied,
@@ -207,11 +228,37 @@ export function useManageMaintenance({
   const versionRefused =
     versionDenied ||
     (version.error instanceof ApiError && version.error.status === 403);
+  // A refusal that names the installation owner can never pass on Retry; the
+  // page shows its notice instead of the section (MD3).
+  const ownerRefused = [
+    status.error,
+    history.error,
+    lastGood.error,
+    version.error,
+  ].some(isOwnerRefusal);
   if (policyRefused && !policyDenied) setPolicyDenied(true);
   if (historyRefused && !historyDenied) setHistoryDenied(true);
   if (versionRefused && !versionDenied) setVersionDenied(true);
   const acceptedStatus =
     status.isError || policyRefused ? undefined : status.data;
+  const acceptedLastGood: LastGoodBackup =
+    lastGood.isError || historyRefused || policyRefused
+      ? "unavailable"
+      : lastGood.data
+        ? (lastGood.data.items[0] ?? null)
+        : "loading";
+  // Why Back up now and Edit schedule cannot act, when they cannot (M-F15).
+  const actionsReason = commandOwnerRefused
+    ? OWNER_REFUSAL_MESSAGE
+    : !acceptedStatus && (status.isError || policyRefused)
+      ? "Retry the backup status first."
+      : null;
+  // A schedule from another installation (after a restore) cannot be edited
+  // until the server confirms it; requests still queue (MG6, Phase 8).
+  const scheduleReason =
+    acceptedStatus && !acceptedStatus.policy.adopted
+      ? "Needs confirmation after a restore."
+      : null;
   const patch = draftPolicy ? backupPolicyPatch(draftPolicy, draft) : null;
   const dirty = patch !== null;
   const stale =
@@ -271,7 +318,12 @@ export function useManageMaintenance({
 
   async function retryPolicy() {
     const result = await status.refetch();
-    if (!result.isError) setPolicyDenied(false);
+    if (!result.isError) {
+      setPolicyDenied(false);
+      // The status read needs the installation owner too, so a fresh
+      // success ends an earlier owner refusal of a command (M-F15).
+      setCommandOwnerRefused(false);
+    }
   }
   async function retryHistory() {
     const result = await history.refetch();
@@ -303,19 +355,23 @@ export function useManageMaintenance({
       setDraft({});
       setDraftPolicy(null);
       setStaleRevision(false);
-      setNotice("Backup policy saved.");
+      setNotice("Backup schedule saved.");
       return true;
     } catch (caught) {
       if (operation.signal.aborted) return false;
       if (isStaleWorkspaceRevision(caught)) {
         setStaleRevision(true);
         await status.refetch();
-      } else
+      } else {
+        if (isOwnerRefusal(caught)) setCommandOwnerRefused(true);
         setError(
-          caught instanceof ApiError && caught.status === 403
-            ? "Only administrators can change backup policy."
-            : "Backup policy could not be saved. Your draft is still here.",
+          isOwnerRefusal(caught)
+            ? OWNER_REFUSAL_MESSAGE
+            : caught instanceof ApiError && caught.status === 403
+              ? "Only the installation owner can change the backup schedule."
+              : "The backup schedule could not be saved. Your draft is still here.",
         );
+      }
       return false;
     } finally {
       if (command.current === operation) {
@@ -346,7 +402,7 @@ export function useManageMaintenance({
       if (caught instanceof ApiError && caught.status === 403)
         setPolicyDenied(true);
       setError(
-        "The latest backup policy could not be loaded. Your draft is still here.",
+        "The latest backup schedule could not be loaded. Your draft is still here.",
       );
     } finally {
       if (command.current === operation) {
@@ -392,15 +448,20 @@ export function useManageMaintenance({
       await afterManageBackupQueue(client);
       if (operation.signal.aborted) return false;
       setNotice(
-        `${run.name}: ${run.state === "queued" ? "queued for the host runner" : run.state}. Queueing does not execute a backup.`,
+        run.state === "queued"
+          ? `${run.name} is queued. The backup service on the server runs it.`
+          : `${run.name}: ${backupStateLabels[run.state].toLowerCase()}.`,
       );
       return true;
     } catch (caught) {
       if (operation.signal.aborted) return false;
+      if (isOwnerRefusal(caught)) setCommandOwnerRefused(true);
       setError(
-        caught instanceof ApiError && caught.status === 403
-          ? "Only administrators can request a backup."
-          : "The backup request could not be confirmed. Retry the same name to check the same request.",
+        isOwnerRefusal(caught)
+          ? OWNER_REFUSAL_MESSAGE
+          : caught instanceof ApiError && caught.status === 403
+            ? "Only the installation owner can request a backup."
+            : "The backup request could not be confirmed. Retry the same name to check the same request.",
       );
       return false;
     } finally {
@@ -456,9 +517,11 @@ export function useManageMaintenance({
     } catch (caught) {
       if (!owns()) return false;
       setExportError(
-        caught instanceof ApiError && caught.status === 403
-          ? "Only an eligible administrator can request an export."
-          : "The export request could not be confirmed. Retry without changing the passphrase to check the same request.",
+        isOwnerRefusal(caught)
+          ? OWNER_REFUSAL_MESSAGE
+          : caught instanceof ApiError && caught.status === 403
+            ? "Only the installation owner can request an export."
+            : "The export request could not be confirmed. Retry without changing the passphrase to check the same request.",
       );
       return false;
     } finally {
@@ -554,13 +617,17 @@ export function useManageMaintenance({
     acceptedDownloadAdmission,
     exportError,
     acceptedStatus,
+    acceptedLastGood,
+    actionsReason,
     acceptedHistory:
       history.isError || historyRefused ? undefined : history.data,
     acceptedVersion:
       version.isError || versionRefused ? undefined : version.data,
+    scheduleReason,
     policyRefused,
     historyRefused,
     versionRefused,
+    ownerRefused,
     request,
     setRequest,
     draft,

@@ -54,10 +54,11 @@ export const PAGE_GUIDES = {
   manage: {
     title: "Manage",
     entries: [
-      "Organization shows the saved organization settings, including its administrator contacts and regional defaults.",
-      "Administrators can change settings. Save confirms a change; Discard changes restores the saved values.",
-      "Backup and Audit are available according to your role. Read the displayed status before starting an operator action.",
-      "Updates & licensing shows the installation's current information. Your personal appearance and preferences stay in your profile.",
+      "Organization: change the name, region, and look in the two panes, then choose Save settings at the bottom. Discard changes returns to the saved values. Only administrators can change them.",
+      "Audit: the quick filters show all events, changes, created, or deleted items. Filters narrows by person, area, and dates; open an event to see what changed in its event details.",
+      "Backup: Status shows the schedule, the last good backup, and the backup service. History lists every backup; select one to see its details. The person who runs your server restores backups.",
+      "Jobs: the state filters show Pending, Queued, Running, Failed, and other work. Open a row's menu and choose Retry when a failed job offers it.",
+      "Updates & licensing: one Installation panel shows the version, the release check, and the license. The person who runs your server installs updates.",
     ],
   },
   platform: {

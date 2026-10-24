@@ -16,10 +16,10 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { LifecyclePurgeReview } from "@/components/systems/shared/lifecycle-purge-review";
 import {
-  SandboxDialogFooter,
-  SandboxDialogHeader,
-  sandboxDialogContentClass,
-} from "./sandbox-dialog-frame";
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import {
   structuralLifecycleErrorMessage,
   type LifecyclePurgeInput,
@@ -149,8 +149,8 @@ export function SandboxLifecycleDialog({
         if (!open) cancel();
       }}
     >
-      <DialogContent className={`${sandboxDialogContentClass} sm:max-w-xl`}>
-        <SandboxDialogHeader
+      <DialogContent className={`${dialogFrameContentClass} sm:max-w-xl`}>
+        <DialogFrameHeader
           title={<DialogTitle>{title}</DialogTitle>}
           description={
             <DialogDescription>
@@ -245,7 +245,7 @@ export function SandboxLifecycleDialog({
             </Field>
           </>
         ) : null}
-        <SandboxDialogFooter className="flex flex-wrap justify-end gap-2">
+        <DialogFrameFooter className="flex flex-wrap justify-end gap-2">
           <Button
             variant="outline"
             disabled={busy === "command"}
@@ -279,7 +279,7 @@ export function SandboxLifecycleDialog({
                 ? "Permanently delete"
                 : title}
           </Button>
-        </SandboxDialogFooter>
+        </DialogFrameFooter>
       </DialogContent>
     </Dialog>
   );

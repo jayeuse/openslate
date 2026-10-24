@@ -9,29 +9,20 @@ import {
   useState,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Route } from "next";
 import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import { formatWorkspaceDateTime } from "@/lib/date-time";
-import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
-import { Field, FieldLabel } from "@/components/ui/field";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
-import { PaginationControls } from "@/components/ui/pagination-controls";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TablePagination } from "@/components/ui/table-pagination";
+import { toast } from "@/components/ui/toast";
 import { workspaceCalendarQueryOptions } from "../adapters/workspace-api";
 import {
   manageJobIdentity,
   retryManageJob,
-  type ManageJob,
   type ManageJobIdentity,
 } from "../adapters/jobs-api";
 import {
@@ -44,38 +35,24 @@ import {
   setManageJobsRecovery,
   type ManageJobsRecovery,
 } from "../adapters/manage-queries";
+import { jobSubject } from "../domain/job-rules";
+import { JobsRows } from "./jobs-rows";
+import { JobsToolbar } from "./jobs-toolbar";
 
-const kinds = [
-  ["report-run", "Report runs"],
-  ["post-publish", "Post publications"],
-  ["event-reminder", "Event reminders"],
-  ["backup", "Backups"],
-] as const;
-const states = [
-  "queued",
-  "pending",
-  "running",
-  "succeeded",
-  "failed",
-  "canceled",
-  "interrupted",
-];
-function label(value: string): string {
-  return value
-    ? value.charAt(0).toUpperCase() + value.slice(1).replaceAll(/[-_]/g, " ")
-    : "Unknown";
-}
-function kindLabel(value: string): string {
-  return kinds.find(([kind]) => kind === value)?.[1] ?? label(value);
-}
-
+/**
+ * Manage Jobs (MD9): the toolbar, then one panel whose list is the only part
+ * that scrolls from 1280px, then the page footer. This component owns the
+ * filters, the reads and the retry command with its recovery; the rules and
+ * words are in `domain/job-rules.ts`.
+ */
 export default function ManageJobs({ admitted }: { admitted: boolean }) {
   const client = useQueryClient();
   const [kind, setKind] = useState("");
   const [state, setState] = useState("");
   const [limit, setLimit] = useState(10);
   const [offset, setOffset] = useState(0);
-  const [phone, setPhone] = useState(false);
+  // Below 1280px Jobs shows list rows, where the subject reads in full.
+  const [narrow, setNarrow] = useState(false);
   const [recovery, setRecovery] = useState<ManageJobsRecovery | null>(() =>
     getManageJobsRecovery(client),
   );
@@ -86,7 +63,6 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
   const [pending, setPending] = useState<string | null>(null);
   const [readError, setReadError] = useState("");
   const [commandError, setCommandError] = useState("");
-  const [notice, setNotice] = useState("");
   const live = useRef(false);
   const epoch = useRef(0);
   const admission = useRef(admitted);
@@ -141,12 +117,11 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
       setPending(null);
       reading.current = false;
       setReadBusy(false);
-      setNotice("");
     }
   }, [admitted, denied, client]);
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 767px)");
-    const update = () => setPhone(media.matches);
+    const media = window.matchMedia("(max-width: 1279px)");
+    const update = () => setNarrow(media.matches);
     update();
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
@@ -258,16 +233,11 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
     storeRecovery(attempt);
     setPending(manageJobIdentity(actual));
     setCommandError("");
-    setNotice("");
     try {
       await retryManageJob(actual, { key, signal: controller.signal });
       if (!owns(started)) return;
       storeRecovery({ ...attempt, confirmed: true });
-      setNotice(
-        actual.kind === "backup"
-          ? "Backup retry request confirmed."
-          : "Retry requested.",
-      );
+      toast.add({ title: "Retry requested.", type: "success" });
       if (actual.kind === "backup") {
         void client.invalidateQueries({ queryKey: manageKeys.backups() });
         void client.invalidateQueries({ queryKey: manageKeys.backupStatus() });
@@ -287,7 +257,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
         );
       } else {
         setCommandError(
-          "Retry outcome unconfirmed. Reload Jobs before checking this request.",
+          "The retry could not be confirmed. Reload Jobs to see its state.",
         );
         setRequiresRead(true);
       }
@@ -304,204 +274,56 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
       }
     }
   }
-  function time(value: string | null, empty: string) {
-    return value ? (
-      <time dateTime={value}>
-        {displayRegion
-          ? formatWorkspaceDateTime(value, displayRegion, {
-              dateStyle: "medium",
-              timeStyle: "short",
-            })
-          : "Date unavailable"}
-      </time>
-    ) : (
-      empty
-    );
-  }
-  function subject(row: ManageJob) {
-    const name = row.subjectLabel.trim() || "Unnamed job";
-    return row.subjectLink ? (
-      <GuardedWorkspaceLink
-        href={row.subjectLink as Route}
-        className="text-primary break-words underline-offset-4 hover:underline"
-      >
-        {name}
-      </GuardedWorkspaceLink>
-    ) : (
-      <span className="break-words">{name}</span>
-    );
-  }
-  function badge(row: ManageJob) {
-    return (
-      <Badge
-        variant={
-          row.state === "failed"
-            ? "destructive"
-            : row.state === "succeeded"
-              ? "success"
-              : "outline"
-        }
-      >
-        {label(row.state)}
-      </Badge>
-    );
-  }
-  function actions(row: ManageJob) {
-    return (
-      <div className="flex flex-wrap gap-2">
-        {row.canRetry ? (
-          <Button
-            variant="outline"
-            className="min-h-11"
-            aria-label={`Retry ${row.subjectLabel.trim() || "Unnamed job"}`}
-            disabled={commandsBlocked}
-            onClick={() => void retry(row)}
-          >
-            {pending === manageJobIdentity(row) ? "Retrying…" : "Retry"}
-          </Button>
-        ) : null}
-        {row.kind === "backup" ? (
-          <GuardedWorkspaceLink
-            href="/manage?view=backup"
-            className="text-primary inline-flex min-h-11 items-center text-sm underline-offset-4 hover:underline"
-          >
-            View all backups
-          </GuardedWorkspaceLink>
-        ) : null}
-      </div>
-    );
-  }
-  const columns: DataTableColumn<ManageJob>[] = [
-    {
-      id: "kind",
-      header: "Job",
-      cell: ({ row }) => kindLabel(row.original.kind),
-    },
-    {
-      id: "subject",
-      header: "Subject",
-      cell: ({ row }) => subject(row.original),
-    },
-    { id: "state", header: "State", cell: ({ row }) => badge(row.original) },
-    {
-      id: "last",
-      header: "Last attempt",
-      cell: ({ row }) => time(row.original.lastAttemptAt, "Not recorded"),
-    },
-    {
-      id: "next",
-      header: "Next run",
-      cell: ({ row }) => time(row.original.nextAttemptAt, "Not scheduled"),
-    },
-    {
-      id: "attempts",
-      header: "Attempts",
-      cell: ({ row }) => (
-        <span className="tabular-nums">{row.original.attempts}</span>
-      ),
-    },
-    {
-      id: "problem",
-      header: "Problem",
-      cell: ({ row }) => row.original.failureLabel ?? "No problem recorded",
-    },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: ({ row }) => actions(row.original),
-    },
-  ];
+  const formatTime = (value: string) =>
+    displayRegion
+      ? formatWorkspaceDateTime(value, displayRegion, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
+      : "Date unavailable";
   const p = query.data?.pagination;
   const error =
     readError ||
     (query.error
       ? `Jobs could not be loaded. ${apiErrorMessage(query.error, "Try again.")}`
       : denied
-        ? "Jobs could not be loaded. Access is unavailable."
+        ? "Jobs could not be loaded. You do not have access."
         : "");
   const controlsLocked = pending !== null || recovery !== null || readBusy;
+  const pendingRow = pending
+    ? rows.find((row) => manageJobIdentity(row) === pending)
+    : undefined;
+  const changeFilters = (next: { kind?: string; state?: string }) => {
+    // A pending command or read owns the filters; chips and quick filters
+    // are disabled then, and a late event changes nothing.
+    if (controlsLocked) return;
+    if (next.kind !== undefined) setKind(next.kind);
+    if (next.state !== undefined) setState(next.state);
+    setOffset(0);
+    setReadError("");
+  };
+  // The page shows the notice for an account that is not an administrator;
+  // until the role is verified, Jobs waits without a request.
   if (!admitted)
-    return <Alert role="note">Only an administrator can view Jobs.</Alert>;
-  return (
-    <section aria-label="Jobs workspace" className="min-w-0 space-y-5">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-3">
-          <Field>
-            <FieldLabel htmlFor="jobs-kind">Job kind</FieldLabel>
-            <NativeSelect
-              id="jobs-kind"
-              value={kind}
-              disabled={controlsLocked}
-              onChange={(event) => {
-                setKind(event.target.value);
-                setOffset(0);
-                setReadError("");
-              }}
-            >
-              <NativeSelectOption value="">All kinds</NativeSelectOption>
-              {kinds.map(([key, text]) => (
-                <NativeSelectOption key={key} value={key}>
-                  {text}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="jobs-state">Job state</FieldLabel>
-            <NativeSelect
-              id="jobs-state"
-              value={state}
-              disabled={controlsLocked}
-              onChange={(event) => {
-                setState(event.target.value);
-                setOffset(0);
-                setReadError("");
-              }}
-            >
-              <NativeSelectOption value="">All states</NativeSelectOption>
-              {states.map((value) => (
-                <NativeSelectOption key={value} value={value}>
-                  {label(value)}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="jobs-size">Rows per page</FieldLabel>
-            <NativeSelect
-              id="jobs-size"
-              value={String(limit)}
-              disabled={controlsLocked}
-              onChange={(event) => {
-                setLimit(Number(event.target.value));
-                setOffset(0);
-                setReadError("");
-              }}
-            >
-              {[10, 25, 50, 100].map((value) => (
-                <NativeSelectOption key={value} value={String(value)}>
-                  {value}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </Field>
-        </div>
-        <Button
-          variant="outline"
-          className="min-h-11"
-          disabled={pending !== null || readBusy}
-          onClick={() => void freshRead()}
-        >
-          Refresh Jobs
-        </Button>
+    return (
+      <div role="status" className="flex flex-col gap-4">
+        <span className="sr-only">Checking your access…</span>
+        <Skeleton className="h-48 w-full" />
       </div>
-      {notice ? (
-        <p role="status" className="text-sm">
-          {notice}
+    );
+  return (
+    <section
+      aria-label="Jobs workspace"
+      className="manage-fill flex min-w-0 flex-col gap-4"
+    >
+      {pending !== null ? (
+        <p role="status" className="text-muted-foreground shrink-0 text-sm">
+          {pendingRow ? `Retrying ${jobSubject(pendingRow)}…` : "Retrying…"}
         </p>
       ) : null}
       {commandError ? (
-        <Alert role="alert" variant="warning">
+        // A retry that failed or could not be confirmed is an error.
+        <Alert role="alert" variant="destructive" className="shrink-0">
           {commandError}
         </Alert>
       ) : null}
@@ -510,7 +332,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
       pending === null ? (
         <Button
           variant="outline"
-          className="min-h-11"
+          className="min-h-11 shrink-0 self-start"
           disabled={
             recovery.readFirst ||
             requiresRead ||
@@ -523,110 +345,85 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
           Check retry result
         </Button>
       ) : null}
-      {error ? (
-        <Alert role="alert" variant="destructive" className="space-y-3">
-          <p>{error}</p>
-          <Button
-            variant="outline"
-            className="min-h-11"
-            disabled={readBusy || pending !== null}
-            onClick={() => void freshRead()}
+      {/* The toolbar sits above the table card, as on Audit (Phase 8). */}
+      <div className="shrink-0">
+        <JobsToolbar
+          kind={kind}
+          state={state}
+          onKindChange={(value) => changeFilters({ kind: value })}
+          onStateChange={(value) => changeFilters({ state: value })}
+          locked={controlsLocked}
+          refreshDisabled={pending !== null || readBusy}
+          onRefresh={() => void freshRead()}
+        />
+      </div>
+      <div className="bg-card border-border manage-fill flex min-w-0 flex-col overflow-clip rounded-[var(--radius)] border">
+        {error ? (
+          <Alert
+            role="alert"
+            variant="destructive"
+            className="m-3 w-auto shrink-0"
           >
-            Retry Jobs
-          </Button>
-        </Alert>
-      ) : null}
-      <LoadingRegion
-        loading={!denied && (readBusy || query.isPending) && rows.length === 0}
-        label="Loading Jobs…"
-        skeleton={<Skeleton className="h-64 w-full" />}
-      >
-        <div className="border-card-edge bg-card shadow-card min-w-0 overflow-hidden rounded-xl border">
-          {phone ? (
-            <div className="divide-border divide-y">
-              {rows.map((row) => (
-                <article
-                  key={manageJobIdentity(row)}
-                  aria-label={`Job ${row.subjectLabel}`}
-                  className="space-y-3 p-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-muted-foreground text-xs">
-                        {kindLabel(row.kind)}
-                      </p>
-                      <p className="font-semibold">{subject(row)}</p>
-                    </div>
-                    {badge(row)}
-                  </div>
-                  <dl className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <dt className="text-muted-foreground">Last attempt</dt>
-                      <dd>{time(row.lastAttemptAt, "Not recorded")}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Next run</dt>
-                      <dd>{time(row.nextAttemptAt, "Not scheduled")}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Attempts</dt>
-                      <dd className="tabular-nums">{row.attempts}</dd>
-                    </div>
-                  </dl>
-                  <p className="text-sm break-words">
-                    {row.failureLabel ?? "No problem recorded"}
-                  </p>
-                  {actions(row)}
-                </article>
-              ))}
-            </div>
-          ) : (
-            <DataTable
-              ariaLabel="Jobs"
-              columns={columns}
-              data={rows}
-              getRowId={manageJobIdentity}
-              emptyState={
-                <p className="py-8 text-center text-sm">
-                  {denied || requiresRead || error
-                    ? "Jobs are unavailable."
-                    : "No jobs match these filters."}
-                </p>
+            <p>{error}</p>
+            <Button
+              variant="outline"
+              className="mt-2 min-h-11"
+              disabled={readBusy || pending !== null}
+              onClick={() => void freshRead()}
+            >
+              Retry Jobs
+            </Button>
+          </Alert>
+        ) : null}
+        {/* From 1280px this is the one part that scrolls; the table header
+            stays in view because the table itself does not scroll. */}
+        <div className="manage-scroll min-w-0 xl:[&>[data-slot=loading-region]_[data-slot=table-container]]:overflow-visible">
+          <LoadingRegion
+            loading={
+              !denied && (readBusy || query.isPending) && rows.length === 0
+            }
+            label="Loading Jobs…"
+            skeleton={<Skeleton className="m-3 h-64" />}
+          >
+            <JobsRows
+              rows={rows}
+              list={narrow}
+              formatTime={formatTime}
+              blocked={commandsBlocked}
+              onRetry={(row) => void retry(row)}
+              empty={
+                denied || requiresRead || error
+                  ? "Jobs are unavailable."
+                  : "No jobs match these filters."
               }
             />
-          )}
-          {phone && rows.length === 0 ? (
-            <p className="p-5 text-sm">
-              {denied || requiresRead || error
-                ? "Jobs are unavailable."
-                : "No jobs match these filters."}
-            </p>
-          ) : null}
+          </LoadingRegion>
         </div>
-      </LoadingRegion>
-      {p && !denied && !requiresRead ? (
-        <div className="space-y-3">
-          <p className="text-muted-foreground text-sm">
-            Showing {p.count ? p.offset + 1 : 0}–
-            {p.count ? p.offset + p.count : 0} of {p.total} jobs
-          </p>
-          <div
-            className={controlsLocked ? "pointer-events-none opacity-50" : ""}
-          >
-            <PaginationControls
-              ariaLabel="Jobs pages"
-              pageIndex={Math.floor(p.offset / p.limit)}
-              pageCount={Math.ceil(p.total / p.limit)}
-              onPageIndexChange={(page) => {
-                if (!controlsLocked) {
-                  setOffset(page * limit);
-                  setReadError("");
-                }
-              }}
-            />
-          </div>
-        </div>
-      ) : null}
+        {p && !denied && !requiresRead ? (
+          <TablePagination
+            ariaLabel="Jobs pages"
+            total={p.total}
+            offset={p.offset}
+            rowCount={p.count}
+            pageSize={limit}
+            disabled={controlsLocked}
+            onPageIndexChange={(page) => {
+              if (!controlsLocked) {
+                setOffset(page * limit);
+                setReadError("");
+              }
+            }}
+            onPageSizeChange={(size) => {
+              if (!controlsLocked) {
+                setLimit(size);
+                setOffset(0);
+                setReadError("");
+              }
+            }}
+            className="shrink-0 px-3 py-2 lg:py-2"
+          />
+        ) : null}
+      </div>
     </section>
   );
 }

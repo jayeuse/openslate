@@ -43,10 +43,10 @@ import { useWorkspaceInteractionSuspended } from "../../shared/runtime/workspace
 import type { SandboxCommandResult } from "../state/commands";
 import { OrganizationTemplateDialog } from "./organization-template-dialog";
 import {
-  SandboxDialogFooter,
-  SandboxDialogHeader,
-  sandboxDialogContentClass,
-} from "./sandbox-dialog-frame";
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import {
   VersionCapacityBanner,
   type VersionCapacityActions,
@@ -346,8 +346,8 @@ export function SandboxHeaderActions({
         open={checkpointOpen}
         onOpenChange={(open) => !busy && setCheckpointOpen(open)}
       >
-        <DialogContent className={sandboxDialogContentClass}>
-          <SandboxDialogHeader
+        <DialogContent className={dialogFrameContentClass}>
+          <DialogFrameHeader
             title={<DialogTitle>Save checkpoint</DialogTitle>}
             closeLabel="Close checkpoint"
             closeDisabled={busy}
@@ -380,7 +380,7 @@ export function SandboxHeaderActions({
               onChange={(event) => setNote(event.target.value)}
             />
           </Field>
-          <SandboxDialogFooter>
+          <DialogFrameFooter>
             <DialogFooter className="mt-0">
               <Button
                 variant="outline"
@@ -401,7 +401,7 @@ export function SandboxHeaderActions({
                 Save checkpoint
               </Button>
             </DialogFooter>
-          </SandboxDialogFooter>
+          </DialogFrameFooter>
         </DialogContent>
       </Dialog>
       <Dialog
@@ -412,8 +412,8 @@ export function SandboxHeaderActions({
           setImportOpen(open);
         }}
       >
-        <DialogContent className={sandboxDialogContentClass}>
-          <SandboxDialogHeader
+        <DialogContent className={dialogFrameContentClass}>
+          <DialogFrameHeader
             title={<DialogTitle>Import or export</DialogTitle>}
             description={
               <DialogDescription>
@@ -509,7 +509,7 @@ export function SandboxHeaderActions({
               draft
             </p>
           ) : null}
-          <SandboxDialogFooter>
+          <DialogFrameFooter>
             <DialogFooter className="mt-0">
               <Button
                 variant="outline"
@@ -535,15 +535,15 @@ export function SandboxHeaderActions({
                 </Button>
               ) : null}
             </DialogFooter>
-          </SandboxDialogFooter>
+          </DialogFrameFooter>
         </DialogContent>
       </Dialog>
       <Dialog
         open={discardOpen}
         onOpenChange={(open) => !busy && setDiscardOpen(open)}
       >
-        <DialogContent className={sandboxDialogContentClass}>
-          <SandboxDialogHeader
+        <DialogContent className={dialogFrameContentClass}>
+          <DialogFrameHeader
             title={<DialogTitle>Discard draft changes?</DialogTitle>}
             closeLabel="Close without discarding"
             closeDisabled={busy}
@@ -555,7 +555,7 @@ export function SandboxHeaderActions({
               : "Saves a checkpoint, then clears the draft. Live data stays."}
           </DialogDescription>
           {error ? <Alert variant="destructive">{error}</Alert> : null}
-          <SandboxDialogFooter>
+          <DialogFrameFooter>
             <DialogFooter className="mt-0">
               <Button
                 variant="outline"
@@ -577,7 +577,7 @@ export function SandboxHeaderActions({
                 Discard draft
               </Button>
             </DialogFooter>
-          </SandboxDialogFooter>
+          </DialogFrameFooter>
         </DialogContent>
       </Dialog>
     </>

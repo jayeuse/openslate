@@ -170,6 +170,10 @@ test("export validates the passphrase before a request and cancels with empty se
   await page.setViewportSize({ width: 390, height: 844 });
   const { exports } = await fixtures(page, baseURL);
   await page.goto("/manage?view=backup");
+  // A phone lists the history first, then opens one backup's detail.
+  await page
+    .getByRole("button", { name: "Inspect Backup 1", exact: true })
+    .click();
   await expect(selectedBackup(page)).toBeVisible();
   await expect(downloadAction(page)).toBeVisible();
   await downloadAction(page).click();
@@ -187,7 +191,9 @@ test("export validates the passphrase before a request and cancels with empty se
   await expect(downloadAction(page)).toBeFocused();
   await downloadAction(page).click();
   await expect(passphrase).toHaveValue("");
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Close export", exact: true })
+    .click();
   expect(exports.createSubmissions).toBe(0);
 });
 
@@ -221,7 +227,7 @@ test("export permits a verified reconciled retention-failed recovery point and q
     "The installation goes offline while this backup runs.",
   );
   await backupDialog
-    .getByRole("button", { name: "Cancel", exact: true })
+    .getByRole("button", { name: "Close without backing up", exact: true })
     .click();
   await downloadAction(page).click();
   const exportDialog = passphraseDialog(page);
@@ -422,7 +428,11 @@ test("export reloads the UUID for an off-page source and preserves it through un
   baseURL,
 }) => {
   const { exports } = await fixtures(page, baseURL);
-  const source = exports.backups.runs[5]!;
+  // Twelve backups, so the source is past the first page of ten.
+  exports.backups.runs = Array.from({ length: 12 }, (_, index) =>
+    backupRun(index + 1),
+  );
+  const source = exports.backups.runs[11]!;
   const operation = readyBackupExport(source.id, {
     id: "abcdefab-cdef-4abc-8def-abcdefabcdef",
   });
@@ -442,7 +452,7 @@ test("export reloads the UUID for an off-page source and preserves it through un
   ).toBeEnabled();
   await page
     .getByRole("searchbox", { name: "Search backups" })
-    .fill("Backup 1");
+    .fill("Backup 2");
   await expect(
     page.getByText("Showing 1–1 of 1", { exact: true }),
   ).toBeVisible();
@@ -882,23 +892,12 @@ for (const failure of [
   );
 }
 
-test("export keeps local input through a same-account privacy curtain and preserves the incumbent policy draft", async ({
+test("export keeps local input through a same-account privacy curtain", async ({
   page,
   baseURL,
 }) => {
   const { exports } = await fixtures(page, baseURL);
   await page.goto("/manage?view=backup");
-  await page
-    .getByRole("button", { name: "Edit schedule", exact: true })
-    .click();
-  const policy = page.getByRole("dialog", {
-    name: "Backup schedule",
-    exact: true,
-  });
-  await policy
-    .getByLabel("Backup schedule", { exact: true })
-    .selectOption("weekly");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
   await downloadAction(page).click();
   const dialog = passphraseDialog(page);
   await fillPassphrase(dialog, syntheticExportPassphrase);
@@ -918,13 +917,9 @@ test("export keeps local input through a same-account privacy curtain and preser
     await expect(dialog.getByLabel("Passphrase", { exact: true })).toHaveValue(
       syntheticExportPassphrase,
     );
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Edit schedule", exact: true })
+    await dialog
+      .getByRole("button", { name: "Close export", exact: true })
       .click();
-    await expect(
-      policy.getByLabel("Backup schedule", { exact: true }),
-    ).toHaveValue("weekly");
     expect(exports.createSubmissions).toBe(0);
     expect(exports.backups.patches).toEqual([]);
   } finally {

@@ -61,6 +61,8 @@ export class AuditExportLimitError extends Error {
 
 export type ManageAuditListRequest = {
   search?: string;
+  /** A department manager's scope (MD12); an administrator sends none. */
+  departmentId?: string;
   action?: ManageAuditAction;
   entityType?: string;
   performedBy?: string;
@@ -77,6 +79,7 @@ function auditFilterParams(
   const params = new URLSearchParams();
   if (request.action) params.set("action", request.action);
   if (request.entityType) params.set("entity_type", request.entityType);
+  if (request.departmentId) params.set("department_id", request.departmentId);
   if (request.performedBy) params.set("performed_by", request.performedBy);
   if (request.createdAfter) params.set("created_after", request.createdAfter);
   if (request.createdBefore)
@@ -105,21 +108,13 @@ export function listManageAuditLogs(
   });
 }
 
-export function getManageAuditLog(
-  id: string,
-  signal?: AbortSignal,
-): Promise<ManageAuditLog> {
-  return apiFetch(`/audit-logs/${encodeURIComponent(id)}`, auditLogSchema, {
-    cache: "no-store",
-    signal,
-  });
-}
-
 export function getManageAuditOptions(
   signal?: AbortSignal,
   search = "",
+  departmentId?: string,
 ): Promise<ManageAuditOptions> {
   const query = new URLSearchParams();
+  if (departmentId) query.set("department_id", departmentId);
   if (search.trim()) query.set("search", search.trim());
   return apiFetch(
     `/audit-logs/options${query.size ? `?${query}` : ""}`,

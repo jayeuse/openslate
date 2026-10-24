@@ -25,16 +25,16 @@ export const eventLabels: Record<string, string> = {
   "user.invitation_resend": "Invitation resend",
   "user.invitation_revocation": "Invitation revocation",
   "user.invitation_acceptance": "Invitation acceptance",
-  "user.authentication_activation": "Authentication activation",
-  "user.authentication_disable": "Authentication disablement",
-  "user.authentication_restore": "Authentication restoration",
+  "user.authentication_activation": "Sign-in enabled",
+  "user.authentication_disable": "Sign-in disabled",
+  "user.authentication_restore": "Sign-in restored",
   "workspace.security_policy_change": "Account policy change",
-  "security.retention": "Session retention",
+  "security.retention": "Session history cleanup",
   "backup.export.download": "Backup export download",
   "file.download": "File download",
   "records.export.authorized": "Record export authorization",
-  "records.aggregate_snapshot.authorized": "Aggregate snapshot authorization",
-  "records.aggregate_snapshots.authorized": "Aggregate snapshots authorization",
+  "records.aggregate_snapshot.authorized": "Record summary authorization",
+  "records.aggregate_snapshots.authorized": "Record summaries authorization",
   "lifecycle.record_purge": "Permanent record deletion",
   "job.retry": "Job retry",
 };
@@ -199,18 +199,18 @@ export function securityEventSentence(
       );
     case "user.authentication_activation":
       return result(
-        `${actor} activated authentication for ${subject}.`,
-        `Authentication activation by ${actor} for ${subject}`,
+        `${actor} enabled sign-in for ${subject}.`,
+        `Enabling sign-in by ${actor} for ${subject}`,
       );
     case "user.authentication_disable":
       return result(
-        `${actor} disabled authentication for ${subject}.`,
-        `Authentication disablement by ${actor} for ${subject}`,
+        `${actor} disabled sign-in for ${subject}.`,
+        `Disabling sign-in by ${actor} for ${subject}`,
       );
     case "user.authentication_restore":
       return result(
-        `${actor} restored authentication for ${subject}.`,
-        `Authentication restoration by ${actor} for ${subject}`,
+        `${actor} restored sign-in for ${subject}.`,
+        `Restoring sign-in by ${actor} for ${subject}`,
       );
     case "workspace.security_policy_change":
       return result(
@@ -220,8 +220,8 @@ export function securityEventSentence(
     case "security.retention": {
       const removed = count("deleted_sessions");
       return result(
-        `Session retention removed ${removed === null ? "session records" : `${removed} session record${removed === 1 ? "" : "s"}`}.`,
-        "Session retention cleanup",
+        `Session history cleanup removed ${removed === null ? "session records" : `${removed} session record${removed === 1 ? "" : "s"}`}.`,
+        "Session history cleanup",
       );
     }
     case "backup.export.download":
@@ -252,8 +252,8 @@ export function securityEventSentence(
     case "records.aggregate_snapshot.authorized": {
       const buckets = count("bucket_count");
       return result(
-        `${actor} was authorized to create an aggregate snapshot${buckets === null ? "" : ` with ${buckets} bucket${buckets === 1 ? "" : "s"}`}.`,
-        `Aggregate snapshot by ${actor}`,
+        `${actor} was authorized to read a record summary${buckets === null ? "" : ` with ${buckets} group${buckets === 1 ? "" : "s"}`}.`,
+        `Record summary by ${actor}`,
       );
     }
     case "records.aggregate_snapshots.authorized": {
@@ -261,11 +261,11 @@ export function securityEventSentence(
       const buckets = count("bucket_count");
       const snapshots =
         queries === null
-          ? "aggregate snapshots"
-          : `${queries} aggregate snapshot${queries === 1 ? "" : "s"}`;
+          ? "record summaries"
+          : `${queries} record ${queries === 1 ? "summary" : "summaries"}`;
       return result(
-        `${actor} was authorized to create ${snapshots}${buckets === null ? "" : ` with ${buckets} bucket${buckets === 1 ? "" : "s"}`}.`,
-        `Aggregate snapshots by ${actor}`,
+        `${actor} was authorized to read ${snapshots}${buckets === null ? "" : ` with ${buckets} group${buckets === 1 ? "" : "s"}`}.`,
+        `Record summaries by ${actor}`,
       );
     }
     case "lifecycle.record_purge":

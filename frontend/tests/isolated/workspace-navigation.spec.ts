@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 
 import {
   accessNavigationFor,
+  auditDepartmentsFor,
+  installationOwnerFor,
   getWorkspaceLocation,
   getWorkspaceNavigation,
   isWorkspaceNavigationItemActive,
@@ -155,6 +157,118 @@ test("only administrators see the Sandbox in the navigation", () => {
   expect(
     getWorkspaceNavigation("/sandbox", new URLSearchParams(), "none")[0]?.href,
   ).toBe("/boards?section=overview");
+});
+
+test("Manage shows each section only to an account whose requests the server admits", () => {
+  // The server rules: Organization reads admit every member; Audit lists
+  // admit an administrator (a department manager is the next test); Jobs
+  // admits a verified administrator; Backup and Updates admit an
+  // administrator who also owns the installation.
+  const manager = {
+    role: "member" as const,
+    access: [{ departmentId, moduleId: null, level: "manage" as const }],
+    operator: false,
+  };
+  const sections = (
+    identity: Parameters<typeof accessNavigationFor>[0] & {
+      operator: boolean;
+    },
+    jobsAdmitted: boolean,
+  ) =>
+    getWorkspaceNavigation(
+      "/manage",
+      new URLSearchParams("view=organization"),
+      accessNavigationFor(identity),
+      jobsAdmitted,
+      installationOwnerFor(identity),
+    )
+      .find((group) => group.id === "manage")
+      ?.items.map((entry) => entry.id);
+
+  expect(sections({ role: "admin", access: [], operator: true }, true)).toEqual(
+    ["organization", "backup", "audit", "jobs", "updates"],
+  );
+  expect(
+    sections({ role: "admin", access: [], operator: false }, true),
+  ).toEqual(["organization", "audit", "jobs"]);
+  expect(sections(manager, false)).toEqual(["organization"]);
+  expect(
+    sections({ role: "member", access: [], operator: false }, false),
+  ).toEqual(["organization"]);
+  // Owning the installation does not admit a member of this organization.
+  expect(
+    sections({ role: "member", access: [], operator: true }, false),
+  ).toEqual(["organization"]);
+  expect(
+    sections({ role: "guest", access: [], operator: true }, false),
+  ).toEqual(["organization"]);
+  expect(installationOwnerFor(undefined)).toBe(false);
+});
+
+test("Audit shows to a member who manages a department, scoped to the departments they manage", () => {
+  // `audit/router.py` admits a non-administrator only with a department_id
+  // whose department level is manage; a module-only manager and a guest are
+  // refused, so they do not see Audit.
+  const otherDepartment = "00000000-0000-4000-8000-000000000302";
+  const moduleId = "00000000-0000-4000-8000-000000000401";
+  const audit = (identity: Parameters<typeof auditDepartmentsFor>[0]) =>
+    getWorkspaceNavigation(
+      "/manage",
+      new URLSearchParams("view=organization"),
+      accessNavigationFor(identity),
+      false,
+      false,
+      (auditDepartmentsFor(identity)?.length ?? 0) > 0,
+    )
+      .find((group) => group.id === "manage")
+      ?.items.some((entry) => entry.id === "audit");
+  const manager = {
+    role: "member" as const,
+    access: [
+      { departmentId, moduleId: null, level: "manage" as const },
+      {
+        departmentId: otherDepartment,
+        moduleId: null,
+        level: "manage" as const,
+      },
+      { departmentId, moduleId: null, level: "read" as const },
+    ],
+  };
+  expect(auditDepartmentsFor(manager)).toEqual([departmentId, otherDepartment]);
+  expect(audit(manager)).toBe(true);
+
+  const moduleManager = {
+    role: "member" as const,
+    access: [{ departmentId, moduleId, level: "manage" as const }],
+  };
+  expect(auditDepartmentsFor(moduleManager)).toEqual([]);
+  expect(audit(moduleManager)).toBe(false);
+
+  const guest = {
+    role: "guest" as const,
+    access: [{ departmentId, moduleId: null, level: "manage" as const }],
+  };
+  expect(auditDepartmentsFor(guest)).toEqual([]);
+  expect(audit(guest)).toBe(false);
+  // An administrator reads the whole organization: no department scope.
+  expect(auditDepartmentsFor({ role: "admin", access: [] })).toBeNull();
+  expect(auditDepartmentsFor(undefined)).toEqual([]);
+});
+
+test("the Manage breadcrumb names the section a link opens, even one the account cannot open", () => {
+  const location = (view: string) =>
+    getWorkspaceLocation(
+      "/manage",
+      new URLSearchParams(`view=${view}`),
+      "",
+      "none",
+    );
+  expect(location("backup")).toEqual({
+    workspace: { label: "Manage", href: "/manage?view=organization" },
+    section: "Backup",
+  });
+  expect(location("audit")?.section).toBe("Audit");
+  expect(location("licensing")?.section).toBe("Updates & licensing");
 });
 
 test("retired Access views open the Access overview", () => {

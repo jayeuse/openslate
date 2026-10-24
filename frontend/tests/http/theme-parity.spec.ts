@@ -139,12 +139,16 @@ test("each organization look keeps the same words and structure", async ({
   await look.locator("label").filter({ hasText: "Whiteboard" }).click();
   await save.click();
   await expect(
-    page.getByText("Organization settings saved.", { exact: true }),
+    page
+      .getByRole("group", { name: "Organization actions", exact: true })
+      .getByText("Saved", { exact: true }),
   ).toBeVisible();
   await look.locator("label").filter({ hasText: "Slate" }).click();
   await save.click();
   await expect(
-    page.getByText("Organization settings saved.", { exact: true }),
+    page
+      .getByRole("group", { name: "Organization actions", exact: true })
+      .getByText("Saved", { exact: true }),
   ).toBeVisible();
   const slate = await snapshot(page);
 
@@ -157,7 +161,9 @@ test("each organization look keeps the same words and structure", async ({
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme.id);
     await save.click();
     await expect(
-      page.getByText("Organization settings saved.", { exact: true }),
+      page
+        .getByRole("group", { name: "Organization actions", exact: true })
+        .getByText("Saved", { exact: true }),
     ).toBeVisible();
     expect(await snapshot(page), theme.id).toEqual(slate);
     const bodyFont = await page.evaluate(

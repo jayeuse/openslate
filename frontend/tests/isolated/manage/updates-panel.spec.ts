@@ -7,7 +7,7 @@ import {
   type UpdatesPanelState,
 } from "./updates-panel-harness";
 
-// What the Software version panel says for each recorded version state. The
+// What the Updates & licensing summary says for each recorded version state. The
 // http journeys keep the refresh, the event-driven re-read, the load failure
 // and the administrator-only denial: "Updates and licensing share a real
 // read-only destination and never simulate upgrades or licenses" and
@@ -16,7 +16,11 @@ import {
 // here with the same version records.
 
 function panel(state: UpdatesPanelState): string {
-  return staticMarkup(UpdatesPanelHarness, { state });
+  // Classes are styling, not words; the checks read the markup without them.
+  return staticMarkup(UpdatesPanelHarness, { state }).replace(
+    / class="[^"]*"/g,
+    "",
+  );
 }
 
 function version(values: Partial<ManageVersion>): ManageVersion {
@@ -32,23 +36,22 @@ function version(values: Partial<ManageVersion>): ManageVersion {
   };
 }
 
-const notEstablished =
-  "The last observation does not establish whether this installation is current.";
+const license = ">No license required · Self-hosted<";
+const limits = ">None · capacity depends on your server<";
 
 for (const row of [
   {
     name: "an unavailable release source says so and claims nothing",
     state: { version: version({}) },
     shown: [
-      ">0.1.0<",
-      "Release information unavailable",
-      notEstablished,
-      "<dd>Not recorded</dd>",
-      "<dd>Oct 7, 2026, 11:00 PM</dd>",
-      '<div role="status" data-slot="alert" data-variant="default"',
-      "The release source was unavailable",
+      ">0.1.0 · Stable channel<",
+      "<span>The release check is not available</span>",
+      ">· The release source was unavailable<",
+      ">Last successful check — · Last attempt Oct 7, 2026, 11:00 PM<",
+      license,
+      limits,
     ],
-    hidden: ["Up to date", "Release notes", "Last observed release"],
+    hidden: ["Up to date", "Release notes", "Latest release", 'role="status"'],
   },
   {
     name: "an available release names it and links its notes",
@@ -63,12 +66,11 @@ for (const row of [
       }),
     },
     shown: [
-      "Version 0.2.0 is available",
-      '<div role="status" data-slot="alert" data-variant="warning"',
+      "<span>Version 0.2.0 is available</span>",
       'href="https://github.com/jayeuse/openslate/releases/tag/v0.2.0"',
       ">Release notes<",
     ],
-    hidden: ["Up to date", notEstablished, "Last observed release"],
+    hidden: ["Up to date", "Latest release", "· The release source"],
   },
   {
     name: "a stale observation is not called current",
@@ -80,9 +82,8 @@ for (const row of [
       }),
     },
     shown: [
-      "Release information is stale",
-      notEstablished,
-      "<dt>Last observed release</dt><dd>0.2.0</dd>",
+      "<span>The release check is out of date</span>",
+      "<dt>Latest release</dt><dd>0.2.0</dd>",
     ],
     hidden: ["Up to date"],
   },
@@ -96,12 +97,13 @@ for (const row of [
         failure_code: null,
       }),
     },
-    shown: [
-      ">Up to date<",
-      "Release check",
-      "<dt>Last observed release</dt><dd>0.1.0</dd>",
+    shown: ["<span>Up to date</span>", ">Release check</dt>"],
+    hidden: [
+      'role="status"',
+      'role="alert"',
+      "· The release source",
+      "Latest release",
     ],
-    hidden: ['role="status"', notEstablished, "<dt>Failure</dt>"],
   },
   {
     name: "an unknown comparison with an observation shows the observed release",
@@ -117,15 +119,15 @@ for (const row of [
       }),
     },
     shown: [
-      ">2.7.1-development<",
-      "Version comparison unavailable",
-      "<dt>Last observed release</dt><dd>2.7.1</dd>",
+      ">2.7.1-development · Stable channel<",
+      "<span>The versions could not be compared</span>",
+      "<dt>Latest release</dt><dd>2.7.1</dd>",
       'href="https://github.com/jayeuse/openslate/releases/tag/v2.7.1"',
     ],
-    hidden: ["No release observation recorded", "Up to date"],
+    hidden: ["Not checked yet", "Up to date"],
   },
   {
-    name: "an unknown comparison without an observation says none is recorded",
+    name: "an unknown comparison without an observation says it was not checked",
     state: {
       version: version({
         current_version: "2.7.1-development",
@@ -137,31 +139,36 @@ for (const row of [
         release_url: null,
       }),
     },
-    shown: [">2.7.1-development<", "No release observation recorded"],
+    shown: [
+      ">2.7.1-development · Stable channel<",
+      "<span>Not checked yet</span>",
+      ">Last successful check — · Last attempt —<",
+    ],
     hidden: [
-      "Version comparison unavailable",
+      "The versions could not be compared",
+      "No release observation recorded",
       "Release notes",
       "Up to date",
-      "Last observed release",
+      "Latest release",
     ],
   },
   {
-    name: "a refused read shows the administrator-only message and no version",
+    name: "a refused read shows the owner-only message and no version",
     state: { version: null, refused: true },
-    shown: ["Only administrators can review version status."],
-    hidden: ["Current version", "Release check", "Loading version status"],
+    shown: ["Only the installation owner can review version status.", license],
+    hidden: [">Version</dt>", "Release check", "Loading version status"],
   },
   {
     name: "a failed read asks to try again and shows no version",
     state: { version: null, failed: true },
-    shown: ["Version status could not be loaded. Try again."],
-    hidden: ["Current version", "Release check"],
+    shown: ["Version status could not be loaded. Try again.", limits],
+    hidden: [">Version</dt>", "Release check"],
   },
   {
     name: "a first read in progress says it is loading",
     state: { version: null, pending: true },
     shown: ["Loading version status…"],
-    hidden: ["Current version", 'role="alert"'],
+    hidden: [">Version</dt>", 'role="alert"'],
   },
 ]) {
   test(`software version: ${row.name}`, () => {

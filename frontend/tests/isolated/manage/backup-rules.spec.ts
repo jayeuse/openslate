@@ -231,10 +231,10 @@ const failureLabels: { code: string; label: string }[] = [
   { code: "backup_failed", label: "The backup did not finish" },
   { code: "backup_interrupted", label: "The backup was interrupted" },
   { code: "verification_failed", label: "The backup could not be verified" },
-  { code: "restart_failed", label: "Services did not restart" },
+  { code: "restart_failed", label: "The server did not restart" },
   {
     code: "readiness_failed",
-    label: "Services restarted but did not become ready",
+    label: "The server restarted but is not ready",
   },
   { code: "result_unconfirmed", label: "The result could not be confirmed" },
   { code: "retention_failed", label: "Old backups could not be removed" },
@@ -247,10 +247,12 @@ const failureLabels: { code: string; label: string }[] = [
     code: "release_timeout",
     label: "The release source did not answer in time",
   },
-  // Export failure codes have no label of their own and stay readable; the
-  // http journey keeps source_unavailable and export_interrupted.
-  { code: "source_unavailable", label: "source unavailable" },
-  { code: "source_unproven", label: "source unproven" },
+  // Export failure codes read as plain words too (Phase 7, MG17); the http
+  // journey keeps source_unavailable and export_interrupted.
+  { code: "source_unavailable", label: "The backup is no longer available" },
+  { code: "source_unproven", label: "The backup could not be checked" },
+  { code: "copy_failed", label: "The copy did not finish" },
+  { code: "export_interrupted", label: "The export was interrupted" },
   { code: "foo_bar", label: "foo bar" },
 ];
 

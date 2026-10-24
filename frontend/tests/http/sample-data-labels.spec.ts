@@ -10,14 +10,6 @@ async function openSignedIn(page: Page, path: string) {
   await page.goto(path);
 }
 
-const surfaces = [
-  {
-    path: "/manage?view=organization",
-    says: "Settings save to the organization.",
-    temporary: false,
-  },
-];
-
 test("OpenComms shows server conversations without an example-data label", async ({
   page,
 }) => {
@@ -43,27 +35,20 @@ test("OpenComms shows server conversations without an example-data label", async
   }
 });
 
-for (const surface of surfaces) {
-  test(`${surface.path} labels its data source once`, async ({ page }) => {
-    await openSignedIn(page, surface.path);
-    const note = page.getByRole("note", {
-      name: surface.temporary ? "Example data" : "Organization data",
-    });
-    await expect(note).toHaveCount(1);
-    await expect(note).toContainText(
-      surface.temporary ? "Example" : "Organization",
-    );
-    await expect(note).toContainText(surface.says);
-    if (surface.temporary)
-      await expect(note).toContainText(
-        "Changes last until you close this tab.",
-      );
-    else
-      await expect(note).not.toContainText(
-        "Changes last until you close this tab.",
-      );
-  });
-}
+test("Manage Organization shows no data-source or example-data label", async ({
+  page,
+}) => {
+  await openSignedIn(page, "/manage?view=organization");
+  await expect(
+    page.getByText("Set your organization’s name, region, and look.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("note", { name: "Example data" })).toHaveCount(0);
+  await expect(
+    page.getByRole("note", { name: "Organization data" }),
+  ).toHaveCount(0);
+});
 
 test("Platform search describes readable workspace content and its empty prompts", async ({
   page,

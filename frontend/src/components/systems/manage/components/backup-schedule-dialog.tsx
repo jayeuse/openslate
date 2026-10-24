@@ -1,0 +1,300 @@
+"use client";
+
+import { useId, useRef, useState, type ReactNode } from "react";
+
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { DisabledReason } from "@/components/ui/disabled-reason";
+import { Select, SelectItem } from "@/components/ui/select";
+
+import {
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
+import { DiscardChangesDialog } from "../../access/components/people-fields";
+import { backupScheduleLabels } from "../adapters/backup-api";
+import type { useManageMaintenance } from "../state/controller";
+import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
+
+type Maintenance = ReturnType<typeof useManageMaintenance>;
+
+const RETENTION_LABELS = {
+  "7": "7 days",
+  "30": "30 days",
+  "90": "90 days",
+} as const;
+
+/**
+ * The schedule dialog (MD8, layout direction 8): a pinned header with a
+ * named close, label-left rows, and a pinned footer that shows Close at
+ * rest and only Discard changes and Save schedule after an edit (M-F10).
+ * After an edit, the named close and Escape ask before the edit is lost, so
+ * no draft waits behind a closed dialog (Phase 8, MD20).
+ */
+export function BackupScheduleDialog({
+  maintenance,
+  open,
+  onOpenChange,
+  finalFocus,
+}: {
+  maintenance: Maintenance;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  finalFocus: () => HTMLElement | null;
+}) {
+  const id = useId();
+  const region = useWorkspaceRegion();
+  const status = maintenance.acceptedStatus;
+  const current = status
+    ? { ...(maintenance.draftPolicy ?? status.policy), ...maintenance.draft }
+    : null;
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Keep editing returns to the field last changed; Discard closes the
+  // dialog, which returns focus to Edit schedule.
+  const lastEdited = useRef<"schedule" | "retention">("schedule");
+  const discarding = useRef(false);
+  const close = () => onOpenChange(false);
+  // An edit is never dropped silently: closing asks first.
+  const requestClose = () => {
+    if (maintenance.pending) return;
+    discarding.current = false;
+    if (maintenance.dirty) setConfirmDiscard(true);
+    else close();
+  };
+  const saveReason = maintenance.stale
+    ? "Review the latest schedule first."
+    : maintenance.actionsReason;
+  return (
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => (next ? onOpenChange(true) : requestClose())}
+        dismissible={!maintenance.pending}
+      >
+        <DialogContent
+          className={`${dialogFrameContentClass} max-w-xl`}
+          finalFocus={finalFocus}
+        >
+          <DialogFrameHeader
+            title={<DialogTitle>Backup schedule</DialogTitle>}
+            description={
+              <DialogDescription>
+                Old backups are removed only after a newer backup is checked.
+              </DialogDescription>
+            }
+            closeLabel="Close backup schedule"
+            closeDisabled={maintenance.pending}
+            onClose={requestClose}
+          />
+          <form
+            id={`${id}-form`}
+            aria-busy={maintenance.pending}
+            className="flex min-w-0 flex-col gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void maintenance.savePolicy();
+            }}
+          >
+            {!status || !current ? (
+              <Alert role="alert" variant="destructive">
+                <p>
+                  {maintenance.policyRefused
+                    ? "Only the installation owner can review backup status."
+                    : "Backup status could not be loaded."}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-2 min-h-11"
+                  onClick={() => void maintenance.retryPolicy()}
+                >
+                  Retry backup status
+                </Button>
+              </Alert>
+            ) : (
+              <>
+                {maintenance.stale ? (
+                  <Alert
+                    role={maintenance.staleRevision ? "alert" : "status"}
+                    variant={
+                      maintenance.staleRevision ? "destructive" : "warning"
+                    }
+                  >
+                    <p>
+                      The backup schedule changed. Your draft is still here.
+                      Review the latest schedule before you save again.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-2 min-h-11"
+                      disabled={maintenance.pending}
+                      onClick={() => void maintenance.reviewLatestPolicy()}
+                    >
+                      Review latest schedule
+                    </Button>
+                  </Alert>
+                ) : null}
+                {maintenance.error ? (
+                  <Alert role="alert" variant="destructive">
+                    {maintenance.error}
+                  </Alert>
+                ) : null}
+                <fieldset
+                  disabled={maintenance.pending || !status.policy.adopted}
+                  className="grid min-w-0 gap-3"
+                >
+                  <ScheduleRow id={`${id}-schedule`} label="Schedule">
+                    <Select
+                      id={`${id}-schedule`}
+                      aria-label="Backup schedule"
+                      value={current.schedule}
+                      className="min-h-11"
+                      onValueChange={(value) => {
+                        if (
+                          value === "disabled" ||
+                          value === "daily" ||
+                          value === "weekly"
+                        ) {
+                          lastEdited.current = "schedule";
+                          maintenance.changeDraft({ schedule: value });
+                        }
+                      }}
+                    >
+                      {(["disabled", "daily", "weekly"] as const).map(
+                        (value) => (
+                          <SelectItem key={value} value={value}>
+                            {backupScheduleLabels[value]}
+                          </SelectItem>
+                        ),
+                      )}
+                    </Select>
+                  </ScheduleRow>
+                  <ScheduleRow id={`${id}-retention`} label="Keep backups for">
+                    <Select
+                      id={`${id}-retention`}
+                      value={String(current.retention_days)}
+                      className="min-h-11"
+                      onValueChange={(value) => {
+                        const days = Number(value);
+                        if (days === 7 || days === 30 || days === 90) {
+                          lastEdited.current = "retention";
+                          maintenance.changeDraft({ retention_days: days });
+                        }
+                      }}
+                    >
+                      {(["7", "30", "90"] as const).map((value) => (
+                        <SelectItem key={value} value={value}>
+                          {RETENTION_LABELS[value]}
+                        </SelectItem>
+                      ))}
+                    </Select>
+                  </ScheduleRow>
+                </fieldset>
+                <dl className="grid min-w-0 gap-x-3 gap-y-2 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]">
+                  <dt className="text-muted-foreground">Time zone</dt>
+                  <dd>{status.policy.timezone}</dd>
+                  <dt className="text-muted-foreground">Next backup</dt>
+                  <dd className="tabular-nums">
+                    {status.policy.next_due_at
+                      ? formatBackupTime(status.policy.next_due_at, region)
+                      : "Not scheduled"}
+                  </dd>
+                </dl>
+              </>
+            )}
+          </form>
+          <DialogFrameFooter data-testid="backup-schedule-footer">
+            <DialogFooter className="mt-0 items-center">
+              {maintenance.dirty ? (
+                <Badge variant="warning" className="mr-auto">
+                  Unsaved changes
+                </Badge>
+              ) : null}
+              {maintenance.dirty ? null : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={maintenance.pending}
+                  onClick={close}
+                >
+                  Close
+                </Button>
+              )}
+              {maintenance.dirty ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={maintenance.pending}
+                    onClick={maintenance.discardDraft}
+                  >
+                    Discard changes
+                  </Button>
+                  <DisabledReason reason={saveReason}>
+                    <Button
+                      type="submit"
+                      form={`${id}-form`}
+                      className="min-h-11"
+                      disabled={maintenance.pending}
+                    >
+                      {maintenance.pending ? "Saving…" : "Save schedule"}
+                    </Button>
+                  </DisabledReason>
+                </>
+              ) : null}
+            </DialogFooter>
+          </DialogFrameFooter>
+        </DialogContent>
+      </Dialog>
+      <DiscardChangesDialog
+        open={confirmDiscard}
+        title="Discard unsaved changes?"
+        description="Your backup schedule changes will be lost."
+        onKeep={() => setConfirmDiscard(false)}
+        finalFocus={() =>
+          discarding.current
+            ? false
+            : document.getElementById(`${id}-${lastEdited.current}`)
+        }
+        onDiscard={() => {
+          discarding.current = true;
+          setConfirmDiscard(false);
+          maintenance.discardDraft();
+          close();
+        }}
+      />
+    </>
+  );
+}
+
+/** A label-left row: the label column beside the field (a stack on phones). */
+function ScheduleRow({
+  id,
+  label,
+  children,
+}: {
+  id: string;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid min-w-0 gap-1.5 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center sm:gap-x-3">
+      <label htmlFor={id} className="text-muted-foreground text-sm">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}

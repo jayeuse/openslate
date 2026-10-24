@@ -203,6 +203,7 @@ export function DiscardChangesDialog({
   error = "",
   onKeep,
   onDiscard,
+  finalFocus,
 }: {
   open: boolean;
   title: string;
@@ -210,10 +211,15 @@ export function DiscardChangesDialog({
   error?: string;
   onKeep: () => void;
   onDiscard: () => void;
+  /** Where focus goes when the question closes; the default is the opener. */
+  finalFocus?: () => HTMLElement | boolean | null;
 }) {
   return (
     <AlertDialog open={open} onOpenChange={(next) => !next && onKeep()}>
-      <AlertDialogContent className="access-ui slim-ui">
+      <AlertDialogContent
+        className="access-ui slim-ui"
+        finalFocus={finalFocus ? () => finalFocus() ?? true : undefined}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>

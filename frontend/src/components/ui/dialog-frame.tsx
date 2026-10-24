@@ -5,19 +5,20 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-// The Sandbox dialog frame, after "Dialogs in Access" (DESIGN.md): the dialog
-// content is the one scroller (flex column, so sticky children stick), its
-// header keeps the title and a named close button in view, and its footer
-// keeps the buttons in view. Short alert dialogs keep the plain layout.
+// The dialog frame, after "Dialogs in Access" (DESIGN.md), shared by the
+// Sandbox (S23) and Manage (MD19): the dialog content is the one scroller
+// (flex column, so sticky children stick), its header keeps the title and a
+// named close button in view, and its footer keeps the buttons in view.
+// Short alert dialogs keep the plain layout.
 
 /** The content class for a framed dialog: a flex column, so the frame sticks. */
-export const sandboxDialogContentClass = "slim-ui flex flex-col gap-4";
+export const dialogFrameContentClass = "slim-ui flex flex-col gap-4";
 
 /**
  * The pinned header: the title (a DialogTitle or AlertDialogTitle), an
  * optional description, and a close button named for the dialog.
  */
-export function SandboxDialogHeader({
+export function DialogFrameHeader({
   title,
   description,
   closeLabel,
@@ -54,7 +55,7 @@ export function SandboxDialogHeader({
 }
 
 /** The pinned footer; its button row is a DialogFooter (or a plain row). */
-export function SandboxDialogFooter({
+export function DialogFrameFooter({
   className,
   ...props
 }: HTMLAttributes<HTMLDivElement>) {

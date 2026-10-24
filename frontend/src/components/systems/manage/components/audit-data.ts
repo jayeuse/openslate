@@ -1,10 +1,15 @@
 export type ActivityOrder = "newest" | "oldest";
+/** The quick filter beside the search: every event, or one kind of change. */
+export type ActivityKind = "all" | "update" | "create" | "delete";
 
 export type ActivityFilters = {
   query: string;
+  kind: ActivityKind;
+  /** The person's id, or "" for everyone. */
   user: string;
+  /** The audited table (`entity_type`), or "" for every area. */
   entity: string;
-  action: string;
+  /** Calendar days in the organization's zone, or "". */
   from: string;
   to: string;
   order: ActivityOrder;
@@ -12,9 +17,9 @@ export type ActivityFilters = {
 
 export const initialActivityFilters: ActivityFilters = {
   query: "",
-  user: "All users",
-  entity: "All entities",
-  action: "All actions",
+  kind: "all",
+  user: "",
+  entity: "",
   from: "",
   to: "",
   order: "newest",

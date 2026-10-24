@@ -36,7 +36,15 @@ const guides: { href: string; title: string; tasks: RegExp[] }[] = [
   {
     href: "/manage",
     title: "Manage",
-    tasks: [/organization/i, /setting|audit|backup/i],
+    // Phase 7 (MG14): one entry per section, in the words each one shows.
+    tasks: [
+      /organization/i,
+      /Save settings/,
+      /quick filters.*Filters.*event details/,
+      /Status.*History.*details/,
+      /state filters.*Pending, Queued.*Retry/,
+      /Installation panel/,
+    ],
   },
   { href: "/platform", title: "Platform", tasks: [/search/i, /file/i] },
   {

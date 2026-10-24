@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { apiFetch } from "@/lib/api";
+import { DEFAULT_TABLE_PAGE_SIZE } from "@/components/ui/table-pagination";
+import { ApiError, apiFetch } from "@/lib/api";
 
 export const backupScheduleSchema = z.enum(["disabled", "daily", "weekly"]);
 const retentionSchema = z.union([z.literal(7), z.literal(30), z.literal(90)]);
@@ -195,7 +196,7 @@ export type ManageBackupsRequest = {
   run_id?: string;
 };
 export const defaultManageBackupsRequest: ManageBackupsRequest = {
-  limit: 4,
+  limit: DEFAULT_TABLE_PAGE_SIZE,
   offset: 0,
   search: "",
   sort_by: "requested_at",
@@ -218,6 +219,17 @@ export function backupPolicyPatch(
   )
     patch.retention_days = draft.retention_days;
   return Object.keys(patch).length > 1 ? patch : null;
+}
+
+/** Backup and Updates belong to the installation owner (`operator_required`). */
+export const OWNER_REFUSAL_MESSAGE = "Only the installation owner can do this.";
+
+export function isOwnerRefusal(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    error.code === "operator_required"
+  );
 }
 
 export function backupNameError(name: string): string | null {
@@ -356,13 +368,17 @@ const failureLabels: Record<string, string> = {
   backup_failed: "The backup did not finish",
   backup_interrupted: "The backup was interrupted",
   verification_failed: "The backup could not be verified",
-  restart_failed: "Services did not restart",
-  readiness_failed: "Services restarted but did not become ready",
+  restart_failed: "The server did not restart",
+  readiness_failed: "The server restarted but is not ready",
   result_unconfirmed: "The result could not be confirmed",
   retention_failed: "Old backups could not be removed",
   release_unavailable: "The release source was unavailable",
   release_invalid: "The release source sent an invalid answer",
   release_timeout: "The release source did not answer in time",
+  source_unavailable: "The backup is no longer available",
+  source_unproven: "The backup could not be checked",
+  copy_failed: "The copy did not finish",
+  export_interrupted: "The export was interrupted",
 };
 /** Plain-language text for a recorded failure code; unknown codes stay readable. */
 export function failureLabel(code: string): string {

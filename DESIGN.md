@@ -532,7 +532,7 @@ The main region pads 16px on phones and 20px by 28px from 640px up. Manage uses 
 
 The rhythm is a 4px base: 8px and 12px gaps inside groups, 16px between groups, 20px card padding, 28px between the page header and content. Tables open at 10 rows per page (options 5, 10, 25, 50).
 
-**The Still Page Rule.** On desktop (1280px and wider) a workspace page fills the viewport and never scrolls; its panels do. The shell header, the page header, and the footer line stay in place, and each panel (canvas, Structure, Properties, a section body) scrolls on its own. Scroll panels are `relative`, so screen-reader text inside them cannot stretch the page. Phones and tablets scroll the page. The Sandbox and Access (People, Groups, Security) follow it now; inside a still page any panel, card, or list may scroll on its own with the quiet scrollbar. The other workspaces follow it when their pass comes.
+**The Still Page Rule.** On desktop (1280px and wider) a workspace page fills the viewport and never scrolls; its panels do. The shell header, the page header, and the footer line stay in place, and each panel (canvas, Structure, Properties, a section body) scrolls on its own. Scroll panels are `relative`, so screen-reader text inside them cannot stretch the page. Phones and tablets scroll the page. The Sandbox, Access (People, Groups, Security), and Manage follow it now; inside a still page any panel, card, or list may scroll on its own with the quiet scrollbar. The other workspaces follow it when their pass comes.
 
 **The Quiet Scrollbar Rule.** Every scroll area uses a 4px thumb in an 8px lane with no track, tinted from `--ink-muted`; under the pointer it widens to 6px and darkens, in every look (Firefox draws its standard thin bar, which cannot be narrower). It is never hidden: it is the only cue that a panel has more below the fold. The sidebar tints its thumb with `--sidebar-muted`.
 
@@ -851,9 +851,55 @@ The Sandbox uses the Access grammar around its canvas (`docs/specs/sandbox-relay
 - **Dialogs.** A pinned header and footer and a named close button; on phones the dialog is the only scroller. A disabled primary says why.
 - **Phones.** Two short header rows (title with Review & Publish and the menu; then the chip and attention button); Undo and Redo sit beside the pane tabs.
 
+### Manage sections (relayout)
+
+Manage uses the Access grammar inside `manage-ui` and `slim-ui` (`docs/specs/manage-relayout.md`: layout direction, MD1–MD20, glossary MG1–MG39). From 1280px the page stays still and only its panels scroll.
+
+**Header.** The section title (`data-slot="page-title"`) has one 14px muted meta line under it that says what the section is for. There is no source chip, repeated sentence, or banner. Actions are quiet (ghost). A section has at most one primary action: Back up now in the Backup Status panel, or Save settings in the Organization footer. On phones the actions take a second row (`data-slot="page-actions"`) that never scrolls sideways; from 640px they sit beside the title.
+
+Correct: "Backup" over "The person who runs your server restores backups.", then a ghost "Access security" button with a shield icon.
+
+Wrong: an "Organization" source chip, a sentence, and a banner under the title that repeat one fact, and a filled Export button.
+
+**Sections by role.** The navigation shows a section only to an account that can open it. Organization shows to every member; administrators edit and the others read. Audit shows to administrators, and to department managers for the departments they manage. Jobs shows to a verified administrator, and Backup and Updates & licensing show to the installation owner. A direct link to a hidden section shows one default notice and "Go to <first open section>". The notice has no Retry and sends no refused request; only a failed access check ("Your access could not be checked.") offers Retry.
+
+Correct: a department manager opens `/manage?view=backup` and reads "Backup is managed by the installation owner." with "Go to Organization".
+
+Wrong: the Backup controls over a 403 error, with a Retry that can never succeed.
+
+**Summary first.** Backup opens on a Status panel (Schedule, Last good backup, Service, Queue). Updates & licensing is one Installation panel (Version, Release check, License, Limits). Each panel is a card with a 56px header that holds the panel title (`data-slot="section-title"`) and the panel's actions. Its rows are label-left: a muted label column of 7rem (8.5rem from 640px), values in tabular figures, and 6px between rows. A missing time reads "—".
+
+Correct: "Last good backup" in the muted label column, and its time with "Verified" beside it, as one row of the Status panel.
+
+Wrong: a schedule card, a status banner, and a history header, each with its own heading and sentence.
+
+**Lists.** From 1280px a row is 40px and one line. Its state is a `StatusWord` (an 8px dot and a word); an Audit row puts a `StatusDot` before its verb. Backup, Jobs, Audit, and Security events share one tone map: `flow` done, `action` running or changed, `danger` failed or deleted, `warn` interrupted, denied, or partial, and `muted` waiting or ended. The muted dot is a hollow `--ink-muted` ring. Above a list sit quick filters, the Filters popover, and removable chips; below it sits the shared `TablePagination` (10 rows). Manage quick filters show no counts, because each count costs another read. Below 1280px Jobs and Audit change from tables to two-line list rows.
+
+Correct: a 40px Jobs row with "Queued" beside a hollow ring, the subject in ink, and "—" for no attempts.
+
+Wrong: a green "Succeeded" badge in Jobs, a filled dot for Queued in Backup, and blue subject links.
+
+**The Audit sentence row.** An Activity row is one sentence: the verb and the target at weight 500, up to two field names in muted ink between them ("Changed Status, Sent on +3 · Quote Q-1042"). The whole row opens the event sheet. Bookkeeping values (ids, revisions, times, keys, digests) stay out of the sentence and What changed; Advanced shows them raw, with "Record ID". A reference (a person, department, module, field, or record) reads as its loaded name, else "Set", "Changed", or "Removed", never as an id. A target without a name falls back to the kind alone ("Created · Test run").
+
+Correct: "Changed Description · Organization Harbor Operations Group", with the revision only in Advanced.
+
+Wrong: "Changed Revision, Description · Organization 01a14acf", or "Created by 01a15e0a-…" in What changed.
+
+**The shared dialog frame.** Manage dialogs use the Sandbox frame in `ui/dialog-frame.tsx`. With `dialogFrameContentClass`, the content is the only scroller. `DialogFrameHeader` keeps the title and a close named for its result ("Close without backing up") in view, and `DialogFrameFooter` keeps the buttons in view. The form dialogs (Back up now, Prepare encrypted backup, Confirm password) put an outline Cancel beside the action and open on their first field. The Backup schedule dialog shows Close at rest, and Discard changes and Save schedule only after an edit. Closing it after an edit (the close, Escape, or a click outside) asks "Discard unsaved changes?" first.
+
+Correct: on a phone, Back up now keeps its title, the named close, and Cancel beside Back up now in view while the fields scroll.
+
+Wrong: a "Saved · Discard · Save" bar before any edit, or a closed dialog that keeps an edit behind an "Unsaved changes" chip.
+
+**Words.** One object keeps one word in the section, its dialogs, and Help: "backup schedule", never "policy"; "Manual" and "Automatic" for the source. Work on the server names "the person who runs your server". "Installation owner" names the in-app account, and only in refusals and the hidden-section notice ("Only the installation owner can do this.").
+
+Correct: the Updates meta line "The person who runs your server installs updates."
+
+Wrong: "Operator recovery required", or "Only administrators can request a backup." for an action that only the installation owner can do.
+
 ### Organization look picker
 
-A radio group of four tiles (two columns from 640px, four from 1280px). Each tile shows a small canvas swatch drawn with that look's own tokens (`data-theme-preview`): a department head with its identity mark, and a table card with a header and two field rows. The checked tile takes an `--action` border and ring. The look is saved for the workspace; each person keeps their own color mode.
+A radio group of four tiles (two columns below 1440px, four from 1440px). Each tile shows a small canvas swatch drawn with that look's own tokens (`data-theme-preview`): a department head with its identity mark, and a table card with a header and two field rows. The checked tile takes an `--action` border and ring. The look is saved for the workspace; each person keeps their own color mode.
 
 ### Access overview (dashboard)
 

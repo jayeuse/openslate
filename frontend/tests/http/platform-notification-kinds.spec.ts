@@ -14,6 +14,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { pageOf, wirePagination } from "../helpers/pagination";
+import { openProfile } from "./helpers/manage-organization";
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -461,6 +462,7 @@ test("Comms inbox opens a current-organization message through the shell's unsav
   ).toBeVisible();
   await page.getByRole("button", { name: "Manage", exact: true }).click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
+  await openProfile(page);
   await page
     .getByRole("textbox", { name: "Description", exact: true })
     .fill("Unsaved organization change");
