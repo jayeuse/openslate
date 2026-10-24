@@ -172,7 +172,7 @@ export function AuditToolbar({
           <ToggleGroupItem
             key={option.value}
             value={option.value}
-            className="flex-none px-2 text-sm whitespace-nowrap"
+            className="min-w-11 flex-none px-2 text-sm whitespace-nowrap xl:min-w-0"
           >
             {option.label}
           </ToggleGroupItem>
@@ -195,7 +195,7 @@ export function AuditToolbar({
       chips={chips}
       onClearFilters={onClearFilters}
       filtersDisabled={disabled}
-      sortInFiltersBelowMd
+      sortInFiltersBelowXl
       quickFilters={quickFilters}
     >
       <FilterRow>

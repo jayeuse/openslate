@@ -87,6 +87,11 @@ type AccessToolbarProps<T extends string> = ToolbarSearch &
      * and move Sort into the filters. Off by default.
      */
     sortInFiltersBelowMd?: boolean;
+    /**
+     * The same up to 1280px, so a tablet toolbar keeps one line instead of
+     * wrapping Sort onto a line of its own (Manage Audit). Off by default.
+     */
+    sortInFiltersBelowXl?: boolean;
     /** Quick filters beside the search (People's status). */
     quickFilters?: ReactNode;
     /**
@@ -94,6 +99,12 @@ type AccessToolbarProps<T extends string> = ToolbarSearch &
      * the chips, for a toolbar in a narrow pane (Manage Backup). Off by default.
      */
     quickFiltersBelow?: boolean;
+    /**
+     * From 768px keep the row on one line: the quick filters shrink and
+     * scroll sideways in their strip instead of pushing Filters onto a line
+     * of its own (Manage Jobs at 1024). Off by default.
+     */
+    quickFiltersScroll?: boolean;
     /** The view's own actions at the end of the row. */
     actions?: ReactNode;
     /** The Filters rows (`FilterRow`, `FilterSelect`). */
@@ -101,18 +112,32 @@ type AccessToolbarProps<T extends string> = ToolbarSearch &
   };
 
 const WIDE_QUERY = "(min-width: 48rem)";
+const DESKTOP_QUERY = "(min-width: 80rem)";
 
-function subscribeWide(onChange: () => void) {
-  const query = window.matchMedia(WIDE_QUERY);
-  query.addEventListener("change", onChange);
-  return () => query.removeEventListener("change", onChange);
+function subscribeTo(media: string) {
+  return (onChange: () => void) => {
+    const query = window.matchMedia(media);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  };
 }
+const subscribeWide = subscribeTo(WIDE_QUERY);
+const subscribeDesktop = subscribeTo(DESKTOP_QUERY);
 
 /** True at the md breakpoint and wider; the first render assumes wide. */
 function useWideScreen(): boolean {
   return useSyncExternalStore(
     subscribeWide,
     () => window.matchMedia(WIDE_QUERY).matches,
+    () => true,
+  );
+}
+
+/** True at the xl breakpoint and wider; the first render assumes it. */
+function useDesktopScreen(): boolean {
+  return useSyncExternalStore(
+    subscribeDesktop,
+    () => window.matchMedia(DESKTOP_QUERY).matches,
     () => true,
   );
 }
@@ -289,16 +314,23 @@ export function AccessToolbar<T extends string>({
   onSortChange,
   chips,
   onClearFilters,
-  sortInFiltersBelowMd = false,
+  sortInFiltersBelowMd: sortBelowMd = false,
+  sortInFiltersBelowXl = false,
   quickFilters,
   quickFiltersBelow = false,
+  quickFiltersScroll = false,
   actions,
   children,
 }: AccessToolbarProps<T>) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const wide = useWideScreen();
-  const sortInFilters = sortInFiltersBelowMd && !wide;
+  const desktop = useDesktopScreen();
+  // Below xl implies below md: the phone layout of the search stays.
+  const sortInFiltersBelowMd = sortBelowMd || sortInFiltersBelowXl;
+  const sortInFilters = sortInFiltersBelowXl
+    ? !desktop
+    : sortInFiltersBelowMd && !wide;
   const count = chips.length;
   const sortSelect = (
     inToolbar: boolean,
@@ -409,7 +441,12 @@ export function AccessToolbar<T extends string>({
       className="flex min-w-0 shrink-0 flex-col gap-2"
     >
       {/* From 1280px one row: the search gives way to the other controls. */}
-      <div className="flex min-w-0 flex-wrap items-end gap-3 xl:flex-nowrap xl:gap-2">
+      <div
+        className={cn(
+          "flex min-w-0 flex-wrap items-end gap-3 xl:flex-nowrap xl:gap-2",
+          quickFiltersScroll && "md:flex-nowrap",
+        )}
+      >
         {onQueryChange ? (
           <Field
             className={cn(

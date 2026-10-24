@@ -9,11 +9,14 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { serializeCsv } from "@/lib/csv";
 
@@ -75,7 +78,9 @@ function auditCsv(logs: readonly ManageAuditLog[]): string {
 /**
  * The export preview below the 10,000-event limit (MD7 keeps this flow):
  * the first 10 filtered events as CSV, then Download CSV for all of them.
- * The host owns the pinned request, the download and its cancellation.
+ * The host owns the pinned request, the download and its cancellation. In
+ * the dialog frame (MD19) the content is the one scroller, so the preview
+ * has no scroll area of its own; the header holds the named close.
  */
 export function AuditExportDialog({
   open,
@@ -113,14 +118,21 @@ export function AuditExportDialog({
         if (!next) onClose();
       }}
     >
-      <DialogContent className="slim-ui sm:max-w-3xl" finalFocus={finalFocus}>
-        <DialogHeader>
-          <DialogTitle>Audit export preview</DialogTitle>
-          <DialogDescription>
-            {count} filtered {count === 1 ? "entry" : "entries"} · the download
-            includes every filtered entry across all pages.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent
+        className={`${dialogFrameContentClass} sm:max-w-3xl`}
+        finalFocus={finalFocus}
+      >
+        <DialogFrameHeader
+          title={<DialogTitle>Audit export preview</DialogTitle>}
+          description={
+            <DialogDescription>
+              {count} filtered {count === 1 ? "entry" : "entries"} · the
+              download includes every filtered entry across all pages.
+            </DialogDescription>
+          }
+          closeLabel="Close export"
+          onClose={onClose}
+        />
         {downloadError ? (
           <Alert role="alert" variant="destructive">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -131,6 +143,7 @@ export function AuditExportDialog({
               </p>
               <Button
                 variant="outline"
+                className="min-h-11"
                 disabled={downloadPending}
                 onClick={onDownload}
               >
@@ -147,20 +160,17 @@ export function AuditExportDialog({
                   ? preview.error.message
                   : "Audit export preview could not be loaded. Try again."}
               </p>
-              <Button variant="outline" onClick={() => void preview.refetch()}>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                onClick={() => void preview.refetch()}
+              >
                 Retry
               </Button>
             </div>
           </Alert>
         ) : (
-          <ScrollArea
-            className="max-h-[50dvh] rounded-md"
-            viewportProps={{
-              className: "max-h-[50dvh]",
-              tabIndex: 0,
-              "aria-label": "CSV preview",
-            }}
-          >
+          <div role="group" aria-label="CSV preview" className="min-w-0">
             <LoadingRegion
               loading={preview.isPending}
               label="Preparing audit export…"
@@ -170,7 +180,7 @@ export function AuditExportDialog({
                 {auditCsv(logs.slice(0, 10))}
               </pre>
             </LoadingRegion>
-          </ScrollArea>
+          </div>
         )}
         {preview.isSuccess ? (
           <p className="text-muted-foreground text-sm">
@@ -183,19 +193,18 @@ export function AuditExportDialog({
             Downloading audit CSV…
           </p>
         ) : null}
-        <DialogFooter>
-          <Button variant="outline" className="min-h-11" onClick={onClose}>
-            Close preview
-          </Button>
-          <Button
-            className="min-h-11"
-            onClick={onDownload}
-            aria-busy={downloadPending}
-            disabled={!canDownload}
-          >
-            <Download data-icon="inline-start" /> Download CSV
-          </Button>
-        </DialogFooter>
+        <DialogFrameFooter>
+          <DialogFooter className="mt-0">
+            <Button
+              className="min-h-11"
+              onClick={onDownload}
+              aria-busy={downloadPending}
+              disabled={!canDownload}
+            >
+              <Download data-icon="inline-start" /> Download CSV
+            </Button>
+          </DialogFooter>
+        </DialogFrameFooter>
       </DialogContent>
     </Dialog>
   );

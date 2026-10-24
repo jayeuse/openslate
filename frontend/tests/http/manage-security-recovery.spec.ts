@@ -37,7 +37,9 @@ test("Back up now queues real history, cancels without writes, and preserves pol
   await expect(dialog).toContainText("Enter a backup name");
   expect(backup.queueRequests).toEqual([]);
   await name.fill("Cancelled backup");
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Close without backing up", exact: true })
+    .click();
   await expect(dialog).toBeHidden();
   await expect(opener).toBeFocused();
   expect(backup.queueRequests).toEqual([]);
@@ -830,7 +832,9 @@ test("after a refusal, Back up now and Edit schedule stay disabled and say why",
   await expect(dialog.getByRole("alert")).toHaveText(
     "Only the installation owner can do this.",
   );
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Close without backing up", exact: true })
+    .click();
   await expect(dialog).toBeHidden();
   // Focus returns to Back up now, which now says why it cannot act.
   await expect(backUp).toBeFocused();

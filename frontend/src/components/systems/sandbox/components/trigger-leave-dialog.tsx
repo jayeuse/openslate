@@ -13,10 +13,10 @@ import {
 } from "@/components/ui/dialog";
 import { plural } from "../helpers/designer-impacts";
 import {
-  SandboxDialogFooter,
-  SandboxDialogHeader,
-  sandboxDialogContentClass,
-} from "./sandbox-dialog-frame";
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import type { TriggerDraft } from "./use-trigger-draft";
 
 /**
@@ -46,9 +46,9 @@ export function TriggerLeaveDialog({
         onStay();
       }}
     >
-      <DialogContent className={sandboxDialogContentClass}>
+      <DialogContent className={dialogFrameContentClass}>
         {/* The named close stays, like Stay. */}
-        <SandboxDialogHeader
+        <DialogFrameHeader
           title={<DialogTitle>Unsaved trigger changes</DialogTitle>}
           closeLabel="Close and stay"
           closeDisabled={saving}
@@ -65,7 +65,7 @@ export function TriggerLeaveDialog({
             {error}
           </Alert>
         ) : null}
-        <SandboxDialogFooter>
+        <DialogFrameFooter>
           <DialogFooter className="mt-0">
             <Button
               variant="outline"
@@ -104,7 +104,7 @@ export function TriggerLeaveDialog({
               Save
             </Button>
           </DialogFooter>
-        </SandboxDialogFooter>
+        </DialogFrameFooter>
       </DialogContent>
     </Dialog>
   );

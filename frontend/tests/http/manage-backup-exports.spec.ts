@@ -191,7 +191,9 @@ test("export validates the passphrase before a request and cancels with empty se
   await expect(downloadAction(page)).toBeFocused();
   await downloadAction(page).click();
   await expect(passphrase).toHaveValue("");
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Close export", exact: true })
+    .click();
   expect(exports.createSubmissions).toBe(0);
 });
 
@@ -225,7 +227,7 @@ test("export permits a verified reconciled retention-failed recovery point and q
     "The installation goes offline while this backup runs.",
   );
   await backupDialog
-    .getByRole("button", { name: "Cancel", exact: true })
+    .getByRole("button", { name: "Close without backing up", exact: true })
     .click();
   await downloadAction(page).click();
   const exportDialog = passphraseDialog(page);
@@ -926,7 +928,9 @@ test("export keeps local input through a same-account privacy curtain and preser
     await expect(dialog.getByLabel("Passphrase", { exact: true })).toHaveValue(
       syntheticExportPassphrase,
     );
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Close export", exact: true })
+      .click();
     await page
       .getByRole("button", { name: "Edit schedule", exact: true })
       .click();

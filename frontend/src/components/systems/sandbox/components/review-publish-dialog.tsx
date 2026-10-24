@@ -15,10 +15,10 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  SandboxDialogFooter,
-  SandboxDialogHeader,
-  sandboxDialogContentClass,
-} from "./sandbox-dialog-frame";
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import {
   PublishChangeGroups,
   type PublishReviewDesign,
@@ -211,8 +211,8 @@ export function ReviewPublishDialog({
     >
       {/* One scroller: the header and footer stay in view (Dialogs in
           Access), so focused controls are never hidden behind them. */}
-      <DialogContent className={`${sandboxDialogContentClass} sm:max-w-2xl`}>
-        <SandboxDialogHeader
+      <DialogContent className={`${dialogFrameContentClass} sm:max-w-2xl`}>
+        <DialogFrameHeader
           title={<DialogTitle>Review &amp; Publish</DialogTitle>}
           closeLabel="Close review"
           closeDisabled={busy === "publish"}
@@ -307,7 +307,7 @@ export function ReviewPublishDialog({
             )}
           </>
         )}
-        <SandboxDialogFooter>
+        <DialogFrameFooter>
           {preview ? (
             <>
               {/* The password is its own label-left row (stacked on a
@@ -387,7 +387,7 @@ export function ReviewPublishDialog({
               )}
             </DialogFooter>
           )}
-        </SandboxDialogFooter>
+        </DialogFrameFooter>
       </DialogContent>
     </Dialog>
   );

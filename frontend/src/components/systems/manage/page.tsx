@@ -2,7 +2,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ShieldCheck } from "lucide-react";
 import {
   Suspense,
   useEffect,
@@ -1224,8 +1224,15 @@ function ManageContent() {
           </p>
         )}
       </div>
+      {/* Row 2 on a phone (MD19): the section's actions in one row that
+          never scrolls sideways; beside the title from 640px. */}
       {actions && !unavailable ? (
-        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+        <div
+          data-slot="page-actions"
+          className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:shrink-0"
+        >
+          {actions}
+        </div>
       ) : null}
     </header>
   );
@@ -1250,8 +1257,15 @@ function ManageContent() {
         {tab !== "Audit" || !sectionShown
           ? renderPageHeader(
               tab === "Backup" && canEditOrganization ? (
-                <Button asChild variant="outline" className="min-h-11">
+                // Quiet, with an icon so it reads as an action; on a phone
+                // it sits near the title edge with room for its focus ring.
+                <Button
+                  asChild
+                  variant="ghost"
+                  className="min-h-11 max-sm:-ml-2 max-sm:px-2"
+                >
                   <GuardedWorkspaceLink href="/access?view=security">
+                    <ShieldCheck aria-hidden="true" className="size-4" />
                     Access security
                   </GuardedWorkspaceLink>
                 </Button>

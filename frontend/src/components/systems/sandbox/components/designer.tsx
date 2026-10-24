@@ -107,9 +107,9 @@ import { buildField, FieldRow, FieldSettings } from "./designer-field-settings";
 import { RelationshipList, type RelationshipRow } from "./relationship-list";
 import { DesignerSummary } from "./designer-summary";
 import {
-  SandboxDialogHeader,
-  sandboxDialogContentClass,
-} from "./sandbox-dialog-frame";
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import { LifecycleActions, ModuleSettings } from "./designer-properties";
 import {
   buildAttentionItems,
@@ -3037,9 +3037,9 @@ export function Designer({
         }}
       >
         <DialogContent
-          className={`${sandboxDialogContentClass} max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11`}
+          className={`${dialogFrameContentClass} max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11`}
         >
-          <SandboxDialogHeader
+          <DialogFrameHeader
             title={
               <DialogTitle>
                 {editingRelationship

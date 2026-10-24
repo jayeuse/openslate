@@ -22,10 +22,10 @@ import {
 import { VersionDetail, type CheckpointLabelEdit } from "./version-detail";
 import type { VersionCapacityActions } from "./version-capacity-banner";
 import {
-  SandboxDialogFooter,
-  SandboxDialogHeader,
-  sandboxDialogContentClass,
-} from "./sandbox-dialog-frame";
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -684,9 +684,9 @@ export function VersionsWorkspace({
                 ? returnTarget
                 : versionsHeading.current;
             }}
-            className={`${sandboxDialogContentClass} max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11`}
+            className={`${dialogFrameContentClass} max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11 max-xl:[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 max-xl:[&_select]:min-h-11`}
           >
-            <SandboxDialogHeader
+            <DialogFrameHeader
               title={
                 <AlertDialogTitle className="[overflow-wrap:anywhere]">
                   {confirm.kind === "delete"
@@ -710,7 +710,7 @@ export function VersionsWorkspace({
             {actionError ? (
               <Alert variant="destructive">{actionError}</Alert>
             ) : null}
-            <SandboxDialogFooter>
+            <DialogFrameFooter>
               <AlertDialogFooter className="mt-0">
                 <Button
                   variant="outline"
@@ -734,7 +734,7 @@ export function VersionsWorkspace({
                     : "Restore version"}
                 </Button>
               </AlertDialogFooter>
-            </SandboxDialogFooter>
+            </DialogFrameFooter>
           </AlertDialogContent>
         ) : null}
       </AlertDialog>

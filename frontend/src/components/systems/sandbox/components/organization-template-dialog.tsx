@@ -19,10 +19,10 @@ import {
 } from "@/components/ui/dialog";
 import type { SandboxCommandResult } from "../state/commands";
 import {
-  SandboxDialogFooter,
-  SandboxDialogHeader,
-  sandboxDialogContentClass,
-} from "./sandbox-dialog-frame";
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import {
   SANDBOX_ORGANIZATION_TEMPLATES,
   sandboxTemplateStats,
@@ -89,9 +89,9 @@ export function OrganizationTemplateDialog({
           confirm button stay in view (Dialogs in Access). */}
       <DialogContent
         aria-busy={applying || undefined}
-        className={`${sandboxDialogContentClass} max-w-6xl max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11`}
+        className={`${dialogFrameContentClass} max-w-6xl max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11`}
       >
-        <SandboxDialogHeader
+        <DialogFrameHeader
           title={<DialogTitle>Organization templates</DialogTitle>}
           description={
             <DialogDescription>
@@ -213,7 +213,7 @@ export function OrganizationTemplateDialog({
             </Card>
           ) : null}
         </div>
-        <SandboxDialogFooter>
+        <DialogFrameFooter>
           {error ? (
             <Alert role="alert" variant="destructive">
               {error}
@@ -250,7 +250,7 @@ export function OrganizationTemplateDialog({
                 : `Use ${selectedTemplate?.name ?? "template"}`}
             </Button>
           </DialogFooter>
-        </SandboxDialogFooter>
+        </DialogFrameFooter>
         {applying ? (
           <p role="status" aria-live="polite" className="sr-only">
             Applying template

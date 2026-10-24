@@ -2,6 +2,7 @@ import { authMeBody, expect, test, type Page } from "./helpers/test";
 import { person } from "./helpers/access-api";
 import { profilePreferences } from "./helpers/profile-api";
 import { openFilters, enterDay } from "./helpers/filters";
+import { cutTexts, smallTargets } from "./helpers/layout";
 import { eventLabels } from "../../src/components/systems/access/helpers/security-event-sentences";
 import { deferredMfaResponse, mfaUserA, mfaUserB } from "./helpers/mfa";
 import {
@@ -1827,3 +1828,43 @@ test("S09: missing and malformed sentence facts keep non-success outcomes truthf
   await expect(eventRows(page)).not.toContainText(unsafeEventCanary);
   expect(state.commands).toEqual([]);
 });
+
+test("on a phone the Security events targets and the details sheet are at least 44px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockAccessSecurityEvents(page);
+  await openFeed(page);
+  expect(await smallTargets(page.getByRole("main"))).toEqual([]);
+  const sheet = await details(page, "Sign-in");
+  await expect(sheet).toBeVisible();
+  // A full-screen sheet with a named close.
+  expect(Math.round((await sheet.boundingBox())?.width ?? 0)).toBe(390);
+  await expect(
+    sheet.getByRole("button", {
+      name: "Close security event details",
+      exact: true,
+    }),
+  ).toBeInViewport({ ratio: 1 });
+  expect(await smallTargets(sheet)).toEqual([]);
+});
+
+for (const [width, height] of [
+  [1024, 768],
+  [768, 1024],
+] as const) {
+  test(`at ${width} by ${height} each Security event sentence reads in full`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height });
+    await mockAccessSecurityEvents(page);
+    await openFeed(page);
+    await expect(
+      eventRows(page).getByText(
+        "Failed sign-in attempts were recorded from 198.51.100.42.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    expect(await cutTexts(eventRows(page))).toEqual([]);
+  });
+}

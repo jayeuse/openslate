@@ -62,7 +62,8 @@ export function JobsToolbar({
       ]
     : [];
   // Refresh sits beside the toolbar, so on a phone it stays on the Filters
-  // row instead of wrapping to its own line.
+  // row instead of wrapping to its own line. Below 1280px the state strip
+  // scrolls sideways with the fade, so Filters keeps its line (MD19).
   return (
     <div className="flex min-w-0 items-start gap-2">
       <div className="min-w-0 flex-1">
@@ -72,6 +73,7 @@ export function JobsToolbar({
           chips={chips}
           onClearFilters={() => onKindChange("")}
           filtersDisabled={locked}
+          quickFiltersScroll
           quickFilters={
             <ToggleGroup
               aria-label="Job state"
@@ -79,7 +81,7 @@ export function JobsToolbar({
               multiple={false}
               disabled={locked}
               value={[state || "all"]}
-              className="w-full max-w-full flex-nowrap overflow-x-auto max-md:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-md:pr-8 md:w-fit [&>*]:shrink-0"
+              className="w-full max-w-full flex-nowrap overflow-x-auto max-xl:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-xl:pr-8 xl:w-fit [&>*]:shrink-0"
               onValueChange={(selection) => {
                 const next = STATE_FILTERS.find(
                   (option) => option.value === selection[0],
@@ -91,7 +93,7 @@ export function JobsToolbar({
                 <ToggleGroupItem
                   key={option.value}
                   value={option.value}
-                  className="flex-none px-2 text-sm whitespace-nowrap"
+                  className="min-w-11 flex-none px-2 text-sm whitespace-nowrap xl:min-w-0"
                 >
                   {option.label}
                 </ToggleGroupItem>

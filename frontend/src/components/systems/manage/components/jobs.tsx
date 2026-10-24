@@ -50,7 +50,8 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
   const [state, setState] = useState("");
   const [limit, setLimit] = useState(10);
   const [offset, setOffset] = useState(0);
-  const [phone, setPhone] = useState(false);
+  // Below 1280px Jobs shows list rows, where the subject reads in full.
+  const [narrow, setNarrow] = useState(false);
   const [recovery, setRecovery] = useState<ManageJobsRecovery | null>(() =>
     getManageJobsRecovery(client),
   );
@@ -120,8 +121,8 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
     }
   }, [admitted, denied, client]);
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 767px)");
-    const update = () => setPhone(media.matches);
+    const media = window.matchMedia("(max-width: 1279px)");
+    const update = () => setNarrow(media.matches);
     update();
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
@@ -395,7 +396,7 @@ export default function ManageJobs({ admitted }: { admitted: boolean }) {
           >
             <JobsRows
               rows={rows}
-              phone={phone}
+              list={narrow}
               formatTime={formatTime}
               blocked={commandsBlocked}
               onRetry={(row) => void retry(row)}

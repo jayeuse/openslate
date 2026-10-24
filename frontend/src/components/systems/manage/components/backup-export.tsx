@@ -11,9 +11,13 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
@@ -287,16 +291,29 @@ export function PrepareExportDialog({
         if (!next) onCancel();
       }}
     >
-      <DialogContent className="slim-ui" finalFocus={finalFocus}>
-        <DialogHeader>
-          <DialogTitle>Prepare encrypted backup</DialogTitle>
-          <DialogDescription>
-            Prepare an encrypted copy of {sourceName ?? "the selected backup"}.
-            The installation stays online. Keep this passphrase with your
-            offline recovery records; you need it to restore the backup.
-          </DialogDescription>
-        </DialogHeader>
-        <form className="mt-4 flex min-w-0 flex-col gap-4" onSubmit={onSubmit}>
+      <DialogContent
+        className={dialogFrameContentClass}
+        initialFocus={() => document.getElementById(id + "-export-passphrase")}
+        finalFocus={finalFocus}
+      >
+        <DialogFrameHeader
+          title={<DialogTitle>Prepare encrypted backup</DialogTitle>}
+          description={
+            <DialogDescription>
+              Prepare an encrypted copy of {sourceName ?? "the selected backup"}
+              . The installation stays online. Keep this passphrase with your
+              offline recovery records; you need it to restore the backup.
+            </DialogDescription>
+          }
+          closeLabel="Close export"
+          closeDisabled={pending}
+          onClose={onCancel}
+        />
+        <form
+          id={`${id}-export-form`}
+          className="flex min-w-0 flex-col gap-4"
+          onSubmit={onSubmit}
+        >
           <fieldset disabled={pending} className="flex min-w-0 flex-col gap-4">
             <Field data-invalid={Boolean(passphraseError)}>
               <FieldLabel htmlFor={id + "-export-passphrase"}>
@@ -358,6 +375,8 @@ export function PrepareExportDialog({
               {error}
             </Alert>
           ) : null}
+        </form>
+        <DialogFrameFooter>
           <DialogFooter className="mt-0">
             <Button
               type="button"
@@ -370,13 +389,14 @@ export function PrepareExportDialog({
             </Button>
             <Button
               type="submit"
+              form={`${id}-export-form`}
               className="min-h-11"
               disabled={pending || !passphrasesMatch}
             >
               {pending ? "Preparing…" : "Prepare encrypted backup"}
             </Button>
           </DialogFooter>
-        </form>
+        </DialogFrameFooter>
       </DialogContent>
     </Dialog>
   );
@@ -413,14 +433,27 @@ export function ConfirmPasswordDialog({
         if (!next) onCancel();
       }}
     >
-      <DialogContent className="slim-ui" finalFocus={finalFocus}>
-        <DialogHeader>
-          <DialogTitle>Confirm password</DialogTitle>
-          <DialogDescription>
-            Enter your current password to download this encrypted backup.
-          </DialogDescription>
-        </DialogHeader>
-        <form className="mt-4 flex min-w-0 flex-col gap-4" onSubmit={onSubmit}>
+      <DialogContent
+        className={dialogFrameContentClass}
+        initialFocus={() => document.getElementById(id + "-export-password")}
+        finalFocus={finalFocus}
+      >
+        <DialogFrameHeader
+          title={<DialogTitle>Confirm password</DialogTitle>}
+          description={
+            <DialogDescription>
+              Enter your current password to download this encrypted backup.
+            </DialogDescription>
+          }
+          closeLabel="Close without downloading"
+          closeDisabled={pending}
+          onClose={onCancel}
+        />
+        <form
+          id={`${id}-password-form`}
+          className="flex min-w-0 flex-col gap-4"
+          onSubmit={onSubmit}
+        >
           <fieldset disabled={pending} className="min-w-0">
             <Field data-invalid={Boolean(passwordError)}>
               <FieldLabel htmlFor={id + "-export-password"}>
@@ -450,6 +483,8 @@ export function ConfirmPasswordDialog({
               {error}
             </Alert>
           ) : null}
+        </form>
+        <DialogFrameFooter>
           <DialogFooter className="mt-0">
             <Button
               type="button"
@@ -460,11 +495,16 @@ export function ConfirmPasswordDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" className="min-h-11" disabled={pending}>
+            <Button
+              type="submit"
+              form={`${id}-password-form`}
+              className="min-h-11"
+              disabled={pending}
+            >
               {pending ? "Confirming…" : "Confirm password"}
             </Button>
           </DialogFooter>
-        </form>
+        </DialogFrameFooter>
       </DialogContent>
     </Dialog>
   );

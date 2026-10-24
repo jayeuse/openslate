@@ -1,6 +1,19 @@
-import { expect, signedInAs, test, type Page } from "./helpers/test";
+import {
+  expect,
+  expectNoHorizontalScroll,
+  signedInAs,
+  test,
+  type Locator,
+  type Page,
+} from "./helpers/test";
 import { fixtureId } from "./helpers/access-api";
-import { mockManageBackups } from "./helpers/manage-backups";
+import {
+  mockManageBackupExports,
+  mockManageBackups,
+  readyBackupExport,
+} from "./helpers/manage-backups";
+import { mockManageSecurity } from "./helpers/manage-security";
+import { cutTexts, smallTargets, toolbarLines } from "./helpers/layout";
 
 // Who sees which Manage section, the section header, and the still page from
 // 1280px. The navigation rule itself is owned by the isolated
@@ -81,20 +94,30 @@ async function mockAudit(page: Page, count = 24) {
   });
 }
 
-async function mockJobs(page: Page) {
-  const items = Array.from({ length: 30 }, (_, index) => ({
-    kind: "report",
+type JobRow = {
+  kind: string;
+  subject_label: string;
+  state: string;
+  can_retry: boolean;
+};
+const reportRows: JobRow[] = Array.from({ length: 30 }, (_, index) => ({
+  kind: "report",
+  subject_label: `Weekly report ${index + 1}`,
+  state: "succeeded",
+  can_retry: false,
+}));
+
+async function mockJobs(page: Page, rows: readonly JobRow[] = reportRows) {
+  const items = rows.map((row, index) => ({
+    ...row,
     id: fixtureId(6000 + index),
-    subject_label: `Weekly report ${index + 1}`,
     subject_link: null,
-    state: "succeeded",
     scheduled_for: "2026-10-01T00:00:00Z",
     last_attempt_at: "2026-10-01T00:05:00Z",
     next_attempt_at: null,
     attempts: 1,
     failure_code: null,
     failure_label: null,
-    can_retry: false,
   }));
   await page.route("**/api/jobs**", (route) => {
     const url = new URL(route.request().url());
@@ -328,5 +351,367 @@ test("no Manage section scrolls the page at 1280 by 720", async ({ page }) => {
   ).toBe(true);
   await expect(
     page.getByRole("navigation", { name: "Jobs pages" }),
+  ).toBeInViewport();
+});
+
+const phone = { width: 390, height: 844 };
+const main = (page: Page) => page.getByRole("main");
+
+test("on a phone the Organization targets are at least 44px", async ({
+  page,
+}) => {
+  await page.setViewportSize(phone);
+  await installEverySection(page);
+  await openSection(page, sections[0]);
+  expect(await smallTargets(main(page))).toEqual([]);
+  await expectNoHorizontalScroll(page);
+});
+
+test("on a phone the Backup targets, its detail and its schedule dialog are at least 44px", async ({
+  page,
+}) => {
+  await page.setViewportSize(phone);
+  await installEverySection(page);
+  await openSection(page, sections[1]);
+  expect(await smallTargets(main(page))).toEqual([]);
+  await page
+    .getByRole("button", { name: "Inspect Backup 1", exact: true })
+    .click();
+  // The detail is its own screen with a 44px Back.
+  await expect(
+    page.getByRole("region", { name: "Selected backup", exact: true }),
+  ).toBeVisible();
+  expect(await smallTargets(main(page))).toEqual([]);
+  await page.getByRole("button", { name: "Edit schedule" }).click();
+  const schedule = page.getByRole("dialog", { name: "Backup schedule" });
+  await expect(schedule).toBeVisible();
+  expect(await smallTargets(schedule)).toEqual([]);
+  await expectNoHorizontalScroll(page);
+});
+
+test("on a phone the Audit targets, its event sheet and its export dialog are at least 44px", async ({
+  page,
+}) => {
+  await page.setViewportSize(phone);
+  await installEverySection(page);
+  await openSection(page, sections[2]);
+  expect(await smallTargets(main(page))).toEqual([]);
+  await main(page)
+    .getByRole("list", { name: "Activity history", exact: true })
+    .getByRole("button")
+    .first()
+    .click();
+  const sheet = page.getByRole("dialog").filter({ hasText: "What changed" });
+  await expect(sheet).toBeVisible();
+  // A full-screen sheet with a named close.
+  const sheetBox = await sheet.boundingBox();
+  expect(Math.round(sheetBox?.width ?? 0)).toBe(phone.width);
+  await expect(
+    sheet.getByRole("button", { name: "Close event details", exact: true }),
+  ).toBeInViewport({ ratio: 1 });
+  expect(await smallTargets(sheet)).toEqual([]);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Export audit preview" }).click();
+  const preview = page.getByRole("dialog", { name: "Audit export preview" });
+  await expect(preview).toBeVisible();
+  expect(await smallTargets(preview)).toEqual([]);
+  await expectNoHorizontalScroll(page);
+});
+
+test("on a phone the Jobs targets, the row menu and the Filters bottom sheet are at least 44px", async ({
+  page,
+}) => {
+  await page.setViewportSize(phone);
+  await mockManageBackups(page);
+  await mockJobs(page, [
+    {
+      kind: "report",
+      subject_label: "Weekly report 1",
+      state: "failed",
+      can_retry: true,
+    },
+    ...reportRows.slice(1),
+  ]);
+  await openSection(page, sections[3]);
+  expect(await smallTargets(main(page))).toEqual([]);
+  await page
+    .getByRole("button", { name: "Actions for Weekly report 1", exact: true })
+    .click();
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  expect(await smallTargets(menu)).toEqual([]);
+  await page.keyboard.press("Escape");
+  await main(page)
+    .getByRole("button", { name: "Filters", exact: true })
+    .click();
+  // Below 768px Filters opens as a full-width sheet at the bottom.
+  const sheet = page.getByRole("dialog", { name: "Filters", exact: true });
+  await expect(sheet).toBeVisible();
+  const box = await sheet.boundingBox();
+  expect(Math.round(box?.width ?? 0)).toBe(phone.width);
+  expect(Math.round((box?.y ?? 0) + (box?.height ?? 0))).toBe(phone.height);
+  expect(await smallTargets(sheet)).toEqual([]);
+  await sheet
+    .getByLabel("Job kind", { exact: true })
+    .selectOption("report-run");
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+  // The chip and Clear all keep the 44px floor.
+  await expect(
+    main(page).getByRole("group", { name: "Active filters" }),
+  ).toBeVisible();
+  expect(await smallTargets(main(page))).toEqual([]);
+  await expectNoHorizontalScroll(page);
+});
+
+test("on a phone the Updates targets are at least 44px", async ({ page }) => {
+  await page.setViewportSize(phone);
+  await installEverySection(page);
+  await openSection(page, sections[4]);
+  expect(await smallTargets(main(page))).toEqual([]);
+  await expectNoHorizontalScroll(page);
+});
+
+test("on a phone the header is the title and meta line, then one row of quiet actions", async ({
+  page,
+}) => {
+  await page.setViewportSize(phone);
+  await installEverySection(page);
+  for (const section of [sections[1], sections[2]]) {
+    await openSection(page, section);
+    const header = main(page).locator('header:has([data-slot="page-title"])');
+    const title = header.locator('[data-slot="page-title"]');
+    const actions = header.locator('[data-slot="page-actions"]');
+    await expect(actions, section.view).toBeVisible();
+    const [titleBox, actionsBox] = await Promise.all([
+      title.boundingBox(),
+      actions.boundingBox(),
+    ]);
+    // Row 2 sits under the title and meta line.
+    expect(actionsBox!.y).toBeGreaterThan(titleBox!.y + titleBox!.height);
+    expect(
+      await actions.evaluate((row) => row.scrollWidth <= row.clientWidth),
+      section.view,
+    ).toBe(true);
+    const middles = await actions
+      .locator("button, a[href], [role=tab]")
+      .evaluateAll((parts) =>
+        parts.map((part) => {
+          const box = part.getBoundingClientRect();
+          return Math.round(box.y + box.height / 2);
+        }),
+      );
+    expect(Math.max(...middles) - Math.min(...middles)).toBeLessThan(12);
+  }
+  // Backup's Access security is a quiet 44px button, not a block.
+  await openSection(page, sections[1]);
+  const security = main(page).getByRole("link", { name: "Access security" });
+  await expect(security).toHaveAttribute("data-variant", "ghost");
+  expect(Math.round((await security.boundingBox())?.height ?? 0)).toBe(44);
+});
+
+const longJobs: JobRow[] = [
+  "Weekly capacity report",
+  "Maintenance window reminder",
+  "Department capacity review",
+  "Customer account follow-up",
+  "Quality follow-up meeting",
+  "Quarterly staffing summary",
+].map((subject_label, index) => ({
+  kind: index % 2 ? "event-reminder" : "report-run",
+  subject_label,
+  state: "succeeded",
+  can_retry: false,
+}));
+
+for (const viewport of [
+  { width: 1024, height: 768 },
+  { width: 768, height: 1024 },
+]) {
+  test(`at ${viewport.width} by ${viewport.height} Jobs subjects read in full and Filters shares the quick-filter line`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await mockManageBackups(page);
+    await mockJobs(page, longJobs);
+    await page.goto("/manage?view=jobs");
+    for (const job of longJobs) {
+      const subject = main(page).getByText(job.subject_label, { exact: true });
+      await expect(subject).toBeVisible();
+      expect(
+        await subject.evaluate((text) => text.scrollWidth <= text.clientWidth),
+        job.subject_label,
+      ).toBe(true);
+    }
+    expect(await cutTexts(main(page))).toEqual([]);
+    const toolbar = main(page).getByRole("region", { name: "Jobs controls" });
+    expect(await toolbarLines(toolbar)).toEqual([2]);
+    const [states, filters] = await Promise.all([
+      toolbar.getByRole("group", { name: "Job state" }).boundingBox(),
+      toolbar
+        .getByRole("button", { name: "Filters", exact: true })
+        .boundingBox(),
+    ]);
+    expect(
+      Math.abs(
+        states!.y + states!.height / 2 - (filters!.y + filters!.height / 2),
+      ),
+    ).toBeLessThan(12);
+    await expectNoHorizontalScroll(page);
+  });
+
+  test(`at ${viewport.width} by ${viewport.height} Audit and Backup rows read in full with no toolbar control alone on a line`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await installEverySection(page);
+    await openSection(page, sections[2]);
+    expect(await cutTexts(main(page))).toEqual([]);
+    expect(
+      await toolbarLines(
+        main(page).getByRole("region", { name: "Search activity controls" }),
+      ),
+    ).toEqual([3]);
+    await openSection(page, sections[1]);
+    expect(await cutTexts(main(page))).toEqual([]);
+    for (const line of await toolbarLines(
+      main(page).getByRole("region", { name: "Search backups controls" }),
+    ))
+      expect(line).toBeGreaterThan(1);
+    await expectNoHorizontalScroll(page);
+  });
+}
+
+/**
+ * Scrolls a dialog to each end and checks its close and footer buttons stay
+ * in view. A form dialog opens on its first field and keeps Cancel beside
+ * its action, so a phone has a "no" next to it.
+ */
+async function expectFramed(
+  dialog: Locator,
+  close: string,
+  footer: readonly string[],
+  firstField?: string,
+) {
+  await expect(dialog).toBeVisible();
+  if (firstField)
+    await expect(dialog.getByLabel(firstField, { exact: true })).toBeFocused();
+  // On a phone a dialog fills the width inside the 16px page gutter.
+  expect((await dialog.boundingBox())?.width).toBeGreaterThanOrEqual(
+    phone.width - 32,
+  );
+  const closeButton = dialog.getByRole("button", { name: close, exact: true });
+  for (const end of ["top", "bottom"] as const) {
+    await dialog.evaluate((content, to) => {
+      content.scrollTop = to === "top" ? 0 : content.scrollHeight;
+    }, end);
+    await expect(closeButton, `${close} at the ${end}`).toBeInViewport({
+      ratio: 1,
+    });
+    for (const name of footer)
+      await expect(
+        dialog.getByRole("button", { name, exact: true }),
+        `${name} at the ${end}`,
+      ).toBeInViewport({ ratio: 1 });
+  }
+  // The named close replaces "Close preview".
+  await expect(
+    dialog.getByRole("button", { name: "Close preview", exact: true }),
+  ).toHaveCount(0);
+}
+
+test("on a phone each Manage dialog has a named close and keeps its footer in view", async ({
+  page,
+  baseURL,
+}) => {
+  if (!baseURL) throw new Error("The configured browser origin is required.");
+  await page.setViewportSize(phone);
+  await mockManageSecurity(page);
+  const exports = await mockManageBackupExports(page, baseURL);
+  await mockAudit(page);
+  await page.goto("/manage?view=backup");
+  await page.getByRole("button", { name: "Back up now", exact: true }).click();
+  const backUp = page.getByRole("dialog", { name: "Back up now" });
+  await expectFramed(
+    backUp,
+    "Close without backing up",
+    ["Cancel", "Back up now"],
+    "Backup name",
+  );
+  await backUp
+    .getByRole("button", { name: "Close without backing up", exact: true })
+    .click();
+  await expect(backUp).toBeHidden();
+
+  await page
+    .getByRole("button", { name: "Edit schedule", exact: true })
+    .click();
+  const schedule = page.getByRole("dialog", { name: "Backup schedule" });
+  await expectFramed(schedule, "Close backup schedule", ["Close"]);
+  await page.keyboard.press("Escape");
+
+  await page
+    .getByRole("button", { name: "Inspect Backup 1", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Selected backup", exact: true })
+    .getByRole("button", { name: "Prepare encrypted backup", exact: true })
+    .click();
+  const prepare = page.getByRole("dialog", {
+    name: "Prepare encrypted backup",
+  });
+  await expectFramed(
+    prepare,
+    "Close export",
+    ["Cancel", "Prepare encrypted backup"],
+    "Passphrase",
+  );
+  await page.keyboard.press("Escape");
+
+  const operation = readyBackupExport(exports.backups.runs[0]!.id);
+  exports.operations.set(operation.id, operation);
+  await page.goto(
+    "/manage?view=backup&export=" + encodeURIComponent(operation.id),
+  );
+  await page
+    .getByRole("region", { name: "Encrypted backup", exact: true })
+    .getByRole("button", { name: "Confirm password", exact: true })
+    .click();
+  await expectFramed(
+    page.getByRole("dialog", { name: "Confirm password" }),
+    "Close without downloading",
+    ["Cancel", "Confirm password"],
+    "Current password",
+  );
+  await page.keyboard.press("Escape");
+
+  await page.goto("/manage?view=audit");
+  await page.getByRole("button", { name: "Export audit preview" }).click();
+  const preview = page.getByRole("dialog", { name: "Audit export preview" });
+  await expect(
+    preview.getByRole("button", { name: "Download CSV", exact: true }),
+  ).toBeEnabled();
+  // The CSV preview makes this dialog long; the content is the one scroller.
+  expect(
+    await preview.evaluate(
+      (content) => content.scrollHeight > content.clientHeight,
+    ),
+  ).toBe(true);
+  await expectFramed(preview, "Close export", ["Download CSV"]);
+});
+
+test("at 1024 by 768 opening a backup brings its detail, under the list, into view", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await installEverySection(page);
+  await openSection(page, sections[1]);
+  await page
+    .getByRole("button", { name: "Inspect Backup 4", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("region", { name: "Selected backup", exact: true })
+      .getByRole("heading", { name: "Backup 4", exact: true }),
   ).toBeInViewport();
 });

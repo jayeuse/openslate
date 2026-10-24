@@ -464,7 +464,9 @@ export function SecurityEventsView({
                         aria-label={`Details for ${eventName(event)} at ${localTime(event.occurred_at, displayRegion)}`}
                         onClick={(opener) => void loadDetail(event.id, opener)}
                       >
-                        <span className="truncate font-medium">
+                        {/* Below 1280px the sentence wraps, so it reads
+                            in full on tablets and phones (MD19). */}
+                        <span className="font-medium break-words xl:truncate">
                           {securityEventSentence(event, names)}
                         </span>
                       </button>

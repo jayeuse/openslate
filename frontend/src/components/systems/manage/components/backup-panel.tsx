@@ -16,9 +16,13 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
@@ -172,7 +176,14 @@ export function BackupPanel({
   }
   function openRun(runId: string) {
     setSelectedId(runId);
-    if (!phone) return;
+    if (!phone) {
+      // Below 1280px the detail sits under the list, so bring it into view
+      // (MD19); from 1280px it is beside the list and already shown.
+      requestAnimationFrame(() =>
+        detailHeading.current?.scrollIntoView({ block: "start" }),
+      );
+      return;
+    }
     setPhoneView("detail");
     requestAnimationFrame(() => {
       window.scrollTo({ top: 0 });
@@ -263,7 +274,10 @@ export function BackupPanel({
           setScheduleOpen(true);
         }}
       />
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] xl:min-h-[23rem] xl:flex-1 xl:grid-rows-[minmax(0,1fr)]">
+      {/* The list and the detail sit side by side from 1280px; below, the
+          detail follows the list, because at 1024 the list pane cut its
+          times and wrapped each control alone (MD19). */}
+      <div className="grid min-w-0 gap-4 xl:min-h-[23rem] xl:flex-1 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] xl:grid-rows-[minmax(0,1fr)]">
         <BackupHistoryList
           listRef={listRef}
           headingRef={listHeading}
@@ -391,17 +405,29 @@ export function BackupPanel({
         }}
       >
         <DialogContent
-          className="slim-ui"
+          className={dialogFrameContentClass}
+          initialFocus={() => document.getElementById(`${id}-backup-name`)}
           finalFocus={() => createOpener.current}
         >
-          <DialogHeader>
-            <DialogTitle>Back up now</DialogTitle>
-            <DialogDescription>
-              Add a named backup request to the queue. The installation goes
-              offline while this backup runs.
-            </DialogDescription>
-          </DialogHeader>
-          <form className="mt-4 flex flex-col gap-4" onSubmit={submit}>
+          {/* The frame (MD19): a pinned header with a named close, then
+              Cancel and the action pinned in the footer. */}
+          <DialogFrameHeader
+            title={<DialogTitle>Back up now</DialogTitle>}
+            description={
+              <DialogDescription>
+                Add a named backup request to the queue. The installation goes
+                offline while this backup runs.
+              </DialogDescription>
+            }
+            closeLabel="Close without backing up"
+            closeDisabled={maintenance.pending}
+            onClose={() => setCreateOpen(false)}
+          />
+          <form
+            id={`${id}-backup-form`}
+            className="flex min-w-0 flex-col gap-4"
+            onSubmit={submit}
+          >
             <fieldset disabled={maintenance.pending} className="min-w-0">
               <Field data-invalid={Boolean(nameError)}>
                 <FieldLabel htmlFor={`${id}-backup-name`}>
@@ -426,6 +452,8 @@ export function BackupPanel({
                 {maintenance.error}
               </Alert>
             ) : null}
+          </form>
+          <DialogFrameFooter>
             <DialogFooter className="mt-0">
               <Button
                 type="button"
@@ -438,13 +466,14 @@ export function BackupPanel({
               </Button>
               <Button
                 type="submit"
+                form={`${id}-backup-form`}
                 className="min-h-11"
                 disabled={maintenance.pending}
               >
                 {maintenance.pending ? "Queueing…" : "Back up now"}
               </Button>
             </DialogFooter>
-          </form>
+          </DialogFrameFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -44,23 +44,26 @@ function JobStatusWord({ state }: { state: string }) {
 
 /**
  * The subject in ink. A subject with a record keeps its link, underlined on
- * hover and focus; its name stays the subject.
+ * hover and focus; its name stays the subject. In list rows the subject
+ * wraps, because Jobs has no detail that shows it in full (MD19).
  */
-function Subject({ job, phone }: { job: ManageJob; phone: boolean }) {
+function Subject({ job, list }: { job: ManageJob; list: boolean }) {
   const name = jobSubject(job);
+  const fit = list ? "break-words" : "truncate";
   return job.subjectLink ? (
     <GuardedWorkspaceLink
       href={job.subjectLink as Route}
       title={name}
       className={cn(
-        "text-foreground focus-visible:outline-ring min-w-0 truncate font-medium underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-2",
-        phone && "inline-flex min-h-11 items-center",
+        "text-foreground focus-visible:outline-ring min-w-0 font-medium underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-2",
+        fit,
+        list && "inline-flex min-h-11 items-center",
       )}
     >
       {name}
     </GuardedWorkspaceLink>
   ) : (
-    <span title={name} className="min-w-0 truncate font-medium">
+    <span title={name} className={cn("min-w-0 font-medium", fit)}>
       {name}
     </span>
   );
@@ -140,28 +143,29 @@ const headClassName = "text-muted-foreground h-9 px-3 text-xs";
 const cellClassName = "h-10 px-3 py-0";
 
 /**
- * Jobs rows (MD9): from 768px a table of 40px one-line rows (state, kind,
- * subject, when, attempts), with a recorded problem on a second line; on a
- * phone a list whose rows add the full problem on their own line. Retry sits
- * in a row menu.
+ * Jobs rows (MD9): from 1280px a table of 40px one-line rows (state, kind,
+ * subject, when, attempts), with a recorded problem on a second line; below
+ * 1280px a list whose rows add the full problem on their own line, because
+ * the table cut the subject at 1024 (MD19). Retry sits in a row menu.
  */
 export function JobsRows({
   rows,
-  phone,
+  list,
   formatTime,
   blocked,
   onRetry,
   empty,
 }: {
   rows: readonly ManageJob[];
-  phone: boolean;
+  /** List rows below 1280px; the table from there. */
+  list: boolean;
   formatTime: (value: string) => string;
   /** True while commands wait for a read, a command, or a recovery. */
   blocked: boolean;
   onRetry: (job: ManageJob) => void;
   empty: string;
 }) {
-  if (phone)
+  if (list)
     return rows.length ? (
       <ul aria-label="Jobs" className="divide-border min-w-0 divide-y">
         {rows.map((job) => {
@@ -170,11 +174,11 @@ export function JobsRows({
           return (
             <li
               key={manageJobIdentity(job)}
-              className="flex min-w-0 items-start gap-1 pt-0.5 pr-1 pb-2 pl-3"
+              className="flex min-w-0 items-start gap-1 pt-1.5 pr-1 pb-2 pl-3"
             >
               <div className="min-w-0 flex-1">
                 <div className="flex min-h-11 min-w-0 items-center justify-between gap-3">
-                  <Subject job={job} phone />
+                  <Subject job={job} list />
                   <span className="shrink-0 text-sm">
                     <JobStatusWord state={job.state} />
                   </span>
@@ -276,7 +280,7 @@ function JobRow({
         </TableCell>
         <TableCell className={cellClassName}>
           <span className="flex min-w-0">
-            <Subject job={job} phone={false} />
+            <Subject job={job} list={false} />
           </span>
         </TableCell>
         <TableCell className={cn(cellClassName, "truncate")}>

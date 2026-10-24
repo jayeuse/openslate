@@ -16,10 +16,10 @@ import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Select, SelectItem } from "@/components/ui/select";
 
 import {
-  SandboxDialogFooter,
-  SandboxDialogHeader,
-  sandboxDialogContentClass,
-} from "../../sandbox/components/sandbox-dialog-frame";
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import { backupScheduleLabels } from "../adapters/backup-api";
 import type { useManageMaintenance } from "../state/controller";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
@@ -65,10 +65,10 @@ export function BackupScheduleDialog({
       dismissible={!maintenance.pending}
     >
       <DialogContent
-        className={`${sandboxDialogContentClass} max-w-xl`}
+        className={`${dialogFrameContentClass} max-w-xl`}
         finalFocus={finalFocus}
       >
-        <SandboxDialogHeader
+        <DialogFrameHeader
           title={<DialogTitle>Backup schedule</DialogTitle>}
           description={
             <DialogDescription>
@@ -196,7 +196,7 @@ export function BackupScheduleDialog({
             </>
           )}
         </form>
-        <SandboxDialogFooter data-testid="backup-schedule-footer">
+        <DialogFrameFooter data-testid="backup-schedule-footer">
           <DialogFooter className="mt-0 items-center">
             {maintenance.dirty ? (
               <Badge variant="warning" className="mr-auto">
@@ -236,7 +236,7 @@ export function BackupScheduleDialog({
               </>
             ) : null}
           </DialogFooter>
-        </SandboxDialogFooter>
+        </DialogFrameFooter>
       </DialogContent>
     </Dialog>
   );

@@ -54,7 +54,8 @@ function Sentence({
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       <StatusDot tone={dotTone[log.action]} />
-      <span className="truncate">
+      {/* Below 1280px the sentence wraps, as on Security events (MD19). */}
+      <span className="min-w-0 break-words xl:truncate">
         <b className="font-medium">{verb}</b>
         {fields ? (
           <>
@@ -129,9 +130,10 @@ function FoldToggle({
 }
 
 /**
- * Activity rows (MD6): from 768px a table of 40px one-line rows (when,
- * person, what happened, area) whose whole row opens the event; on a phone a
- * list of two-line rows. This page's system events fold into one row.
+ * Activity rows (MD6): from 1280px a table of 40px one-line rows (when,
+ * person, what happened, area) whose whole row opens the event; below 1280px
+ * a list of two-line rows, because the table cut what happened at 1024
+ * (MD19). This page's system events fold into one row.
  */
 export function AuditRows({
   entries,
@@ -150,7 +152,7 @@ export function AuditRows({
 }) {
   return (
     <>
-      <div className="manage-scroll hidden md:block">
+      <div className="manage-scroll hidden xl:block">
         <Table aria-label="Activity history table" className="table-fixed">
           <colgroup>
             <col className="w-44" />
@@ -237,7 +239,7 @@ export function AuditRows({
       </div>
       <ul
         aria-label="Activity history"
-        className="divide-border manage-scroll min-w-0 divide-y md:hidden"
+        className="divide-border manage-scroll min-w-0 divide-y xl:hidden"
       >
         {entries.map((entry) => {
           if (entry.kind === "system")

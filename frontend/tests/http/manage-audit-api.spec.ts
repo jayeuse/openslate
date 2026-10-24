@@ -1433,7 +1433,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
       ).toBeDisabled();
       if (method === "Close")
         await preview
-          .getByRole("button", { name: "Close preview", exact: true })
+          .getByRole("button", { name: "Close export", exact: true })
           .click();
       if (method === "Escape") await page.keyboard.press("Escape");
       if (method === "concealment") {
@@ -1474,7 +1474,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
           preview.getByRole("button", { name: "Download CSV", exact: true }),
         ).toBeEnabled();
         await preview
-          .getByRole("button", { name: "Close preview", exact: true })
+          .getByRole("button", { name: "Close export", exact: true })
           .click();
       }
       expect(downloads).toBe(0);
