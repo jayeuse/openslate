@@ -111,14 +111,19 @@ export function VirtualMessageList({
     if (count === 0) awaitingEnd.current = true;
     else if (!positioning) awaitingEnd.current = false;
   });
+  const fallbackFrame = useRef(0);
   useLayoutEffect(() => {
-    if (!positioning) return;
-    const frame = requestAnimationFrame(() => {
-      awaitingEnd.current = false;
-      renderRows();
-    });
-    return () => cancelAnimationFrame(frame);
+    if (!positioning) {
+      cancelAnimationFrame(fallbackFrame.current);
+      fallbackFrame.current = 0;
+    } else if (!fallbackFrame.current)
+      fallbackFrame.current = requestAnimationFrame(() => {
+        fallbackFrame.current = 0;
+        awaitingEnd.current = false;
+        renderRows();
+      });
   });
+  useLayoutEffect(() => () => cancelAnimationFrame(fallbackFrame.current), []);
   useLayoutEffect(() => {
     restoreAnchor?.((id, top) => {
       const viewport = viewportRef.current,
