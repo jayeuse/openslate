@@ -46,7 +46,7 @@ function passwordErrorField(error: unknown): "current" | "new" | null {
 
 export function sessionLoadErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 403)
-    return "Session access is not available for this account.";
+    return "Sessions are not available for this account.";
   return "Sessions could not be loaded. Try again.";
 }
 
@@ -132,7 +132,7 @@ export function useAccountSecurity() {
     try {
       await passwordMutation.mutateAsync({ currentPassword, newPassword });
       setPasswordFeedback(
-        "Password changed. Other sessions were ended; this session remains active.",
+        "Password changed. Other devices are signed out; this device stays signed in.",
       );
     } catch (error) {
       const message = passwordErrorMessage(error);
@@ -141,7 +141,7 @@ export function useAccountSecurity() {
       else if (field === "new") setNewPasswordError(message);
       else setPasswordFormError(message);
       setPasswordSessionNote(
-        "Other sessions may have ended. Check the active session list.",
+        "Other devices may be signed out. Check Sessions.",
       );
     } finally {
       setCurrentPassword("");
@@ -180,14 +180,12 @@ export function useAccountSecurity() {
           await completeSignOut();
           return;
         }
-        setSessionActionFeedback(
-          "Session ended. That device will be signed out.",
-        );
+        setSessionActionFeedback("Session ended. That device signs out.");
       } else {
         await otherSessionsMutation.mutateAsync();
         setConfirmation(null);
         setSessionActionFeedback(
-          "Other sessions ended. Your current session remains active.",
+          "Other sessions ended. This device stays signed in.",
         );
       }
       await Promise.all([

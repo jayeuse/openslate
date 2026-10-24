@@ -326,7 +326,7 @@ export function AppShell({
     } catch {
       toast.add({
         title: "Could not sign out",
-        description: "Your workspace is still active. Try again.",
+        description: "You are still signed in. Try again.",
         type: "error",
       });
       return;
@@ -936,6 +936,7 @@ function AppHeaderActions({
         <DropdownMenuContent align="end" aria-label="Account">
           <DropdownMenuGroup>
             <DropdownMenuItem
+              className="min-h-11 xl:min-h-8"
               render={
                 <GuardedWorkspaceLink
                   href={"/profile" as Route}
@@ -947,6 +948,7 @@ function AppHeaderActions({
               Your profile
             </DropdownMenuItem>
             <DropdownMenuItem
+              className="min-h-11 xl:min-h-8"
               render={
                 <GuardedWorkspaceLink
                   href={"/settings" as Route}
@@ -957,7 +959,10 @@ function AppHeaderActions({
               <Settings aria-hidden="true" />
               Account settings
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={requestLogout}>
+            <DropdownMenuItem
+              className="min-h-11 xl:min-h-8"
+              onClick={requestLogout}
+            >
               <LogOut aria-hidden="true" />
               Sign out
             </DropdownMenuItem>

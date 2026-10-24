@@ -961,9 +961,7 @@ test("blocked device storage still applies text and spacing without claiming per
     .toBe("20px");
   await expect(page.locator("html")).toHaveAttribute("data-text-size", "125");
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "Browser storage is unavailable" }),
+    page.getByRole("status").filter({ hasText: "this browser cannot keep it" }),
   ).toBeVisible();
   await page.evaluate(() =>
     window.dispatchEvent(

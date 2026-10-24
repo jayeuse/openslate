@@ -56,7 +56,7 @@ export default function EmailChange() {
       setPassword("");
       setAccepted(false);
       setError(
-        "The request outcome could not be confirmed after sign-in reverification. Check both inboxes before making another request; nothing will be resent automatically.",
+        "The request could not be confirmed after you signed in again. Check both inboxes before you ask again; nothing is sent again by itself.",
       );
     }
     return () => {
@@ -83,14 +83,14 @@ export default function EmailChange() {
       if (current !== version.current || controller.signal.aborted) return;
       setError(
         failure instanceof ApiError && failure.status === 401
-          ? "Your current password or sign-in session was not accepted. Check your password before trying again."
+          ? "Your current password was not accepted, or you were signed out. Check your password and try again."
           : failure instanceof ApiError && failure.status === 409
-            ? "The email address is unavailable, or the request may be incomplete. Your saved email has not been changed by this request."
+            ? "This email address cannot be used, or the request did not finish. Your saved email has not changed."
             : failure instanceof ApiError && failure.status === 403
-              ? "This request is not permitted in the current sign-in context. Complete any required verification before trying again."
+              ? "Your email cannot be changed right now. Finish any sign-in check you are asked for, such as two-step verification, then try again."
               : failure instanceof ApiError && failure.status === 422
                 ? "Check the new email address and current password. The request was not accepted."
-                : "The request outcome could not be confirmed. Confirmation emails may have been sent. Check both inboxes before making another request; nothing will be resent automatically.",
+                : "The request could not be confirmed. Confirmation emails may have been sent. Check both inboxes before you ask again; nothing is sent again by itself.",
       );
     } finally {
       if (current === version.current && !controller.signal.aborted) {
@@ -237,7 +237,7 @@ export default function EmailChange() {
                 className="min-h-11"
                 disabled={blocked || accepted || !email.trim() || !password}
               >
-                {pending ? "Requesting…" : "Send confirmation emails"}
+                {pending ? "Sending…" : "Send confirmation emails"}
               </Button>
             </DialogFooter>
           </DialogFrameFooter>

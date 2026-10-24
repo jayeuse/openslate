@@ -9,6 +9,7 @@ import {
   accessNavigationFor,
   getWorkspaceLocation,
 } from "@/components/workspace-navigation";
+import { cn } from "@/lib/utils";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { useProfileView } from "@/components/profile/hooks/use-profile-view";
 import {
@@ -28,6 +29,12 @@ const routeLabels: Record<string, string> = {
   "/settings": "Account settings",
   "/settings/appearance": "Appearance",
 };
+
+// Profile and Account settings carry their whole title in the page heading,
+// the row under the bar on phones (PD49): a person's name or "Account
+// settings" would be cut beside the bar's 44px controls, so below 768px the
+// bar names no page there.
+const titledInPage = new Set(["/profile", "/settings"]);
 
 // Links in the header bar keep a 24px target.
 const crumbTarget = "inline-flex min-h-6 items-center";
@@ -56,7 +63,9 @@ export function AppBreadcrumbs() {
   );
   const current = location?.section ?? routeLabels[pathname] ?? "Workspace";
   return (
-    <Breadcrumb className="min-w-0">
+    <Breadcrumb
+      className={cn("min-w-0", titledInPage.has(pathname) && "max-md:hidden")}
+    >
       <BreadcrumbList className="flex-nowrap">
         <BreadcrumbItem className="max-sm:hidden">
           <BreadcrumbLink

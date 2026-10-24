@@ -8,25 +8,29 @@ import type { Locator } from "./test";
  * The visible interactive targets under 44px on their shorter side. A
  * visually hidden control (the file input behind Choose logo, a look radio
  * inside its tile) has a 1px box and is skipped; its visible target counts.
+ * `extra` adds selectors to the sweep, such as `[role="menuitem"]` for an
+ * open menu whose items are not buttons or links.
  */
-export async function smallTargets(scope: Locator) {
-  return scope.evaluate((root) =>
-    [
-      ...root.querySelectorAll<HTMLElement>(
-        'button, a[href], input, select, textarea, summary, [role="tab"], [role="combobox"]',
-      ),
-    ].flatMap((element) => {
-      const box = element.getBoundingClientRect();
-      if (box.width <= 1 || box.height <= 1) return [];
-      if (getComputedStyle(element).visibility === "hidden") return [];
-      const size = Math.round(Math.min(box.width, box.height));
-      if (size >= 44) return [];
-      const name =
-        element.getAttribute("aria-label") ||
-        element.textContent?.trim() ||
-        element.tagName;
-      return [`${name} (${size}px)`];
-    }),
+export async function smallTargets(scope: Locator, extra?: string) {
+  return scope.evaluate(
+    (root, more) =>
+      [
+        ...root.querySelectorAll<HTMLElement>(
+          `button, a[href], input, select, textarea, summary, [role="tab"], [role="combobox"]${more ? `, ${more}` : ""}`,
+        ),
+      ].flatMap((element) => {
+        const box = element.getBoundingClientRect();
+        if (box.width <= 1 || box.height <= 1) return [];
+        if (getComputedStyle(element).visibility === "hidden") return [];
+        const size = Math.round(Math.min(box.width, box.height));
+        if (size >= 44) return [];
+        const name =
+          element.getAttribute("aria-label") ||
+          element.textContent?.trim() ||
+          element.tagName;
+        return [`${name} (${size}px)`];
+      }),
+    extra ?? "",
   );
 }
 

@@ -231,7 +231,7 @@ test("loads own sessions and exposes a retryable denied and empty state", async 
   });
   await page.reload();
   await expect(
-    page.getByText("Session access is not available for this account.", {
+    page.getByText("Sessions are not available for this account.", {
       exact: true,
     }),
   ).toBeVisible();
@@ -311,7 +311,7 @@ test("password changes send the API payload, show status-specific feedback, clea
       page.getByRole("alert").filter({ hasText: response.message }),
     ).toBeVisible();
     await expect(
-      page.getByText("Other sessions may have ended."),
+      page.getByText("Other devices may be signed out."),
     ).toBeVisible();
     await expect(currentPassword).toHaveValue("");
     await expect(newPassword).toHaveValue("");
@@ -423,7 +423,7 @@ test("serializes password changes and session revocations", async ({
     passwordChange.release();
     await expect(
       page.getByText(
-        "Password changed. Other sessions were ended; this session remains active.",
+        "Password changed. Other devices are signed out; this device stays signed in.",
         { exact: true },
       ),
     ).toBeVisible();
@@ -445,8 +445,8 @@ test("serializes password changes and session revocations", async ({
           `/api/auth/sessions/${otherSession.id}`,
     );
     await page
-      .getByRole("alertdialog", { name: "Confirm account action" })
-      .getByRole("button", { name: "Confirm end session" })
+      .getByRole("alertdialog", { name: "End session?" })
+      .getByRole("button", { name: "End session", exact: true })
       .click();
     await sessionRequest;
     await expect(
@@ -685,14 +685,11 @@ test("keeps password and session controls reachable on mobile with full device d
   ).toBeInViewport({ ratio: 1 });
   await firefox.getByRole("button", { name: /^Session actions, / }).click();
   await chooseEndSession(page);
-  const confirmation = page.getByRole("alertdialog", {
-    name: "Confirm account action",
-  });
-  await expect(confirmation).toContainText(
-    "Ending this session will sign out that device.",
-  );
+  const confirmation = page.getByRole("alertdialog");
+  await expect(confirmation).toHaveAccessibleName("End session?");
+  await expect(confirmation).toContainText("That device signs out.");
   await confirmation
-    .getByRole("button", { name: "Confirm end session" })
+    .getByRole("button", { name: "End session", exact: true })
     .click();
   await expect(firefox).toHaveCount(0);
   await expect(list).not.toContainText("2001:db8::102");
@@ -708,11 +705,10 @@ test("keeps password and session controls reachable on mobile with full device d
   await expectNoHorizontalScroll(page);
 
   await page.getByRole("button", { name: "Sign out other sessions" }).click();
-  await expect(confirmation).toContainText(
-    "Your current session will remain active.",
-  );
+  await expect(confirmation).toHaveAccessibleName("Sign out other sessions?");
+  await expect(confirmation).toContainText("This device stays signed in.");
   await confirmation
-    .getByRole("button", { name: "Confirm end all other sessions" })
+    .getByRole("button", { name: "Sign out other sessions" })
     .click();
   await expect(
     page.getByRole("listitem").filter({ hasText: "Safari on iPadOS" }),
@@ -749,11 +745,9 @@ test("warns before ending the current session and routes to sign-in after confir
   await current.getByRole("button", { name: /^Session actions, / }).click();
   await chooseEndSession(page);
   const confirmation = page.getByRole("alertdialog", {
-    name: "Confirm account action",
+    name: "End session?",
   });
-  await expect(confirmation).toContainText(
-    "Ending this session will sign you out on this device.",
-  );
+  await expect(confirmation).toContainText("You sign out on this device.");
   await confirmation.getByRole("button", { name: "Cancel" }).click();
   expect(requests).toEqual([]);
 
@@ -761,7 +755,7 @@ test("warns before ending the current session and routes to sign-in after confir
 
   await chooseEndSession(page);
   await confirmation
-    .getByRole("button", { name: "End this session and sign out" })
+    .getByRole("button", { name: "End session and sign out" })
     .click();
   await expect(page).toHaveURL(/\/login$/);
   expect(requests).toEqual([`DELETE /api/auth/sessions/${currentSession.id}`]);
@@ -854,7 +848,7 @@ test("current-session revocation clears owned drafts and attachment URLs through
   await chooseEndSession(page);
   await page
     .getByRole("button", {
-      name: /^(Confirm end session|End this session and sign out)$/,
+      name: /^(End session|End session and sign out)$/,
     })
     .click();
   await expect(page).toHaveURL(/\/login$/);
@@ -924,7 +918,7 @@ for (const [index, failure] of ["Access", "workspace", "Comms"].entries()) {
     await chooseEndSession(page);
     await page
       .getByRole("button", {
-        name: /^(Confirm end session|End this session and sign out)$/,
+        name: /^(End session|End session and sign out)$/,
       })
       .click();
     await expect(
@@ -996,7 +990,7 @@ test("failed current-session revocation keeps drafts active and restores focus a
   await trigger.click();
   await chooseEndSession(page);
   const dialog = page.getByRole("alertdialog", {
-    name: "Confirm account action",
+    name: "End session?",
     exact: true,
   });
   await expect(dialog).toBeVisible();
@@ -1011,7 +1005,7 @@ test("failed current-session revocation keeps drafts active and restores focus a
   await chooseEndSession(page);
   await expect(dialog).toBeVisible();
   await dialog
-    .getByRole("button", { name: "End this session and sign out", exact: true })
+    .getByRole("button", { name: "End session and sign out", exact: true })
     .click();
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
@@ -1212,7 +1206,7 @@ test("accepted Account remote-session end refreshes the cached People count", as
   await chooseEndSession(page);
   await page
     .getByRole("alertdialog")
-    .getByRole("button", { name: "Confirm end session", exact: true })
+    .getByRole("button", { name: "End session", exact: true })
     .click();
   await expect(sessions.getByRole("listitem")).toHaveCount(1);
   expect(acceptedWrites).toEqual([otherSession.id]);

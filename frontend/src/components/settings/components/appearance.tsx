@@ -110,7 +110,7 @@ export function AppearanceSection({
         </RowNote>
         {!preference.deviceStorageAvailable && (
           <p role="status" className="text-muted-foreground text-xs">
-            Applied for this page only; browser storage is unavailable.
+            Applied to this page only: this browser cannot keep it.
           </p>
         )}
       </SettingsRow>
@@ -158,7 +158,7 @@ export function AppearanceSection({
             }}
           >
             <SelectItem value="" disabled>
-              Preferences unavailable
+              Not loaded
             </SelectItem>
             <SelectItem value="automatic">Automatic</SelectItem>
             <SelectItem value="sandbox">Sandbox</SelectItem>

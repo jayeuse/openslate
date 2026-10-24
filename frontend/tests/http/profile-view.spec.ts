@@ -1,4 +1,5 @@
 import { installAttentionApi } from "./helpers/comms-attention";
+import { smallTargets } from "./helpers/layout";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import {
   installProfileApi,
@@ -504,4 +505,116 @@ test("your own bare profile says where to add a job title, phone and bio; anothe
     page.getByRole("heading", { level: 1, name: "Rosa Reyes", exact: true }),
   ).toBeVisible();
   await expect(main(page)).not.toContainText("Add your job title");
+});
+
+test("the profile does not scroll the document at 1440×900 and 1920×1080 either", async ({
+  page,
+}) => {
+  await installProfileApi(page);
+  await serveProfile(page, profileUserB, {
+    json: {
+      ...rosa,
+      phone: "+63 917 555 0118",
+      bio: Array.from(
+        { length: 40 },
+        (_, line) => `Line ${line + 1} of a long bio.`,
+      ).join("\n"),
+      role: "member",
+      groups,
+    },
+  });
+  for (const [width, height] of [
+    [1440, 900],
+    [1920, 1080],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.goto(`/profile?person=${profileUserB}`);
+    await expect(
+      page.getByRole("region", { name: "Bio", exact: true }),
+    ).toContainText("Line 40 of a long bio.");
+    expect(
+      await page.evaluate(() => [
+        document.documentElement.scrollWidth,
+        document.documentElement.scrollHeight,
+      ]),
+      `${width}×${height}`,
+    ).toEqual([width, height]);
+  }
+});
+
+test("on a phone every target on your own, another member's and a guest's view of a profile is at least 44px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installProfileApi(page);
+  await serveProfile(page, profileUserB, {
+    json: {
+      ...rosa,
+      phone: "+63 917 555 0118",
+      bio: "Dispatch.",
+      role: "member",
+      groups,
+    },
+  });
+  // Your own bare profile, so the fill hint and its link show too.
+  await serveProfile(page, profileUserA, {
+    json: {
+      display_name: "Maya Chen",
+      job_title: null,
+      avatar_url: null,
+      phone: null,
+      bio: null,
+      role: "member",
+      groups: [],
+    },
+  });
+  await page.goto("/profile");
+  await expect(
+    main(page).getByRole("link", { name: "Account settings" }),
+  ).toHaveCount(2);
+  expect(await smallTargets(main(page))).toEqual([]);
+  await page.goto(`/profile?person=${profileUserB}`);
+  await expect(
+    page.getByRole("region", { name: "About", exact: true }),
+  ).toBeVisible();
+  expect(await smallTargets(main(page))).toEqual([]);
+});
+
+test("a guest's phone view of a profile has no target under 44px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installProfileApi(page, { role: "guest" });
+  await serveProfile(page, profileUserB, { json: rosa });
+  await page.goto(`/profile?person=${profileUserB}`);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Rosa Reyes" }),
+  ).toBeVisible();
+  expect(await smallTargets(main(page))).toEqual([]);
+});
+
+test("without an organization your own profile is still at 1280×720 and one column at 390", async ({
+  page,
+}) => {
+  await installProfileApi(page, { role: null });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto("/profile");
+  const name = page.getByRole("heading", { level: 1, name: "Maya Chen" });
+  await expect(name).toBeVisible();
+  expect(
+    await page.evaluate(() => [
+      document.documentElement.scrollWidth,
+      document.documentElement.scrollHeight,
+    ]),
+  ).toEqual([1280, 720]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const about = page.getByRole("region", { name: "About", exact: true });
+  await expect(about).toBeVisible();
+  expect((await about.boundingBox())!.y).toBeGreaterThan(
+    (await name.boundingBox())!.y,
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    390,
+  );
+  expect(await smallTargets(page.locator("main"))).toEqual([]);
 });

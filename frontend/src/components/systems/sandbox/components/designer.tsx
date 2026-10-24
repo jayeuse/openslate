@@ -2708,8 +2708,8 @@ export function Designer({
                       {keyboardShortcuts === true
                         ? `Designer shortcuts: press ${SANDBOX_SHORTCUTS.fit.key} to fit the canvas and ${SANDBOX_SHORTCUTS.help.key} for this help. `
                         : keyboardShortcuts === false
-                          ? "Convenience shortcuts are off in Appearance. Use the Fit and View buttons. "
-                          : "Convenience shortcuts are available once your account preferences load. "}
+                          ? "Shortcuts are off. Turn on Use shortcuts in Account settings › Appearance, or use the Fit and View buttons. "
+                          : "Shortcuts are available once your preferences load. "}
                       {SANDBOX_SHORTCUTS.remove.key} reviews removal of the
                       selected item. Shortcuts ignore text editing and open
                       dialogs.

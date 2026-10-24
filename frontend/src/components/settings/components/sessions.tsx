@@ -240,13 +240,17 @@ function SessionConfirmation({ security }: { security: AccountSecurity }) {
         }
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>Confirm account action</AlertDialogTitle>
+          <AlertDialogTitle>
+            {confirmation?.type === "other-sessions"
+              ? "Sign out other sessions?"
+              : "End session?"}
+          </AlertDialogTitle>
           <AlertDialogDescription>
             {confirmation?.type === "other-sessions"
-              ? "End all other sessions? Your current session will remain active."
+              ? "Every other device signs out. This device stays signed in."
               : confirmation?.session.current
-                ? "Ending this session will sign you out on this device."
-                : "Ending this session will sign out that device."}
+                ? "You sign out on this device."
+                : "That device signs out."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -266,10 +270,10 @@ function SessionConfirmation({ security }: { security: AccountSecurity }) {
             onClick={security.confirm}
           >
             {confirmation?.type === "other-sessions"
-              ? "Confirm end all other sessions"
+              ? "Sign out other sessions"
               : confirmation?.session.current
-                ? "End this session and sign out"
-                : "Confirm end session"}
+                ? "End session and sign out"
+                : "End session"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -44,7 +44,7 @@ test("authoritative MFA grace shows its start and deadline while a fresh enforce
   await page.route("**/api/auth/mfa", (route) => route.fulfill({ json: body }));
   const dialog = await openMfa(page);
   await expect(dialog.getByRole("note")).toContainText(
-    "keep using the workspace",
+    "keep working until then",
   );
   await expect(dialog).toContainText("Required since");
   await expect(dialog).toContainText("Set up by");
@@ -117,7 +117,7 @@ test("a required account with no recorded episode has immediate enrollment and n
     0,
   );
   await expect(gate.getByText("Set up by", { exact: true })).toHaveCount(0);
-  await expect(gate).not.toContainText("keep using the workspace");
+  await expect(gate).not.toContainText("keep working until then");
   await expect(
     gate.getByRole("button", { name: "Set up authenticator", exact: true }),
   ).toBeEnabled();

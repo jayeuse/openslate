@@ -432,7 +432,7 @@ test("Profile explains committed avatar cleanup 503 and never reserves or binds 
   await expect(
     page
       .getByRole("alert")
-      .filter({ hasText: /profile.*saved.*previous.*(delet|cleanup)/i }),
+      .filter({ hasText: /profile saved.*old photo could not be deleted/i }),
   ).toBeVisible();
   await expect(
     page.getByRole("img", { name: "Your profile photo", exact: true }),
@@ -565,7 +565,7 @@ test("Profile uncertain upload preserves the existing photo and text draft witho
     buffer: avatarPng,
   });
   await expect(
-    page.getByRole("alert").filter({ hasText: /photo.*outcome.*unavailable/i }),
+    page.getByRole("alert").filter({ hasText: /photo may not have saved/i }),
   ).toBeVisible();
   await expect(photo).toHaveAttribute("src", priorUrl!);
   await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(

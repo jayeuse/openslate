@@ -259,7 +259,8 @@ function ProfileDetails({
               Add your job title, phone, and bio in{" "}
               <GuardedWorkspaceLink
                 href={"/settings#identity" as Route}
-                className="text-action-text focus-visible:outline-ring rounded-sm font-medium underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2"
+                // A 44px target below 1280px; it ends the line (PD50).
+                className="text-action-text focus-visible:outline-ring inline-flex min-h-11 items-center rounded-sm font-medium underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 xl:inline xl:min-h-0"
               >
                 Account settings
               </GuardedWorkspaceLink>

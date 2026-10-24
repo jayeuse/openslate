@@ -48,7 +48,7 @@ export const identityLabels: Record<IdentityField, string> = {
 };
 
 const PHOTO_UNCERTAIN =
-  "Photo could not be saved, and its outcome is unavailable. Retry to check your saved photo; no storage deletion is confirmed.";
+  "The photo may not have saved. Retry to check which photo is saved.";
 
 /**
  * The Identity editor of Account settings (PD10): one owner for the draft,
@@ -238,7 +238,7 @@ export function useIdentityEditor() {
       if (submitted && !photoCommand) setDraft(null);
       if (partial) {
         setPhotoError(
-          "Profile saved; previous photo deletion is unfinished. Contact your administrator about cleanup.",
+          "Profile saved, but the old photo could not be deleted. Ask your administrator to delete it.",
         );
         setPhotoLocked(true);
       } else setSaved(true);
@@ -281,7 +281,7 @@ export function useIdentityEditor() {
   }
   function choosePhoto(file: File) {
     if (!validAvatarSelection(file)) {
-      setPhotoError("Choose a PNG or JPEG photo up to 2 MiB.");
+      setPhotoError("Choose a PNG or JPEG photo up to 2 MB.");
       return;
     }
     void command(null, file);

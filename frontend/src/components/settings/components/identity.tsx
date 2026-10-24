@@ -116,7 +116,7 @@ export function IdentitySection({
             </Button>
           ) : null}
         </div>
-        <RowNote id="profile-photo-note">PNG or JPEG, up to 2 MiB.</RowNote>
+        <RowNote id="profile-photo-note">PNG or JPEG, up to 2 MB.</RowNote>
         {editor.retryable ? null : (
           <RowError id="profile-photo-error">{editor.photoError}</RowError>
         )}

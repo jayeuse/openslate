@@ -295,7 +295,7 @@ test("Help off text links to Profile and updates its guide after client navigati
   await visitPlatform(page);
   await openHelp(page);
   await expect(shortcuts(page)).toContainText(
-    "Shortcuts are off. Turn them on in Account settings.",
+    "Shortcuts are off. Turn on Use shortcuts in Account settings › Appearance.",
   );
   const profile = shortcuts(page).getByRole("link", {
     name: "Open Account settings",
@@ -336,7 +336,7 @@ test("Help pending preferences never claim shortcuts are on or off before confir
     await expect(shortcuts(page)).not.toContainText("Shortcuts are off.");
     hold.release();
     await expect(shortcuts(page)).toContainText(
-      "Shortcuts are off. Turn them on in Account settings.",
+      "Shortcuts are off. Turn on Use shortcuts in Account settings › Appearance.",
     );
   } finally {
     hold.release();
@@ -354,7 +354,9 @@ test("Help failed preferences explain recovery without claiming enabled keys or 
     });
   await visitPlatform(page);
   await openHelp(page);
-  await expect(shortcuts(page)).toContainText(/preferences are unavailable/i);
+  await expect(shortcuts(page)).toContainText(
+    /shortcut preference could not be loaded/i,
+  );
   await expect(shortcuts(page)).not.toContainText(
     /loading|Private preference canary|F2/,
   );

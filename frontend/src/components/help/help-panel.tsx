@@ -198,16 +198,17 @@ export function HelpPanel() {
             </h2>
             {preferencePending ? (
               <p className="text-muted-foreground text-sm" role="status">
-                Loading your confirmed shortcut preference…
+                Loading your shortcut preference…
               </p>
             ) : keyboardShortcuts === false ? (
               <p className="text-muted-foreground text-sm">
-                Shortcuts are off. Turn them on in Account settings.
+                Shortcuts are off. Turn on Use shortcuts in Account settings ›
+                Appearance.
               </p>
             ) : disabled ? (
               <p className="text-muted-foreground text-sm">
-                Shortcut preferences are unavailable. Check Account settings to
-                retry.
+                Your shortcut preference could not be loaded. Retry it in
+                Account settings.
               </p>
             ) : null}
             <p className="text-muted-foreground text-xs">

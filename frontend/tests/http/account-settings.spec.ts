@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "./helpers/test";
 import { installProfileApi } from "./helpers/profile-api";
+import { smallTargets } from "./helpers/layout";
 import { mockMfa } from "./helpers/mfa";
 
 // Account settings layout and saving (docs/specs/profile-sidebar-relayout.md,
@@ -299,10 +300,10 @@ test("sessions are one-line rows with This device and an End session named for t
     })
     .click();
   const confirm = page.getByRole("alertdialog", {
-    name: "Confirm account action",
+    name: "End session?",
   });
   await confirm
-    .getByRole("button", { name: "Confirm end session", exact: true })
+    .getByRole("button", { name: "End session", exact: true })
     .click();
   await expect(confirm).toBeHidden();
   expect(sessions.ended).toEqual(["00000000-0000-4000-8000-000000000802"]);
@@ -472,4 +473,155 @@ test("the settings panel has at most 60 helper words", async ({ page }) => {
       .filter(Boolean).length;
   });
   expect(words).toBeLessThanOrEqual(60);
+});
+
+const documentSize = (page: Page) =>
+  page.evaluate(() => [
+    document.documentElement.scrollWidth,
+    document.documentElement.scrollHeight,
+  ]);
+
+test("Account settings does not scroll the document at 1440×900 and 1920×1080 either", async ({
+  page,
+}) => {
+  await installProfileApi(page);
+  await installSessions(page, 9);
+  for (const [width, height] of [
+    [1440, 900],
+    [1920, 1080],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.goto("/settings");
+    await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(
+      "+1 555 0101",
+    );
+    expect(await documentSize(page), `${width}×${height}`).toEqual([
+      width,
+      height,
+    ]);
+  }
+});
+
+test("on a phone every target in the settings panel, its footer, the preview and the session menu is at least 44px", async ({
+  page,
+}) => {
+  await installProfileApi(page);
+  await installSessions(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/settings");
+  const phone = page.getByLabel("Phone", { exact: true });
+  await expect(phone).toHaveValue("+1 555 0101");
+  await expect(
+    page.getByRole("switch", { name: "Reduce motion" }),
+  ).toBeEnabled();
+  await expect(
+    settingsPanel(page).getByRole("button", {
+      name: "Session actions, Chrome on Windows",
+      exact: true,
+    }),
+  ).toBeVisible();
+  // With a change, so the footer also shows Discard changes.
+  await phone.fill("+1 555 0102");
+  await expect(
+    footer(page).getByRole("button", { name: "Discard changes" }),
+  ).toBeVisible();
+  expect(
+    await smallTargets(page.locator("#main-content"), '[role="radio"]'),
+  ).toEqual([]);
+  await settingsPanel(page)
+    .getByRole("button", {
+      name: "Session actions, Chrome on Windows",
+      exact: true,
+    })
+    .click();
+  const menu = page.getByRole("menu");
+  await expect(
+    menu.getByRole("menuitem", { name: "End session, Chrome on Windows" }),
+  ).toBeVisible();
+  expect(await smallTargets(menu, '[role="menuitem"]')).toEqual([]);
+});
+
+test("on a phone Account settings is one column, and the pinned footer never covers a focused row", async ({
+  page,
+}) => {
+  await installProfileApi(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/settings");
+  await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(
+    "+1 555 0101",
+  );
+  const bar = footer(page);
+  // Pinned to the bottom of the viewport while the panel scrolls past.
+  const pinned = (await bar.boundingBox())!;
+  expect(Math.round(pinned.y + pinned.height)).toBe(844);
+  const [panel, preview] = await Promise.all([
+    settingsPanel(page).boundingBox(),
+    page.getByRole("complementary", { name: "Preview" }).boundingBox(),
+  ]);
+  expect(preview!.x).toBe(panel!.x);
+  expect(preview!.y).toBeGreaterThanOrEqual(panel!.y + panel!.height);
+  // Focus moves to the last row of the panel; the footer leaves it in view.
+  const weekStarts = settingsPanel(page).getByRole("combobox", {
+    name: "Week starts",
+  });
+  await weekStarts.focus();
+  const [row, cover] = await Promise.all([
+    weekStarts.boundingBox(),
+    bar.boundingBox(),
+  ]);
+  expect(row!.y + row!.height).toBeLessThanOrEqual(cover!.y);
+  expect((await documentSize(page))[0]).toBe(390);
+});
+
+test("on a phone the framed dialogs fill the width inside the 16px gutter and keep their footers in view", async ({
+  page,
+}) => {
+  await installProfileApi(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/settings");
+  await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(
+    "+1 555 0101",
+  );
+  for (const [opener, title, action, close] of [
+    ["Change password", "Change password", "Change password", "Close password"],
+    ["Change email", "Change email", "Send confirmation emails", "Close email"],
+  ]) {
+    await page.getByRole("button", { name: opener, exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: title, exact: true });
+    await expect(dialog).toBeVisible();
+    const box = (await dialog.boundingBox())!;
+    expect([Math.round(box.x), Math.round(box.width)], title).toEqual([
+      16, 358,
+    ]);
+    const button = dialog.getByRole("button", { name: action, exact: true });
+    await expect(button).toBeInViewport({ ratio: 1 });
+    expect(await smallTargets(dialog)).toEqual([]);
+    await dialog.getByRole("button", { name: close, exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+});
+
+test("without an organization Account settings is still at 1280×720 and one column at 390", async ({
+  page,
+}) => {
+  await installProfileApi(page, { role: null });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto("/settings");
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
+    "Maya Chen",
+  );
+  expect(await documentSize(page)).toEqual([1280, 720]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Account settings" }),
+  ).toBeVisible();
+  expect((await documentSize(page))[0]).toBe(390);
+  const [panel, preview] = await Promise.all([
+    settingsPanel(page).boundingBox(),
+    page.getByRole("complementary", { name: "Preview" }).boundingBox(),
+  ]);
+  expect(preview!.y).toBeGreaterThanOrEqual(panel!.y + panel!.height);
+  expect(await smallTargets(page.locator("main"), '[role="radio"]')).toEqual(
+    [],
+  );
 });

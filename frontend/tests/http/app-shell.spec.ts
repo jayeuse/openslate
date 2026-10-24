@@ -1,5 +1,6 @@
 import { wireWorkspace } from "../helpers/wire";
-import { installProfileApi } from "./helpers/profile-api";
+import { cutTexts, smallTargets } from "./helpers/layout";
+import { installProfileApi, profileUserB } from "./helpers/profile-api";
 import {
   authMeBody,
   expect,
@@ -363,4 +364,78 @@ test("a stored width is kept; double-click resets to 240px and Home and End reac
   await expect.poll(() => sidebarWidth(page)).toBe(220);
   await resize.press("End");
   await expect.poll(() => sidebarWidth(page)).toBe(360);
+});
+
+test("on a phone the Profile and Account settings title is whole under the bar, and nothing scrolls sideways", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installProfileApi(page);
+  const longName = "Maximiliana Dela Cruz-Villanueva";
+  await page.route(/\/api\/users\/[^/]+\/profile$/, (route) =>
+    route.request().url().includes(profileUserB)
+      ? route.fulfill({
+          headers: { "Cache-Control": "private, no-store" },
+          json: {
+            display_name: longName,
+            job_title: "Dispatch coordinator",
+            avatar_url: null,
+            phone: null,
+            bio: null,
+            role: "member",
+            groups: [],
+          },
+        })
+      : route.fallback(),
+  );
+  const header = page.locator('[data-skin="topbar"]');
+  for (const [path, title] of [
+    ["/settings", "Account settings"],
+    ["/profile", "Maya Chen"],
+    [`/profile?person=${profileUserB}`, longName],
+  ]) {
+    await page.goto(path);
+    const heading = page.getByRole("heading", {
+      level: 1,
+      name: title,
+      exact: true,
+    });
+    await expect(heading).toBeVisible();
+    // No title in the 56px bar is cut; the page title is the row under it.
+    expect(await cutTexts(header), path).toEqual([]);
+    expect((await heading.boundingBox())!.y, path).toBeGreaterThanOrEqual(56);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+      path,
+    ).toBe(390);
+  }
+});
+
+test("on a phone every target in the header, the account menu and the drawer is at least 44px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installProfileApi(page);
+  await page.goto("/settings");
+  const header = page.locator('[data-skin="topbar"]');
+  const account = header.getByRole("button", { name: "Account", exact: true });
+  await expect(account).toBeVisible();
+  expect(await smallTargets(header)).toEqual([]);
+  await account.click();
+  const menu = page.getByRole("menu", { name: "Account", exact: true });
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Your profile",
+    "Account settings",
+    "Sign out",
+  ]);
+  expect(await smallTargets(menu, '[role="menuitem"]')).toEqual([]);
+  await page.keyboard.press("Escape");
+  await header
+    .getByRole("button", { name: "Open navigation", exact: true })
+    .click();
+  const drawer = page.getByRole("dialog", { name: "OpenSlate navigation" });
+  await expect(
+    drawer.getByRole("link", { name: "Your profile, Maya Chen", exact: true }),
+  ).toBeVisible();
+  expect(await smallTargets(drawer)).toEqual([]);
 });
