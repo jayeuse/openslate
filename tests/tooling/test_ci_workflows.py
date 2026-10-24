@@ -254,6 +254,26 @@ class CiWorkflowContractTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source.lower())
 
+    def test_frontend_browser_install_cannot_use_up_the_test_hang_limit(self):
+        source = self.source("frontend.yml")
+        isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
+        http = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
+
+        # A slow apt mirror during `playwright install --with-deps` once cancelled the
+        # isolated job at its old 10-minute job limit before any test ran.
+        for job, step in (
+            (isolated, "- name: Run isolated frontend tests\n        timeout-minutes: 10\n"),
+            (
+                http,
+                "- name: Run browser tests against the static export\n"
+                "        timeout-minutes: 15\n",
+            ),
+        ):
+            with self.subTest(step=step.split("\n", 1)[0]):
+                self.assertIn("playwright install --with-deps chromium", job)
+                self.assertIn("\n    timeout-minutes: 30\n", job)
+                self.assertIn(step, job)
+
     def test_frontend_uploads_the_export_reports_and_only_failed_test_context(self):
         source = self.source("frontend.yml")
         test = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]

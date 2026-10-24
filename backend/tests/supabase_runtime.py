@@ -10,6 +10,7 @@ import socket
 import subprocess
 import tempfile
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from secrets import token_urlsafe
@@ -39,6 +40,19 @@ NETWORK_LOCK = Path(tempfile.gettempdir()) / "openslate-e2e-networks.lock"
 # block: unique per live stack, below the ephemeral ranges (Linux 32768+, macOS 49152+)
 # and the Kubernetes NodePort range (30000-32767).
 TEMPLATE_PORT_BASE = 29000
+# A cold CI runner pulls every pinned provider image. In 247 passing CI shards
+# (2026-10-15 to 2026-10-24) the whole startup took 62-98 s, yet two cold pulls
+# outlived the old 120 s `compose create` limit. Pulls get their own measured budget
+# before the network lock, and a registry error ("unauthorized: authentication
+# required" on 2026-10-23) is retried within that budget; nothing else is retried.
+IMAGE_PULL_SECONDS = 300.0
+IMAGE_PULL_RETRY_DELAYS = (5.0, 15.0)
+
+
+def _wait(seconds: float) -> None:
+    Event().wait(seconds)
+
+
 DOCKER_ENV_NAMES = frozenset(
     {
         "PATH",
@@ -127,7 +141,7 @@ class DisposablePostgres:
         self.network_block: int | None = None
 
     def _run(
-        self, arguments: list[str], *, capture: bool = False, timeout: int = 60
+        self, arguments: list[str], *, capture: bool = False, timeout: float = 60
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["docker", *arguments],
@@ -342,7 +356,37 @@ class DisposablePostgres:
             Event().wait(min(0.5, remaining))
         return False
 
+    def _pull_image(self, image: str, deadline: float) -> None:
+        # Like Compose's default "missing" policy: a present pinned image needs no
+        # registry, so offline machines and registry outages do not block local runs.
+        try:
+            self._run(["image", "inspect", "--format", "{{.Id}}", image], capture=True, timeout=15)
+            return
+        except subprocess.CalledProcessError:
+            pass
+        for delay in (*IMAGE_PULL_RETRY_DELAYS, None):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(["docker", "pull", image], IMAGE_PULL_SECONDS)
+            try:
+                self._run(["pull", "--quiet", image], timeout=remaining)
+                return
+            except subprocess.CalledProcessError:
+                if delay is None or deadline - monotonic() <= delay:
+                    raise
+            _wait(delay)
+
+    def _pull_images(self) -> None:
+        """Pull missing pinned images in parallel, outside the network lock, in one budget."""
+        deadline = monotonic() + IMAGE_PULL_SECONDS
+        images = sorted(set(PROVIDER_IMAGES.values()))
+        with ThreadPoolExecutor(max_workers=len(images)) as pool:
+            pulls = [pool.submit(self._pull_image, image, deadline) for image in images]
+        for pull in pulls:
+            pull.result()
+
     def start(self) -> None:
+        self._pull_images()
         self.port, self.api_port, self.mail_port, self.publisher_port = (
             _available_port(),
             _available_port(),

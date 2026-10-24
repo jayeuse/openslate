@@ -342,7 +342,7 @@ test("Comms retains a rate-limited send draft and retries once after the real se
 }) => {
   const start = new Date("2026-10-19T12:00:00Z");
   // The server owns the 20-send/10-second limit; its clock moves only with the page's.
-  const { clock } = await installCommsWorld(page, {
+  const { clock, runtime, ids } = await installCommsWorld(page, {
     userId: "00000000-0000-4000-8000-000000000101",
     displayName: "Journey owner",
     clock: { time: start, installPage: false },
@@ -360,16 +360,27 @@ test("Comms retains a rate-limited send draft and retries once after the real se
     name: "Send message",
     exact: true,
   });
-  // The limit applies to administrators too.
-  for (let index = 1; index <= 20; index++) {
-    const body = `Send-window setup ${index}.`;
-    await draft.fill(body);
-    await send.click();
-    await expect(draft).toHaveValue("");
-    await expect(
-      page.getByRole("article").filter({ hasText: body }),
-    ).toHaveCount(1);
-  }
+  // The limit applies to administrators too. Each send from this page also
+  // repairs the read model, so the owner's other client fills the window and
+  // this composer sends the twentieth.
+  for (let index = 1; index <= 19; index++)
+    await runtime.client.sendMessage(ids.room, {
+      client_key: crypto.randomUUID(),
+      body: `Send-window setup ${index}.`,
+      attachment_ids: [],
+      record_ids: [],
+      mention_user_ids: [],
+      mentions_channel: false,
+      mentions_here: false,
+      reply_to_id: null,
+    });
+  const body = "Send-window setup 20.";
+  await draft.fill(body);
+  await send.click();
+  await expect(draft).toHaveValue("");
+  await expect(page.getByRole("article").filter({ hasText: body })).toHaveCount(
+    1,
+  );
   const retained = "Rate-limited draft must be accepted exactly once";
   const message = page.getByRole("article").filter({ hasText: retained });
   await draft.fill(retained);

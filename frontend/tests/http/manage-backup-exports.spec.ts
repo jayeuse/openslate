@@ -341,7 +341,17 @@ test("export polls queued and preparing state only in visible Backup and stops w
   await page.clock.fastForward(10_100);
   const afterAwayStarts = await metadataStarts(page);
   expect(afterAwayStarts).toHaveLength(awayStarts.length);
-  await page.goBack();
+  // Leaving Backup invalidates its queries, so returning reads the export
+  // once; it must answer "preparing" before the server turns ready.
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname ===
+          "/api/backups/exports/" + operation.id,
+    ),
+    page.goBack(),
+  ]);
   await expect(page).toHaveURL(
     new RegExp("view=backup.*export=" + operation.id),
   );
@@ -352,6 +362,11 @@ test("export polls queued and preparing state only in visible Backup and stops w
   );
   await page.clock.fastForward(5_100);
   await expect(exportPanel(page)).toContainText(/ready/i);
+  // Every state lists a "Ready" time, so only the ready sentence shows that
+  // the ready read has landed and the count below includes it.
+  await expect(exportPanel(page)).toContainText(
+    "The encrypted backup is ready.",
+  );
   const readyReads = exports.metadataReads.length;
   await page.clock.fastForward(10_100);
   expect(exports.metadataReads).toHaveLength(readyReads);

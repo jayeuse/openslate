@@ -11,6 +11,7 @@ import {
   type Page,
 } from "./helpers/test";
 import {
+  attentionBaselined,
   attentionEmissions,
   commsNotice,
   installAttentionApi,
@@ -117,6 +118,9 @@ test("only the leader tab raises one desktop alert and sound for a new Comms not
     await tab.goto(route);
     await expect(commsLink(tab)).toHaveAccessibleName("OpenComms");
   }
+  await attentionBaselined(tabs, defaultOrganization.org_id, [
+    states[0].notifications[0].id,
+  ]);
   const notice = commsNotice(1, defaultOrganization.org_id, states[0].room);
   for (const state of states) {
     state.notifications.push(notice);
@@ -159,8 +163,16 @@ test("quiet hours silence the alert and sound until they end", async ({
       notification_preview: false,
     },
   });
+  const baseline = commsNotice(
+    9,
+    defaultOrganization.org_id,
+    state.room,
+    "comms-direct",
+  );
+  state.notifications.push(baseline);
   await page.goto(route);
   await expect(commsLink(page)).toHaveAccessibleName("OpenComms");
+  await attentionBaselined([page], defaultOrganization.org_id, [baseline.id]);
   state.notifications.push(
     commsNotice(1, defaultOrganization.org_id, state.room),
   );
@@ -190,8 +202,16 @@ test("a denied browser permission plays the sound without a desktop alert", asyn
     orgId: defaultOrganization.org_id,
     unread: 0,
   });
+  const baseline = commsNotice(
+    9,
+    defaultOrganization.org_id,
+    state.room,
+    "comms-direct",
+  );
+  state.notifications.push(baseline);
   await page.goto(route);
   await expect(commsLink(page)).toHaveAccessibleName("OpenComms");
+  await attentionBaselined([page], defaultOrganization.org_id, [baseline.id]);
   state.notifications.push(
     commsNotice(1, defaultOrganization.org_id, state.room),
   );

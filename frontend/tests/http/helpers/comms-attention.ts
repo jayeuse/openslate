@@ -1,9 +1,8 @@
-import type { Page } from "@playwright/test";
 import { createMemorySeed } from "../../support/comms-memory/memory/seed";
 import { createMemoryCommsRuntime } from "../../support/comms-memory/memory-client";
 import type * as C from "../../../src/components/systems/comms/contract/types";
 import { pageOf } from "../../helpers/pagination";
-import { defaultSignedInIdentity } from "./test";
+import { defaultSignedInIdentity, expect, type Page } from "./test";
 
 type Emissions = { desktop: { title: string; body: string }[]; sound: number };
 
@@ -44,6 +43,44 @@ export function attentionEmissions(page: Page): Promise<Emissions> {
     desktop: JSON.parse(localStorage.getItem("attention-desktop") ?? "[]"),
     sound: Number(localStorage.getItem("attention-sound") ?? 0),
   }));
+}
+
+/**
+ * Waits until the leader tab has taken its unread baseline (it records the
+ * `baseline` notice ids as already seen) and holds the one event stream. A
+ * notice added before then is part of the baseline, never an alert.
+ */
+export async function attentionBaselined(
+  tabs: Page[],
+  orgId: string,
+  baseline: string[],
+): Promise<void> {
+  const key = `openslate-comms-alerted:v1:${defaultSignedInIdentity.id}:${orgId}`;
+  await expect
+    .poll(async () => {
+      const seen: unknown = await tabs[0].evaluate(
+        (key) => JSON.parse(localStorage.getItem(key) ?? "[]"),
+        key,
+      );
+      const streams = await Promise.all(
+        tabs.map((tab) =>
+          tab.evaluate(
+            () =>
+              (
+                Reflect.get(window, "__openViewStreamState") as () => {
+                  active: number;
+                }
+              )().active,
+          ),
+        ),
+      );
+      return (
+        Array.isArray(seen) &&
+        baseline.every((id) => seen.includes(id)) &&
+        streams.reduce((sum, active) => sum + active, 0) === 1
+      );
+    })
+    .toBe(true);
 }
 
 const noticeId = (n: number, prefix = "95") =>

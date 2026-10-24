@@ -44,6 +44,7 @@ def _start_until_create(tmp_path: Path, monkeypatch, block: int, **options) -> D
 
     monkeypatch.setattr(supabase_runtime, "_available_port", available_port)
     monkeypatch.setattr(runtime, "_compose", compose)
+    monkeypatch.setattr(runtime, "_pull_images", lambda: None)
     monkeypatch.setattr(runtime, "_free_network_block", lambda: block)
     with pytest.raises(_StopAfterCreate):
         runtime.start()

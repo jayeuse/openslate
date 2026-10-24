@@ -319,6 +319,28 @@ def test_database_failure_after_provider_cleanup_reports_partial_reset(monkeypat
     storage.delete_and_verify_empty.assert_not_called()
 
 
+def test_hidden_reset_cause_names_its_type_but_not_its_message(monkeypatch) -> None:
+    plan = _plan()
+    storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
+    monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
+
+    def execute(_, statement, *_args):
+        if statement == "DELETE FROM public.organizations":
+            raise RuntimeError("provider secret detail")
+
+    monkeypatch.setattr(execution, "_execute", execute)
+    monkeypatch.setattr(execution, "_single_value", lambda *_: True)
+
+    with pytest.raises(reset.ResetError) as refused:
+        apply_confirmed(
+            Mock(), plan, storage=storage, auth=_auth(plan), build_plan_fn=lambda *_, **__: plan
+        )
+
+    assert refused.value.__cause__ is None
+    assert refused.value.__notes__ == ["Cause: RuntimeError"]
+    assert "provider secret detail" not in str(refused.value)
+
+
 def test_plan_drift_after_auth_cleanup_keeps_profiles_and_reports_partial(monkeypatch) -> None:
     plan = _plan()
     changed = SimpleNamespace(**vars(plan))

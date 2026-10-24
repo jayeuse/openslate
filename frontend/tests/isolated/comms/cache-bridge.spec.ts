@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { InfiniteQueryObserver, QueryClient } from "@tanstack/react-query";
-import { createCommsQueryScope } from "../../../src/components/systems/comms/adapters/comms-queries";
+import {
+  createCommsQueryScope,
+  querySettled,
+} from "../../../src/components/systems/comms/adapters/comms-queries";
 import { createCommsCacheBridge } from "../../../src/components/systems/comms/adapters/cache-bridge";
 import { createReadyHttpCommsClient } from "../../../src/components/systems/comms/adapters/http-client";
 import type {
@@ -144,6 +147,48 @@ test("message events hydrate cached content and a sequence gap repairs history w
       owner.cache.getQueryState(owner.scope.keys.history(conversationId, null))
         ?.isInvalidated,
     ).toBe(false);
+  } finally {
+    owner.close();
+    fetch.restore();
+  }
+});
+
+test("a message event during the first history read repairs the gap that read missed", async () => {
+  let entered!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fetch = installFetch(async (input) => {
+    const url = new URL(String(input), "http://localhost");
+    if (url.pathname.endsWith("bootstrap")) return Response.json(bootstrap);
+    if (url.searchParams.get("after_seq") === "1")
+      return Response.json(page([message(2), message(3)], 3));
+    if (url.searchParams.get("after_seq") === "0")
+      return Response.json(page([message(1)], 3, true, 1));
+    // The first read was answered before messages 2 and 3 existed.
+    entered();
+    await held;
+    return Response.json(page([message(1)], 1));
+  });
+  const owner = setup();
+  try {
+    await reading;
+    const pending = owner.bridge.event(event(3));
+    release();
+    await pending;
+    await querySettled(
+      owner.cache,
+      owner.scope.keys.history(conversationId, null),
+    );
+    expect(
+      owner.observer
+        .getCurrentResult()
+        .data?.pages.flatMap((p) => p.items.map((m) => m.seq)),
+    ).toEqual([1, 2, 3]);
   } finally {
     owner.close();
     fetch.restore();

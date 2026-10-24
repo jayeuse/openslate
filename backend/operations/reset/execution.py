@@ -231,19 +231,24 @@ def apply_reset(
                 "run a fresh dry run before retrying"
             ) from None
         raise
-    except Exception:
+    except Exception as error:
         _rollback_safely(connection)
         if sql_commit_started and not committed:
-            raise ResetError(
+            message = (
                 "Provider cleanup finished but the database commit outcome is uncertain; "
                 "inspect the installation before retrying"
-            ) from None
-        if provider_cleanup_started and not committed:
-            raise ResetError(
+            )
+        elif provider_cleanup_started and not committed:
+            message = (
                 "Provider accounts may have been deleted but application profiles were retained; "
                 "run a fresh dry run before retrying"
-            ) from None
-        raise ResetError("Unable to apply application-data reset") from None
+            )
+        else:
+            message = "Unable to apply application-data reset"
+        refusal = ResetError(message)
+        # The cause stays hidden (it may carry provider details); its type does not.
+        refusal.add_note(f"Cause: {type(error).__name__}")
+        raise refusal from None
     finally:
         if reset_lock_held:
             _rollback_safely(connection)
