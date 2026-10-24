@@ -1,4 +1,4 @@
-import { expect, signedInAs, test } from "./helpers/test";
+import { expect, heldResponse, signedInAs, test } from "./helpers/test";
 import type { Page } from "./helpers/test";
 import { mockManageBackups } from "./helpers/manage-backups";
 import { sendOpenViewEvent } from "./helpers/openview-event-source";
@@ -595,15 +595,27 @@ test("Updates and licensing share a real read-only destination and never simulat
   await expect(
     page.getByRole("heading", { level: 1, name: "Updates & licensing" }),
   ).toBeVisible();
+  // One summary of label-left rows holds the version and the license.
   const software = page.getByRole("region", {
-    name: "Software version",
+    name: "Installation",
     exact: true,
   });
-  const license = page.getByRole("region", {
-    name: "License & usage",
-    exact: true,
-  });
-  await expect(software.getByText("0.1.0", { exact: true })).toBeVisible();
+  const license = software;
+  await expect(software.getByRole("term")).toHaveText([
+    "Version",
+    "Release check",
+    "License",
+    "Limits",
+  ]);
+  await expect(software.getByRole("definition")).toHaveText([
+    "0.1.0 · Stable channel",
+    /^Release information unavailable/,
+    "No license required · Self-hosted",
+    "None · capacity depends on your server",
+  ]);
+  await expect(
+    page.getByRole("heading", { name: /Software version|License & usage/ }),
+  ).toHaveCount(0);
   await expect(software).toContainText("Release information unavailable");
   await expect(license).toContainText("No license required");
   await expect(
@@ -625,7 +637,10 @@ test("Updates and licensing share a real read-only destination and never simulat
   await refreshed;
   await expect(software).toContainText("Release information unavailable");
   await expect(
-    software.getByRole("link", { name: "Update procedure", exact: true }),
+    software.getByRole("link", {
+      name: "Update procedure for this release",
+      exact: true,
+    }),
   ).toHaveAttribute(
     "href",
     "https://github.com/jayeuse/openslate/blob/main/infra/supabase/README.md#operator-updates",
@@ -661,7 +676,7 @@ test("Recorded version loading, denial, stale and current observations remain ho
   state.versionReadStatus = 503;
   await page.goto("/manage?view=updates");
   const software = page.getByRole("region", {
-    name: "Software version",
+    name: "Installation",
     exact: true,
   });
   await expect(software).toContainText("Version status could not be loaded");
@@ -670,7 +685,9 @@ test("Recorded version loading, denial, stale and current observations remain ho
   await software
     .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
-  await expect(software.getByText("0.1.0", { exact: true })).toBeVisible();
+  await expect(
+    software.getByText("0.1.0 · Stable channel", { exact: true }),
+  ).toBeVisible();
   state.version.status = "stale";
   state.version.latest_version = "0.2.0";
   state.version.observed_at = "2026-10-01T00:00:00Z";
@@ -686,16 +703,37 @@ test("Recorded version loading, denial, stale and current observations remain ho
   await expect(software).toContainText(
     "Only administrators can review version status",
   );
-  await expect(software.getByText("0.1.0", { exact: true })).toHaveCount(0);
+  await expect(
+    software.getByText("0.1.0 · Stable channel", { exact: true }),
+  ).toHaveCount(0);
   state.versionReadStatus = 200;
   state.version.status = "current";
   state.version.latest_version = "0.1.0";
   state.version.failure_code = null;
   state.version.observed_at = "2026-10-08T04:00:00Z";
-  await software
-    .getByRole("button", { name: "Refresh release status", exact: true })
-    .click();
+  // While the release check runs, Refresh waits and says so.
+  const held = heldResponse();
+  await page.route("**/api/version", async (route) => {
+    held.enter();
+    await held.released;
+    await route.fallback();
+  });
+  const refresh = software.getByRole("button", {
+    name: "Refresh release status",
+    exact: true,
+  });
+  await refresh.click();
+  try {
+    await held.entered;
+    await expect(refresh).toBeDisabled();
+    await expect(software.getByRole("status")).toHaveText(
+      "Checking release status…",
+    );
+  } finally {
+    held.release();
+  }
   await expect(software.getByText("Up to date", { exact: true })).toBeVisible();
+  await expect(software.getByRole("status")).toHaveCount(0);
   await expect(software).toContainText("Release check");
 });
 

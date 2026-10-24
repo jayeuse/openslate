@@ -1,13 +1,30 @@
 "use client";
 
-import { Search } from "lucide-react";
+import type { ReactNode } from "react";
+import { ExternalLink, RefreshCw } from "lucide-react";
+
 import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { failureLabel, updateProcedureUrl } from "../adapters/backup-api";
+import { updateProcedureUrl } from "../adapters/backup-api";
+import {
+  LICENSE_WORDS,
+  LIMITS_WORDS,
+  latestReleaseWords,
+  releaseCheckWords,
+  versionWords,
+} from "../domain/updates-rules";
 import type { useManageMaintenance } from "../state/controller";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
 
+const linkClassName =
+  "text-action-text inline-flex min-h-11 items-center gap-1 underline-offset-4 hover:underline xl:min-h-0";
+
+/**
+ * Updates & licensing (MD10): one summary of label-left rows (Version,
+ * Release check, Latest release, License, Limits), with a quiet Refresh
+ * release status and the Update procedure link in its header. The header
+ * meta line already says who installs updates.
+ */
 export function UpdatesPanel({
   maintenance,
 }: {
@@ -15,131 +32,114 @@ export function UpdatesPanel({
 }) {
   const version = maintenance.acceptedVersion;
   const region = useWorkspaceRegion();
-  const statusText = version
-    ? {
-        unknown: version.observed_at
-          ? "Version comparison unavailable"
-          : "No release observation recorded",
-        available: `Version ${version.latest_version} is available`,
-        current: "Up to date",
-        unavailable: "Release information unavailable",
-        stale: "Release information is stale",
-      }[version.status]
+  const refreshing =
+    maintenance.version.isFetching && !maintenance.version.isPending;
+  const check = version
+    ? releaseCheckWords(version, (value) => formatBackupTime(value, region))
     : null;
-  return (
-    <section className="min-w-0 p-6" aria-labelledby="manage-updates-heading">
-      <div className="flex flex-col gap-5">
-        <h2
-          data-slot="section-title"
-          id="manage-updates-heading"
-          className="text-xl font-semibold tracking-tight"
-        >
-          Software version
-        </h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary">Stable channel</Badge>
-          {version?.status === "current" ? (
-            <Badge variant="success">Up to date</Badge>
+  const latest = version ? latestReleaseWords(version) : null;
+  const rows: [string, ReactNode][] = [];
+  if (version && check) {
+    rows.push(["Version", versionWords(version)]);
+    rows.push([
+      "Release check",
+      <>
+        <span className="flex flex-wrap items-baseline gap-x-1">
+          <span>{check.result}</span>
+          {check.failure ? (
+            <span className="text-muted-foreground">· {check.failure}</span>
           ) : null}
-        </div>
+          {version.release_url ? (
+            <>
+              <span aria-hidden="true" className="text-muted-foreground">
+                ·
+              </span>
+              <a
+                href={version.release_url}
+                target="_blank"
+                rel="noreferrer"
+                className={linkClassName}
+              >
+                Release notes
+                <ExternalLink aria-hidden="true" className="size-3.5" />
+              </a>
+            </>
+          ) : null}
+        </span>
+        <span className="text-muted-foreground block text-xs">
+          {check.times}
+        </span>
+      </>,
+    ]);
+    if (latest) rows.push(["Latest release", latest]);
+  }
+  rows.push(["License", LICENSE_WORDS], ["Limits", LIMITS_WORDS]);
+  return (
+    <section
+      aria-labelledby="manage-updates-heading"
+      className="bg-card border-border min-w-0 shrink-0 rounded-[var(--radius)] border"
+    >
+      <div className="border-border flex min-h-14 flex-wrap items-center gap-x-2 border-b px-4 py-2">
+        <h2
+          id="manage-updates-heading"
+          data-slot="section-title"
+          className="mr-auto font-semibold"
+        >
+          Installation
+        </h2>
+        {refreshing ? (
+          <span role="status" className="text-muted-foreground text-sm">
+            Checking release status…
+          </span>
+        ) : null}
+        <a
+          href={updateProcedureUrl}
+          target="_blank"
+          rel="noreferrer"
+          className={linkClassName}
+        >
+          Update procedure for this release
+          <ExternalLink aria-hidden="true" className="size-3.5" />
+        </a>
+        <Button
+          type="button"
+          variant="ghost"
+          className="min-h-11 gap-2 max-sm:-ml-4"
+          aria-busy={refreshing}
+          disabled={maintenance.version.isFetching}
+          onClick={() => void maintenance.refreshVersion()}
+        >
+          <RefreshCw
+            data-icon="inline-start"
+            aria-hidden="true"
+            className={refreshing ? "motion-safe:animate-spin" : undefined}
+          />
+          Refresh release status
+        </Button>
+      </div>
+      <div className="px-4 py-2">
         {maintenance.versionRefused || maintenance.version.isError ? (
-          <Alert role="alert" variant="destructive">
+          <Alert role="alert" variant="destructive" className="my-1.5">
             {maintenance.versionRefused
               ? "Only administrators can review version status."
               : "Version status could not be loaded. Try again."}
           </Alert>
-        ) : maintenance.version.isPending ? (
-          <p role="status">Loading version status…</p>
+        ) : !version && maintenance.version.isPending ? (
+          <p role="status" className="text-muted-foreground py-1.5 text-sm">
+            Loading version status…
+          </p>
         ) : null}
-        {version ? (
-          <>
-            <div className="border-border border-b pb-5">
-              <p className="text-muted-foreground text-sm">Current version</p>
-              <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <p className="text-4xl font-semibold tabular-nums">
-                  {version.current_version}
-                </p>
-                <span className="text-muted-foreground text-sm">
-                  Running server
-                </span>
-              </div>
+        <dl className="grid min-w-0 text-sm">
+          {rows.map(([label, value]) => (
+            <div
+              key={label}
+              className="grid min-w-0 grid-cols-[7rem_minmax(0,1fr)] items-baseline gap-3 py-1.5 sm:grid-cols-[8.5rem_minmax(0,1fr)]"
+            >
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="min-w-0 tabular-nums">{value}</dd>
             </div>
-            {version.status !== "current" ? (
-              <Alert
-                variant={version.status === "available" ? "warning" : "default"}
-                role="status"
-              >
-                <p className="font-medium">{statusText}</p>
-                {version.status === "stale" ||
-                version.status === "unavailable" ? (
-                  <p className="text-sm">
-                    The last observation does not establish whether this
-                    installation is current.
-                  </p>
-                ) : null}
-              </Alert>
-            ) : null}
-          </>
-        ) : null}
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={maintenance.version.isFetching}
-            onClick={() => void maintenance.refreshVersion()}
-          >
-            <Search data-icon="inline-start" /> Refresh release status
-          </Button>
-          <Button asChild variant="outline" className="min-h-11">
-            <a href={updateProcedureUrl} target="_blank" rel="noreferrer">
-              Update procedure
-            </a>
-          </Button>
-          {version?.release_url ? (
-            <Button asChild variant="ghost" className="min-h-11">
-              <a href={version.release_url} target="_blank" rel="noreferrer">
-                Release notes
-              </a>
-            </Button>
-          ) : null}
-        </div>
-        <p className="text-muted-foreground text-sm">
-          Refresh release status shows the latest release check from your
-          server. The person who runs your server installs updates with the
-          procedure included with this release.
-        </p>
-        {version ? (
-          <div className="border-border min-w-0 space-y-3 border-t pt-5">
-            <h3 data-slot="section-title" className="font-semibold">
-              Release check
-            </h3>
-            <dl className="text-muted-foreground space-y-2 text-sm">
-              <div>
-                <dt>Last successful check</dt>
-                <dd>{formatBackupTime(version.observed_at, region)}</dd>
-              </div>
-              <div>
-                <dt>Last attempt</dt>
-                <dd>{formatBackupTime(version.checked_at, region)}</dd>
-              </div>
-              {version.failure_code ? (
-                <div>
-                  <dt>Failure</dt>
-                  <dd className="break-words">
-                    {failureLabel(version.failure_code)}
-                  </dd>
-                </div>
-              ) : null}
-              {version.latest_version && version.status !== "available" ? (
-                <div>
-                  <dt>Last observed release</dt>
-                  <dd>{version.latest_version}</dd>
-                </div>
-              ) : null}
-            </dl>
-          </div>
-        ) : null}
+          ))}
+        </dl>
       </div>
     </section>
   );

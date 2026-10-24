@@ -15,10 +15,11 @@ import {
 } from "../adapters/backup-api";
 import {
   backupExportReason,
+  backupRunStatus,
   backupScheduleAtRequest,
   shortSnapshotId,
 } from "../domain/backup-rules";
-import { BackupStatusWord } from "./backup-history-list";
+import { StatusWord } from "./status-word";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
 
 // One backup's detail (MD8), after Sandbox History: the name, status and
@@ -145,7 +146,7 @@ export function BackupDetail({
         >
           {run.name}
         </h2>
-        <BackupStatusWord run={run} className="text-sm" />
+        <StatusWord {...backupRunStatus(run)} className="text-sm" />
         <span className="text-muted-foreground text-sm">
           {run.installation === "previous"
             ? "Previous installation · Read-only history"

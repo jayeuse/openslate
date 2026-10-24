@@ -80,7 +80,6 @@ import { useManageMaintenance } from "./state/controller";
 import { isManageBackupExportId } from "./adapters/backup-api";
 import { UpdatesPanel } from "./components/updates-panel";
 import { ManageUnavailable } from "./components/manage-unavailable";
-import { LicensingPanel } from "./components/licensing-panel";
 
 type ViewTab =
   "Organization" | "Audit" | "Backup" | "Jobs" | "Updates & licensing";
@@ -487,7 +486,15 @@ function ManageContent() {
   const ownerRefused =
     (tab === "Backup" || tab === "Updates & licensing") &&
     maintenance.ownerRefused;
-  const unavailable = sectionClosed || ownerRefused;
+  // Jobs reads need a verified administrator: any other known role gets the
+  // notice; an identity that could not be read says so, with a Retry.
+  const jobsRefused =
+    tab === "Jobs" &&
+    knownIdentity !== undefined &&
+    knownIdentity.role !== "admin";
+  const jobsAccessUnchecked = tab === "Jobs" && identity.isError;
+  const unavailable =
+    sectionClosed || ownerRefused || jobsRefused || jobsAccessUnchecked;
   const sectionShown = sectionOpen && !unavailable;
   const organizationErrorInFooter =
     sectionShown && tab === "Organization" && !organizationReader;
@@ -1291,7 +1298,17 @@ function ManageContent() {
             </Alert>
           ) : null}
           {unavailable ? (
-            <ManageUnavailable section={tab} home={openSections[0] ?? null} />
+            <ManageUnavailable
+              section={tab}
+              home={openSections[0] ?? null}
+              {...(jobsAccessUnchecked
+                ? {
+                    message: "Your access could not be checked.",
+                    onRetry: () => void identity.refetch(),
+                    retrying: identity.isFetching,
+                  }
+                : {})}
+            />
           ) : !sectionDecided ? (
             <div role="status" className="flex flex-col gap-4">
               <span className="sr-only">Checking your access…</span>
@@ -1402,7 +1419,7 @@ function ManageContent() {
           ) : null}
 
           {sectionShown && tab === "Jobs" ? (
-            <div className="manage-scroll min-w-0">
+            <div className="manage-fill min-w-0">
               <ManageJobs admitted={verifiedOrganizationRole === "admin"} />
             </div>
           ) : null}
@@ -1435,10 +1452,7 @@ function ManageContent() {
 
           {sectionShown && tab === "Updates & licensing" ? (
             <div className="manage-scroll min-w-0">
-              <div className="bg-card grid min-w-0 divide-y overflow-hidden rounded-lg border xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:divide-x xl:divide-y-0">
-                <UpdatesPanel maintenance={maintenance} />
-                <LicensingPanel />
-              </div>
+              <UpdatesPanel maintenance={maintenance} />
             </div>
           ) : null}
         </div>

@@ -19,7 +19,8 @@ import {
   type ManageBackupRun,
   type ManageBackupsRequest,
 } from "../adapters/backup-api";
-import { backupRunStatus, type BackupTone } from "../domain/backup-rules";
+import { backupRunStatus } from "../domain/backup-rules";
+import { StatusWord } from "./status-word";
 import { formatBackupTime, useWorkspaceRegion } from "./backup-time";
 
 // The list pane of Backup history (MD8), after Sandbox History: the total in
@@ -54,39 +55,6 @@ const INSTALLATION_OPTIONS = [
   { value: "current", label: "Current" },
   { value: "previous", label: "Previous" },
 ] as const;
-
-export const backupDotTone: Record<BackupTone, string> = {
-  flow: "bg-[var(--flow)]",
-  action: "bg-[var(--action)]",
-  danger: "bg-[var(--danger)]",
-  warn: "bg-[var(--warn)]",
-  muted: "shadow-[inset_0_0_0_1.5px_var(--ink-muted)]",
-};
-
-/** A status as a dot and a word (DESIGN "Access rows"). */
-export function BackupStatusWord({
-  run,
-  className,
-}: {
-  run: ManageBackupRun;
-  className?: string;
-}) {
-  const { word, tone } = backupRunStatus(run);
-  return (
-    <span
-      className={cn(
-        "inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap",
-        className,
-      )}
-    >
-      <span
-        aria-hidden="true"
-        className={cn("size-2 shrink-0 rounded-full", backupDotTone[tone])}
-      />
-      <span className="truncate">{word}</span>
-    </span>
-  );
-}
 
 export type BackupListBody = "none" | "rows" | "empty" | "no-match" | "no-page";
 
@@ -352,7 +320,10 @@ function BackupRow({
           <span title={run.name} className="truncate font-medium">
             {run.name}
           </span>
-          <BackupStatusWord run={run} className="text-sm font-normal" />
+          <StatusWord
+            {...backupRunStatus(run)}
+            className="text-sm font-normal"
+          />
           <time
             dateTime={run.requested_at}
             className="text-muted-foreground col-span-2 truncate text-xs font-normal tabular-nums"
@@ -362,7 +333,10 @@ function BackupRow({
         </>
       ) : (
         <>
-          <BackupStatusWord run={run} className="text-sm font-normal" />
+          <StatusWord
+            {...backupRunStatus(run)}
+            className="text-sm font-normal"
+          />
           <span title={run.name} className="truncate font-medium">
             {run.name}
           </span>

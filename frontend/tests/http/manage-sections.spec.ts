@@ -82,7 +82,7 @@ async function mockAudit(page: Page, count = 24) {
 }
 
 async function mockJobs(page: Page) {
-  const items = Array.from({ length: 10 }, (_, index) => ({
+  const items = Array.from({ length: 30 }, (_, index) => ({
     kind: "report",
     id: fixtureId(6000 + index),
     subject_label: `Weekly report ${index + 1}`,
@@ -96,20 +96,24 @@ async function mockJobs(page: Page) {
     failure_label: null,
     can_retry: false,
   }));
-  await page.route("**/api/jobs**", (route) =>
-    route.fulfill({
+  await page.route("**/api/jobs**", (route) => {
+    const url = new URL(route.request().url());
+    const limit = Number(url.searchParams.get("limit") ?? "10");
+    const offset = Number(url.searchParams.get("offset") ?? "0");
+    const page = items.slice(offset, offset + limit);
+    return route.fulfill({
       json: {
-        items,
+        items: page,
         pagination: {
-          limit: 10,
-          offset: 0,
-          count: items.length,
+          limit,
+          offset,
+          count: page.length,
           total: items.length,
-          has_more: false,
+          has_more: offset + limit < items.length,
         },
       },
-    }),
-  );
+    });
+  });
 }
 
 /** Every section with its data, for an administrator who owns the installation. */
@@ -124,7 +128,7 @@ const sections = [
   { view: "backup", title: "Backup", ready: "Back up now" },
   { view: "audit", title: "Audit", ready: "Quote Q-1000" },
   { view: "jobs", title: "Jobs", ready: "Weekly report 1" },
-  { view: "updates", title: "Updates & licensing", ready: "Current version" },
+  { view: "updates", title: "Updates & licensing", ready: "Stable channel" },
 ] as const;
 
 async function openSection(page: Page, section: (typeof sections)[number]) {
@@ -304,4 +308,25 @@ test("no Manage section scrolls the page at 1280 by 720", async ({ page }) => {
       )
       .toBe(0);
   }
+  // A page of 25 jobs scrolls inside the list; the page and its footer stay.
+  await openSection(page, sections[3]);
+  await page.getByLabel("Rows per page", { exact: true }).selectOption("25");
+  const jobs = page.getByRole("table", { name: "Jobs", exact: true });
+  await expect(jobs.getByRole("row")).toHaveCount(26);
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollHeight -
+        document.documentElement.clientHeight,
+    ),
+  ).toBe(0);
+  expect(
+    await jobs.evaluate((table) => {
+      const list = table.closest(".manage-scroll")!;
+      return list.scrollHeight > list.clientHeight;
+    }),
+  ).toBe(true);
+  await expect(
+    page.getByRole("navigation", { name: "Jobs pages" }),
+  ).toBeInViewport();
 });

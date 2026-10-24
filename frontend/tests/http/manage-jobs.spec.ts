@@ -3,6 +3,7 @@ import {
   controlledSession,
   expect,
   heldResponse,
+  expectNoHorizontalScroll,
   recheckSession,
   test,
   type Page,
@@ -288,6 +289,9 @@ async function installJobs(
     failIdentity: () => {
       identityFailure = true;
     },
+    restoreIdentity: () => {
+      identityFailure = false;
+    },
     setRows: (value: Job[]) => {
       rows = value;
     },
@@ -300,8 +304,13 @@ async function openJobs(page: Page) {
     page.getByRole("heading", { name: "Jobs", exact: true }),
   ).toBeVisible();
 }
-const retry = (page: Page, label: string) =>
-  page.getByRole("button", { name: `Retry ${label}`, exact: true });
+const rowMenu = (page: Page, label: string) =>
+  page.getByRole("button", { name: `Actions for ${label}`, exact: true });
+/** Opens a row's menu and returns its Retry item. */
+async function retry(page: Page, label: string) {
+  await rowMenu(page, label).click();
+  return page.getByRole("menuitem", { name: `Retry ${label}`, exact: true });
+}
 
 test("exact administrator sees server-priority composite Jobs and future registry rows", async ({
   page,
@@ -324,17 +333,63 @@ test("exact administrator sees server-priority composite Jobs and future registr
   await expect(table.getByRole("row")).toHaveCount(7);
   await expect(table.getByRole("row").nth(1)).toContainText("Nightly backup");
   await expect(table.getByRole("row").nth(2)).toContainText("Weekly Report");
-  await expect(retry(page, "Weekly Report")).toBeVisible();
-  await expect(retry(page, "Meeting post")).toBeVisible();
-  await expect(retry(page, "Closed Report")).toHaveCount(0);
+  await expect(rowMenu(page, "Weekly Report")).toBeVisible();
+  await expect(rowMenu(page, "Meeting post")).toBeVisible();
+  await expect(rowMenu(page, "Closed Report")).toHaveCount(0);
   const future = table
     .getByRole("row")
     .filter({ hasText: "Future registry work" });
   await expect(future).toContainText("Waiting external");
-  await expect(future).toContainText("Not recorded");
+  // A job that never ran shows "—" for its time and attempts, and no problem.
+  await expect(future.getByRole("cell")).toHaveText([
+    "Waiting external",
+    "Future work",
+    "Future registry work",
+    "Last attempt —",
+    "—",
+  ]);
+  await expect(table).not.toContainText(/Not recorded|No problem recorded/);
+  // One-line 40px rows with no Actions column.
+  await expect(table.getByRole("columnheader")).toHaveText([
+    "State",
+    "Job",
+    "Subject",
+    "When",
+    "Attempts",
+  ]);
+  expect((await future.boundingBox())?.height).toBe(40);
+  // A problem is a second line that the row is described by, read in full.
+  const weekly = table.getByRole("row").filter({ hasText: "Weekly Report" });
+  await expect(weekly).toHaveAccessibleDescription("All attempts have failed");
   await expect(
-    page.getByRole("link", { name: "View all backups", exact: true }),
+    page
+      .getByRole("main")
+      .getByText("All attempts have failed", { exact: true })
+      .first(),
   ).toBeVisible();
+  // The subject keeps its link, in ink.
+  const subject = table.getByRole("link", {
+    name: "Nightly backup",
+    exact: true,
+  });
+  await expect(subject).toHaveAttribute("href", "/manage?view=backup");
+  expect(
+    await subject.evaluate(
+      (node) =>
+        getComputedStyle(node).color ===
+        getComputedStyle(node.closest("td")!).color,
+    ),
+  ).toBe(true);
+  // Refresh is a quiet icon whose tooltip names it.
+  const refresh = page.getByRole("button", {
+    name: "Refresh Jobs",
+    exact: true,
+  });
+  await expect(refresh).toHaveText("");
+  await refresh.hover();
+  await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText(
+    "Refresh Jobs",
+  );
 });
 
 for (const role of ["member", "guest"] as const)
@@ -353,8 +408,9 @@ for (const role of ["member", "guest"] as const)
       0,
     );
     await expect(
-      page.getByText("Only an administrator can view Jobs.", { exact: true }),
+      page.getByText("Jobs is not available to your account.", { exact: true }),
     ).toBeVisible();
+    await expect(page.getByRole("button", { name: /Retry/ })).toHaveCount(0);
     expect(api.gets).toHaveLength(0);
     expect(api.posts).toHaveLength(0);
   });
@@ -375,6 +431,16 @@ test("unavailable identity never admits Jobs reads or intent prefetch", async ({
     0,
   );
   expect(api.gets).toHaveLength(0);
+  // The failed check says so and can be retried; a refusal could not.
+  await expect(
+    page.getByText("Your access could not be checked.", { exact: true }),
+  ).toBeVisible();
+  api.restoreIdentity();
+  await page
+    .getByRole("main")
+    .getByRole("button", { name: "Retry", exact: true })
+    .click();
+  await expect(page.getByText("Nightly backup", { exact: true })).toBeVisible();
 });
 
 test("Jobs paging and kind/state/size filters retain exact server page identities", async ({
@@ -396,10 +462,28 @@ test("Jobs paging and kind/state/size filters retain exact server page identitie
     .click();
   await expect(page.getByText("Owned job 15", { exact: true })).toBeVisible();
   expect(api.gets.at(-1)?.searchParams.get("offset")).toBe("10");
+  // Kind is in Filters, and shows as a chip.
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
   await page.getByLabel("Job kind", { exact: true }).selectOption("backup");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("group", { name: "Active filters", exact: true }),
+  ).toContainText("Kind: Backup");
   await expect(page.getByText("Owned job 2", { exact: true })).toBeVisible();
   expect(api.gets.at(-1)?.searchParams.get("offset")).toBe("0");
-  await page.getByLabel("Job state", { exact: true }).selectOption("succeeded");
+  // State is a quick filter.
+  const state = page.getByRole("group", { name: "Job state", exact: true });
+  await expect(state.getByRole("button")).toHaveText([
+    "All",
+    "Pending",
+    "Running",
+    "Failed",
+    "Succeeded",
+    "Queued",
+    "Canceled",
+    "Interrupted",
+  ]);
+  await state.getByRole("button", { name: "Succeeded", exact: true }).click();
   await expect(
     page.getByText("No jobs match these filters.", { exact: true }),
   ).toBeVisible();
@@ -408,6 +492,13 @@ test("Jobs paging and kind/state/size filters retain exact server page identitie
   await expect
     .poll(() => api.gets.at(-1)?.searchParams.get("limit"))
     .toBe("25");
+  await page
+    .getByRole("button", { name: "Remove Kind filter", exact: true })
+    .click();
+  await expect
+    .poll(() => api.gets.at(-1)?.searchParams.has("kind"))
+    .toBe(false);
+  expect(api.gets.at(-1)?.searchParams.get("state")).toBe("succeeded");
 });
 
 test("report-run retry requires a matching 200 receipt and refreshes authoritative state", async ({
@@ -416,13 +507,14 @@ test("report-run retry requires a matching 200 receipt and refreshes authoritati
   const row = seedJobs()[1];
   const api = await installJobs(page, { rows: [row] });
   await openJobs(page);
-  await expect(retry(page, "Weekly Report")).toBeEnabled();
+  await expect(await retry(page, "Weekly Report")).toBeEnabled();
+  await page.keyboard.press("Escape");
   const reread = page.waitForRequest(
     (request) =>
       request.method() === "GET" &&
       new URL(request.url()).pathname === "/api/jobs",
   );
-  await retry(page, "Weekly Report").click();
+  await (await retry(page, "Weekly Report")).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Retry requested." }),
   ).toBeVisible();
@@ -442,7 +534,7 @@ for (const response of ["wrong-id", "409", "404", "422"] as const)
       reply: response,
     });
     await openJobs(page);
-    await retry(page, "Weekly Report").click();
+    await (await retry(page, "Weekly Report")).click();
     await expect(
       page
         .getByRole("alert")
@@ -460,7 +552,7 @@ test("backup wrong-location receipt stays unresolved and blocks new retry keys",
 }) => {
   const api = await installJobs(page, { reply: "wrong-location" });
   await openJobs(page);
-  await retry(page, "Nightly backup").click();
+  await (await retry(page, "Nightly backup")).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "unconfirmed" }),
   ).toBeVisible();
@@ -469,7 +561,8 @@ test("backup wrong-location receipt stays unresolved and blocks new retry keys",
   ).toHaveCount(0);
   expect(api.posts).toHaveLength(1);
   expect(api.posts[0].key).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
-  await expect(retry(page, "Weekly Report")).toBeDisabled();
+  await expect(await retry(page, "Weekly Report")).toBeDisabled();
+  await page.keyboard.press("Escape");
 });
 
 test("uncertain backup first reads Jobs then explicitly recovers one accepted run with the same key", async ({
@@ -477,13 +570,14 @@ test("uncertain backup first reads Jobs then explicitly recovers one accepted ru
 }) => {
   const api = await installJobs(page, { reply: "lost" });
   await openJobs(page);
-  await expect(retry(page, "Nightly backup")).toBeEnabled();
+  await expect(await retry(page, "Nightly backup")).toBeEnabled();
+  await page.keyboard.press("Escape");
   const reread = page.waitForRequest(
     (request) =>
       request.method() === "GET" &&
       new URL(request.url()).pathname === "/api/jobs",
   );
-  await retry(page, "Nightly backup").click();
+  await (await retry(page, "Nightly backup")).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "unconfirmed" }),
   ).toBeVisible();
@@ -562,7 +656,7 @@ test("backup uncertainty survives same-account section remount without an automa
 }) => {
   const api = await installJobs(page, { reply: "lost" });
   await openJobs(page);
-  await retry(page, "Nightly backup").click();
+  await (await retry(page, "Nightly backup")).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "unconfirmed" }),
   ).toBeVisible();
@@ -589,7 +683,7 @@ test("account replacement cancels a held retry and never transfers its key or la
   const held = heldResponse();
   const api = await installJobs(page, { postDelay: held });
   await openJobs(page);
-  await retry(page, "Nightly backup").click();
+  await (await retry(page, "Nightly backup")).click();
   try {
     await held.entered;
     expect(api.posts).toHaveLength(1);
@@ -658,10 +752,12 @@ test("cold Jobs load and retained 503 refresh remain truthful and require explic
       .getByRole("alert"),
   ).toContainText("could not");
   await expect(page.getByText("Nightly backup", { exact: true })).toBeVisible();
-  await expect(retry(page, "Nightly backup")).toBeDisabled();
+  await expect(await retry(page, "Nightly backup")).toBeDisabled();
+  await page.keyboard.press("Escape");
   api.error(null);
   await page.getByRole("button", { name: "Retry Jobs", exact: true }).click();
-  await expect(retry(page, "Nightly backup")).toBeEnabled();
+  await expect(await retry(page, "Nightly backup")).toBeEnabled();
+  await page.keyboard.press("Escape");
 });
 
 test("failed new filter never relabels prior Jobs rows as its response", async ({
@@ -671,7 +767,9 @@ test("failed new filter never relabels prior Jobs rows as its response", async (
   await openJobs(page);
   await expect(page.getByText("Weekly Report", { exact: true })).toBeVisible();
   api.error(503);
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
   await page.getByLabel("Job kind", { exact: true }).selectOption("backup");
+  await page.keyboard.press("Escape");
   await expect(
     page
       .getByRole("region", { name: "Jobs workspace", exact: true })
@@ -689,20 +787,62 @@ test("pending scheduled retry locks composite peers and never double-submits", a
   const held = heldResponse();
   const api = await installJobs(page, { postDelay: held });
   await openJobs(page);
-  await retry(page, "Weekly Report").click();
+  await (await retry(page, "Weekly Report")).click();
   try {
     await held.entered;
     expect(api.posts).toHaveLength(1);
-    await expect(retry(page, "Weekly Report")).toBeDisabled();
-    await expect(retry(page, "Meeting post")).toBeDisabled();
+    await expect(await retry(page, "Weekly Report")).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(await retry(page, "Meeting post")).toBeDisabled();
+    await page.keyboard.press("Escape");
   } finally {
     held.release();
   }
   await expect(
     page.getByRole("status").filter({ hasText: "Retry requested." }),
   ).toBeVisible();
-  await expect(retry(page, "Meeting post")).toBeEnabled();
+  await expect(await retry(page, "Meeting post")).toBeEnabled();
+  await page.keyboard.press("Escape");
   expect(api.posts).toEqual([{ kind: "report-run", id: id(1), key: null }]);
+});
+
+test("a pending retry locks the Kind chip, Clear all and the state quick filters", async ({
+  page,
+}) => {
+  const held = heldResponse();
+  await installJobs(page, { postDelay: held });
+  await openJobs(page);
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await page.getByLabel("Job kind", { exact: true }).selectOption("report-run");
+  await page.keyboard.press("Escape");
+  const chips = page.getByRole("group", {
+    name: "Active filters",
+    exact: true,
+  });
+  const remove = chips.getByRole("button", {
+    name: "Remove Kind filter",
+    exact: true,
+  });
+  await expect(chips).toContainText("Kind: Report run");
+  await (await retry(page, "Weekly Report")).click();
+  try {
+    await held.entered;
+    await expect(remove).toBeDisabled();
+    await expect(
+      chips.getByRole("button", { name: "Clear all", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page
+        .getByRole("group", { name: "Job state", exact: true })
+        .getByRole("button", { name: "Failed", exact: true }),
+    ).toBeDisabled();
+  } finally {
+    held.release();
+  }
+  await expect(
+    page.getByRole("status").filter({ hasText: "Retry requested." }),
+  ).toBeVisible();
+  await expect(remove).toBeEnabled();
 });
 
 test("unsafe subject link rejects the Jobs response without creating navigation", async ({
@@ -735,7 +875,7 @@ test("backup readback failure cannot offer recovery POST until a fresh GET succe
     afterLossReadError: 503,
   });
   await openJobs(page);
-  await retry(page, "Nightly backup").click();
+  await (await retry(page, "Nightly backup")).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "unconfirmed" }),
   ).toBeVisible();
@@ -811,7 +951,7 @@ test("empty refreshed later page displays the authoritative zero range", async (
     page.getByText("No jobs match these filters.", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("Showing 0–0 of 0 jobs", { exact: true }),
+    page.getByText("Showing 0–0 of 0", { exact: true }),
   ).toBeVisible();
 });
 
@@ -849,7 +989,7 @@ for (const state of ["registry", "unconfirmed"] as const) {
               request.method() === "GET" &&
               new URL(request.url()).pathname === "/api/jobs",
           );
-          await retry(page, "Nightly backup").click();
+          await (await retry(page, "Nightly backup")).click();
           await expect(
             page.getByRole("alert").filter({ hasText: "unconfirmed" }),
           ).toBeVisible();
@@ -884,17 +1024,14 @@ for (const state of ["registry", "unconfirmed"] as const) {
           await expect(table.getByRole("row").nth(2)).toContainText(
             "Weekly Report",
           );
-          await expect(retry(page, "Weekly Report")).toBeVisible();
-          await expect(retry(page, "Meeting post")).toBeVisible();
-          await expect(retry(page, "Closed Report")).toHaveCount(0);
+          await expect(rowMenu(page, "Weekly Report")).toBeVisible();
+          await expect(rowMenu(page, "Meeting post")).toBeVisible();
+          await expect(rowMenu(page, "Closed Report")).toHaveCount(0);
           const future = table
             .getByRole("row")
             .filter({ hasText: "Future registry work" });
           await expect(future).toContainText("Waiting external");
-          await expect(future).toContainText("Not recorded");
-          await expect(
-            page.getByRole("link", { name: "View all backups", exact: true }),
-          ).toBeVisible();
+          await expect(future).toContainText("—");
         }
         await page.evaluate(() => window.scrollTo(0, 0));
         await page.setViewportSize(viewport);
@@ -919,3 +1056,46 @@ for (const state of ["registry", "unconfirmed"] as const) {
     }
   }
 }
+
+test("Jobs phone rows show the full problem, the state word and 44px targets", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const problem =
+    "The report run failed because its department was archived while the run waited in the queue.";
+  await installJobs(page, {
+    rows: [
+      job("report-run", 1, "Weekly Report", {
+        subject_link: "/openview?section=reports",
+        failure_label: problem,
+      }),
+      job("event-reminder", 2, "Never ran", {
+        state: "pending",
+        last_attempt_at: null,
+        next_attempt_at: "2026-10-05T00:00:00Z",
+        attempts: 0,
+        failure_code: null,
+        failure_label: null,
+        can_retry: false,
+      }),
+    ],
+  });
+  await openJobs(page);
+  const items = page
+    .getByRole("list", { name: "Jobs", exact: true })
+    .getByRole("listitem");
+  await expect(items).toHaveCount(2);
+  await expect(items.nth(0)).toContainText("Failed");
+  await expect(items.nth(0)).toContainText("5 attempts");
+  await expect(items.nth(0).getByText(problem, { exact: true })).toBeVisible();
+  await expect(items.nth(1)).toContainText("Pending");
+  await expect(items.nth(1)).toContainText("Next");
+  await expect(items.nth(1)).not.toContainText("attempt");
+  for (const target of [
+    items.nth(0).getByRole("link", { name: "Weekly Report", exact: true }),
+    rowMenu(page, "Weekly Report"),
+  ])
+    expect((await target.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await expect(rowMenu(page, "Never ran")).toHaveCount(0);
+  await expectNoHorizontalScroll(page);
+});

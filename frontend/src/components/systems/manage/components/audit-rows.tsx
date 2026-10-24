@@ -26,6 +26,7 @@ import {
   type AuditFieldNames,
   type AuditListEntry,
 } from "../domain/audit-rules";
+import { StatusDot, type StatusTone } from "./status-word";
 
 /** The words a row shows; the parent formats time and names the area. */
 export type AuditRowText = {
@@ -36,10 +37,10 @@ export type AuditRowText = {
   area: string;
 };
 
-const dotTone: Record<ManageAuditLog["action"], string> = {
-  create: "bg-[var(--flow)]",
-  update: "bg-[var(--action)]",
-  delete: "bg-[var(--danger)]",
+const dotTone: Record<ManageAuditLog["action"], StatusTone> = {
+  create: "flow",
+  update: "action",
+  delete: "danger",
 };
 
 function Sentence({
@@ -52,10 +53,7 @@ function Sentence({
   const { verb, fields, target } = auditSentence(log, fieldNames);
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <span
-        aria-hidden="true"
-        className={cn("size-2 shrink-0 rounded-full", dotTone[log.action])}
-      />
+      <StatusDot tone={dotTone[log.action]} />
       <span className="truncate">
         <b className="font-medium">{verb}</b>
         {fields ? (

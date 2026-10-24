@@ -1,6 +1,7 @@
 "use client";
 import type { Route } from "next";
 import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import type { WorkspaceNavigationItem } from "@/components/workspace-navigation";
 
@@ -24,13 +25,32 @@ export function manageUnavailableMessage(section: ManageSectionTitle): string {
 export function ManageUnavailable({
   section,
   home,
+  message,
+  onRetry,
+  retrying = false,
 }: {
   section: ManageSectionTitle;
   home: WorkspaceNavigationItem | null;
+  /** Replaces the refusal when the access check itself failed. */
+  message?: string;
+  /** A Retry for a check that can still succeed; a refusal has none. */
+  onRetry?: () => void;
+  retrying?: boolean;
 }) {
   return (
-    <Alert className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-      <p>{manageUnavailableMessage(section)}</p>
+    <Alert className="flex shrink-0 flex-wrap items-center gap-3">
+      <p className="mr-auto">{message ?? manageUnavailableMessage(section)}</p>
+      {onRetry ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          disabled={retrying}
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+      ) : null}
       {home ? (
         <GuardedWorkspaceLink
           href={home.href as Route}
