@@ -31,7 +31,8 @@ export function ComboboxInput({ className, ...props }: Primitive.Input.Props) {
     <Primitive.Input
       {...props}
       className={cn(
-        "border-input bg-background focus-visible:outline-ring h-10 w-full rounded-[var(--radius)] border px-3 text-sm focus-visible:outline-2",
+        // 16px below 768px, so iOS Safari does not zoom on focus (PD56).
+        "border-input bg-background focus-visible:outline-ring h-10 w-full rounded-[var(--radius)] border px-3 text-base focus-visible:outline-2 md:text-sm",
         className,
       )}
     />

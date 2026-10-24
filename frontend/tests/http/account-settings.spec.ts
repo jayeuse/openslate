@@ -598,11 +598,26 @@ test("on a phone Account settings is one column, and the pinned footer never cov
   expect(row!.y + row!.height).toBeLessThanOrEqual(cover!.y);
   expect((await documentSize(page))[0]).toBe(390);
   // 16px text, so iOS Safari does not zoom the page when a field takes focus.
-  for (const name of ["Display name", "Job title", "Phone", "Bio"])
+  for (const name of [
+    "Display name",
+    "Job title",
+    "Phone",
+    "Bio",
+    "Text size",
+    "Page spacing",
+    "Start page after sign-in",
+    "Date format",
+    "Time format",
+    "Week starts",
+  ])
     await expect(page.getByLabel(name, { exact: true }), name).toHaveCSS(
       "font-size",
       "16px",
     );
+  await page.getByRole("combobox", { name: "Timezone", exact: true }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Search timezone", exact: true }),
+  ).toHaveCSS("font-size", "16px");
 });
 
 test("on a phone the framed dialogs fill the width inside the 16px gutter and keep their footers in view", async ({

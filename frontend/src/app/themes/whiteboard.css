@@ -227,6 +227,12 @@
     inset 0 0 0 5px var(--wb-frame-hi);
 }
 
+/* The Profile band spans the content area (PD27); it stops inside the
+   5px frame so the board keeps its frame at the top, as other pages do. */
+[data-theme="whiteboard"] [data-skin="page"] [data-slot="profile-band"] {
+  margin: 5px 5px 0;
+}
+
 [data-theme="whiteboard"] [data-skin="topbar"] {
   border-bottom: 1px solid var(--wb-frame);
 }

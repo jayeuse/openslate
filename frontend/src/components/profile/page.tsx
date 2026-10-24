@@ -161,6 +161,7 @@ function ProfileFrame({ children }: { children?: ReactNode }) {
     >
       <div
         aria-hidden="true"
+        data-slot="profile-band"
         className={cn(
           "border-border h-24 shrink-0 bg-(--surface-sunken) md:h-30",
           inShell ? "border-b" : "rounded-[var(--radius)] border",
@@ -233,7 +234,7 @@ function ProfileDetails({
                     key={row.label}
                     className="border-border grid min-h-14 grid-cols-1 content-center gap-y-0.5 border-b px-4 py-2 last:border-b-0 md:min-h-10 md:grid-cols-[8rem_minmax(0,1fr)] md:items-center md:gap-x-4 md:py-1"
                   >
-                    <dt className="text-muted-foreground text-[0.8125rem]">
+                    <dt className="text-muted-foreground text-sm">
                       {row.label}
                     </dt>
                     <dd className="min-w-0 wrap-anywhere">

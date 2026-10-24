@@ -110,7 +110,10 @@ test("Profile email request needs the current password and keeps saved email rea
   try {
     await send.click();
     await hold.begun;
-    await expect(send).toBeDisabled();
+    // The visible pending word is the button's name.
+    await expect(
+      dialog.getByRole("button", { name: "Sending…", exact: true }),
+    ).toBeDisabled();
     await expect(
       page.getByText("person@example.test", { exact: true }).first(),
     ).toBeVisible();

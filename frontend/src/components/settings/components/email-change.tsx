@@ -235,7 +235,6 @@ export default function EmailChange() {
               <Button
                 type="submit"
                 form="email-change-form"
-                aria-label="Send confirmation emails"
                 className="min-h-11"
                 disabled={blocked || accepted || !email.trim() || !password}
               >
