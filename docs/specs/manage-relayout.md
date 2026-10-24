@@ -224,7 +224,7 @@ Each phase ends with these checks:
 | EXIT-7  | Pass after the final batch; its row and sheet words were checked in the live app as `owner-admin`.                                                                                   |
 | EXIT-8  | Pass. No page scroll at 1280×720 and 1440×900 for any account or section (hands-on pass); no sideways scroll at 390 (HTTP sweeps).                                                   |
 | EXIT-9  | Targets: pass (44px sweeps at 390 per section and the shell buttons). Field edges: covered by theme parity; not re-measured per look.                                                |
-| EXIT-10 | The owner reviewed the live app on 2026-10-24; approval of the 390 screens is asked with the push.                                                                                   |
+| EXIT-10 | Pass. The owner reviewed the live app and approved the 390 screens (2026-10-24).                                                                                                     |
 
 ## Phase 7 glossary (decided under the owner's delegation, 2026-10-24)
 
