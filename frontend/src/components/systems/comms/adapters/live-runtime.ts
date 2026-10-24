@@ -176,8 +176,8 @@ export function createLiveCommsRuntime(
   async function accepted(result: SendResult) {
     await bridge.accept(result.message).catch(failure);
     scope.signal.throwIfAborted();
-    // The write receipt is authoritative even when later read repair fails.
-    void refresh().catch(failure);
+    // No read repair here: the command runner repairs after every command,
+    // sends included, and a second repair would read the workspace again.
     return result;
   }
   const client = {

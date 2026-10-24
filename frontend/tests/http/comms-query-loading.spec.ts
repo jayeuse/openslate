@@ -400,6 +400,43 @@ test("an ordinary member cold load makes no forbidden administrative reads and c
   }
 });
 
+test("an own send repairs the read model once", async ({ page }, testInfo) => {
+  const api = await prepare(page);
+  try {
+    await page.goto("/comms");
+    await ready(page);
+    await commsQuiet(api.calls);
+    const before = api.calls.length;
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("One repair per send");
+    await input.press("Enter");
+    await expect(
+      page.getByText("One repair per send", { exact: true }),
+    ).toBeVisible();
+    await expect(input).toHaveValue("");
+    await commsQuiet(api.calls);
+    // One repair reads the bootstrap and each workspace read once; a second
+    // repair for the same send reads every one of them again.
+    const commsGets = api.calls
+      .slice(before)
+      .filter(
+        (call) => call.method === "GET" && call.path.startsWith("/api/comms/"),
+      )
+      .map((call) => call.path + call.query);
+    expect(
+      commsGets.filter((path) => path === "/api/comms/bootstrap"),
+    ).toHaveLength(1);
+    expect(new Set(commsGets).size).toBe(commsGets.length);
+  } finally {
+    await testInfo.attach("own send evidence", {
+      body: JSON.stringify(api.calls),
+      contentType: "application/json",
+    });
+    await page.close();
+    api.server.close();
+  }
+});
+
 test("an incoming message and a presence change reread no workspace metadata", async ({
   page,
 }, testInfo) => {

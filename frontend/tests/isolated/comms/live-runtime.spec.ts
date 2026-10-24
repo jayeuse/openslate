@@ -37,6 +37,8 @@ test("an accepted send remains accepted when the subsequent metadata refresh is 
     await expect(
       runtime.client.sendReply(conversationId, rootId, replyRequest),
     ).resolves.toMatchObject({ status: 201, message: { id: live.id } });
+    // The command runner asks for the follow-up repair, not the send itself.
+    await runtime.refresh().catch(() => {});
     await refreshed;
     expect(runtime.outbox.getSnapshot()).toEqual([]);
     expect(
