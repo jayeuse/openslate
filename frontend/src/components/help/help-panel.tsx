@@ -131,7 +131,7 @@ export function HelpPanel() {
           <Button
             variant="ghost"
             size="icon"
-            className="size-11"
+            className="size-11 xl:size-8"
             aria-label="Help"
             title="Help"
             disabled={suspended}

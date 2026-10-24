@@ -832,8 +832,8 @@ test("Profile entry honors explicit Platform section precedence and Your profile
     page.getByRole("navigation", { name: "Breadcrumb", exact: true }),
   ).toContainText("Profile");
   await expect(
-    page.getByRole("button", { name: "Your profile", exact: true }).first(),
-  ).toBeVisible();
+    page.getByRole("link", { name: "Your profile, Maya Chen", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 for (const viewport of [

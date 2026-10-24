@@ -299,9 +299,7 @@ test("legacy Appearance and Your profile share only confirmed theme saves, prese
       .poll(() => page.evaluate(() => localStorage.getItem("openslate-motion")))
       .toBeNull();
     await expect(page.locator("html")).not.toHaveAttribute("data-motion");
-    await page
-      .getByRole("button", { name: "Your profile", exact: true })
-      .click();
+    await page.getByRole("link", { name: /^Your profile, / }).click();
     await expect(dark(page)).toBeChecked();
     await page.reload();
     await expect(dark(page)).toBeChecked();

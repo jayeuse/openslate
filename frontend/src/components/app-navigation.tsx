@@ -69,9 +69,37 @@ const MAX_PREFETCHED_ROUTES = 12;
 // opening in the same move); outside it, the fill tracks its label directly.
 const INDICATOR_GLIDE_WINDOW_MS = 450;
 
+/**
+ * Where the navigation renders. The sidebar shows one-line rows that carry
+ * their description as a title and `aria-description`; the phone drawer
+ * shows the description as a visible second line.
+ */
+export type NavigationSurface = "sidebar" | "drawer";
+
+// Row sizes and the active ink live on the rows themselves, not on an
+// `.app-shell` rule, so they also apply inside the drawer's portal.
+// Sidebar rows keep the 44px floor and become 32px from 1280px; in the
+// collapsed rail they are square targets of the same sizes.
+const sidebarRowSize =
+  "min-h-11 xl:min-h-8 group-data-[collapsible=icon]:size-11! xl:group-data-[collapsible=icon]:size-8!";
+const drawerRowSize = "min-h-11";
+
+/** The size classes of a sidebar or drawer row (workspace, OpenComms, account). */
+export function navigationRowSize(surface: NavigationSurface) {
+  return surface === "drawer" ? drawerRowSize : sidebarRowSize;
+}
+
+/** The current place: `--action-text` at weight 600, in the sidebar and the drawer. */
+export const navigationActiveInk =
+  "data-active:text-action-text data-active:font-semibold";
+
+/** Line icons in the shell's rows. */
+export const navigationIconStroke = "[&_svg]:stroke-[1.65]";
+
 interface AppNavigationProps {
   pathname: string;
   searchParams: URLSearchParams;
+  surface?: NavigationSurface;
   collapsed?: boolean;
   onExpandSidebar?: () => void;
 }
@@ -79,6 +107,7 @@ interface AppNavigationProps {
 export function AppNavigation({
   pathname,
   searchParams,
+  surface = "sidebar",
   collapsed = false,
   onExpandSidebar,
 }: AppNavigationProps) {
@@ -287,13 +316,13 @@ export function AppNavigation({
           data-slot="sidebar-active-indicator"
           className="bg-sidebar-accent pointer-events-none absolute top-0 left-0 -z-10 rounded-md opacity-0 data-ready:transition-[transform,width,height,opacity] data-ready:duration-(--motion-base) data-ready:ease-(--ease-out) motion-reduce:transition-none"
         />
-        <SidebarMenu className="gap-1.5">
+        <SidebarMenu className="gap-0.5">
           {groups.map((group) => {
             const Icon = groupIcons[group.id as keyof typeof groupIcons];
             const active = isWorkspaceNavigationGroupActive(group, pathname);
             const open = !collapsed && (expanded[group.id] ?? active);
             const showDescription = Boolean(
-              group.description && !collapsed && !open,
+              surface === "drawer" && group.description && !open,
             );
             const descriptionId = `${descriptionIdPrefix}-${group.id}-description`;
 
@@ -317,15 +346,25 @@ export function AppNavigation({
                       aria-describedby={
                         showDescription ? descriptionId : undefined
                       }
-                      title={
-                        collapsed
-                          ? group.description
-                            ? `${group.label} — ${group.description}`
-                            : group.label
+                      // The sidebar row is one line; its description is the
+                      // tooltip and the accessible description.
+                      aria-description={
+                        surface === "sidebar"
+                          ? group.description || undefined
                           : undefined
                       }
+                      title={
+                        surface === "drawer"
+                          ? undefined
+                          : collapsed
+                            ? group.description
+                              ? `${group.label} — ${group.description}`
+                              : group.label
+                            : group.description || undefined
+                      }
                       className={cn(
-                        "min-h-11",
+                        navigationRowSize(surface),
+                        navigationIconStroke,
                         showDescription && "h-auto py-1.5",
                       )}
                     />
@@ -355,7 +394,7 @@ export function AppNavigation({
                   />
                 </CollapsibleTrigger>
                 <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--motion-base) ease-(--ease-out) data-ending-style:h-0 data-starting-style:h-0 motion-reduce:transition-none">
-                  <SidebarMenuSub>
+                  <SidebarMenuSub className="mr-0 gap-0.5 pr-0">
                     {group.items.map((item) => {
                       const itemActive = isWorkspaceNavigationItemActive(
                         group.id,
@@ -386,7 +425,13 @@ export function AppNavigation({
                             aria-current={itemActive ? "page" : undefined}
                             // The active fill is the nav's indicator, so it
                             // can glide from item to item.
-                            className="min-h-11 data-active:bg-transparent"
+                            className={cn(
+                              surface === "drawer"
+                                ? "min-h-11"
+                                : "min-h-11 xl:min-h-8",
+                              navigationActiveInk,
+                              "data-active:bg-transparent",
+                            )}
                           >
                             <span>{item.label}</span>
                           </SidebarMenuSubButton>

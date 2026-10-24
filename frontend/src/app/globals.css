@@ -756,21 +756,8 @@ textarea {
   }
 }
 
-/* Shared studio chrome: quiet surfaces and consistently reachable controls. */
-.app-shell [data-slot="sidebar-menu-button"] {
-  min-height: 2.75rem;
-}
-.app-shell
-  :is(
-    [data-slot="sidebar-menu-button"],
-    [data-slot="sidebar-menu-sub-button"]
-  ):not([aria-expanded])[data-active]:not([data-active="false"]) {
-  color: var(--action-text);
-  font-weight: 600;
-}
-.app-shell [data-slot="sidebar-menu-button"] svg {
-  stroke-width: 1.65;
-}
+/* Sidebar and drawer rows carry their own sizes, active ink and icon stroke
+   (app-navigation.tsx), so the rules also reach the drawer's portal. */
 
 /* The sidebar's thumb (Quiet Scrollbar Rule) uses its own ink. */
 .app-sidebar-scroll::-webkit-scrollbar-thumb {

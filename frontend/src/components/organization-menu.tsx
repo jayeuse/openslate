@@ -1,10 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronsUpDown, LoaderCircle, MailOpen } from "lucide-react";
+import {
+  Check,
+  ChevronsUpDown,
+  House,
+  LoaderCircle,
+  MailOpen,
+} from "lucide-react";
 
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
@@ -28,7 +34,8 @@ import { toast } from "@/components/ui/toast";
 import type { AccountRole } from "@/lib/auth-api";
 import { cn } from "@/lib/utils";
 
-const roleLabels: Record<AccountRole, string> = {
+/** The membership role as people read it ("Administrator", "Member", "Guest"). */
+export const membershipRoleLabels: Record<AccountRole, string> = {
   admin: "Administrator",
   member: "Member",
   guest: "Guest",
@@ -45,8 +52,11 @@ type OrganizationMenuProps = {
   onAccepted?: () => void;
   /** The phone drawer header sets the name at body size. */
   compact?: boolean;
-  /** The collapsed sidebar shows an icon-only trigger. */
-  iconOnly?: boolean;
+  /**
+   * The collapsed rail: the organization mark is the whole trigger, and the
+   * menu starts with the workspace home link that the rail no longer shows.
+   */
+  mark?: ReactNode;
 };
 
 /**
@@ -60,8 +70,9 @@ export function OrganizationMenu({
   onSwitchOrganization,
   onAccepted,
   compact = false,
-  iconOnly = false,
+  mark,
 }: OrganizationMenuProps) {
+  const iconOnly = mark !== undefined;
   const router = useRouter();
   const requestNavigation = useWorkspaceNavigationRequest();
   const userId = useVerifiedWorkspaceUserId();
@@ -105,24 +116,32 @@ export function OrganizationMenu({
             }
             aria-busy={switching || undefined}
             disabled={suspended || switching}
+            title={name}
             className={cn(
               "hover:bg-sidebar-accent focus-visible:outline-ring flex min-h-11 items-center gap-1.5 rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-wait",
-              iconOnly ? "min-w-11 justify-center" : "min-w-0 flex-1 px-1.5",
+              iconOnly
+                ? "min-w-11 shrink-0 justify-center xl:min-h-8 xl:min-w-8"
+                : "min-w-0 flex-1 pr-1 pl-1.5 xl:min-h-10",
             )}
           />
         }
       >
-        {iconOnly ? null : (
+        {iconOnly ? (
+          switching ? null : (
+            mark
+          )
+        ) : (
+          // The full name shows; it wraps to two lines before it truncates.
           <span
             className={cn(
-              "min-w-0 flex-1 truncate font-semibold",
-              compact ? "text-base" : "text-lg tracking-tight",
+              "line-clamp-2 min-w-0 flex-1 font-semibold wrap-anywhere",
+              compact ? "text-base leading-5" : "text-sm leading-4.25",
             )}
           >
             {switching ? "Switching…" : name}
           </span>
         )}
-        {switching ? (
+        {iconOnly && !switching ? null : switching ? (
           <LoaderCircle
             aria-hidden="true"
             className="text-sidebar-muted size-4 shrink-0 animate-spin motion-reduce:animate-none"
@@ -139,6 +158,23 @@ export function OrganizationMenu({
         aria-label="Organizations"
         className="w-72 max-w-[calc(100vw-2rem)]"
       >
+        {iconOnly ? (
+          <>
+            <DropdownMenuItem
+              className="min-h-11 xl:min-h-8"
+              render={
+                <GuardedWorkspaceLink
+                  href={WORKSPACE_HOME}
+                  onAcceptedNavigate={() => setOpen(false)}
+                />
+              }
+            >
+              <House aria-hidden="true" />
+              Workspace home
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
         <DropdownMenuGroup>
           <DropdownMenuLabel className="text-muted-foreground px-2 py-1.5 text-xs font-medium">
             Organizations
@@ -183,7 +219,7 @@ export function OrganizationMenu({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{organization.name}</span>
                   <span className="text-muted-foreground block text-xs">
-                    {roleLabels[organization.role]}
+                    {membershipRoleLabels[organization.role]}
                     {selected ? (
                       <span className="sr-only"> (current)</span>
                     ) : null}
