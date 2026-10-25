@@ -68,6 +68,7 @@ import {
   type FilterChip,
 } from "@/components/systems/access/components/access-toolbar";
 import { LayoutMenu } from "./layout-menu";
+import { QuickFilter, useQuickFilterCounts } from "./quick-filter";
 import {
   Dialog,
   DialogClose,
@@ -1911,13 +1912,72 @@ export default function ServerBackedViewsWorkspace({
       };
     });
 
+  // OD14: the first choice field is the quick filter. Its choice is an
+  // "is" filter on that field, shown in the strip rather than as a chip.
+  const quickField = fields.find((field) => field.type === "select");
+  const isQuickFilter = (filter: OpenViewQueryDefinition["filters"][number]) =>
+    filter.fieldId === quickField?.id &&
+    filter.operator === "eq" &&
+    typeof filter.value === "string" &&
+    filter.value !== "";
+  const quickFilterValue = draft.definition.filters.find(isQuickFilter)?.value;
+  const quickFilterCounts = useQuickFilterCounts({
+    moduleId: moduleId ?? "",
+    fieldId: quickField?.id ?? "",
+    definition: {
+      ...normalizedDraftDefinition,
+      filters: normalizedDraftDefinition.filters.filter(
+        (filter) => !isQuickFilter(filter),
+      ),
+    },
+    refreshKey: recordInvalidation,
+    // Any-condition logic would widen the view with the strip's choice.
+    enabled: Boolean(
+      moduleId && quickField && draft.definition.logic === "and",
+    ),
+  });
+  // The strip shows its choice; without a strip the choice is a chip.
+  const quickFilterShown = quickFilterCounts.choices.length > 0;
+  const setQuickFilter = (value: string | null) => {
+    if (!quickField) return;
+    updateDefinition((current) => {
+      const keys = new Map<object, string>();
+      const filters = current.filters.filter((item, itemIndex) => {
+        if (isQuickFilter(item)) return false;
+        keys.set(item, filterRowKeyFor(item, itemIndex));
+        return true;
+      });
+      if (value !== null) {
+        const quick: OpenViewQueryDefinition["filters"][number] = {
+          fieldId: quickField.id,
+          expectedType: "select",
+          operator: "eq",
+          value,
+        };
+        keys.set(
+          quick,
+          `${draftKey}:quick-filter:${nextFilterRowKey.current++}`,
+        );
+        filters.push(quick);
+      }
+      setFilterRowKeyState({ draftKey, keys });
+      return { ...current, filters };
+    });
+  };
   const filterChips: FilterChip[] = [
-    ...draft.definition.filters.map((filter, index) => ({
-      key: filterRowKeyFor(filter, index),
-      label: activeFields.get(filter.fieldId)?.name ?? "Unavailable field",
-      value: filterCondition(filter, activeFields.get(filter.fieldId)),
-      onRemove: () => removeFilter(index),
-    })),
+    ...draft.definition.filters.flatMap((filter, index) =>
+      quickFilterShown && isQuickFilter(filter)
+        ? []
+        : [
+            {
+              key: filterRowKeyFor(filter, index),
+              label:
+                activeFields.get(filter.fieldId)?.name ?? "Unavailable field",
+              value: filterCondition(filter, activeFields.get(filter.fieldId)),
+              onRemove: () => removeFilter(index),
+            },
+          ],
+    ),
     ...(draft.definition.deleted === "exclude"
       ? []
       : [
@@ -3053,6 +3113,21 @@ export default function ServerBackedViewsWorkspace({
                     }))
                   }
                   sortInFiltersBelowXl
+                  quickFilters={
+                    quickField && quickFilterShown ? (
+                      <QuickFilter
+                        field={quickField}
+                        counts={quickFilterCounts}
+                        value={
+                          typeof quickFilterValue === "string"
+                            ? quickFilterValue
+                            : null
+                        }
+                        disabled={Boolean(pendingAction)}
+                        onChange={setQuickFilter}
+                      />
+                    ) : null
+                  }
                   actions={
                     <div className="flex items-center gap-2">
                       <Button

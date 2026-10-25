@@ -3251,6 +3251,76 @@ test("Grid and Gallery use the current server page and save only the selected la
   );
 });
 
+test("the quick filter narrows the view by the first choice field with counts that ignore its own choice", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page, { disableInitialSearch: true });
+  const countRequests: { definition: { filters: unknown[] } }[] = [];
+  await page.route("**/api/records/aggregate-query", async (route) => {
+    const body = route.request().postDataJSON() as {
+      dimension: { field_id: string };
+      definition: { filters: unknown[] };
+      limit: number;
+      offset: number;
+    };
+    countRequests.push(body);
+    expect(body.dimension.field_id).toBe(statusFieldId);
+    await route.fulfill({
+      json: {
+        items: [
+          {
+            key: inServiceChoiceId,
+            label: "In service",
+            value: "20",
+            record_count: 20,
+          },
+          {
+            key: inspectionDueChoiceId,
+            label: "Inspection due",
+            value: "10",
+            record_count: 10,
+          },
+        ],
+        pagination: {
+          limit: body.limit,
+          offset: body.offset,
+          count: 2,
+          total: 2,
+          has_more: false,
+        },
+      },
+    });
+  });
+  await page.goto(
+    "/openview?section=views&module=" + moduleId + "&view=" + viewId,
+  );
+  const strip = page.getByRole("group", { name: "Status" });
+  await expect(
+    strip.getByRole("button", { name: /^All\s*30$/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await strip.getByRole("button", { name: /^Inspection due\s*10$/ }).click();
+  await expect
+    .poll(() =>
+      api.recordQueryRequests.some(({ definition }) =>
+        definition.filters.some(
+          (filter) =>
+            filter.field_id === statusFieldId &&
+            filter.operator === "eq" &&
+            filter.value === inspectionDueChoiceId,
+        ),
+      ),
+    )
+    .toBe(true);
+  // The choice is the strip's, not a chip, and its counts stay put.
+  await expect(page.getByRole("group", { name: "Active filters" })).toHaveCount(
+    0,
+  );
+  expect(countRequests.at(-1)?.definition.filters).toEqual([]);
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await strip.getByRole("button", { name: /^All\s*30$/ }).click();
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+});
+
 test("Views exposes its filter, column, and layout editors on demand", async ({
   page,
 }) => {
@@ -5523,7 +5593,11 @@ async function installRecordCommands(page: Page) {
   await page.route("**/api/records**", async (route: Route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
-    if (/\/api\/records\/(query|grouped-query|window-query)$/.test(path))
+    if (
+      /\/api\/records\/(query|grouped-query|window-query|aggregate-query)$/.test(
+        path,
+      )
+    )
       return route.fallback();
     const body = request.postData()
       ? (request.postDataJSON() as Record<string, unknown>)

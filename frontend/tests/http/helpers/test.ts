@@ -335,6 +335,30 @@ export const test = base.extend({
           ? route.fulfill({ json: emptyPage(new URL(route.request().url())) })
           : route.fallback(),
     );
+    // The module page's quick filter counts its first choice field (OD14);
+    // by default there are no counts, so the strip stays hidden.
+    await context.route("**/api/records/aggregate-query", (route) => {
+      const page = new URL(route.request().frame().url());
+      const section = page.searchParams.get("section");
+      if (page.pathname !== "/openview" || (section && section !== "views"))
+        return route.fallback();
+      const body = route.request().postDataJSON() as {
+        limit?: number;
+        offset?: number;
+      };
+      return route.fulfill({
+        json: {
+          items: [],
+          pagination: {
+            limit: body.limit ?? 12,
+            offset: body.offset ?? 0,
+            count: 0,
+            total: 0,
+            has_more: false,
+          },
+        },
+      });
+    });
     // Only off Comms: there an unmocked bootstrap selects the sample runtime.
     await context.route("**/api/comms/bootstrap", (route) =>
       new URL(route.request().frame().url()).pathname.startsWith("/comms")
