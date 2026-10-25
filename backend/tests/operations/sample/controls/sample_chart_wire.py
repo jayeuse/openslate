@@ -122,6 +122,7 @@ class ChartWire:
             "position": 0,
             "refresh_cadence": "manual",
             "revision": 1,
+            "is_home": False,
             "is_deleted": False,
             "created_at": STAMP,
             "updated_at": STAMP,
@@ -351,7 +352,9 @@ class ChartWire:
                             "id": identity("dashboard:widget"),
                             "position": 0,
                             "widget_type": "chart",
-                            "size": "S",
+                            **parsed.widgets[-1].model_dump(
+                                include={"grid_column", "grid_row", "column_span", "row_span"}
+                            ),
                             "chart_id": self.chart["id"],
                             "config": None,
                             "created_at": STAMP,

@@ -142,10 +142,10 @@ def test_dashboard_persists_summary_workload_record_and_chart_widgets(
     module, dimension = _module(db, name="Live Dashboard widgets")
     set_audit_actor(db, owner.id)
     widgets = [
-        _aggregate_widget("summary", module, dimension),
-        _aggregate_widget("workload", module, dimension),
-        _records_widget(module, dimension),
-        _chart(module, dimension),
+        _aggregate_widget("summary", module, dimension, (0, 0, 2, 1)),
+        _aggregate_widget("workload", module, dimension, (2, 0, 2, 2)),
+        _records_widget(module, dimension, (0, 1, 2, 2)),
+        _chart(module, dimension, (2, 2, 2, 2)),
     ]
 
     with _client(db, owner) as client:
@@ -211,8 +211,8 @@ def test_dashboard_widget_type_change_is_persisted_when_config_is_unchanged(
     owner = _actor(db)
     module, dimension = _module(db, name="Dashboard widget type change")
     set_audit_actor(db, owner.id)
-    summary = _aggregate_widget("summary", module, dimension)
-    workload = _aggregate_widget("workload", module, dimension)
+    summary = _aggregate_widget("summary", module, dimension, (0, 0, 2, 1))
+    workload = _aggregate_widget("workload", module, dimension, (0, 0, 2, 2))
 
     with _client(db, owner) as client:
         created = client.post(

@@ -272,8 +272,16 @@ def test_opposite_widget_order_uses_the_same_current_chart_lock_order(reference_
                 json={
                     "revision": 2,
                     "widgets": [
-                        {"widget_type": "chart", "chart_id": str(identifier), "config": None}
-                        for identifier in world.charts
+                        {
+                            "widget_type": "chart",
+                            "chart_id": str(identifier),
+                            "config": None,
+                            "grid_column": 2 * (index % 2),
+                            "grid_row": 2 * (index // 2),
+                            "column_span": 2,
+                            "row_span": 2,
+                        }
+                        for index, identifier in enumerate(world.charts)
                     ],
                 },
             )

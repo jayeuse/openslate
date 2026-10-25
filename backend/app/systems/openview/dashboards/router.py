@@ -1,7 +1,8 @@
-"""Revisioned department Dashboards and their ordered widgets.
+"""Revisioned department Dashboards and their widgets on the 4 x 5 grid.
 
 Every user who can read something in a department reads its Dashboards. Only a
-user with ``manage`` on the department (or an administrator) changes them.
+user with ``manage`` on the department (or an administrator) changes them. One active
+Dashboard per department is its home.
 """
 
 from datetime import UTC, datetime
@@ -34,6 +35,7 @@ from app.systems.openview.dashboards.schemas import (
     DashboardWidgetResponse,
     DashboardWidgetSpec,
 )
+from app.systems.openview.dashboards.service import claim_home_if_missing, hand_over_home
 from app.systems.openview.dashboards.widget_validation import validate_dashboard_widgets
 from app.systems.sandbox.departments.models import Department
 
@@ -131,9 +133,12 @@ def _widget_response(widget: DashboardWidget) -> DashboardWidgetResponse:
         id=widget.id,
         position=widget.position,
         widget_type=widget.widget_type,
+        grid_column=widget.grid_column,
+        grid_row=widget.grid_row,
+        column_span=widget.column_span,
+        row_span=widget.row_span,
         config=widget.config,
         chart_id=widget.chart_id,
-        size=widget.size,
         created_at=widget.created_at,
         updated_at=widget.updated_at,
     )
@@ -163,6 +168,7 @@ def _dashboard_responses(db: Session, dashboards: list[Dashboard]) -> list[Dashb
             name=dashboard.name,
             refresh_cadence=dashboard.refresh_cadence,
             revision=dashboard.revision,
+            is_home=dashboard.is_home,
             is_deleted=dashboard.is_deleted,
             created_at=dashboard.created_at,
             updated_at=dashboard.updated_at,
@@ -178,6 +184,38 @@ def _dashboard_response(db: Session, dashboard: Dashboard) -> DashboardResponse:
 
 def _stored_config(widget: DashboardWidgetSpec) -> dict[str, Any] | None:
     return widget.config.model_dump(mode="json") if widget.config is not None else None
+
+
+def _new_widget(
+    dashboard: Dashboard, position: int, widget: DashboardWidgetSpec
+) -> DashboardWidget:
+    return DashboardWidget(
+        org_id=dashboard.org_id,
+        dashboard_id=dashboard.id,
+        position=position,
+        widget_type=widget.widget_type,
+        config=_stored_config(widget),
+        chart_id=widget.chart_id,
+        grid_column=widget.grid_column,
+        grid_row=widget.grid_row,
+        column_span=widget.column_span,
+        row_span=widget.row_span,
+    )
+
+
+def _widget_state(widget: DashboardWidget | DashboardWidgetSpec) -> tuple[object, ...]:
+    config = (
+        _stored_config(widget) if isinstance(widget, DashboardWidgetSpec) else widget.config
+    )
+    return (
+        widget.widget_type,
+        config,
+        widget.chart_id,
+        widget.grid_column,
+        widget.grid_row,
+        widget.column_span,
+        widget.row_span,
+    )
 
 
 def _replace_widgets(
@@ -196,42 +234,24 @@ def _replace_widgets(
             .order_by(DashboardWidget.position, DashboardWidget.id)
         ).all()
     )
-    desired = [
-        (widget.widget_type, _stored_config(widget), widget.chart_id, widget.size)
-        for widget in widgets
-    ]
     current_by_position = {widget.position: widget for widget in current}
     preserved_positions = {
         position
-        for position, (widget_type, config, chart_id, size) in enumerate(desired)
+        for position, widget in enumerate(widgets)
         if position in current_by_position
-        and current_by_position[position].widget_type == widget_type
-        and current_by_position[position].config == config
-        and current_by_position[position].chart_id == chart_id
-        and current_by_position[position].size == size
+        and _widget_state(current_by_position[position]) == _widget_state(widget)
     }
-    if len(current) == len(desired) == len(preserved_positions):
+    if len(current) == len(widgets) == len(preserved_positions):
         return False
 
-    removed = [widget for widget in current if widget.position not in preserved_positions]
-    for widget in removed:
-        db.delete(widget)
+    removed = [row for row in current if row.position not in preserved_positions]
+    for row in removed:
+        db.delete(row)
     if removed:
         db.flush()
-    for position, (widget_type, config, chart_id, size) in enumerate(desired):
-        if position in preserved_positions:
-            continue
-        db.add(
-            DashboardWidget(
-                org_id=dashboard.org_id,
-                dashboard_id=dashboard.id,
-                position=position,
-                widget_type=widget_type,
-                config=config,
-                chart_id=chart_id,
-                size=size,
-            )
-        )
+    for position, spec in enumerate(widgets):
+        if position not in preserved_positions:
+            db.add(_new_widget(dashboard, position, spec))
     return True
 
 
@@ -252,6 +272,8 @@ def list_dashboards(
     statement = select(Dashboard).where(department_filter(db, user, Dashboard.department_id))
     if params.department_id is not None:
         statement = statement.where(Dashboard.department_id == params.department_id)
+    if params.home is not None:
+        statement = statement.where(Dashboard.is_home.is_(params.home))
     result = execute_standard_list(db, statement, params, DASHBOARD_LIST_SPEC)
     return StandardListResponse(
         items=_dashboard_responses(db, result.items),
@@ -287,20 +309,11 @@ def create_dashboard(
             refresh_cadence=payload.refresh_cadence,
         )
         db.add(dashboard)
+        claim_home_if_missing(db, dashboard)
         try:
             db.flush()
             for position, widget in enumerate(payload.widgets):
-                db.add(
-                    DashboardWidget(
-                        org_id=dashboard.org_id,
-                        dashboard_id=dashboard.id,
-                        position=position,
-                        widget_type=widget.widget_type,
-                        config=_stored_config(widget),
-                        chart_id=widget.chart_id,
-                        size=widget.size,
-                    )
-                )
+                db.add(_new_widget(dashboard, position, widget))
             db.commit()
         except IntegrityError as error:
             db.rollback()
@@ -392,6 +405,7 @@ def archive_dashboard(
     dashboard.is_deleted = True
     dashboard.deleted_at = datetime.now(UTC)
     dashboard.revision += 1
+    hand_over_home(db, dashboard)
     _commit(db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -411,6 +425,7 @@ def restore_dashboard(
     dashboard.is_deleted = False
     dashboard.deleted_at = None
     dashboard.revision += 1
+    claim_home_if_missing(db, dashboard)
     _commit(db)
     db.refresh(dashboard)
     return _dashboard_response(db, dashboard)

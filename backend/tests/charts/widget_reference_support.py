@@ -153,8 +153,18 @@ class ReferenceRaceWorld:
             for identifier in ids
         ]
         if kind == "dashboard":
+            placed = [
+                {
+                    **{key: value for key, value in spec.items() if key != "size"},
+                    "grid_column": 2 * (index % 2),
+                    "grid_row": 2 * (index // 2),
+                    "column_span": 2,
+                    "row_span": 2,
+                }
+                for index, spec in enumerate(specs)
+            ]
             return client.patch(
-                f"/api/dashboards/{self.dashboard_id}", json={"revision": 1, "widgets": specs}
+                f"/api/dashboards/{self.dashboard_id}", json={"revision": 1, "widgets": placed}
             )
         return client.post(
             f"/api/boards/{self.board_id}/widgets",

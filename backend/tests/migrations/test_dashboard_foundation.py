@@ -168,7 +168,7 @@ def _assert_dashboard_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
         _insert_widget(connection, uuid7(), ids["dashboard"], 0)
 
-    for position, widget_type in ((-1, "chart"), (12, "chart"), (1, "table")):
+    for position, widget_type in ((-1, "chart"), (20, "chart"), (1, "table")):
         with engine.begin() as connection:
             with pytest.raises(IntegrityError):
                 with connection.begin_nested():

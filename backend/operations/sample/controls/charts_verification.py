@@ -282,7 +282,10 @@ def _consumer_state(facts: Mapping[str, Any]) -> None:
     initial = DashboardResponse.model_validate_json(json.dumps(create["response"]), strict=True)
     body = create["request_body"]
     expected = {key: value for key, value in body.items() if key != "widgets"}
-    expected.update(id=facts["ids"]["dashboard_id"], revision=1, is_deleted=False)
+    # The copy joins a department whose sample Dashboard is already its home.
+    expected.update(
+        id=facts["ids"]["dashboard_id"], revision=1, is_home=False, is_deleted=False
+    )
     if (
         initial.model_dump(mode="json", exclude={"created_at", "updated_at", "widgets"}) != expected
         or _dashboard_specs(initial) != body["widgets"]

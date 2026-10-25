@@ -12,6 +12,7 @@ from app.systems.boards.widget_schemas import BoardWidgetListResponse
 from app.systems.openview.charts.schemas import ChartResponse, ChartUsageResponse
 from app.systems.openview.dashboards.schemas import DashboardResponse
 from operations.sample.blueprint import SampleDataset
+from operations.sample.controls import charts_consumers
 from operations.sample.controls.charts import CONTROL_KEY, plan_chart_control
 from operations.sample.controls.charts_consumers import _board_specs, inline_board_specs
 from operations.sample.packs.phase_types import PhaseAction
@@ -436,7 +437,7 @@ def _bind_steps(
         "position": source_dashboard.position,
         "refresh_cadence": source_dashboard.refresh_cadence,
         "widgets": [
-            row.model_dump(mode="json", include={"widget_type", "size", "chart_id", "config"})
+            row.model_dump(mode="json", include=charts_consumers.DASHBOARD_SPEC_FIELDS)
             for row in source_dashboard.widgets
         ],
     }
@@ -459,7 +460,7 @@ def _bind_steps(
             *specs,
             {
                 "widget_type": "chart",
-                "size": "S",
+                **charts_consumers.APPENDED_CHART_CELLS,
                 "chart_id": ids["chart_id"],
                 "config": None,
             },

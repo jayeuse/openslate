@@ -6,6 +6,7 @@ from typing import ClassVar
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     ForeignKey,
     ForeignKeyConstraint,
@@ -22,7 +23,7 @@ from app.core.base_model import BaseModel
 
 
 class Dashboard(BaseModel):
-    """A revisioned Dashboard that belongs to one department."""
+    """A revisioned Dashboard that belongs to one department; one active one is its home."""
 
     __tablename__ = "dashboards"
     __table_args__ = (
@@ -39,6 +40,13 @@ class Dashboard(BaseModel):
         ),
         CheckConstraint("position >= 0", name="ck_dashboards_position_nonnegative"),
         Index("ix_dashboards_department_position", "department_id", "position"),
+        Index(
+            "uq_dashboards_department_home",
+            "org_id",
+            "department_id",
+            unique=True,
+            postgresql_where=text("is_home AND NOT is_deleted"),
+        ),
     )
 
     org_id: Mapped[UUID] = mapped_column(
@@ -55,6 +63,9 @@ class Dashboard(BaseModel):
     revision: Mapped[int] = mapped_column(
         Integer, default=1, server_default=text("1"), nullable=False
     )
+    is_home: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
     widgets: Mapped[list[DashboardWidget]] = relationship(
         back_populates="dashboard",
         cascade="save-update, merge",
@@ -63,7 +74,11 @@ class Dashboard(BaseModel):
 
 
 class DashboardWidget(BaseModel):
-    """An audited chart configuration at one active Dashboard position."""
+    """An audited chart configuration covering whole cells of the 4 x 5 Dashboard grid.
+
+    Placement is null only for a widget the grid migration could not place. Overlap and
+    each widget kind's size range are checked on save (``placement.py``).
+    """
 
     __tablename__ = "dashboard_widgets"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"config"})
@@ -82,9 +97,16 @@ class DashboardWidget(BaseModel):
             name="ck_dashboard_widgets_type",
         ),
         CheckConstraint(
-            "position >= 0 AND position < 12", name="ck_dashboard_widgets_position"
+            "position >= 0 AND position < 20", name="ck_dashboard_widgets_position"
         ),
-        CheckConstraint("size IN ('S', 'M', 'L')", name="ck_dashboard_widgets_size"),
+        CheckConstraint(
+            "(grid_column IS NULL AND grid_row IS NULL AND column_span IS NULL "
+            "AND row_span IS NULL) OR (grid_column IS NOT NULL AND grid_row IS NOT NULL "
+            "AND column_span IS NOT NULL AND row_span IS NOT NULL "
+            "AND grid_column >= 0 AND grid_row >= 0 AND column_span >= 1 AND row_span >= 1 "
+            "AND grid_column + column_span <= 4 AND grid_row + row_span <= 5)",
+            name="ck_dashboard_widgets_placement",
+        ),
         CheckConstraint(
             "(config IS NOT NULL) <> (chart_id IS NOT NULL)",
             name="ck_dashboard_widgets_query_source",
@@ -108,9 +130,10 @@ class DashboardWidget(BaseModel):
     widget_type: Mapped[str] = mapped_column(
         String(20), default="chart", server_default=text("'chart'"), nullable=False
     )
-    size: Mapped[str] = mapped_column(
-        String(1), default="M", server_default=text("'M'"), nullable=False
-    )
+    grid_column: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    grid_row: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    column_span: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    row_span: Mapped[int | None] = mapped_column(Integer, nullable=True)
     chart_id: Mapped[UUID | None] = mapped_column(nullable=True)
     config: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True

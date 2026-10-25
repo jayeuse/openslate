@@ -51,6 +51,10 @@ def _actor(db: Session, area: Area, kind: str) -> User:
 def _chart_widget(module: Module, field: Field) -> dict[str, object]:
     return {
         "widget_type": "chart",
+        "grid_column": 0,
+        "grid_row": 0,
+        "column_span": 2,
+        "row_span": 2,
         "config": {
             "version": 1,
             "chart_type": "bar",

@@ -18,12 +18,15 @@ from tests.rbac.support import make_group_access
 
 pytestmark = pytest.mark.integration
 
+SMALL = {"grid_column": 0, "grid_row": 0, "column_span": 2, "row_span": 2}
+LARGE = {"grid_column": 0, "grid_row": 0, "column_span": 4, "row_span": 3}
+
 
 def test_dashboard_reference_preserves_size_identity_and_usage_until_removed(chart_world):
     world = chart_world
     with world.client("manager") as client:
         chart = client.post("/api/charts", json=world.body()).json()
-        spec = {"widget_type": "chart", "size": "S", "chart_id": chart["id"], "config": None}
+        spec = {"widget_type": "chart", **SMALL, "chart_id": chart["id"], "config": None}
         created = client.post(
             "/api/dashboards",
             json={
@@ -37,9 +40,10 @@ def test_dashboard_reference_preserves_size_identity_and_usage_until_removed(cha
         dashboard_id = saved["id"]
         widget = saved["widgets"][0]
         assert widget["chart_id"] == chart["id"] and widget["config"] is None
-        assert widget["size"] == "S"
+        assert {key: widget[key] for key in SMALL} == SMALL
         row = world.db.get(DashboardWidget, UUID(widget["id"]))
-        assert row.chart_id == UUID(chart["id"]) and row.config is None and row.size == "S"
+        assert row.chart_id == UUID(chart["id"]) and row.config is None
+        assert (row.grid_column, row.grid_row, row.column_span, row.row_span) == (0, 0, 2, 2)
         audit_ids = set(
             world.db.scalars(
                 select(AuditLog.id).where(AuditLog.entity_id.in_([UUID(dashboard_id), row.id]))
@@ -60,10 +64,10 @@ def test_dashboard_reference_preserves_size_identity_and_usage_until_removed(cha
         )
         changed = client.patch(
             f"/api/dashboards/{dashboard_id}",
-            json={"revision": 1, "widgets": [{**spec, "size": "L"}]},
+            json={"revision": 1, "widgets": [{**spec, **LARGE}]},
         )
         assert changed.status_code == 200 and changed.json()["revision"] == 2
-        assert changed.json()["widgets"][0]["size"] == "L"
+        assert {key: changed.json()["widgets"][0][key] for key in LARGE} == LARGE
         assert changed.json()["widgets"][0]["chart_id"] == chart["id"]
         shown = client.get(f"/api/dashboards/{dashboard_id}")
         assert shown.status_code == 200 and shown.json()["widgets"] == changed.json()["widgets"]
@@ -84,7 +88,7 @@ def test_dashboard_reference_request_and_authority_failures_leave_no_dashboard(c
     world = chart_world
     with world.client("manager") as owner:
         chart = owner.post("/api/charts", json=world.body()).json()
-    spec = {"widget_type": "chart", "chart_id": chart["id"], "config": None}
+    spec = {"widget_type": "chart", **SMALL, "chart_id": chart["id"], "config": None}
     body = {
         "department_id": str(world.module.department_id),
         "name": "Denied Dashboard",
@@ -97,7 +101,7 @@ def test_dashboard_reference_request_and_authority_failures_leave_no_dashboard(c
         for invalid in (
             {**spec, "chart_id": None},
             {**spec, "config": {"chart_type": "bar", "query": world.grouped()}},
-            {**spec, "size": "half"},
+            {**spec, "column_span": 0},
             {**spec, "chart_id": "display-name"},
         ):
             assert (
@@ -111,6 +115,19 @@ def test_dashboard_reference_request_and_authority_failures_leave_no_dashboard(c
             mismatched.status_code == 409
             and mismatched.json()["detail"]["code"] == "dashboard_invalid"
         )
+        # The size rule follows the saved chart's own type (bar) for a referenced widget.
+        too_small = client.post(
+            "/api/dashboards",
+            json={**body, "widgets": [{**spec, "column_span": 2, "row_span": 1}]},
+        )
+        assert too_small.status_code == 422
+        assert too_small.json()["detail"]["errors"] == [
+            {
+                "index": 0,
+                "code": "size_not_allowed",
+                "message": "A bar chart must be 2 × 2 to 4 × 3 (columns × rows)",
+            }
+        ]
     assert world.db.scalars(select(Dashboard).where(Dashboard.name == body["name"])).all() == []
 
 
@@ -120,7 +137,7 @@ def test_dashboard_replacement_refusal_and_failed_flush_commit_preserve_prior_st
     world = chart_world
     with world.client("manager") as client:
         chart = client.post("/api/charts", json=world.body()).json()
-        spec = {"widget_type": "chart", "size": "S", "chart_id": chart["id"], "config": None}
+        spec = {"widget_type": "chart", **SMALL, "chart_id": chart["id"], "config": None}
         saved = client.post(
             "/api/dashboards",
             json={
@@ -137,10 +154,15 @@ def test_dashboard_replacement_refusal_and_failed_flush_commit_preserve_prior_st
             "field_id": str(world.other_module.id),
             "expected_type": "text",
         }
-        invalid = {"widget_type": "chart", "config": {"chart_type": "bar", "query": invalid_query}}
+        invalid = {
+            "widget_type": "chart",
+            **SMALL,
+            "grid_row": 3,
+            "config": {"chart_type": "bar", "query": invalid_query},
+        }
         refused = client.patch(
             f"/api/dashboards/{dashboard_id}",
-            json={"revision": 1, "widgets": [{**spec, "size": "L"}, invalid]},
+            json={"revision": 1, "widgets": [{**spec, **LARGE}, invalid]},
         )
         assert refused.status_code == 409
 
@@ -152,7 +174,7 @@ def test_dashboard_replacement_refusal_and_failed_flush_commit_preserve_prior_st
             patch.setattr(world.db, "commit", failed_commit)
             failed = client.patch(
                 f"/api/dashboards/{dashboard_id}",
-                json={"revision": 1, "widgets": [{**spec, "size": "L"}]},
+                json={"revision": 1, "widgets": [{**spec, **LARGE}]},
             )
         assert failed.status_code == 409
         with Session(
@@ -162,8 +184,8 @@ def test_dashboard_replacement_refusal_and_failed_flush_commit_preserve_prior_st
             rows = observer.scalars(
                 select(DashboardWidget).where(DashboardWidget.dashboard_id == dashboard_id)
             ).all()
-            assert [(row.id, row.size, row.chart_id, row.config) for row in rows] == [
-                (widget_id, "S", UUID(chart["id"]), None)
+            assert [(row.id, row.column_span, row.chart_id, row.config) for row in rows] == [
+                (widget_id, 2, UUID(chart["id"]), None)
             ]
             assert set(observer.scalars(select(AuditLog.id)).all()) == before
 
@@ -190,7 +212,9 @@ def test_dashboard_reference_uses_current_module_department_not_stored_chart_own
             f"/api/dashboards/{saved['id']}",
             json={
                 "revision": 1,
-                "widgets": [{"widget_type": "chart", "chart_id": chart["id"], "config": None}],
+                "widgets": [
+                    {"widget_type": "chart", **SMALL, "chart_id": chart["id"], "config": None}
+                ],
             },
         )
         assert (
@@ -216,7 +240,9 @@ def test_revoked_real_session_cannot_attach_a_dashboard_reference(chart_world):
             json={
                 "department_id": str(world.module.department_id),
                 "name": "Revoked attachment",
-                "widgets": [{"widget_type": "chart", "chart_id": chart["id"], "config": None}],
+                "widgets": [
+                    {"widget_type": "chart", **SMALL, "chart_id": chart["id"], "config": None}
+                ],
             },
         )
         assert denied.status_code == 403

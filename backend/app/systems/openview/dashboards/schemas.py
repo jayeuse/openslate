@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.common.listing.schemas import StandardListRequest
+from app.systems.openview.dashboards.placement import GRID_CELLS, GRID_COLUMNS, GRID_ROWS
 from app.systems.sandbox.records.query_schemas import (
     AggregateSnapshotQuery,
     GroupedAggregateSnapshotQuery,
@@ -16,8 +17,9 @@ from app.systems.sandbox.records.query_schemas import (
 
 DashboardRefreshCadence = Literal["manual", "one-minute", "five-minutes"]
 DashboardWidgetType = Literal["summary", "workload", "records", "chart"]
-DashboardWidgetSize = Literal["S", "M", "L"]
 DASHBOARD_POSITION_MAX = 10_000
+# Every widget covers at least one cell of the 4 x 5 grid.
+DASHBOARD_WIDGET_LIMIT = GRID_CELLS
 
 
 class DashboardChartConfig(BaseModel):
@@ -77,12 +79,15 @@ def _configuration_matches_widget(widget_type: str, config: DashboardWidgetConfi
 
 
 class DashboardWidgetSpec(BaseModel):
-    """One live widget; list order supplies its persisted position."""
+    """One live widget at whole grid cells; list order supplies its persisted position."""
 
     model_config = ConfigDict(extra="forbid")
 
     widget_type: DashboardWidgetType
-    size: DashboardWidgetSize = "M"
+    grid_column: int = Field(ge=0, le=GRID_COLUMNS - 1)
+    grid_row: int = Field(ge=0, le=GRID_ROWS - 1)
+    column_span: int = Field(ge=1, le=GRID_COLUMNS)
+    row_span: int = Field(ge=1, le=GRID_ROWS)
     chart_id: UUID | None = None
     config: DashboardWidgetConfig | None = None
 
@@ -98,7 +103,7 @@ class DashboardWidgetSpec(BaseModel):
 
 
 class DashboardCreate(BaseModel):
-    """Create a department Dashboard with up to twelve live widgets."""
+    """Create a department Dashboard; its widgets must fit the grid without overlap."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -106,7 +111,9 @@ class DashboardCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     position: int = Field(default=0, ge=0, le=DASHBOARD_POSITION_MAX)
     refresh_cadence: DashboardRefreshCadence = "manual"
-    widgets: list[DashboardWidgetSpec] = Field(default_factory=list, max_length=12)
+    widgets: list[DashboardWidgetSpec] = Field(
+        default_factory=list, max_length=DASHBOARD_WIDGET_LIMIT
+    )
 
 
 class DashboardUpdate(BaseModel):
@@ -118,7 +125,9 @@ class DashboardUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     position: int | None = Field(default=None, ge=0, le=DASHBOARD_POSITION_MAX)
     refresh_cadence: DashboardRefreshCadence | None = None
-    widgets: list[DashboardWidgetSpec] | None = Field(default=None, max_length=12)
+    widgets: list[DashboardWidgetSpec] | None = Field(
+        default=None, max_length=DASHBOARD_WIDGET_LIMIT
+    )
 
     @model_validator(mode="after")
     def require_nonempty_update(self) -> Self:
@@ -144,20 +153,27 @@ class DashboardSort(StrEnum):
 
 
 class DashboardListRequest(StandardListRequest[DashboardSort]):
-    """Bounded offset pagination, allowlisted ordering and an optional department."""
+    """Bounded offset pagination, allowlisted ordering, a department and the home filter."""
 
     department_id: UUID | None = None
+    home: bool | None = None
 
 
 class DashboardWidgetResponse(BaseModel):
-    """One persisted live widget without a materialized data snapshot."""
+    """One persisted live widget without a materialized data snapshot.
+
+    A widget the grid migration could not place has no placement (all four null).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     id: UUID
-    position: int = Field(ge=0, lt=12)
+    position: int = Field(ge=0, lt=DASHBOARD_WIDGET_LIMIT)
     widget_type: DashboardWidgetType
-    size: DashboardWidgetSize
+    grid_column: int | None = Field(ge=0, le=GRID_COLUMNS - 1)
+    grid_row: int | None = Field(ge=0, le=GRID_ROWS - 1)
+    column_span: int | None = Field(ge=1, le=GRID_COLUMNS)
+    row_span: int | None = Field(ge=1, le=GRID_ROWS)
     chart_id: UUID | None
     config: DashboardWidgetConfig | None
     created_at: datetime
@@ -171,6 +187,9 @@ class DashboardWidgetResponse(BaseModel):
             self.widget_type, self.config
         ):
             raise ValueError("Dashboard widget config does not match its widget type")
+        placement = (self.grid_column, self.grid_row, self.column_span, self.row_span)
+        if len({value is None for value in placement}) != 1:
+            raise ValueError("A widget placement sets all four grid fields or none")
         return self
 
 
@@ -185,7 +204,8 @@ class DashboardResponse(BaseModel):
     name: str
     refresh_cadence: DashboardRefreshCadence
     revision: int = Field(ge=1)
+    is_home: bool
     is_deleted: bool
     created_at: datetime
     updated_at: datetime
-    widgets: list[DashboardWidgetResponse] = Field(max_length=12)
+    widgets: list[DashboardWidgetResponse] = Field(max_length=DASHBOARD_WIDGET_LIMIT)
