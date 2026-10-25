@@ -542,9 +542,10 @@ test("Kanban Discard and the existing navigation guard protect moves without cle
         !window.dispatchEvent(new Event("beforeunload", { cancelable: true })),
     );
   await expect.poll(preventsUnload).toBe(true);
-  // Module pages live under the departments; the OpenView group starts closed there.
-  await page.getByRole("button", { name: "OpenView", exact: true }).click();
-  await page.getByRole("link", { name: "Reports", exact: true }).click();
+  // Leaving the page through the shell asks first.
+  await page
+    .getByRole("link", { name: "Search workspace", exact: true })
+    .click();
   const confirmation = page.getByRole("alertdialog");
   await expect(confirmation).toContainText("1 unsaved move");
   await confirmation

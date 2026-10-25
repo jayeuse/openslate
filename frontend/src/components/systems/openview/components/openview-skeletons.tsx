@@ -101,67 +101,6 @@ export function ChartFormSkeleton() {
   );
 }
 
-/** Rows of the Saved Reports list: open button plus Duplicate. */
-export function SavedReportsListSkeleton() {
-  return (
-    <ul className="flex min-w-0 flex-col gap-2">
-      {ROWS.slice(0, 4).map((row) => (
-        <li key={row} className="flex min-w-0 gap-2">
-          <Skeleton className="h-11 min-w-0 flex-1" />
-          <Skeleton className="h-11 w-24" />
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/**
- * Available outputs: run cards below the xl breakpoint and a five-column
- * table (Report, Created, Recipe version, Rows, Output) from xl up.
- */
-export function AvailableOutputsSkeleton() {
-  const runs = ROWS.slice(0, 3);
-  return (
-    <>
-      <ul className="grid min-w-0 gap-3 xl:hidden">
-        {runs.map((run) => (
-          <li key={run} className="border-border min-w-0 rounded-lg border p-4">
-            <Skeleton className="mb-2 h-5 w-48" />
-            <Skeleton className="h-4 w-36" />
-            <div className="my-3 grid grid-cols-2 gap-3">
-              <Skeleton className="h-10" />
-              <Skeleton className="h-10" />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Skeleton className="h-11 w-36" />
-              <Skeleton className="h-11 w-36" />
-            </div>
-          </li>
-        ))}
-      </ul>
-      <div className="border-border hidden overflow-hidden rounded-lg border xl:block">
-        <div className="grid grid-cols-5 gap-4 border-b px-2 py-3">
-          {COLUMNS.map((column) => (
-            <Skeleton key={column} className="h-4 w-20" />
-          ))}
-          <Skeleton className="h-4 w-16" />
-        </div>
-        {runs.map((run) => (
-          <div
-            key={run}
-            className="grid grid-cols-5 items-center gap-4 border-b px-2 py-2 last:border-0"
-          >
-            {COLUMNS.map((column) => (
-              <Skeleton key={column} className="h-4 w-3/4" />
-            ))}
-            <Skeleton className="h-11 w-full" />
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
 /** The OpenView route's Suspense frame while its URL state is read. */
 export function OpenViewLoading() {
   return (

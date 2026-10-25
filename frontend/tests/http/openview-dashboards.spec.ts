@@ -39,13 +39,14 @@ test("each department's Dashboard row opens its home dashboard, read once per mo
   await expect(page.getByRole("navigation", { name: "breadcrumb" })).toHaveText(
     /^Field service\s*Dashboard$/,
   );
-  // The OpenView group keeps Reports only (EXIT-B1).
-  await page.getByRole("button", { name: "OpenView" }).click();
+  // Reports live on module pages, so the sidebar has no OpenView item
+  // (EXIT-B1, DC9).
+  await expect(page.getByRole("button", { name: "OpenView" })).toHaveCount(0);
   await expect(
     page
       .getByRole("navigation", { name: "Main navigation" })
       .getByRole("link", { name: /^(Dashboards|Charts|Reports)$/ }),
-  ).toHaveText(["Reports"]);
+  ).toHaveCount(0);
 
   await expect(
     page.getByRole("heading", { level: 1, name: "Field service dashboard" }),

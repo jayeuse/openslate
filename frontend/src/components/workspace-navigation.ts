@@ -204,10 +204,10 @@ function visibleItems(
   auditManager: boolean,
 ): readonly { id: string; label: string }[] {
   const items = definition.items;
-  // Module pages and dashboards live under the departments (DA5, BD1);
-  // OpenView keeps Reports until part C moves them.
-  if (definition.id === "openview")
-    return items.filter((item) => item.id !== "views");
+  // Module pages, dashboards and reports live under the departments (DA5,
+  // BD1, DC9), so the sidebar has no OpenView item. Its definition stays for
+  // the navigation keys and the help guide of /openview.
+  if (definition.id === "openview") return [];
   // Every Sandbox API requires an administrator (`require_admin`).
   if (definition.id === "sandbox") return access === "all" ? items : [];
   if (definition.id === "manage")
@@ -293,20 +293,6 @@ function paramsFor(
       if (itemId === "people") {
         const user = searchParams.get("user");
         if (user) params.set("user", user);
-      }
-    }
-    if (definition.id === "openview") {
-      const moduleId = searchParams.get("module");
-      if (moduleId) params.set("module", moduleId);
-      if (itemId === "views") {
-        const view = searchParams.get("view");
-        if (view) params.set("view", view);
-      }
-      if (itemId === "reports") {
-        for (const key of ["report", "run"]) {
-          const value = searchParams.get(key);
-          if (value) params.set(key, value);
-        }
       }
     }
   }
@@ -413,19 +399,8 @@ export function isWorkspaceNavigationItemActive(
 export function isWorkspaceNavigationGroupActive(
   group: WorkspaceNavigationGroup,
   pathname: string,
-  searchParams?: URLSearchParams,
 ): boolean {
-  if (group.href.split("?")[0] !== pathname) return false;
-  // A module page and a dashboard belong to their department, not to the
-  // OpenView group (a dashboard's section is not an item, so it reads as views).
-  const definition = workspaceNavigationDefinitions.find(
-    (entry) => entry.id === group.id,
-  );
-  return !(
-    definition?.id === "openview" &&
-    searchParams &&
-    sectionFor(definition, searchParams) === "views"
-  );
+  return group.href.split("?")[0] === pathname;
 }
 
 /** OpenComms, Profile and Account settings sit outside the sidebar groups. */

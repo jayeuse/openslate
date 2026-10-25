@@ -8,7 +8,7 @@ import { parseOpenViewUrl } from "../domain/model";
 import { OpenViewQuerySync } from "./openview-query-sync";
 import { OpenViewLoading } from "./openview-skeletons";
 import ServerBackedDashboards from "./server-backed-dashboards";
-import ServerBackedReports from "./server-backed-reports";
+import { ReportLinkRedirect } from "./report-link-redirect";
 import ServerBackedViewsWorkspace, {
   OpenViewHeader,
 } from "./server-backed-views-workspace";
@@ -30,13 +30,11 @@ function OpenViewRouteContent() {
   // with the builder's saved-chart list.
   else if (section === "dashboards" || section === "charts")
     content = <ServerBackedDashboards />;
+  // The Reports page is gone (DC8, DC9): its links open a module page's
+  // Reports view.
   else if (section === "reports")
     content = (
-      <ServerBackedReports
-        reportId={urlState.report}
-        runId={urlState.run}
-        invalidUrl={Boolean(urlState.invalidReportSelection)}
-      />
+      <ReportLinkRedirect reportId={urlState.report} runId={urlState.run} />
     );
   else
     content = (
@@ -55,12 +53,11 @@ function OpenViewRouteContent() {
     );
   // The sync keeps its place ahead of the section, so it stays mounted while
   // the section changes. It holds the shared stream only for the sections
-  // that read through the cache; Dashboards and example notices open none.
+  // that read through the cache; Dashboards, the old Reports link and
+  // example notices open none.
   return (
     <>
-      <OpenViewQuerySync
-        active={section === "views" || section === "reports"}
-      />
+      <OpenViewQuerySync active={section === "views"} />
       {content}
     </>
   );

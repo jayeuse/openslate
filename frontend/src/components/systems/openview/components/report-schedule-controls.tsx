@@ -1,35 +1,22 @@
 "use client";
-import { useDisplayRegion } from "@/components/use-display-region";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
-import {
-  formatWorkspaceClockTime,
-  formatWorkspaceDateTime,
-  type WorkspaceRegion,
-} from "@/lib/date-time";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectItem } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   createOpenViewReportSchedule,
-  getOpenViewReportSchedule,
   getOpenViewReportScheduleConflict,
   updateOpenViewReportSchedule,
   type OpenViewReportSchedule,
 } from "../adapters/report-schedule-api";
-import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
+import { reportKeys } from "../adapters/report-queries";
+import { WEEKDAYS, ordinal } from "../domain/report-words";
 
 export type ReportScheduleDraft = {
   enabled: boolean;
@@ -116,19 +103,6 @@ function browserTimezone(): string {
   }
 }
 
-function scheduleSummary(
-  schedule: OpenViewReportSchedule,
-  region: WorkspaceRegion | undefined,
-): string {
-  const cadence =
-    schedule.cadence === "weekly"
-      ? `Weekly on ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][schedule.weekday ?? 0]}`
-      : schedule.cadence === "monthly"
-        ? `Monthly on day ${schedule.monthDay}`
-        : "Daily";
-  return `${schedule.enabled ? "" : "Paused · "}${cadence} at ${region ? formatWorkspaceClockTime(schedule.localTime, region) : schedule.localTime} (${schedule.timezoneName.replaceAll("_", " ")})`;
-}
-
 function policySignature(draft: ReportScheduleDraft): string {
   try {
     return JSON.stringify(reportSchedulePolicyFrom(draft));
@@ -137,88 +111,98 @@ function policySignature(draft: ReportScheduleDraft): string {
   }
 }
 
+/** Every IANA zone the browser knows, with the chosen one kept in the list. */
+function timezoneChoices(current: string): string[] {
+  let zones: string[] = [];
+  try {
+    zones = Intl.supportedValuesOf("timeZone");
+  } catch {
+    zones = [];
+  }
+  return zones.includes(current) ? zones : [current, ...zones];
+}
+
+type Repeat = "off" | ReportScheduleDraft["cadence"];
+
+/** One label-left row (DESIGN "Slim controls"); phones stack the label. */
+function ScheduleRow({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid min-w-0 gap-1.5 md:min-h-10 md:grid-cols-[8rem_minmax(0,1fr)] md:items-center md:gap-3">
+      {htmlFor ? (
+        <label
+          htmlFor={htmlFor}
+          data-slot="field-label"
+          className="text-muted-foreground text-xs font-medium"
+        >
+          {label}
+        </label>
+      ) : (
+        <span
+          data-slot="field-label"
+          className="text-muted-foreground text-xs font-medium"
+        >
+          {label}
+        </span>
+      )}
+      <div className="min-w-0 md:max-w-sm">{children}</div>
+    </div>
+  );
+}
+
 type ReportScheduleControlsProps = {
   reportId: string;
-  /** Only a manager of the Report module changes its schedule. */
-  canManage: boolean;
-  disabled: boolean;
-  disabledReason?: string;
+  /** The schedule as read (null: none yet); the caller owns the read. */
+  schedule: OpenViewReportSchedule | null;
+  region: WorkspaceRegion | undefined;
 };
 
+/**
+ * Step 2's Change (DC4): the report's schedule as label-left rows (Repeat,
+ * Day, Time, Time zone), the next copy, and a quiet Save schedule that waits
+ * for a change. Only a manager of the report's module opens it.
+ */
 export function ReportScheduleControls({
   reportId,
-  canManage,
-  disabled,
-  disabledReason,
+  schedule,
+  region,
 }: ReportScheduleControlsProps) {
-  const region = useDisplayRegion(
-    useQuery(workspaceCalendarQueryOptions()).data,
-  );
-  const [loadVersion, setLoadVersion] = useState(0);
-  const [loadState, setLoadState] = useState<
-    "loading" | "ready" | "denied" | "failed"
-  >("loading");
-  const [schedule, setSchedule] = useState<OpenViewReportSchedule | null>(null);
-  const [draft, setDraft] = useState<ReportScheduleDraft>(() =>
-    defaultReportScheduleDraft("UTC"),
-  );
-  const [baselineDraft, setBaselineDraft] = useState<ReportScheduleDraft>(() =>
-    defaultReportScheduleDraft("UTC"),
-  );
+  const queryClient = useQueryClient();
+  const baseline = schedule
+    ? reportScheduleDraftFrom(schedule)
+    : defaultReportScheduleDraft(browserTimezone());
+  // The draft belongs to the schedule revision it started from; a newer read
+  // (a save here, or someone else's) starts it again.
+  const baselineKey = schedule ? `${schedule.id}:${schedule.revision}` : "new";
+  const [edit, setEdit] = useState<{
+    key: string;
+    draft: ReportScheduleDraft;
+  } | null>(null);
+  const draft = edit?.key === baselineKey ? edit.draft : baseline;
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [stale, setStale] = useState(false);
+  const changed = policySignature(draft) !== policySignature(baseline);
+  const id = (part: string) => `report-schedule-${part}-${reportId}`;
 
-  useEffect(() => {
-    let active = true;
-    setLoadState("loading");
-    setError("");
+  function updateDraft(change: Partial<ReportScheduleDraft>): void {
+    setEdit({ key: baselineKey, draft: { ...draft, ...change } });
     setNotice("");
-    void getOpenViewReportSchedule(reportId)
-      .then((loaded) => {
-        if (!active) return;
-        setSchedule(loaded);
-        const loadedDraft = reportScheduleDraftFrom(loaded);
-        setDraft(loadedDraft);
-        setBaselineDraft(loadedDraft);
-        setStale(false);
-        setLoadState("ready");
-      })
-      .catch((reason: unknown) => {
-        if (!active) return;
-        setSchedule(null);
-        if (reason instanceof ApiError && reason.status === 404) {
-          const nextDraft = defaultReportScheduleDraft(browserTimezone());
-          setDraft(nextDraft);
-          setBaselineDraft(nextDraft);
-          setStale(false);
-          setLoadState("ready");
-        } else if (
-          reason instanceof ApiError &&
-          (reason.status === 401 || reason.status === 403)
-        ) {
-          const nextDraft = defaultReportScheduleDraft("UTC");
-          setDraft(nextDraft);
-          setBaselineDraft(nextDraft);
-          setStale(false);
-          setLoadState("denied");
-        } else {
-          setLoadState("failed");
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [reportId, loadVersion]);
-
-  const changed = policySignature(draft) !== policySignature(baselineDraft);
-  const unavailable = !canManage || disabled || saving || loadState !== "ready";
+    if (!stale) setError("");
+  }
 
   async function save(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (unavailable || savingRef.current) return;
+    if (!changed || stale || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setError("");
@@ -232,48 +216,31 @@ export function ReportScheduleControls({
             ...policy,
           })
         : await createOpenViewReportSchedule({ reportId, ...policy });
-      setSchedule(saved);
-      const savedDraft = reportScheduleDraftFrom(saved);
-      setDraft(savedDraft);
-      setBaselineDraft(savedDraft);
+      queryClient.setQueryData(reportKeys.schedule(reportId), saved);
+      setEdit(null);
       setStale(false);
-      setNotice(
-        saved.enabled
-          ? "Schedule saved and enabled."
-          : "Schedule saved disabled.",
-      );
+      setNotice(saved.enabled ? "Schedule saved." : "Schedule turned off.");
     } catch (reason) {
-      if (
-        reason instanceof ApiError &&
-        (reason.status === 401 || reason.status === 403)
-      ) {
-        setSchedule(null);
-        const nextDraft = defaultReportScheduleDraft("UTC");
-        setDraft(nextDraft);
-        setBaselineDraft(nextDraft);
-        setLoadState("denied");
-      } else {
-        const conflict = getOpenViewReportScheduleConflict(reason);
-        setStale(
-          Boolean(
-            conflict &&
-            ["schedule_exists", "schedule_conflict", "stale_revision"].includes(
-              conflict.code,
-            ),
-          ) ||
-            (reason instanceof ApiError && reason.status === 404),
-        );
-        setError(
-          reason instanceof ReportScheduleDraftError
-            ? reason.message
-            : conflict?.code === "schedule_ineligible"
-              ? "This Report cannot be enabled for scheduling right now because its data source is closed. Save the schedule turned off, or reopen the data source."
-              : (conflict?.message ??
-                (reason instanceof ApiError && reason.status === 404
-                  ? "The Report or schedule changed. Reload the saved schedule before retrying."
-                  : "The schedule could not be saved. Your changes remain here; retry or reload.")),
-        );
-      }
+      const conflict = getOpenViewReportScheduleConflict(reason);
+      const missing = reason instanceof ApiError && reason.status === 404;
+      setStale(
+        Boolean(
+          conflict &&
+          ["schedule_exists", "schedule_conflict", "stale_revision"].includes(
+            conflict.code,
+          ),
+        ) || missing,
+      );
+      setError(
+        reason instanceof ReportScheduleDraftError
+          ? reason.message
+          : conflict?.code === "schedule_ineligible"
+            ? "This module is closed, so the schedule can only be off."
+            : (conflict?.message ??
+              (missing
+                ? "The schedule changed. Reload it before saving."
+                : "The schedule could not be saved. Try again.")),
+      );
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -282,322 +249,192 @@ export function ReportScheduleControls({
 
   function reload(): void {
     if (savingRef.current) return;
-    if (
-      changed &&
-      !window.confirm(
-        "Replace your unsaved schedule changes with the latest saved policy?",
-      )
-    )
-      return;
-    setLoadVersion((version) => version + 1);
+    setEdit(null);
+    setStale(false);
+    setError("");
+    void queryClient.invalidateQueries({
+      queryKey: reportKeys.schedule(reportId),
+    });
   }
 
-  function updateDraft(change: Partial<ReportScheduleDraft>): void {
-    setDraft((current) => ({ ...current, ...change }));
-    setNotice("");
-    if (!stale) setError("");
-  }
-
+  const repeat: Repeat = draft.enabled ? draft.cadence : "off";
+  const nextCopy =
+    schedule?.nextDueAt && region
+      ? formatWorkspaceDateTime(schedule.nextDueAt, region, {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })
+      : null;
+  const lastRun = schedule?.lastRun;
   return (
-    <Card className="min-w-0">
-      <CardHeader>
-        <CardTitle>Schedule</CardTitle>
-        <CardDescription>
-          {canManage
-            ? "Choose a local time for future runs. The server determines the next due time."
-            : "Read the saved schedule and its next run."}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {loadState === "loading" ? (
-          <p role="status" className="text-muted-foreground text-sm">
-            Loading schedule…
+    <form
+      aria-label="Schedule"
+      className="flex min-w-0 flex-col gap-2"
+      onSubmit={(event) => void save(event)}
+    >
+      <ScheduleRow label="Repeat">
+        <ToggleGroup
+          aria-label="Repeat"
+          variant="segmented"
+          multiple={false}
+          disabled={saving}
+          value={[repeat]}
+          className="w-full md:w-fit"
+          onValueChange={(selection) => {
+            const next = selection[0] as Repeat | undefined;
+            if (!next) return;
+            updateDraft(
+              next === "off"
+                ? { enabled: false }
+                : { enabled: true, cadence: next },
+            );
+          }}
+        >
+          {(["off", "daily", "weekly", "monthly"] as const).map((value) => (
+            <ToggleGroupItem
+              key={value}
+              value={value}
+              className="px-3 text-sm whitespace-nowrap"
+            >
+              {value === "off"
+                ? "Off"
+                : value.charAt(0).toUpperCase() + value.slice(1)}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </ScheduleRow>
+      {draft.enabled && draft.cadence === "weekly" ? (
+        <ScheduleRow label="Day" htmlFor={id("weekday")}>
+          <Select
+            id={id("weekday")}
+            className="min-h-11"
+            value={String(draft.weekday)}
+            disabled={saving}
+            onValueChange={(value) => updateDraft({ weekday: Number(value) })}
+          >
+            {WEEKDAYS.map((day, index) => (
+              <SelectItem key={day} value={String(index)}>
+                {day}
+              </SelectItem>
+            ))}
+          </Select>
+        </ScheduleRow>
+      ) : null}
+      {draft.enabled && draft.cadence === "monthly" ? (
+        <ScheduleRow label="Day" htmlFor={id("month-day")}>
+          <Select
+            id={id("month-day")}
+            className="min-h-11"
+            value={draft.monthDay}
+            disabled={saving}
+            onValueChange={(value) => updateDraft({ monthDay: value })}
+          >
+            {Array.from({ length: 31 }, (_, index) => (
+              <SelectItem key={index + 1} value={String(index + 1)}>
+                {ordinal(index + 1)}
+              </SelectItem>
+            ))}
+          </Select>
+        </ScheduleRow>
+      ) : null}
+      {draft.enabled ? (
+        <>
+          <ScheduleRow label="Time" htmlFor={id("time")}>
+            <Input
+              id={id("time")}
+              className="min-h-11"
+              type="time"
+              value={draft.localTime}
+              disabled={saving}
+              onChange={(event) =>
+                updateDraft({ localTime: event.target.value })
+              }
+            />
+          </ScheduleRow>
+          <ScheduleRow label="Time zone" htmlFor={id("timezone")}>
+            <Select
+              id={id("timezone")}
+              className="min-h-11"
+              value={draft.timezoneName}
+              disabled={saving}
+              onValueChange={(value) => updateDraft({ timezoneName: value })}
+            >
+              {timezoneChoices(draft.timezoneName).map((zone) => (
+                <SelectItem key={zone} value={zone}>
+                  {zone.replaceAll("_", " ")}
+                </SelectItem>
+              ))}
+            </Select>
+          </ScheduleRow>
+        </>
+      ) : null}
+      {schedule?.enabled ? (
+        <ScheduleRow label="Next copy">
+          <p className="text-sm tabular-nums">
+            {schedule.nextDueAt ? (
+              <time dateTime={schedule.nextDueAt}>
+                {nextCopy ?? "Date unavailable"}
+              </time>
+            ) : (
+              "Not set"
+            )}
           </p>
-        ) : null}
-        {loadState === "denied" ? (
-          <Alert role="alert" variant="destructive">
-            Schedule details are unavailable. Sign in or ask for access, then
-            try again.
-            <Button
-              type="button"
-              variant="outline"
-              className="ml-3 min-h-11"
-              onClick={reload}
-            >
-              Retry
-            </Button>
-          </Alert>
-        ) : null}
-        {loadState === "failed" ? (
-          <Alert role="alert" variant="destructive">
-            Schedule details could not be loaded. Try again.
-            <Button
-              type="button"
-              variant="outline"
-              className="ml-3 min-h-11"
-              onClick={reload}
-            >
-              Retry
-            </Button>
-          </Alert>
-        ) : null}
-        {loadState === "ready" ? (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-muted-foreground text-sm">
-                {schedule
-                  ? `Saved policy · revision ${schedule.revision}`
-                  : "No saved schedule yet"}
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={saving}
-                onClick={reload}
-              >
-                Reload saved schedule
-              </Button>
-            </div>
-            {schedule?.nextDueAt ? (
-              <p className="text-sm">
-                Next run:{" "}
-                <time dateTime={schedule.nextDueAt}>
-                  {region
-                    ? formatWorkspaceDateTime(schedule.nextDueAt, region, {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      })
-                    : "Date unavailable"}
-                </time>
-              </p>
+        </ScheduleRow>
+      ) : null}
+      {lastRun ? (
+        <ScheduleRow label="Last run">
+          <p role="status" aria-label="Last scheduled run" className="text-sm">
+            {lastRun.state.charAt(0).toUpperCase() + lastRun.state.slice(1)}
+            {" · "}
+            {lastRun.finishedAt ? (
+              <time dateTime={lastRun.finishedAt}>
+                {region
+                  ? formatWorkspaceDateTime(lastRun.finishedAt, region, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })
+                  : "Date unavailable"}
+              </time>
             ) : (
-              <p className="text-muted-foreground text-sm">
-                {schedule
-                  ? "No next run while this schedule is disabled."
-                  : "No next run is scheduled."}
-              </p>
+              "Finish time not recorded"
             )}
-            {schedule?.lastRun ? (
-              <p
-                role="status"
-                aria-label="Last scheduled run"
-                className="text-sm"
-              >
-                Last run:{" "}
-                {schedule.lastRun.state.charAt(0).toUpperCase() +
-                  schedule.lastRun.state.slice(1)}
-                {" · "}
-                {schedule.lastRun.finishedAt ? (
-                  <time dateTime={schedule.lastRun.finishedAt}>
-                    {region
-                      ? formatWorkspaceDateTime(
-                          schedule.lastRun.finishedAt,
-                          region,
-                          { dateStyle: "medium", timeStyle: "short" },
-                        )
-                      : "Date unavailable"}
-                  </time>
-                ) : (
-                  "Finish time not recorded"
-                )}
-                {schedule.lastRun.failureLabel ? (
-                  <> · {schedule.lastRun.failureLabel}</>
-                ) : null}
-              </p>
-            ) : (
-              <p className="text-muted-foreground text-sm">
-                Last run: No runs yet
-              </p>
-            )}
-            {!canManage ? (
-              <div className="text-muted-foreground space-y-1 text-sm">
-                <p>
-                  {schedule
-                    ? scheduleSummary(schedule, region)
-                    : "No saved schedule."}
-                </p>
-                <p>Only a manager of this module changes the schedule.</p>
-              </div>
-            ) : disabledReason ? (
-              <p className="text-muted-foreground text-sm">{disabledReason}</p>
-            ) : null}
-            {canManage ? (
-              <form
-                onSubmit={(event) => void save(event)}
-                className="flex flex-col gap-4"
-              >
-                <p className="text-muted-foreground text-sm">
-                  Scheduled runs use workspace access. People who could read
-                  this report’s module when a run was created can open that
-                  output while they still have access.
-                </p>
-                <Field className="min-h-11 flex-row items-center gap-3">
-                  <Checkbox
-                    id={`report-schedule-enabled-${reportId}`}
-                    checked={draft.enabled}
-                    disabled={unavailable}
-                    onCheckedChange={(value) =>
-                      updateDraft({ enabled: value === true })
-                    }
-                  />
-                  <FieldLabel htmlFor={`report-schedule-enabled-${reportId}`}>
-                    Enable scheduled runs
-                  </FieldLabel>
-                </Field>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor={`report-schedule-cadence-${reportId}`}>
-                      Repeat
-                    </FieldLabel>
-                    <Select
-                      id={`report-schedule-cadence-${reportId}`}
-                      className="min-h-11"
-                      value={draft.cadence}
-                      onValueChange={(value) =>
-                        updateDraft({
-                          cadence: value as ReportScheduleDraft["cadence"],
-                        })
-                      }
-                      disabled={unavailable}
-                    >
-                      <SelectItem value="daily">Daily</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
-                      <SelectItem value="monthly">Monthly</SelectItem>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor={`report-schedule-time-${reportId}`}>
-                      Local time
-                    </FieldLabel>
-                    <Input
-                      id={`report-schedule-time-${reportId}`}
-                      className="min-h-11"
-                      type="time"
-                      value={draft.localTime}
-                      disabled={unavailable}
-                      onChange={(event) =>
-                        updateDraft({ localTime: event.target.value })
-                      }
-                    />
-                  </Field>
-                  {draft.cadence === "weekly" ? (
-                    <Field>
-                      <FieldLabel
-                        htmlFor={`report-schedule-weekday-${reportId}`}
-                      >
-                        Weekday
-                      </FieldLabel>
-                      <Select
-                        id={`report-schedule-weekday-${reportId}`}
-                        className="min-h-11"
-                        value={String(draft.weekday)}
-                        onValueChange={(value) =>
-                          updateDraft({ weekday: Number(value) })
-                        }
-                        disabled={unavailable}
-                      >
-                        {[
-                          "Monday",
-                          "Tuesday",
-                          "Wednesday",
-                          "Thursday",
-                          "Friday",
-                          "Saturday",
-                          "Sunday",
-                        ].map((day, index) => (
-                          <SelectItem key={day} value={String(index)}>
-                            {day}
-                          </SelectItem>
-                        ))}
-                      </Select>
-                    </Field>
-                  ) : null}
-                  {draft.cadence === "monthly" ? (
-                    <Field>
-                      <FieldLabel
-                        htmlFor={`report-schedule-month-day-${reportId}`}
-                      >
-                        Day of month
-                      </FieldLabel>
-                      <Input
-                        id={`report-schedule-month-day-${reportId}`}
-                        className="min-h-11"
-                        type="number"
-                        min={1}
-                        max={31}
-                        step={1}
-                        value={draft.monthDay}
-                        disabled={unavailable}
-                        onChange={(event) =>
-                          updateDraft({ monthDay: event.target.value })
-                        }
-                      />
-                    </Field>
-                  ) : null}
-                  <Field className="sm:col-span-2">
-                    <FieldLabel
-                      htmlFor={`report-schedule-timezone-${reportId}`}
-                    >
-                      Timezone
-                    </FieldLabel>
-                    <Input
-                      id={`report-schedule-timezone-${reportId}`}
-                      className="min-h-11"
-                      value={draft.timezoneName}
-                      disabled={unavailable}
-                      onChange={(event) =>
-                        updateDraft({ timezoneName: event.target.value })
-                      }
-                      autoComplete="off"
-                    />
-                    <FieldDescription>
-                      Use an IANA name such as Asia/Manila. Local clocks adjust
-                      for daylight saving time where applicable.
-                    </FieldDescription>
-                  </Field>
-                </div>
-                {error ? (
-                  <Alert role="alert" variant="destructive">
-                    {error}
-                  </Alert>
-                ) : null}
-                {notice ? (
-                  <p role="status" className="text-sm">
-                    {notice}
-                  </p>
-                ) : null}
-                <div className={canManage ? "flex flex-wrap gap-2" : "hidden"}>
-                  <Button
-                    type="submit"
-                    className="min-h-11"
-                    disabled={
-                      unavailable || stale || (Boolean(schedule) && !changed)
-                    }
-                  >
-                    {saving
-                      ? "Saving schedule…"
-                      : schedule
-                        ? "Save schedule"
-                        : "Create schedule"}
-                  </Button>
-                  {stale ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={saving}
-                      onClick={reload}
-                    >
-                      Reload latest schedule
-                    </Button>
-                  ) : null}
-                </div>
-              </form>
-            ) : null}
-          </>
-        ) : null}
-      </CardContent>
-    </Card>
+            {lastRun.failureLabel ? <> · {lastRun.failureLabel}</> : null}
+          </p>
+        </ScheduleRow>
+      ) : null}
+      {error ? (
+        <Alert role="alert" variant="destructive">
+          {error}
+        </Alert>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-3 md:pl-[8.75rem]">
+        <Button
+          type="submit"
+          variant="outline"
+          className="min-h-11"
+          disabled={!changed || stale || saving}
+        >
+          {saving ? "Saving schedule…" : "Save schedule"}
+        </Button>
+        {stale ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11"
+            disabled={saving}
+            onClick={reload}
+          >
+            Reload schedule
+          </Button>
+        ) : (
+          <span role="status" className="text-muted-foreground text-sm">
+            {notice || (changed ? "" : "No changes to save")}
+          </span>
+        )}
+      </div>
+    </form>
   );
 }

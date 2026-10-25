@@ -510,22 +510,24 @@ async function exerciseConnectedReports(
   let reportFailed = false;
   let reportFailure: unknown;
   try {
-    await page.getByRole("button", { name: "New Report" }).click();
-    await page.getByLabel("Data source").selectOption({ label: "Suppliers" });
-    await page.getByLabel("Report name").fill(reportName);
+    // The Reports view of the Suppliers page (OpenView part C): an empty
+    // module offers Start from scratch, a module with reports New report.
     await page
-      .getByRole("dialog", { name: "New report", exact: true })
-      .getByRole("tab", { name: "Columns", exact: true })
+      .getByRole("button", { name: "Start from scratch" })
+      .or(page.getByRole("button", { name: "New report" }))
+      .first()
       .click();
-    await page.getByRole("checkbox", { name: "Legal name" }).check();
-    await page.getByRole("checkbox", { name: "Payment terms" }).check();
+    const dialog = page.getByRole("dialog", { name: "New report" });
+    await dialog.getByLabel("Name").fill(reportName);
+    await dialog.getByRole("checkbox", { name: "Legal name" }).check();
+    await dialog.getByRole("checkbox", { name: "Payment terms" }).check();
     const [created] = await Promise.all([
       page.waitForResponse(
         (response) =>
           new URL(response.url()).pathname === "/api/reports" &&
           response.request().method() === "POST",
       ),
-      page.getByRole("button", { name: "Create Report" }).click(),
+      dialog.getByRole("button", { name: "Create report" }).click(),
     ]);
     expect(created.status()).toBe(201);
     const createdReport = (await created.json()) as {
@@ -544,38 +546,37 @@ async function exerciseConnectedReports(
       supplier.legalNameFieldId,
       supplier.paymentTermsFieldId,
     ]);
-    await expect(
-      page.getByRole("dialog", { name: "Edit report" }).getByRole("status"),
-    ).toHaveText("Report created.");
+    await expect(dialog).toBeHidden();
+    await expect(page).toHaveURL(new RegExp(`report=${reportId}`));
 
     await page.reload();
-    // The card also names the department of the Report module.
-    await page.getByRole("button", { name: reportName }).click();
-    await page
-      .getByRole("button", { name: "Edit report", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Change what it lists" }).click();
     const editor = page.getByRole("dialog", { name: "Edit report" });
-    await expect(editor).toBeVisible();
-    await expect(page.getByLabel("Data source")).toHaveValue(supplier.moduleId);
-    await expect(page.getByLabel("Report name")).toHaveValue(reportName);
-    await editor.getByRole("tab", { name: "Columns", exact: true }).click();
+    await expect(editor.getByLabel("Name")).toHaveValue(reportName);
     await expect(
-      page.getByRole("checkbox", { name: "Legal name" }),
+      editor.getByRole("checkbox", { name: "Legal name" }),
     ).toBeChecked();
     await expect(
-      page.getByRole("checkbox", { name: "Payment terms" }),
+      editor.getByRole("checkbox", { name: "Payment terms" }),
     ).toBeChecked();
-
-    await editor.getByRole("button", { name: "Close editor" }).click();
+    await editor.getByRole("button", { name: "Close edit report" }).click();
     await expect(editor).toBeHidden();
-    const [runResponse] = await Promise.all([
+
+    const copyCsv = new RegExp(`^/api/reports/${reportId}/runs/[^/]+/csv$`);
+    const [runResponse, csvResponse] = await Promise.all([
       page.waitForResponse(
         (response) =>
           new URL(response.url()).pathname ===
             `/api/reports/${reportId}/runs` &&
           response.request().method() === "POST",
       ),
-      page.getByRole("button", { name: "Run now" }).click(),
+      // The copy shows itself by reading its CSV.
+      page.waitForResponse(
+        (response) =>
+          copyCsv.test(new URL(response.url()).pathname) &&
+          response.request().method() === "GET",
+      ),
+      page.getByRole("button", { name: "Make a copy now" }).click(),
     ]);
     expect(runResponse.status()).toBe(201);
     const run = (await runResponse.json()) as {
@@ -585,47 +586,25 @@ async function exerciseConnectedReports(
     };
     expect(run.row_count).toBe(1);
     expect(run.headings).toEqual(["Legal name", "Payment terms"]);
-    await expect(page.getByText("Report run saved with 1 row.")).toBeVisible();
-    await page.getByRole("button", { name: "Available outputs" }).click();
-    const availableRuns = page.getByRole("dialog", {
-      name: "Available outputs",
-    });
-    await expect(
-      availableRuns.getByRole("cell", { name: reportName, exact: true }),
-    ).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(availableRuns).toBeHidden();
-    const savedRuns = page.getByRole("table", {
-      name: "Saved outputs",
-      exact: true,
-    });
-    await expect(
-      savedRuns.getByRole("cell", { name: "Recipe version 1", exact: true }),
-    ).toBeVisible();
-    await expect(
-      savedRuns.getByRole("cell", { name: "1", exact: true }),
-    ).toBeVisible();
-
-    const [csvResponse, download] = await Promise.all([
-      page.waitForResponse(
-        (response) =>
-          new URL(response.url()).pathname ===
-            `/api/reports/${reportId}/runs/${run.id}/csv` &&
-          response.request().method() === "GET",
-      ),
-      page.waitForEvent("download"),
-      savedRuns.getByRole("button", { name: /^Download CSV for / }).click(),
-    ]);
     expect(csvResponse.status()).toBe(200);
     expect(csvResponse.headers()["cache-control"]).toBe("private, no-store");
+    const copy = page.getByRole("region", { name: /^Copy of / });
+    await expect(copy).toContainText("1 row · as they were then");
+    await expect(copy.getByRole("table")).toContainText(supplier.legalName);
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      copy.getByRole("button", { name: /^Download CSV/ }).click(),
+    ]);
     expect(download.suggestedFilename()).toBe(`report-${run.id}.csv`);
     expect(readFileSync(await download.path(), "utf8")).toBe(
       `Legal name,Payment terms\r\n${supplier.legalName},Net 30\r\n`,
     );
 
-    await page.getByRole("tab", { name: "Schedule", exact: true }).click();
-    await page.getByRole("checkbox", { name: "Enable scheduled runs" }).check();
-    await page.getByRole("textbox", { name: "Timezone" }).fill("UTC");
+    await page.getByRole("button", { name: "Change when it runs" }).click();
+    const schedule = page.getByRole("form", { name: "Schedule" });
+    await schedule.getByRole("button", { name: "Daily" }).click();
+    await schedule.getByLabel("Time zone").selectOption("UTC");
     const [scheduleResponse] = await Promise.all([
       page.waitForResponse(
         (response) =>
@@ -633,21 +612,22 @@ async function exerciseConnectedReports(
             `/api/reports/${reportId}/schedule` &&
           response.request().method() === "POST",
       ),
-      page.getByRole("button", { name: "Create schedule" }).click(),
+      schedule.getByRole("button", { name: "Save schedule" }).click(),
     ]);
     expect(scheduleResponse.status()).toBe(201);
-    await expect(page.getByText("Schedule saved and enabled.")).toBeVisible();
-    await expect(page.getByText(/^Next run:/)).toBeVisible();
+    await expect(schedule.getByText("Schedule saved.")).toBeVisible();
+    await expect(
+      page.getByRole("list", { name: "How this report works" }),
+    ).toContainText(/Every day at .*Next: /);
 
-    await page.getByRole("button", { name: "Report options" }).click();
-    page.once("dialog", (dialog) => void dialog.accept());
+    await page.getByRole("button", { name: "More report actions" }).click();
     const [archived] = await Promise.all([
       page.waitForResponse(
         (response) =>
           new URL(response.url()).pathname === `/api/reports/${reportId}` &&
           response.request().method() === "DELETE",
       ),
-      page.getByRole("menuitem", { name: "Archive Report" }).click(),
+      page.getByRole("menuitem", { name: "Archive" }).click(),
     ]);
     expect(archived.status()).toBe(204);
     await expect(page.getByText("Report archived.")).toBeVisible();
@@ -1655,10 +1635,14 @@ test.describe("Sandbox", () => {
   test("Connected report and CSV", async ({ journey }) => {
     const { page, runFixture } = journey;
     const supplier = requireSupplier(journey);
-    await page.goto("/openview?section=reports");
+    await page.goto(
+      `/openview?section=views&module=${supplier.moduleId}&tab=reports`,
+    );
     await expect(
-      page.getByRole("heading", { name: "Reports", exact: true }),
-    ).toBeVisible();
+      page
+        .getByRole("navigation", { name: "Suppliers page" })
+        .getByRole("link", { name: /^Reports/ }),
+    ).toHaveAttribute("aria-current", "page");
     await exerciseConnectedReports(
       page,
       runFixture.runId,

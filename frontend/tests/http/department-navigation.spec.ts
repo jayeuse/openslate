@@ -132,11 +132,13 @@ test("the sidebar lists readable departments in Sandbox order with their module 
   await expect(
     salesPages.getByRole("link", { name: "Quotes", exact: true }),
   ).toHaveAttribute("href", `/openview?section=views&module=${ids.quotes}`);
-  // The OpenView group keeps Reports only (DA5, BD1).
-  await nav.getByRole("button", { name: "OpenView", exact: true }).click();
+  // Reports live on module pages, so the sidebar has no OpenView item (DC9).
+  await expect(
+    nav.getByRole("button", { name: "OpenView", exact: true }),
+  ).toHaveCount(0);
   await expect(
     nav.getByRole("link", { name: /^(Views|Dashboards|Charts|Reports)$/ }),
-  ).toHaveText(["Reports"]);
+  ).toHaveCount(0);
 });
 
 test("an opened department stays open while the person moves between pages", async ({

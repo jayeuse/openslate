@@ -11,7 +11,6 @@ import {
 import {
   currentNavigationKey,
   getWorkspaceNavigation,
-  isWorkspaceNavigationGroupActive,
 } from "../../src/components/workspace-navigation";
 
 // docs/specs/openview-department-pages.md, DA2–DA8.
@@ -67,31 +66,26 @@ test("a module page is the OpenView Views page for that module", () => {
   expect(moduleLocation(grouped, "missing")).toBeNull();
 });
 
-test("the OpenView group keeps Reports only and is not current on a module page or a dashboard", () => {
+test("the sidebar has no OpenView group, and a module's Reports view is that module's place", () => {
   const onModule = new URLSearchParams("section=views&module=quotes");
-  const openView = getWorkspaceNavigation("/openview", onModule, "all").find(
-    (group) => group.id === "openview",
+  const onReports = new URLSearchParams(
+    "section=views&module=quotes&tab=reports&report=weekly",
   );
-  expect(openView?.items.map((item) => item.id)).toEqual(["reports"]);
-  expect(openView?.href).toBe("/openview?section=reports&module=quotes");
-  const onDashboard = new URLSearchParams(
-    "section=dashboards&department=sales",
-  );
+  // Reports live on module pages (DC9): the sidebar holds departments and tools.
   expect(
-    isWorkspaceNavigationGroupActive(openView!, "/openview", onDashboard),
-  ).toBe(false);
-  expect(
-    isWorkspaceNavigationGroupActive(openView!, "/openview", onModule),
-  ).toBe(false);
-  expect(
-    isWorkspaceNavigationGroupActive(
-      openView!,
-      "/openview",
-      new URLSearchParams("section=reports"),
+    getWorkspaceNavigation("/openview", onReports, "all").map(
+      (group) => group.id,
     ),
-  ).toBe(true);
+  ).toEqual(["sandbox", "boards", "access", "manage", "platform"]);
+  expect(currentModuleId("/openview", onReports)).toBe("quotes");
+  expect(currentNavigationKey("/openview", onReports)).toBe(
+    "openview:module:quotes",
+  );
   expect(currentNavigationKey("/openview", onModule)).toBe(
     "openview:module:quotes",
+  );
+  const onDashboard = new URLSearchParams(
+    "section=dashboards&department=sales",
   );
   // Each department's dashboard is its own place, so the fill glides to it.
   expect(currentNavigationKey("/openview", onDashboard)).toBe(

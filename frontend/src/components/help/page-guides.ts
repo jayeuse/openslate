@@ -48,7 +48,7 @@ export const PAGE_GUIDES = {
       "Choose a record structure and a saved view to browse the records you can read.",
       "Filters, sorting, and visible columns help you find the right record. Open a record to inspect it before making a change.",
       "Each department's Dashboard summarizes the records you can read. A chart does not grant access to its underlying records.",
-      "Reports prepares saved report results and exports. Editing and export controls depend on your access.",
+      "A module page's Reports view keeps saved reports. Make a copy now saves the rows as they are; a schedule makes copies.",
     ],
   },
   manage: {

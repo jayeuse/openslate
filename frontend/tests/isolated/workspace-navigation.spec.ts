@@ -342,14 +342,6 @@ test("sidebar section links retain only each screen's relevant deep-link context
     item("/access", "view=people&user=ana", "access", "groups")?.href,
   ).toBe("/access?view=groups");
   expect(
-    item(
-      "/openview",
-      "section=reports&module=incidents&report=weekly&dashboard=old",
-      "openview",
-      "reports",
-    )?.href,
-  ).toBe("/openview?section=reports&module=incidents&report=weekly");
-  expect(
     item("/sandbox", "rule=approval&inspect=orders", "sandbox", "triggers")
       ?.href,
   ).toBe("/sandbox?section=triggers&rule=approval&inspect=orders");
@@ -534,7 +526,6 @@ test("every workspace describes what it holds in one short line", () => {
     ["sandbox", "Design departments and records"],
     ["boards", "Team pages and events"],
     ["access", "Who can see and change what"],
-    ["openview", "Browse records and reports"],
     ["manage", "Organization settings and audit"],
     ["platform", "Files, search, and import & export"],
   ]);

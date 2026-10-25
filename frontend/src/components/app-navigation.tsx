@@ -195,7 +195,7 @@ export function AppNavigation({
   );
   const search = searchParams.toString();
   const activeGroupId = groups.find((group) =>
-    isWorkspaceNavigationGroupActive(group, pathname, searchParams),
+    isWorkspaceNavigationGroupActive(group, pathname),
   )?.id;
   const currentKey = currentNavigationKey(pathname, searchParams, hash);
   const navRef = useRef<HTMLElement>(null);
@@ -537,11 +537,7 @@ export function AppNavigation({
               label: group.label,
               description: group.description,
               icon: <Icon aria-hidden="true" />,
-              active: isWorkspaceNavigationGroupActive(
-                group,
-                pathname,
-                searchParams,
-              ),
+              active: isWorkspaceNavigationGroupActive(group, pathname),
               items: group.items.map((item) => ({
                 id: item.id,
                 label: item.label,

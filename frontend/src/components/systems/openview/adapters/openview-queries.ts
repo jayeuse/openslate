@@ -14,10 +14,6 @@ import {
 } from "./departments-api";
 import { listRecordFiles } from "./record-files-api";
 import {
-  listOpenViewReports,
-  listOpenViewSharedReportRuns,
-} from "./reports-api";
-import {
   getOpenViewDataSource,
   getOpenViewDataSourceField,
   listOpenViewAssignableUsers,
@@ -33,9 +29,9 @@ import {
 // Section-level OpenView reads share one client cache. Every key starts with
 // "openview", so a stream resync (or leaving OpenView) can mark them all
 // stale at once. Record rows, report history, and other detail reads stay in
-// their components.
+// their components. Report reads live in report-queries.ts, so the shell's
+// prefetch does not carry the Report contract.
 
-export const REPORT_PAGE_SIZE = 25;
 export const CATALOG_PAGE_SIZE = 100;
 
 export const openViewKeys = {
@@ -65,12 +61,6 @@ export const openViewKeys = {
   moduleWorkspaces: ["openview", "module-workspace"] as const,
   moduleWorkspace: (moduleId: string) =>
     ["openview", "module-workspace", moduleId] as const,
-  reportLists: ["openview", "reports", "list"] as const,
-  reportList: (deleted: "include" | "exclude") =>
-    ["openview", "reports", "list", deleted] as const,
-  sharedRuns: ["openview", "reports", "shared-runs"] as const,
-  sharedRunsPage: (offset: number, limit: number) =>
-    ["openview", "reports", "shared-runs", { offset, limit }] as const,
   /** The signed-in identity. It needs only a session, not records.read, so
    *  it sits outside the "openview" prefix and its access latch. */
   authMe: () => ["auth", "me"] as const,
@@ -288,19 +278,6 @@ export const moduleWorkspaceOptions = (moduleId: string) =>
     enabled: Boolean(moduleId),
   });
 
-export const reportListOptions = (deleted: "include" | "exclude") =>
-  queryOptions({
-    queryKey: openViewKeys.reportList(deleted),
-    queryFn: () =>
-      listOpenViewReports({ limit: REPORT_PAGE_SIZE, offset: 0, deleted }),
-  });
-
-export const sharedRunsOptions = (offset: number, limit: number) =>
-  queryOptions({
-    queryKey: openViewKeys.sharedRunsPage(offset, limit),
-    queryFn: () => listOpenViewSharedReportRuns({ limit, offset }),
-  });
-
 export const authMeOptions = () =>
   queryOptions({
     queryKey: openViewKeys.authMe(),
@@ -400,12 +377,5 @@ export function prefetchOpenViewSection(
   const reads: Promise<void>[] = [];
   if (section === "views")
     reads.push(client.prefetchQuery(boundedCatalogOptions()));
-  if (section === "reports")
-    reads.push(
-      client.prefetchQuery(reportListOptions("exclude")),
-      client.prefetchQuery(sharedRunsOptions(0, REPORT_PAGE_SIZE)),
-      client.prefetchQuery(authMeOptions()),
-      client.prefetchQuery(catalogFirstPageOptions()),
-    );
   void Promise.all(reads);
 }
