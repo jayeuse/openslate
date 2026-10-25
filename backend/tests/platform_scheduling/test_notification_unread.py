@@ -246,6 +246,9 @@ def test_concurrent_read_all_and_mark_one_keep_one_timestamp_and_one_audit_updat
     engine, ids = committed_subject
     instants = iter((READ_TIME, READ_TIME + timedelta(seconds=30)))
     monkeypatch.setattr(notification_router, "utc_now", lambda: next(instants))
+    # Liveness deadlines only: a CI shard that seeds large tables at the same
+    # time once needed more than 3 s to start the second request. The order
+    # and outcome assertions are unchanged.
     reached, release, second_attempt = Event(), Event(), Event()
     attempt_lock, attempts = Lock(), 0
 
@@ -261,7 +264,7 @@ def test_concurrent_read_all_and_mark_one_keep_one_timestamp_and_one_audit_updat
         if "FROM in_app_notifications" in statement and "FOR UPDATE" in statement:
             if not reached.is_set():
                 reached.set()
-                assert release.wait(timeout=5)
+                assert release.wait(timeout=20)
 
     event.listen(engine, "after_cursor_execute", hold)
     event.listen(engine, "before_cursor_execute", recipient_attempt)
@@ -271,7 +274,7 @@ def test_concurrent_read_all_and_mark_one_keep_one_timestamp_and_one_audit_updat
                 _request, engine, ids["owner"], "POST", "/api/notifications/read-all"
             )
             try:
-                assert reached.wait(timeout=3)
+                assert reached.wait(timeout=10)
                 second = pool.submit(
                     _request,
                     engine,
@@ -279,10 +282,10 @@ def test_concurrent_read_all_and_mark_one_keep_one_timestamp_and_one_audit_updat
                     "POST",
                     f"/api/notifications/{ids['notice']}/read",
                 )
-                assert second_attempt.wait(timeout=3)
+                assert second_attempt.wait(timeout=10)
             finally:
                 release.set()
-            first_response, second_response = first.result(timeout=5), second.result(timeout=5)
+            first_response, second_response = first.result(timeout=10), second.result(timeout=10)
             assert first_response.status_code == second_response.status_code == 200
             assert first_response.json() == {"updated_count": 1}
             assert second_response.json()["read_at"] == "2026-10-06T12:00:00Z"
