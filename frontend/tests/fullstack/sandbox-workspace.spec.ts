@@ -550,7 +550,7 @@ async function exerciseConnectedReports(
     await expect(page).toHaveURL(new RegExp(`report=${reportId}`));
 
     await page.reload();
-    await page.getByRole("button", { name: "Change what it lists" }).click();
+    await page.getByRole("button", { name: /Change what it lists$/ }).click();
     const editor = page.getByRole("dialog", { name: "Edit report" });
     await expect(editor.getByLabel("Name")).toHaveValue(reportName);
     await expect(
@@ -601,7 +601,7 @@ async function exerciseConnectedReports(
       `Legal name,Payment terms\r\n${supplier.legalName},Net 30\r\n`,
     );
 
-    await page.getByRole("button", { name: "Change when it runs" }).click();
+    await page.getByRole("button", { name: /Change when it runs$/ }).click();
     const schedule = page.getByRole("form", { name: "Schedule" });
     await schedule.getByRole("button", { name: "Daily" }).click();
     await schedule.getByLabel("Time zone").selectOption("UTC");

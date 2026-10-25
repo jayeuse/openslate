@@ -504,7 +504,12 @@ export default function ServerBackedViewsWorkspace({
   } | null>(null);
 
   useEffect(() => {
-    if (!catalog || !moduleId || requestedModule) return;
+    if (!catalog || !moduleId) return;
+    // Records keeps an unreadable module in the address and says so; the
+    // Reports view moves to the module it shows, so the sidebar and the
+    // breadcrumb follow it (DC26).
+    if (requestedModule && (requestedModule === moduleId || !reportsTab))
+      return;
     // The first readable module keeps the Reports view a link asked for
     // (DC8, DC9).
     startNavigation(() =>

@@ -35,6 +35,17 @@ export function ordinal(day: number): string {
   return `${day}${day % 10 > 3 ? "th" : suffix}`;
 }
 
+/**
+ * A module name inside a sentence: "Sales Orders" reads "sales orders", while
+ * acronyms and mixed-case words keep their case ("PO lines", "eBay listings").
+ */
+export function lowerName(name: string): string {
+  return name
+    .split(" ")
+    .map((word) => (/^[A-Z][a-z]+$/.test(word) ? word.toLowerCase() : word))
+    .join(" ");
+}
+
 /** Whether a schedule makes copies on its own. */
 export function isScheduled(
   schedule: ReportScheduleFacts | null | undefined,
@@ -92,7 +103,7 @@ export function listsWords(
   const filters = recipe.filters.length;
   const base = filters
     ? `${records} that match ${filters} ${filters === 1 ? "filter" : "filters"}`
-    : `All ${records.toLowerCase()}`;
+    : `All ${lowerName(records)}`;
   const group = recipe.groupBy ? fieldName(recipe.groupBy.fieldId) : undefined;
   return group ? `${base}, grouped by ${group}` : base;
 }

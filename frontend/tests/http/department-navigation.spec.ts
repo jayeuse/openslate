@@ -247,6 +247,12 @@ test("a module page with no readable module says why, and only an administrator 
   await expect(
     target.getByRole("link", { name: "Open Sandbox", exact: true }),
   ).toBeVisible();
+  // With no module to name, the breadcrumb names the records landing.
+  await expect(
+    target
+      .getByRole("navigation", { name: "breadcrumb" })
+      .locator('[aria-current="page"]'),
+  ).toHaveText("Records");
 
   await signedInAs(target, {
     id: "00000000-0000-4000-8000-0000000000aa",

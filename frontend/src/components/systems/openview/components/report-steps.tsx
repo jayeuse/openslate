@@ -3,15 +3,19 @@
 import { CalendarClock, ChevronRight, Files, FileText } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { tintRowClassName } from "@/components/systems/access/components/row-open-button";
 
 export type ReportStep = {
   /** "What it lists", "When it runs", "What you keep". */
   label: string;
   value: ReactNode;
   detail: ReactNode;
-  /** A manager's Change: the step is then a button. */
+  /**
+   * A manager's Change: the step is then one button named by its facts and
+   * "Change <subject>" ("Close <subject>" while what it opens is open).
+   */
   change?: {
-    label: string;
+    subject: string;
     onClick: () => void;
     expanded?: boolean;
     controls?: string;
@@ -23,7 +27,7 @@ const ICONS = [FileText, CalendarClock, Files] as const;
 /**
  * The three steps that explain a report (DC4) and teach an empty module
  * (DC11, dashed): what it lists → when it runs → what you keep, in reading
- * order. A step a manager can change is one button named for its change.
+ * order. A step a manager can change is one button: its facts, then Change.
  */
 export function ReportSteps({
   steps,
@@ -60,7 +64,10 @@ export function ReportSteps({
               {step.change ? (
                 <>
                   {" · "}
-                  <span className="text-action-text font-medium">Change</span>
+                  <span className="text-action-text font-medium">
+                    {step.change.expanded ? "Close" : "Change"}
+                    <span className="sr-only"> {step.change.subject}</span>
+                  </span>
                 </>
               ) : null}
             </span>
@@ -68,7 +75,7 @@ export function ReportSteps({
         );
         const card = cn(
           "grid h-full w-full min-w-0 grid-cols-[1.75rem_minmax(0,1fr)] content-start gap-x-2.5 gap-y-0.5 rounded-lg border p-3 text-left",
-          dashed ? "border-dashed" : "bg-[var(--surface-sunken)]",
+          dashed ? "border-dashed" : "bg-muted",
         );
         return (
           <Fragment key={step.label}>
@@ -84,14 +91,13 @@ export function ReportSteps({
               {step.change ? (
                 <button
                   type="button"
-                  aria-label={step.change.label}
                   aria-expanded={step.change.expanded}
                   aria-controls={step.change.controls}
+                  data-state={step.change.expanded ? "selected" : undefined}
                   className={cn(
                     card,
-                    "focus-visible:outline-ring min-h-11 hover:border-[var(--rule-strong)] focus-visible:outline-2",
-                    step.change.expanded &&
-                      "bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
+                    tintRowClassName,
+                    "focus-visible:outline-ring min-h-11 focus-visible:outline-2",
                   )}
                   onClick={step.change.onClick}
                 >

@@ -94,10 +94,16 @@ test("a report reads as three steps with its latest copy under them, and only it
     page.getByRole("button", { name: "Make a copy now" }),
   ).toBeVisible();
   await expect(steps(page).getByRole("listitem")).toHaveText([
-    /^1 · What it listsAll assets1 column · Change$/,
-    /^2 · When it runsEvery Monday at 9:00 AMNext: Mon, Sep 28 · Change$/,
+    /^1 · What it listsAll assets1 column · Change what it lists$/,
+    /^2 · When it runsEvery Monday at 9:00 AMNext: Mon, Sep 28 · Change when it runs$/,
     /^3 · What you keepA dated copy each time1 copy · latest Thu, Sep 24$/,
   ]);
+  // A step a manager changes is one button named by its facts, then Change.
+  await expect(
+    steps(page).getByRole("button", {
+      name: /^2 · When it runs\s*Every Monday at 9:00 AM\s*Next: Mon, Sep 28 · Change when it runs$/,
+    }),
+  ).toBeVisible();
   await expect(copy(page)).toContainText("Copy of Thu, Sep 24 at 8:00 AM");
   await expect(copy(page)).toContainText("1 row · as they were then");
   await expect(
@@ -105,6 +111,10 @@ test("a report reads as three steps with its latest copy under them, and only it
       .getByRole("table", { name: /^Copy of / })
       .getByRole("row"),
   ).toHaveText(["Asset", "Forklift"]);
+  // A long cell wraps to two lines and keeps its whole text in reach.
+  await expect(
+    copy(page).getByRole("cell", { name: "Forklift" }),
+  ).toHaveAttribute("title", "Forklift");
   expect(api.state.csvReads).toBe(1);
 
   // EXIT-C4: the document never scrolls; the list and the copy do.
@@ -240,10 +250,13 @@ test.describe("schedules in a non-UTC browser timezone", () => {
     await expect(reportRow(page)).toContainText(
       "When someone makes a copy · 1 copy",
     );
-    const change = page.getByRole("button", { name: "Change when it runs" });
+    const change = steps(page).getByRole("listitem").nth(1).getByRole("button");
     await expect(change).toHaveAttribute("aria-expanded", "false");
+    await expect(change).toHaveAccessibleName(/Change when it runs$/);
     await change.click();
     await expect(change).toHaveAttribute("aria-expanded", "true");
+    // While open, the card closes the schedule.
+    await expect(change).toHaveAccessibleName(/Close when it runs$/);
     const schedule = page.getByRole("form", { name: "Schedule" });
     const save = schedule.getByRole("button", { name: "Save schedule" });
     await expect(save).toBeDisabled();
@@ -472,12 +485,82 @@ test("Make a report from this view fills the new report with the view's columns,
   );
 });
 
+test("moving a column reorders the rows, says where it went and keeps focus", async ({
+  page,
+}) => {
+  const api = await installModuleReportsApi(page);
+  await page.goto(modulePage("reports"));
+  await page.getByRole("button", { name: /Change what it lists$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit report" });
+  const columns = dialog.getByRole("group", { name: "Columns" });
+  await columns.getByRole("checkbox", { name: "Status" }).check();
+  // Chosen columns come first, in report order.
+  await expect(columns.locator('[data-slot="field-label"]')).toHaveText([
+    "Asset",
+    "Status",
+  ]);
+  await columns.getByRole("button", { name: "Move Status up" }).click();
+  await expect(columns.locator('[data-slot="field-label"]')).toHaveText([
+    "Status",
+    "Asset",
+  ]);
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "Status moved to column 1" }),
+  ).toBeAttached();
+  // Up is now off, so focus stays on Status's other move button.
+  await expect(
+    columns.getByRole("button", { name: "Move Status down" }),
+  ).toBeFocused();
+  await columns.getByRole("checkbox", { name: "Asset" }).uncheck();
+  await expect(columns.locator('[data-slot="field-label"]')).toHaveText([
+    "Status",
+    "Asset",
+  ]);
+  await columns.getByRole("checkbox", { name: "Asset" }).check();
+  await dialog.getByRole("button", { name: "Save report" }).click();
+  await expect(dialog).toBeHidden();
+  expect(api.state.updates[0]).toMatchObject({
+    recipe: {
+      fields: [
+        { field_id: ids.statusField, expected_type: "select" },
+        { field_id: ids.assetField, expected_type: "text" },
+      ],
+    },
+  });
+});
+
+test("a report dialog's save says why it waits, and leaving asks before it discards", async ({
+  page,
+}) => {
+  const api = await installModuleReportsApi(page);
+  await page.goto(modulePage("reports"));
+  await page.getByRole("button", { name: /Change what it lists$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit report" });
+  const save = dialog.getByRole("button", { name: "Save report" });
+  await expect(save).toHaveAttribute("aria-disabled", "true");
+  await expect(save).toHaveAccessibleDescription("No changes to save");
+
+  await dialog.getByLabel("Name").fill("Weekly assets");
+  await expect(save).not.toHaveAttribute("aria-disabled", "true");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  const discard = page.getByRole("alertdialog", {
+    name: "Discard your report changes?",
+  });
+  await discard.getByRole("button", { name: "Keep editing" }).click();
+  await expect(discard).toBeHidden();
+  await expect(dialog.getByLabel("Name")).toHaveValue("Weekly assets");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await discard.getByRole("button", { name: "Discard" }).click();
+  await expect(dialog).toBeHidden();
+  expect(api.state.updates).toEqual([]);
+});
+
 test("editing a report saves its revision, and a conflict offers the latest", async ({
   page,
 }) => {
   const api = await installModuleReportsApi(page);
   await page.goto(modulePage("reports"));
-  await page.getByRole("button", { name: "Change what it lists" }).click();
+  await page.getByRole("button", { name: /Change what it lists$/ }).click();
   const dialog = page.getByRole("dialog", { name: "Edit report" });
   await dialog.getByLabel("Name").fill("Weekly assets");
   await dialog.getByRole("checkbox", { name: "Status" }).check();
@@ -503,7 +586,7 @@ test("editing a report saves its revision, and a conflict offers the latest", as
   // Someone else saved in between: the dialog keeps the edit and offers the
   // latest report.
   api.state.conflictNextUpdate = true;
-  await page.getByRole("button", { name: "Change what it lists" }).click();
+  await page.getByRole("button", { name: /Change what it lists$/ }).click();
   await dialog.getByLabel("Subtitle").fill("Mondays");
   await dialog.getByRole("button", { name: "Save report" }).click();
   await expect(
@@ -915,6 +998,37 @@ test("a copy that cannot be read and a blocked print window each say what went w
     }),
   ).toBeVisible();
   expect(api.state.csvReads).toBe(reads);
+
+  // Print lays the copy out as a table, not raw CSV.
+  await page.evaluate(() => {
+    const printed = document.implementation.createHTMLDocument("");
+    window.open = () =>
+      ({
+        document: printed,
+        opener: null,
+        focus: () => undefined,
+        close: () => undefined,
+        print: () => {
+          (window as Window & { __printed?: string }).__printed =
+            printed.body.innerHTML;
+        },
+      }) as unknown as Window;
+  });
+  await copy(page).getByRole("button", { name: "Print" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as Window & { __printed?: string }).__printed ?? "",
+      ),
+    )
+    .toMatch(
+      /<table>[\s\S]*<th[^>]*>Asset<\/th>[\s\S]*<td[^>]*>Forklift<\/td>/,
+    );
+  expect(
+    await page.evaluate(
+      () => (window as Window & { __printed?: string }).__printed,
+    ),
+  ).not.toContain("<pre");
 });
 
 test("old report links open the report and its copy on the module page, or say the report is not available", async ({
@@ -974,10 +1088,34 @@ test("old report links open the report and its copy on the module page, or say t
     api.state.reportReads.filter((read) => read === ids.goneReport),
   ).not.toHaveLength(0);
 
-  // The old Reports page address opens the first module's Reports view.
+  // The old Reports page address opens the first module's Reports view, and
+  // the sidebar and breadcrumb follow the module it names.
   await page.goto("/openview?section=reports");
   await expect(page).toHaveURL(modulePage("reports"));
   await expect(reportRow(page)).toBeVisible();
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await expect(
+    nav
+      .getByRole("list", { name: "Field operations pages" })
+      .getByRole("link", { name: "Assets", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page
+      .getByRole("navigation", { name: "breadcrumb" })
+      .locator('[aria-current="page"]'),
+  ).toHaveText("Assets");
+
+  // A module the person cannot read gives way to the first readable one,
+  // with the Reports view, report and copy kept (DC26).
+  await page.goto(
+    `/openview?section=views&module=${ids.goneReport}&tab=reports&report=${ids.report}`,
+  );
+  await expect(page).toHaveURL(modulePage("reports", ids.report));
+  await expect(
+    nav
+      .getByRole("list", { name: "Field operations pages" })
+      .getByRole("link", { name: "Assets", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 test.describe("on a phone", () => {
@@ -986,7 +1124,9 @@ test.describe("on a phone", () => {
   test("the list and the report are separate screens, and a copy opens full screen", async ({
     page,
   }) => {
-    await installModuleReportsApi(page);
+    await installModuleReportsApi(page, {
+      csv: "Asset,Status\r\nForklift — hydraulic pump and spare seal kit,In service\r\n",
+    });
     await page.goto(modulePage("reports"));
     // Records and Reports sit under the title.
     const title = page.getByRole("heading", { level: 1, name: "Assets" });
@@ -1002,9 +1142,20 @@ test.describe("on a phone", () => {
     await expect(steps(page)).toBeVisible();
     await page.getByRole("button", { name: "Open copy" }).click();
     const full = page.getByRole("dialog", { name: "Operations review" });
-    await expect(full.getByRole("table", { name: /^Copy of / })).toContainText(
-      "Forklift",
-    );
+    // On a phone each copied row reads as label and value lines, so the copy
+    // never scrolls sideways (EXIT-C5).
+    const rows = full.getByRole("list", { name: /^Copy of / });
+    await expect(rows.getByRole("listitem")).toHaveText([
+      /^Asset\s*Forklift — hydraulic pump and spare seal kit\s*Status\s*In service$/,
+    ]);
+    await expect(full.getByRole("table")).toHaveCount(0);
+    expect(
+      await full.evaluate((sheet) =>
+        [sheet, ...sheet.querySelectorAll("*")].every(
+          (element) => element.scrollWidth <= element.clientWidth + 1,
+        ),
+      ),
+    ).toBe(true);
     // The sheet slides in, then covers the whole screen.
     await expect
       .poll(async () => {

@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   columnsWords,
   listsWords,
+  lowerName,
   reportListLine,
   runsWords,
 } from "../../../src/components/systems/openview/domain/report-words";
@@ -81,4 +82,13 @@ test("step 1 says what a report lists in words", () => {
       includeRowCount: false,
     }),
   ).toBe("1 column");
+});
+
+test("a module name in a sentence lowers ordinary words and keeps acronyms", () => {
+  expect(lowerName("Sales Orders")).toBe("sales orders");
+  expect(lowerName("PO Lines")).toBe("PO lines");
+  expect(lowerName("eBay Listings")).toBe("eBay listings");
+  expect(
+    listsWords({ filters: [], groupBy: null }, "RMA Cases", () => undefined),
+  ).toBe("All RMA cases");
 });

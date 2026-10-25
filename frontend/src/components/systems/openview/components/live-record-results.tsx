@@ -75,7 +75,7 @@ function subscribeNarrow(onChange: () => void) {
  * renders at a time, so no record is in the page twice; the first render
  * assumes a wide screen.
  */
-function useNarrowScreen(): boolean {
+export function useNarrowScreen(): boolean {
   return useSyncExternalStore(
     subscribeNarrow,
     () => window.matchMedia(NARROW_QUERY).matches,

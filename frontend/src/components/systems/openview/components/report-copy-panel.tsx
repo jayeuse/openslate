@@ -4,7 +4,6 @@ import { Check, ChevronDown, Download, Maximize2, Printer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { apiErrorMessage } from "@/lib/api-errors";
 import type { WorkspaceRegion } from "@/lib/date-time";
-import { cn } from "@/lib/utils";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { DialogFrameHeader } from "@/components/ui/dialog-frame";
@@ -21,6 +20,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   downloadOpenViewReportRunCsv,
@@ -33,6 +33,7 @@ import { REPORT_COPY_PAGE_SIZE } from "../adapters/report-queries";
 import type { OpenViewPage } from "../adapters/views-api";
 import { copyFromCsv, type ReportCopyTable } from "../domain/report-copy";
 import { copyDate } from "../domain/report-words";
+import { useNarrowScreen } from "./live-record-results";
 
 /** Rows a copy shows on the page; Print and CSV keep every row. */
 const COPY_ROW_LIMIT = 500;
@@ -52,109 +53,182 @@ function rowsWords(count: number): string {
   return `${count.toLocaleString("en-US")} ${count === 1 ? "row" : "rows"}`;
 }
 
+/** Print lays the copy out as a table with its headings, every row. */
 function printCopy(printWindow: Window, csv: string, title: string): void {
   const page = printWindow.document;
   page.title = title;
+  const table = copyFromCsv(csv, Number.MAX_SAFE_INTEGER);
+  const cell = (tag: "th" | "td", text: string, span = 1) => {
+    const element = page.createElement(tag);
+    element.textContent = text;
+    if (span > 1) element.colSpan = span;
+    return element;
+  };
   const heading = page.createElement("h1");
   heading.textContent = title;
-  const content = page.createElement("pre");
-  content.textContent = csv;
-  content.style.whiteSpace = "pre-wrap";
-  content.style.overflowWrap = "anywhere";
-  page.body.append(heading, content);
+  const grid = page.createElement("table");
+  const head = page.createElement("thead");
+  const headRow = page.createElement("tr");
+  headRow.append(...table.headings.map((text) => cell("th", text)));
+  head.append(headRow);
+  const body = page.createElement("tbody");
+  for (const row of table.rows) {
+    const line = page.createElement("tr");
+    if (row.kind === "summary")
+      line.append(cell("td", row.cells[0] ?? "", table.headings.length));
+    else line.append(...row.cells.map((text) => cell("td", text)));
+    body.append(line);
+  }
+  grid.append(head, body);
+  const style = page.createElement("style");
+  style.textContent =
+    "body{font:12px system-ui,sans-serif}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #ccc;padding:4px 6px;text-align:left;vertical-align:top}";
+  page.head.append(style);
+  page.body.append(heading, grid);
   printWindow.focus();
   printWindow.print();
+}
+
+function CopySkeleton() {
+  return (
+    <div className="p-4">
+      <Skeleton className="mb-3 h-5 w-1/3" />
+      <Skeleton className="mb-2 h-8 w-full" />
+      <Skeleton className="mb-2 h-8 w-full" />
+      <Skeleton className="h-8 w-2/3" />
+    </div>
+  );
 }
 
 function CopyRows({
   label,
   read,
+  narrow,
   onRetry,
 }: {
   label: string;
   read: CopyRead | null;
+  /** Phones: each row as label and value lines, so nothing scrolls sideways. */
+  narrow: boolean;
   onRetry: () => void;
 }) {
-  if (!read || read.status === "loading")
-    return (
-      <div role="status" aria-label="Loading the copy" className="p-4">
-        <Skeleton className="mb-3 h-5 w-1/3" />
-        <Skeleton className="mb-2 h-8 w-full" />
-        <Skeleton className="mb-2 h-8 w-full" />
-        <Skeleton className="h-8 w-2/3" />
-      </div>
-    );
-  if (read.status === "failed")
-    return (
-      <div className="p-4">
-        <Alert
-          role="alert"
-          variant="destructive"
-          className="flex flex-wrap items-center justify-between gap-3"
-        >
-          <span>{read.message}</span>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={onRetry}
+  return (
+    <LoadingRegion
+      loading={!read || read.status === "loading"}
+      label="Loading the copy…"
+      skeleton={<CopySkeleton />}
+    >
+      {read?.status === "failed" ? (
+        <div className="p-4">
+          <Alert
+            role="alert"
+            variant="destructive"
+            className="flex flex-wrap items-center justify-between gap-3"
           >
-            Retry
-          </Button>
-        </Alert>
-      </div>
-    );
-  const { table } = read;
+            <span>{read.message}</span>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={onRetry}
+            >
+              Retry
+            </Button>
+          </Alert>
+        </div>
+      ) : read?.status === "ready" ? (
+        <CopyTable label={label} table={read.table} narrow={narrow} />
+      ) : null}
+    </LoadingRegion>
+  );
+}
+
+function CopyTable({
+  label,
+  table,
+  narrow,
+}: {
+  label: string;
+  table: ReportCopyTable;
+  narrow: boolean;
+}) {
+  // A copy's rows have no ids; their order is the copy itself.
+  const rows = narrow ? (
+    <ul aria-label={label} className="divide-border divide-y">
+      {table.rows.map((row, index) =>
+        row.kind === "summary" ? (
+          <li
+            key={index}
+            className="text-muted-foreground px-5 py-3 text-sm font-medium"
+          >
+            {row.cells[0]}
+          </li>
+        ) : (
+          <li key={index} className="px-5 py-3">
+            <dl className="grid gap-x-3 gap-y-1 text-sm">
+              {row.cells.map((cell, column) => (
+                <div key={column} className="min-w-0">
+                  <dt className="text-muted-foreground text-xs">
+                    {table.headings[column]}
+                  </dt>
+                  <dd className="break-words">{cell}</dd>
+                </div>
+              ))}
+            </dl>
+          </li>
+        ),
+      )}
+    </ul>
+  ) : (
+    <table aria-label={label} className="w-full border-collapse text-sm">
+      <thead>
+        <tr>
+          {table.headings.map((heading, index) => (
+            <th
+              key={`${index}:${heading}`}
+              scope="col"
+              data-slot="table-head"
+              className="bg-card text-muted-foreground sticky top-0 z-[1] h-9 px-4 text-left text-xs font-medium whitespace-nowrap shadow-[inset_0_-1px_0_var(--border)]"
+            >
+              {heading}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody data-slot="table-body">
+        {table.rows.map((row, index) =>
+          row.kind === "summary" ? (
+            <tr key={index} data-slot="table-row" className="border-b">
+              <td
+                data-slot="table-cell"
+                colSpan={table.headings.length || 1}
+                className="text-muted-foreground h-10 px-4 font-medium"
+              >
+                {row.cells[0]}
+              </td>
+            </tr>
+          ) : (
+            <tr key={index} data-slot="table-row" className="border-b">
+              {row.cells.map((cell, column) => (
+                <td
+                  key={column}
+                  data-slot="table-cell"
+                  title={cell}
+                  className="h-10 max-w-80 px-4 py-1.5 align-top"
+                >
+                  {/* Two lines at most; the whole text is in the title. */}
+                  <span className="line-clamp-2 whitespace-normal">{cell}</span>
+                </td>
+              ))}
+            </tr>
+          ),
+        )}
+      </tbody>
+    </table>
+  );
   return (
     <>
-      <table aria-label={label} className="w-full border-collapse text-sm">
-        <thead>
-          <tr>
-            {table.headings.map((heading, index) => (
-              <th
-                key={`${index}:${heading}`}
-                scope="col"
-                data-slot="table-head"
-                className="bg-card text-muted-foreground sticky top-0 z-[1] h-9 px-4 text-left text-xs font-medium whitespace-nowrap shadow-[inset_0_-1px_0_var(--border)]"
-              >
-                {heading}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody data-slot="table-body">
-          {table.rows.map((row, index) =>
-            row.kind === "summary" ? (
-              <tr
-                // A copy's rows have no ids; their order is the copy itself.
-                key={index}
-                data-slot="table-row"
-                className="border-b"
-              >
-                <td
-                  data-slot="table-cell"
-                  colSpan={table.headings.length || 1}
-                  className="text-muted-foreground h-10 px-4 font-medium"
-                >
-                  {row.cells[0]}
-                </td>
-              </tr>
-            ) : (
-              <tr key={index} data-slot="table-row" className="border-b">
-                {row.cells.map((cell, column) => (
-                  <td
-                    key={column}
-                    data-slot="table-cell"
-                    className="h-10 max-w-80 truncate px-4"
-                  >
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ),
-          )}
-        </tbody>
-      </table>
+      {rows}
       {table.shown < table.total ? (
         <p className="text-muted-foreground px-4 py-3 text-sm">
           {table.shown.toLocaleString("en-US")} of{" "}
@@ -210,6 +284,7 @@ export function ReportCopyPanel({
   const [actionError, setActionError] = useState("");
   const [printing, setPrinting] = useState(false);
   const [fullScreen, setFullScreen] = useState(false);
+  const narrow = useNarrowScreen();
 
   const loadedOlder = older?.reportId === report.id ? older : null;
   const listed = [...(copies?.items ?? []), ...(loadedOlder?.items ?? [])];
@@ -361,9 +436,12 @@ export function ReportCopyPanel({
 
   if (copiesPending && !copies)
     return (
-      <div className="border-t p-4" aria-busy="true">
-        <Skeleton className="h-6 w-1/2" />
-      </div>
+      <LoadingRegion
+        loading
+        label="Loading copies…"
+        className="border-t"
+        skeleton={<CopySkeleton />}
+      />
     );
   if (copiesFailed && !copies)
     return (
@@ -395,9 +473,12 @@ export function ReportCopyPanel({
     );
   if (!current)
     return copyId ? (
-      <div className="border-t p-4" aria-busy="true">
-        <Skeleton className="h-6 w-1/2" />
-      </div>
+      <LoadingRegion
+        loading
+        label="Loading the copy…"
+        className="border-t"
+        skeleton={<CopySkeleton />}
+      />
     ) : (
       <div className="text-muted-foreground border-t px-4 py-6 text-sm">
         No copies yet.
@@ -515,18 +596,17 @@ export function ReportCopyPanel({
         </Alert>
       ) : null}
       {/* Only this panel scrolls on desktop (EXIT-C4); phones open it full
-          screen instead. */}
-      <div
-        className={cn(
-          "relative min-h-0 overflow-auto overscroll-contain max-md:hidden xl:flex-1",
-        )}
-      >
-        <CopyRows
-          label={title}
-          read={currentRead}
-          onRetry={() => setRetry((value) => value + 1)}
-        />
-      </div>
+          screen instead, so one layout renders at a time. */}
+      {narrow ? null : (
+        <div className="relative min-h-0 overflow-auto overscroll-contain xl:flex-1">
+          <CopyRows
+            label={title}
+            read={currentRead}
+            narrow={false}
+            onRetry={() => setRetry((value) => value + 1)}
+          />
+        </div>
+      )}
       {/* Phones: the copy opens full screen (DC12). */}
       <Sheet open={fullScreen} onOpenChange={setFullScreen}>
         <SheetContent className="slim-ui w-screen max-w-none">
@@ -541,11 +621,12 @@ export function ReportCopyPanel({
             onClose={() => setFullScreen(false)}
           />
           {actions}
-          <div className="relative -mx-5 min-h-0 flex-1 overflow-auto">
+          <div className="relative -mx-5 min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
             {fullScreen ? (
               <CopyRows
                 label={title}
                 read={currentRead}
+                narrow={narrow}
                 onRetry={() => setRetry((value) => value + 1)}
               />
             ) : null}

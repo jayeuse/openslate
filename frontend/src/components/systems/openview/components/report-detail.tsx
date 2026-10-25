@@ -173,7 +173,7 @@ export function ReportDetail({
       value: listsWords(recipe, moduleName, fieldName),
       detail: columnsWords(recipe),
       change: canChange
-        ? { label: "Change what it lists", onClick: onEdit }
+        ? { subject: "what it lists", onClick: onEdit }
         : undefined,
     },
     {
@@ -200,7 +200,7 @@ export function ReportDetail({
       ),
       change: canChange
         ? {
-            label: "Change when it runs",
+            subject: "when it runs",
             onClick: () => setScheduleOpen((open) => !open),
             expanded: scheduleOpen,
             controls: scheduleId,

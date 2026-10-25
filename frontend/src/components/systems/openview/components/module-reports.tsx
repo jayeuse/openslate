@@ -40,7 +40,7 @@ import {
   type OpenViewReport,
 } from "../adapters/reports-api";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
-import { isScheduled, reportListLine } from "../domain/report-words";
+import { isScheduled, lowerName, reportListLine } from "../domain/report-words";
 import { ReportDetail } from "./report-detail";
 import {
   emptyReportDraft,
@@ -301,9 +301,9 @@ export function ModuleReports({
             <h2
               id="reports-empty-title"
               data-slot="empty-title"
-              className="text-[0.9375rem] font-semibold"
+              className="text-base font-semibold"
             >
-              Keep a dated copy of these {moduleName.toLowerCase()}
+              Keep a dated copy of these {lowerName(moduleName)}
             </h2>
             <div className="w-full">
               <ReportSteps
@@ -312,7 +312,7 @@ export function ModuleReports({
                 steps={[
                   {
                     label: "What it lists",
-                    value: `The ${moduleName.toLowerCase()} you choose`,
+                    value: `The ${lowerName(moduleName)} you choose`,
                     detail: "Start from the view you are using",
                   },
                   {
@@ -360,7 +360,7 @@ export function ModuleReports({
   return (
     <div className="access-fill flex min-h-0 min-w-0 flex-col gap-3">
       {notice}
-      <div className="grid min-h-0 min-w-0 gap-3 md:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)] xl:flex-1 xl:grid-rows-[minmax(0,1fr)]">
+      <div className="grid min-h-0 min-w-0 gap-3 md:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)] xl:flex-1 xl:grid-cols-[22rem_minmax(0,1fr)] xl:grid-rows-[minmax(0,1fr)]">
         <Card
           aria-labelledby="reports-list-title"
           className={cn(
@@ -372,7 +372,7 @@ export function ModuleReports({
             <h2
               id="reports-list-title"
               data-slot="section-title"
-              className="text-[0.9375rem] font-semibold"
+              className="text-base font-semibold"
             >
               Reports
             </h2>
@@ -490,7 +490,11 @@ export function ModuleReports({
                         <RowOpenButton
                           title={report.name}
                           subtitle={
-                            <span className="tabular-nums">{line}</span>
+                            // One plain line (DC2); the row keeps it whole
+                            // in its name for a cut line.
+                            <span className="block max-w-full truncate tabular-nums">
+                              {line}
+                            </span>
                           }
                           onOpen={() => select(report)}
                         />
