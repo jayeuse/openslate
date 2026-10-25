@@ -18,7 +18,7 @@ import {
 import { profileSelfKey } from "@/components/profile/adapters/profile-queries";
 import type { ProfileSelf } from "@/components/profile/adapters/profile-api";
 import { personProfileKey } from "@/components/profile/adapters/profile-view-keys";
-import type { PersonProfile } from "@/components/profile/adapters/profile-view-api";
+import type { PersonProfile } from "@/components/profile/adapters/profile-api";
 import {
   Breadcrumb,
   BreadcrumbItem,

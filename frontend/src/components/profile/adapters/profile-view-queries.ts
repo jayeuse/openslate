@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { getPersonProfile } from "./profile-view-api";
+import { getPersonProfile } from "./profile-api";
 import { personProfileKey } from "./profile-view-keys";
 
 export const personProfileOptions = (

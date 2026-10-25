@@ -299,7 +299,15 @@ test("legacy Appearance and Your profile share only confirmed theme saves, prese
       .poll(() => page.evaluate(() => localStorage.getItem("openslate-motion")))
       .toBeNull();
     await expect(page.locator("html")).not.toHaveAttribute("data-motion");
+    // The account row opens the read-only Profile view (PD16); the account
+    // menu leads back to Account settings and its confirmed saves.
     await page.getByRole("link", { name: /^Your profile, / }).click();
+    await expect(page).toHaveURL(/\/profile$/);
+    await page.getByRole("button", { name: "Account", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Account settings", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/settings$/);
     await expect(dark(page)).toBeChecked();
     await page.reload();
     await expect(dark(page)).toBeChecked();

@@ -12,7 +12,7 @@ import {
 import {
   personProfileFromSelf,
   type PersonProfile,
-} from "../adapters/profile-view-api";
+} from "../adapters/profile-api";
 import { profileSelfOptions } from "../adapters/profile-queries";
 import { personProfileOptions } from "../adapters/profile-view-queries";
 

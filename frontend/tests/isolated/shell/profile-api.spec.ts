@@ -21,7 +21,7 @@ import {
   getPersonProfile,
   personProfileFromSelf,
   type PersonProfile,
-} from "../../../src/components/profile/adapters/profile-view-api";
+} from "../../../src/components/profile/adapters/profile-api";
 import { installFetch } from "../platform/fixtures";
 
 // The private profile, its photo and the shared person card trust a reply
