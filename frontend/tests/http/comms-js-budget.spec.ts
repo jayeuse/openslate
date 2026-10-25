@@ -24,9 +24,13 @@ const gzip = {
   memLevel: 8,
   strategy: constants.Z_DEFAULT_STRATEGY,
 };
-// Plan section 6: a cold /comms load (Comms and shell) ends strictly below the
-// S04 baseline. Growth is reported against the last recorded measurement.
+// Plan section 6: a cold /comms load (Comms and shell) ends strictly below its
+// target. The target began at the S04 baseline; the owner raised it to 548,000
+// on 2026-10-26 for the sidebar's Departments section (OpenView part A, DA2),
+// an approved shell feature, after parts B and C removed the OpenView group.
+// Growth is reported against the last recorded measurement.
 const s04BaselineColdGzipBytes = 546_979;
+const coldTargetGzipBytes = 548_000;
 const baselineColdGzipBytes = 578_709;
 
 function manifestChunks(value: unknown): string[] {
@@ -205,9 +209,9 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
       budget_slice: "admin-tools-wiring",
       comparison:
         "Recorded shell-fix closure measurement, not a newly measured baseline",
-      strict_cap_met: cold.gzip_bytes < s04BaselineColdGzipBytes,
+      strict_cap_met: cold.gzip_bytes < coldTargetGzipBytes,
       s04_baseline_cold_gzip_bytes: s04BaselineColdGzipBytes,
-      target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
+      target_exclusive_gzip_bytes: coldTargetGzipBytes,
       baseline_cold_gzip_bytes: baselineColdGzipBytes,
       growth_bytes: growthBytes,
       growth_percent: growthPercent,
@@ -237,9 +241,9 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
       contentType: "application/json",
     });
     console.info(
-      `Cold JavaScript gzip: raw=${coldRaw.gzip_bytes} bytes; Comms+shell=${cold.gzip_bytes} bytes; other-route-only=${coldRaw.gzip_bytes - cold.gzip_bytes} bytes; growth=${growthBytes} bytes / ${growthPercent}%; target below ${s04BaselineColdGzipBytes} bytes.`,
+      `Cold JavaScript gzip: raw=${coldRaw.gzip_bytes} bytes; Comms+shell=${cold.gzip_bytes} bytes; other-route-only=${coldRaw.gzip_bytes - cold.gzip_bytes} bytes; growth=${growthBytes} bytes / ${growthPercent}%; target below ${coldTargetGzipBytes} bytes.`,
     );
-    expect(cold.gzip_bytes).toBeLessThan(s04BaselineColdGzipBytes);
+    expect(cold.gzip_bytes).toBeLessThan(coldTargetGzipBytes);
   } finally {
     server.close();
   }
