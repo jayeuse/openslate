@@ -328,6 +328,25 @@ export function listOpenViewRelationshipFields(
   });
 }
 
+/**
+ * The relationship fields of every module the person can read, one page. A
+ * dashboard may show modules linked to its department either way (BE2).
+ */
+export function listReadableRelationshipFields(
+  signal?: AbortSignal,
+): Promise<OpenViewPage<OpenViewRelationshipField>> {
+  const query = new URLSearchParams({
+    type: "relationship",
+    deleted: "exclude",
+    limit: "100",
+    offset: "0",
+  });
+  return apiFetch(`/fields?${query}`, listSchema(relationshipFieldSchema), {
+    cache: "no-store",
+    signal,
+  });
+}
+
 /** One visible incident-link page; the caller exposes the continuation. */
 export function listOpenViewRecordLinks(
   recordId: string,

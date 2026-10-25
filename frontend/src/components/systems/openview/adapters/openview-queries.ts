@@ -400,8 +400,6 @@ export function prefetchOpenViewSection(
   const reads: Promise<void>[] = [];
   if (section === "views")
     reads.push(client.prefetchQuery(boundedCatalogOptions()));
-  if (section === "charts")
-    reads.push(client.prefetchQuery(catalogFirstPageOptions()));
   if (section === "reports")
     reads.push(
       client.prefetchQuery(reportListOptions("exclude")),

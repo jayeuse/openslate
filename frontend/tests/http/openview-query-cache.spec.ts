@@ -405,9 +405,11 @@ test("revisiting Reports within the cache window shows its list at once without 
   );
   expect(streamsAfterFirstLoad).toBeGreaterThan(0);
 
-  await followSidebarLink(page, "Charts");
-  await expect(page).toHaveURL(/section=charts/);
-  await expect(page.getByRole("heading", { name: "Charts" })).toBeVisible();
+  await followSidebarLink(page, "Assets");
+  await expect(page).toHaveURL(/section=views/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Assets" }),
+  ).toBeVisible();
 
   await resetLoadingProbe(page);
   await followSidebarLink(page, "Reports");
@@ -435,6 +437,11 @@ test("a Reports list prefetched before the stream connects refreshes once it con
   // Dashboards does not listen to the stream, so a hover there prefetches
   // Reports while no stream protects it.
   await page.goto("/openview?section=dashboards");
+  // A dashboard belongs to its department, so the OpenView group starts closed.
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("button", { name: "OpenView", exact: true })
+    .click();
   await sidebarLink(page, "Reports").hover();
   await expect.poll(() => api.reportLists.length).toBe(1);
 
@@ -485,13 +492,6 @@ const catalogDenialCases: CatalogDenialCase[] = [
       "OpenView data is unavailable. Sign in or ask for access, then retry.",
     loading: "Loading OpenView catalog",
   },
-  {
-    name: "Charts",
-    section: "charts",
-    invalidation: { entity: "modules" },
-    denial: "Chart data is unavailable. Sign in or ask for access, then retry.",
-    loading: "Loading the authorized data-source catalog…",
-  },
 ];
 
 for (const current of catalogDenialCases) {
@@ -501,12 +501,8 @@ for (const current of catalogDenialCases) {
     const api = await installOpenViewApi(page);
     await page.goto(`/openview?section=${current.section}`);
     const denial = page.getByText(current.denial);
-    // The catalog shows as the module page's title in Views (OD1) and as
-    // the data-source choice in Charts.
-    const source =
-      current.section === "views"
-        ? page.getByRole("heading", { level: 1, name: "Assets" })
-        : page.locator("option", { hasText: "Assets" });
+    // The catalog shows as the module page's title (OD1).
+    const source = page.getByRole("heading", { level: 1, name: "Assets" });
     await expect(source).toHaveCount(1);
     await sendOpenViewEvent(page, "resync");
     await expect.poll(() => api.catalogReads.length).toBe(2);
@@ -533,47 +529,23 @@ for (const current of catalogDenialCases) {
   });
 }
 
-test("a refused Charts catalog page stays in force while the catalog retries", async ({
-  page,
-}) => {
-  const api = await installOpenViewApi(page);
-  api.refuseLaterCatalogPages();
-  await page.goto("/openview?section=charts");
-  const source = page.locator("option", { hasText: "Assets" });
-  await expect(source).toHaveCount(1);
-
-  await page.getByRole("button", { name: "Load more data sources" }).click();
-  await expect(source).toHaveCount(0);
-
-  const release = api.holdCatalog();
-  const reads = api.catalogReads.length;
-  await page.getByRole("button", { name: "Retry catalog" }).click();
-  await expect.poll(() => api.catalogReads.length).toBe(reads + 1);
-  // The first page has not read again yet, so its names stay hidden.
-  await expect(source).toHaveCount(0);
-
-  release();
-  await expect(source).toHaveCount(1);
-});
-
 test("a refused catalog page or refresh hides cached data sources from a new Report recipe", async ({
   page,
 }) => {
   const api = await installOpenViewApi(page);
   api.refuseLaterCatalogPages();
-  await page.goto("/openview?section=charts");
-  const source = page.locator("option", { hasText: "Assets" });
+  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "New Report" }).click();
+  const source = page.locator("#report-source option", { hasText: "Assets" });
   await expect(source).toHaveCount(1);
   await page.getByRole("button", { name: "Load more data sources" }).click();
   await expect(source).toHaveCount(0);
 
-  // The refusal belongs to the shared catalog, not to Charts alone: Reports
-  // must read the catalog again before it may show any data source.
+  // The refusal belongs to the shared catalog: the recipe must read the
+  // catalog again before it may show any data source.
   const release = api.holdCatalog();
   const reads = api.catalogReads.length;
-  await followSidebarLink(page, "Reports");
-  await expect(page).toHaveURL(/section=reports/);
-  await page.getByRole("button", { name: "New Report" }).click();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.locator("#report-source")).toBeVisible();
   await expect(source).toHaveCount(0);
   await expect.poll(() => api.catalogReads.length).toBeGreaterThan(reads);
@@ -593,69 +565,6 @@ test("a refused catalog page or refresh hides cached data sources from a new Rep
     .toBeGreaterThan(refreshReads);
   await expect(page.locator("#report-source")).toBeVisible();
   await expect(source).toHaveCount(0);
-});
-
-test("an invalidation drops loaded catalog pages even when the first page is unchanged", async ({
-  page,
-}) => {
-  const api = await installOpenViewApi(page);
-  api.setLaterCatalogPage([
-    { id: "00000000-0000-4000-8000-000000000106", name: "Equipment" },
-  ]);
-  await page.goto("/openview?section=charts");
-  await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(1);
-  // The stream's opening resync reads the catalog once more.
-  await sendOpenViewEvent(page, "resync");
-  await expect.poll(() => api.catalogReads.length).toBe(2);
-
-  await page.getByRole("button", { name: "Load more data sources" }).click();
-  const equipment = page.locator("option", { hasText: "Equipment" });
-  await expect(equipment).toHaveCount(1);
-
-  // The second page changes; the first page reads back deep-equal.
-  api.setLaterCatalogPage([
-    { id: "00000000-0000-4000-8000-000000000107", name: "Vehicles" },
-  ]);
-  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
-  await expect.poll(() => api.catalogReads.length).toBe(3);
-  await expect(equipment).toHaveCount(0);
-  await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(1);
-
-  await page.getByRole("button", { name: "Load more data sources" }).click();
-  await expect(page.locator("option", { hasText: "Vehicles" })).toHaveCount(1);
-  await expect(equipment).toHaveCount(0);
-});
-
-test("a refused catalog page outlasts a first-page read already in flight", async ({
-  page,
-}) => {
-  const api = await installOpenViewApi(page);
-  api.refuseLaterCatalogPages();
-  await page.goto("/openview?section=charts");
-  const source = page.locator("option", { hasText: "Assets" });
-  await expect(source).toHaveCount(1);
-  await sendOpenViewEvent(page, "resync");
-  await expect.poll(() => api.catalogReads.length).toBe(2);
-
-  // A catalog change starts a first-page read that has not returned yet.
-  const release = api.holdCatalog();
-  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
-  await expect.poll(() => api.catalogReads.length).toBe(3);
-
-  // The next page is refused while that read is still out.
-  await page.getByRole("button", { name: "Load more data sources" }).click();
-  await expect(source).toHaveCount(0);
-
-  // The older read started before the refusal, so it cannot clear it.
-  release();
-  await expect(
-    page.getByRole("button", { name: "Retry catalog" }),
-  ).toBeVisible();
-  await expect(source).toHaveCount(0);
-
-  // A read started after the refusal can.
-  await page.getByRole("button", { name: "Retry catalog" }).click();
-  await expect(source).toHaveCount(1);
 });
 
 test("a refused Reports list hides the other archive filter's cached list too", async ({
@@ -684,21 +593,22 @@ test("a refused Reports list hides the other archive filter's cached list too", 
   await expect(report).toBeVisible();
 });
 
-test("a refusal in Charts or Dashboards hides cached Reports or Views until an authorized read", async ({
+test("a refusal on a module page hides cached Reports until an authorized read", async ({
   page,
 }) => {
   const api = await installOpenViewApi(page);
   await page.goto("/openview?section=reports");
   const report = page.getByRole("button", { name: "Alpha report" });
   await expect(report).toBeVisible();
-  await followSidebarLink(page, "Charts");
-  await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(1);
+  await followSidebarLink(page, "Assets");
+  const title = page.getByRole("heading", { level: 1, name: "Assets" });
+  await expect(title).toBeVisible();
   await sendOpenViewEvent(page, "resync");
   await expect.poll(() => api.catalogReads.length).toBeGreaterThan(1);
 
   api.denyCatalog(true);
   await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
-  await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(0);
+  await expect(title).toHaveCount(0);
 
   // The Reports list is still cached as a success, but access was refused.
   await followSidebarLink(page, "Reports");
@@ -712,41 +622,14 @@ test("a refusal in Charts or Dashboards hides cached Reports or Views until an a
   // next modules change reads it again and they return.
   await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
   await expect(
-    sidebarLink(page, "Assets").or(
-      page
-        .getByRole("navigation", { name: "Main navigation" })
-        .getByRole("button", { name: "Operations", exact: true }),
-    ),
+    page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("button", { name: "Operations", exact: true }),
   ).toBeVisible();
 
   await followSidebarLink(page, "Assets");
   await expect(page).toHaveURL(/section=views/);
   const source = page.getByRole("heading", { level: 1, name: "Assets" });
-  await expect(source).toHaveCount(1);
-
-  // Dashboards reads the catalog itself, without the cache, and is refused.
-  // Clicks are dispatched without hover or focus: a pointer resting on a
-  // sidebar link starts an intent prefetch of the catalog 120 ms later, at a
-  // moment this journey does not control.
-  api.denyCatalog(true);
-  const reads = api.catalogReads.length;
-  await followSidebarLink(page, "Dashboards");
-  await expect.poll(() => api.catalogReads.length).toBeGreaterThan(reads);
-
-  // Back in Views the cached catalog reads again. While those reads are
-  // out, the refusal Dashboards saw already hides the cached names.
-  const release = api.holdCatalog();
-  const before = api.catalogReads.length;
-  await followSidebarLink(page, "Assets");
-  await expect(page).toHaveURL(/section=views/);
-  await expect.poll(() => api.catalogReads.length).toBeGreaterThan(before);
-  await expect(source).toHaveCount(0);
-  release();
-  await expect(source).toHaveCount(0);
-
-  // An authorized read started after the refusal restores them.
-  api.denyCatalog(false);
-  await page.getByRole("button", { name: "Retry catalog" }).click();
   await expect(source).toHaveCount(1);
 });
 

@@ -7,7 +7,6 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { parseOpenViewUrl } from "../domain/model";
 import { OpenViewQuerySync } from "./openview-query-sync";
 import { OpenViewLoading } from "./openview-skeletons";
-import ServerBackedCharts from "./server-backed-charts";
 import ServerBackedDashboards from "./server-backed-dashboards";
 import ServerBackedReports from "./server-backed-reports";
 import ServerBackedViewsWorkspace, {
@@ -27,8 +26,10 @@ function OpenViewRouteContent() {
     content = (
       <ServerBackedViewsWorkspace invalidUrl={Boolean(urlState.invalid)} />
     );
-  else if (section === "charts") content = <ServerBackedCharts />;
-  else if (section === "dashboards") content = <ServerBackedDashboards />;
+  // The Charts page is gone (BD10): its links open a department dashboard
+  // with the builder's saved-chart list.
+  else if (section === "dashboards" || section === "charts")
+    content = <ServerBackedDashboards />;
   else if (section === "reports")
     content = (
       <ServerBackedReports
@@ -58,9 +59,7 @@ function OpenViewRouteContent() {
   return (
     <>
       <OpenViewQuerySync
-        active={
-          section === "views" || section === "charts" || section === "reports"
-        }
+        active={section === "views" || section === "reports"}
       />
       {content}
     </>

@@ -140,8 +140,11 @@ export function AppShell({
   // scrolls; its panels do. Phones and tablets scroll the page.
   const isSandbox = pathname === "/sandbox";
   const isManage = pathname === "/manage";
-  // A module page is a still page like Manage (OD6).
-  const isModule = isModulePage(pathname, searchParams);
+  // A module page and a department dashboard are still pages like Manage
+  // (OD6, EXIT-B2).
+  const isModule =
+    isModulePage(pathname, searchParams) ||
+    (pathname === "/openview" && searchParams.get("section") === "dashboards");
   const suspended = useWorkspaceInteractionSuspended();
   const queryClient = useQueryClient();
   const brandQuery = useQuery({

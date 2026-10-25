@@ -117,18 +117,26 @@ test("the sidebar lists readable departments in Sandbox order with their module 
   ).toHaveCount(0);
   await departments.getByRole("button", { name: "Sales", exact: true }).click();
   const salesPages = nav.getByRole("list", { name: "Sales pages" });
-  await expect(salesPages.getByRole("link")).toHaveText(["Contacts", "Quotes"]);
+  // The department's home dashboard comes first, then its module pages (BD1).
+  await expect(salesPages.getByRole("link")).toHaveText([
+    "Dashboard",
+    "Contacts",
+    "Quotes",
+  ]);
+  await expect(
+    salesPages.getByRole("link", { name: "Dashboard", exact: true }),
+  ).toHaveAttribute(
+    "href",
+    `/openview?section=dashboards&department=${ids.sales}`,
+  );
   await expect(
     salesPages.getByRole("link", { name: "Quotes", exact: true }),
   ).toHaveAttribute("href", `/openview?section=views&module=${ids.quotes}`);
-  // The OpenView group keeps Dashboards, Charts and Reports only (DA5).
+  // The OpenView group keeps Reports only (DA5, BD1).
   await nav.getByRole("button", { name: "OpenView", exact: true }).click();
   await expect(
-    nav.getByRole("link", { name: "Views", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    nav.getByRole("link", { name: "Dashboards", exact: true }),
-  ).toBeVisible();
+    nav.getByRole("link", { name: /^(Views|Dashboards|Charts|Reports)$/ }),
+  ).toHaveText(["Reports"]);
 });
 
 test("an opened department stays open while the person moves between pages", async ({

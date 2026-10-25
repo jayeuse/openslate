@@ -70,116 +70,6 @@ async function catalog(page: Page) {
   });
 }
 
-test("Charts expose numeric extrema and primitive Distinct while missing values stay absent from bar, pie and print", async ({
-  page,
-}) => {
-  await catalog(page);
-  const submitted: Record<string, unknown>[] = [];
-  await page.route("**/api/records/aggregate-snapshot", (route) => {
-    const body = route.request().postDataJSON() as Record<string, unknown>;
-    submitted.push(body);
-    const result =
-      body.aggregation === "distinct"
-        ? snapshot(["Measured"], [2])
-        : snapshot(["Measured", "Missing"], ["1.2345678901234567", null]);
-    if (body.aggregation === "distinct") result.items[0].record_count = 2;
-    else result.items[1].record_count = 1;
-    return route.fulfill({
-      json: result,
-    });
-  });
-  await page.goto("/openview?section=charts&module=" + moduleId);
-  const aggregation = page.getByLabel("Measure", { exact: true });
-  await expect(
-    aggregation.getByRole("option", { name: "Distinct", exact: true }),
-  ).toBeAttached();
-  await aggregation.selectOption("distinct");
-  await page
-    .getByLabel("Measure field", { exact: true })
-    .selectOption(categoryId);
-  await page.getByRole("button", { name: "Apply chart", exact: true }).click();
-  const table = page.getByRole("table", {
-    name: "Complete aggregate data",
-    exact: true,
-  });
-  await expect(
-    table.getByRole("row", { name: "Measured 2 2", exact: true }),
-  ).toBeVisible();
-  expect(submitted[0]).toMatchObject({
-    aggregation: "distinct",
-    measure: { field_id: categoryId, expected_type: "text" },
-  });
-  for (const metric of ["min", "max"]) {
-    await aggregation.selectOption(metric);
-    await page
-      .getByLabel("Numeric measure", { exact: true })
-      .selectOption(amountId);
-    await page
-      .getByRole("button", { name: "Apply chart", exact: true })
-      .click();
-    await expect(
-      table.getByRole("row", { name: "Missing — 1", exact: true }),
-    ).toBeVisible();
-    await expect(page.locator(".recharts-bar-rectangle")).toHaveCount(1);
-  }
-  await page.getByLabel("Chart type", { exact: true }).selectOption("pie");
-  await page.getByRole("button", { name: "Apply chart", exact: true }).click();
-  await expect(page.locator(".recharts-pie-sector")).toHaveCount(1);
-  await expect(
-    page.getByRole("alert").filter({ hasText: "numeric range" }),
-  ).toHaveCount(0);
-  await page.emulateMedia({ media: "print" });
-  await expect(
-    page
-      .getByRole("table", { name: "Printable complete aggregate data" })
-      .getByRole("row", { name: "Missing — 1", exact: true }),
-  ).toBeVisible();
-  await page.emulateMedia({ media: "screen" });
-});
-
-test("Charts keep missing daily averages as line gaps and exact table values", async ({
-  page,
-}) => {
-  await catalog(page);
-  await page.route("**/api/records/aggregate-snapshot", (route) =>
-    route.fulfill({
-      json: snapshot(
-        ["2026-10-01", "2026-10-02", "2026-10-03"],
-        ["1.25", null, "3.75"],
-      ),
-    }),
-  );
-  await page.goto("/openview?section=charts&module=" + moduleId);
-  await page.getByLabel("Chart type", { exact: true }).selectOption("line");
-  await page.getByLabel("Measure", { exact: true }).selectOption("average");
-  await page
-    .getByLabel("Numeric measure", { exact: true })
-    .selectOption(amountId);
-  await page.getByRole("button", { name: "Date window", exact: true }).click();
-  await page.getByLabel("From date", { exact: true }).fill("2026-10-01");
-  await page.getByLabel("To date", { exact: true }).fill("2026-10-03");
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Apply chart", exact: true }).click();
-  await expect(
-    page
-      .getByRole("table", { name: "Complete aggregate data", exact: true })
-      .getByRole("row", { name: "2026-10-02 — 0", exact: true }),
-  ).toBeVisible();
-  await expect(page.locator(".recharts-line-dot")).toHaveCount(2);
-  // Geometry is the contract: the missing date keeps its x-position and splits the line.
-  await expect
-    .poll(
-      async () =>
-        (await page.locator(".recharts-line-curve").getAttribute("d"))?.match(
-          /M/g,
-        )?.length,
-    )
-    .toBe(2);
-  await expect(
-    page.getByRole("alert").filter({ hasText: "numeric range" }),
-  ).toHaveCount(0);
-});
-
 async function storedCalendar(page: Page, bucket: "month" | "week") {
   await catalog(page);
   await page.route("**/api/departments**", (route) =>
@@ -216,6 +106,7 @@ async function storedCalendar(page: Page, bucket: "month" | "week") {
     refresh_cadence: "manual",
     revision: 1,
     is_deleted: false,
+    is_home: true,
     created_at: timestamp,
     updated_at: timestamp,
     widgets: [
@@ -223,7 +114,10 @@ async function storedCalendar(page: Page, bucket: "month" | "week") {
         id: categoryId,
         widget_type: "chart",
         position: 0,
-        size: "M",
+        grid_column: 0,
+        grid_row: 0,
+        column_span: 4,
+        row_span: 3,
         chart_id: null,
         created_at: timestamp,
         updated_at: timestamp,
@@ -264,15 +158,11 @@ test("saved monthly Dashboard reloads containing calendar starts and preserves n
     });
   });
   await page.goto("/openview?section=dashboards&dashboard=" + dashboardId);
-  const table = page.getByRole("table").filter({ hasText: "2026-11-01" });
-  await expect(
-    table.getByRole("row", { name: "2026-11-01 — 0", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Showing all 4 months in chronological order.", {
-      exact: true,
-    }),
-  ).toBeVisible();
+  // The line keeps its four calendar starts, the missing month as a gap.
+  const line = page.getByRole("img", { name: /^Line chart: / });
+  await expect(line).toHaveAccessibleName(
+    "Line chart: 2026-09-01 2.5, 2026-10-01 4.25, 2026-11-01 no value, 2026-12-01 9.25",
+  );
   expect(requests).toHaveLength(1);
   expect(requests[0]).toMatchObject({
     bucket: "month",
@@ -280,9 +170,7 @@ test("saved monthly Dashboard reloads containing calendar starts and preserves n
     to_date: query.to_date,
   });
   await page.reload();
-  await expect(
-    table.getByRole("row", { name: "2026-12-01 9.25 1", exact: true }),
-  ).toBeVisible();
+  await expect(line).toHaveAccessibleName(/2026-12-01 9\.25$/);
   expect(requests).toHaveLength(2);
 });
 
@@ -322,14 +210,13 @@ test("saved weekly Dashboard uses Sunday workspace starts and hides retained dat
     });
   });
   await page.goto("/openview?section=dashboards&dashboard=" + dashboardId);
-  await expect(
-    page
-      .getByRole("table")
-      .getByRole("row", { name: "2026-10-11 — 0", exact: true }),
-  ).toBeVisible();
+  const line = page.getByRole("img", { name: /^Line chart: / });
+  await expect(line).toHaveAccessibleName(
+    "Line chart: 2026-10-04 2.5, 2026-10-11 no value",
+  );
   refused = true;
-  await page.getByRole("button", { name: "Refresh now", exact: true }).click();
-  await expect(page.getByRole("table")).toHaveCount(0);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(line).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Retry", exact: true }),
   ).toBeVisible();

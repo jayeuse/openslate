@@ -75,8 +75,6 @@ const workspaceNavigationDefinitions = [
     defaultItem: "views",
     items: [
       { id: "views", label: "Views" },
-      { id: "dashboards", label: "Dashboards" },
-      { id: "charts", label: "Charts" },
       { id: "reports", label: "Reports" },
     ],
   },
@@ -206,8 +204,8 @@ function visibleItems(
   auditManager: boolean,
 ): readonly { id: string; label: string }[] {
   const items = definition.items;
-  // Module pages live under the departments (DA5); OpenView keeps its other
-  // sections until parts B and C replace them.
+  // Module pages and dashboards live under the departments (DA5, BD1);
+  // OpenView keeps Reports until part C moves them.
   if (definition.id === "openview")
     return items.filter((item) => item.id !== "views");
   // Every Sandbox API requires an administrator (`require_admin`).
@@ -309,10 +307,6 @@ function paramsFor(
           const value = searchParams.get(key);
           if (value) params.set(key, value);
         }
-      }
-      if (itemId === "dashboards") {
-        const dashboard = searchParams.get("dashboard");
-        if (dashboard) params.set("dashboard", dashboard);
       }
     }
   }
@@ -422,7 +416,8 @@ export function isWorkspaceNavigationGroupActive(
   searchParams?: URLSearchParams,
 ): boolean {
   if (group.href.split("?")[0] !== pathname) return false;
-  // A module page belongs to its department, not to the OpenView group.
+  // A module page and a dashboard belong to their department, not to the
+  // OpenView group (a dashboard's section is not an item, so it reads as views).
   const definition = workspaceNavigationDefinitions.find(
     (entry) => entry.id === group.id,
   );
@@ -454,9 +449,15 @@ export function currentNavigationKey(
   );
   if (!definition) return null;
   const section = sectionFor(definition, searchParams, hash);
-  // Each module page is its own place, so the fill glides between modules.
+  // Each module page and dashboard is its own place, so the fill glides;
+  // the "openview" prefix keeps OpenView's help guide.
+  if (
+    definition.id === "openview" &&
+    searchParams.get("section") === "dashboards"
+  )
+    return `openview:dashboard:${searchParams.get("department") ?? ""}`;
   if (definition.id === "openview" && section === "views")
-    return `module:${searchParams.get("module") ?? ""}`;
+    return `openview:module:${searchParams.get("module") ?? ""}`;
   return `${definition.id}:${section}`;
 }
 

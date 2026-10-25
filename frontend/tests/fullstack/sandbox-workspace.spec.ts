@@ -350,44 +350,86 @@ async function exerciseOpenView(
   return viewId;
 }
 
+/**
+ * The chart builder replaces the Charts page (docs/specs/openview-dashboard.md,
+ * BD10): a table of Suppliers by Payment terms is saved for reuse, placed on
+ * the Procurement dashboard, and after a reload reads its live result again.
+ */
 async function exerciseLiveCharts(page: Page, supplier: SeededSupplier) {
-  await page.goto("/openview?section=charts");
-  await expect(
-    page.getByRole("heading", { name: "Charts", level: 1, exact: true }),
-  ).toBeVisible();
-
-  const dataSource = page.getByLabel("Data source");
-  await expect(dataSource).toBeVisible();
-  await dataSource.selectOption({ label: "Suppliers" });
-  await expect(dataSource).toHaveValue(supplier.moduleId);
+  const chartName = `Suppliers by terms ${supplier.recordId.slice(0, 8)}`;
+  await page.goto(departmentDashboardUrl(supplier));
+  await page.getByRole("button", { name: "Edit layout" }).click();
+  // Row 3 starts free: the persistence journey's chart covers rows 1 and 2.
   await page
-    .getByRole("combobox", { name: "Group by", exact: true })
+    .getByRole("button", { name: "Add a widget at column 1, row 3" })
+    .click();
+  const builder = page.getByRole("dialog", { name: "Add a chart" });
+  await builder.getByRole("radio", { name: "Table" }).click();
+  await builder
+    .getByLabel("Records", { exact: true })
+    .selectOption({ label: "Suppliers" });
+  await expect(builder.getByLabel("Records", { exact: true })).toHaveValue(
+    supplier.moduleId,
+  );
+  await builder
+    .getByLabel("Group by", { exact: true })
     .selectOption({ label: "Payment terms" });
-  await expect(
-    page.getByRole("combobox", { name: "Group by", exact: true }),
-  ).toHaveValue(supplier.paymentTermsFieldId);
-  await page.getByRole("button", { name: "Apply chart" }).click();
+  await expect(builder.getByLabel("Group by", { exact: true })).toHaveValue(
+    supplier.paymentTermsFieldId,
+  );
+  await builder.getByRole("button", { name: "Update preview" }).click();
+  const preview = builder.getByRole("region", { name: "Preview" });
+  await expect(preview.getByRole("row", { name: "Net 30 1" })).toBeVisible();
+  await builder.getByRole("checkbox", { name: "Save for reuse" }).click();
+  await builder.getByLabel("Title", { exact: true }).fill(chartName);
+  const chartCreation = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/charts" &&
+      response.request().method() === "POST",
+  );
+  await builder.getByRole("button", { name: "Add to dashboard" }).click();
+  const createdChart = await chartCreation;
+  expect(createdChart.status()).toBe(201);
+  const chart = (await createdChart.json()) as {
+    id: string;
+    module_id: string;
+    chart_type: string;
+  };
+  expect(chart).toMatchObject({
+    module_id: supplier.moduleId,
+    chart_type: "workload",
+  });
 
-  const table = page.getByRole("table", { name: "Complete aggregate data" });
-  await expect(table).toBeVisible();
-  await expect(
-    table.getByRole("columnheader", { name: "Group" }),
-  ).toBeVisible();
-  await expect(
-    table.getByRole("columnheader", { name: "Records" }),
-  ).toBeVisible();
-  await expect(
-    table.getByRole("columnheader", { name: "Record count" }),
-  ).toBeVisible();
+  const layoutSave = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith("/api/dashboards/") &&
+      response.request().method() === "PATCH",
+  );
+  await page.getByRole("button", { name: "Save layout" }).click();
+  const saved = await layoutSave;
+  expect(saved.status()).toBe(200);
+  const savedWidgets = (
+    saved.request().postDataJSON() as {
+      widgets: ReadonlyArray<Record<string, unknown>>;
+    }
+  ).widgets;
+  expect(savedWidgets.at(-1)).toMatchObject({
+    widget_type: "workload",
+    chart_id: chart.id,
+    config: null,
+    grid_column: 0,
+    grid_row: 2,
+  });
 
-  const net30Row = table.getByRole("row").filter({ hasText: "Net 30" });
-  await expect(net30Row.getByRole("cell")).toHaveText(["Net 30", "1", "1"]);
+  const card = page.getByRole("article", { name: chartName, exact: true });
+  await expect(card.getByRole("row", { name: "Net 30 1" })).toBeVisible();
+  await page.reload();
+  await expect(card.getByRole("row", { name: "Net 30 1" })).toBeVisible();
+  await card.getByRole("button", { name: `${chartName}, actions` }).click();
   await expect(
-    page.getByText(/1 aggregate groups · one complete snapshot/),
+    page.getByRole("menuitem", { name: "Download data (CSV)" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Download complete CSV" }),
-  ).toBeEnabled();
+  await page.keyboard.press("Escape");
 }
 
 async function permanentlyDeleteReport(
@@ -1069,51 +1111,46 @@ async function expectPopulatedDashboardSnapshot(
   });
 }
 
-async function exercisePrivateDashboard(
-  page: Page,
-  runId: string,
-  supplier: SeededSupplier,
-) {
-  const dashboardName = `Full-stack Dashboard ${runId.slice(0, 8)}`;
-  await page.goto("/openview?section=dashboards");
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Dashboards" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Each Dashboard belongs to a department/),
-  ).toBeVisible();
+function departmentDashboardUrl(supplier: SeededSupplier) {
+  return `/openview?section=dashboards&department=${supplier.departmentId}`;
+}
 
-  await page.getByRole("button", { name: "New Dashboard" }).click();
-  const newDashboard = page.getByRole("dialog", { name: "New Dashboard" });
-  const dashboardDepartment = newDashboard.getByLabel("Department", {
-    exact: true,
-  });
-  await dashboardDepartment.click();
-  await page
-    .getByRole("combobox", { name: "Search department", exact: true })
-    .fill("Procurement");
-  await page.getByRole("option", { name: "Procurement", exact: true }).click();
-  await expect(dashboardDepartment).toHaveText("Procurement");
-  await newDashboard.getByLabel("Dashboard name").fill(dashboardName);
-  await newDashboard.getByRole("button", { name: "Continue" }).click();
-  await expect(newDashboard).toBeHidden();
-  await page.getByRole("button", { name: "Add widget", exact: true }).click();
-  const addWidget = page.getByRole("dialog", { name: "Add widget" });
-  const moduleSelect = addWidget.getByLabel("Data source");
-  await moduleSelect.selectOption({ label: "Suppliers" });
-  await expect(moduleSelect).toHaveValue(supplier.moduleId);
-  const moduleId = supplier.moduleId;
-  const dimension = addWidget.getByLabel("Group by");
-  await dimension.selectOption({ label: "Payment terms" });
-  await expect(dimension).toHaveValue(supplier.paymentTermsFieldId);
-  const dimensionId = supplier.paymentTermsFieldId;
-  await addWidget
-    .getByRole("button", { name: "Add widget", exact: true })
-    .click();
-  await expect(addWidget).toBeHidden();
+/**
+ * A department's home dashboard (docs/specs/openview-dashboard.md, BD3, BD7):
+ * the Procurement managers set it up from empty, add a chart of Suppliers,
+ * save it, move it with the keyboard, and the moved layout survives a reload.
+ */
+async function exercisePrivateDashboard(page: Page, supplier: SeededSupplier) {
+  await page.goto(departmentDashboardUrl(supplier));
   await expect(
-    page.getByRole("article", { name: "Count by Payment terms", exact: true }),
+    page.getByRole("heading", { name: /^Set up the .+ dashboard$/ }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Start empty" }).click();
+  await page
+    .getByRole("button", { name: "Add a widget at column 1, row 1" })
+    .click();
+  const builder = page.getByRole("dialog", { name: "Add a chart" });
+  await expect(builder.getByRole("radio", { name: "Bar" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await builder
+    .getByLabel("Records", { exact: true })
+    .selectOption({ label: "Suppliers" });
+  const moduleId = supplier.moduleId;
+  await expect(builder.getByLabel("Records", { exact: true })).toHaveValue(
+    moduleId,
+  );
+  await builder
+    .getByLabel("Group by", { exact: true })
+    .selectOption({ label: "Payment terms" });
+  const dimensionId = supplier.paymentTermsFieldId;
+  await expect(builder.getByLabel("Group by", { exact: true })).toHaveValue(
+    dimensionId,
+  );
+  await builder.getByLabel("Size", { exact: true }).selectOption("2 × 2");
+  await builder.getByRole("button", { name: "Add to dashboard" }).click();
+  await expect(builder).toBeHidden();
 
   const snapshotPromise = waitForDashboardSnapshot(page);
   const dashboardCreation = page.waitForResponse(
@@ -1121,101 +1158,89 @@ async function exercisePrivateDashboard(
       new URL(response.url()).pathname === "/api/dashboards" &&
       response.request().method() === "POST",
   );
-  await page.getByRole("button", { name: "Save Dashboard" }).click();
+  await page.getByRole("button", { name: "Save layout" }).click();
   const createdDashboard = await dashboardCreation;
   expect(createdDashboard.status()).toBe(201);
   const dashboardRequest = createdDashboard.request().postDataJSON() as {
     department_id: string;
+    widgets: ReadonlyArray<Record<string, unknown>>;
   };
   expect(dashboardRequest.department_id).toBe(supplier.departmentId);
+  expect(dashboardRequest.widgets).toEqual([
+    expect.objectContaining({
+      widget_type: "chart",
+      grid_column: 0,
+      grid_row: 0,
+      column_span: 2,
+      row_span: 2,
+    }),
+  ]);
   const dashboardResponse = (await createdDashboard.json()) as {
+    id: string;
     department_id: string;
+    is_home: boolean;
+    name: string;
   };
-  expect(dashboardResponse.department_id).toBe(supplier.departmentId);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Dashboard saved." }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("article", { name: "Count by Payment terms", exact: true }),
-  ).toBeVisible();
+  expect(dashboardResponse).toMatchObject({
+    department_id: supplier.departmentId,
+    is_home: true,
+  });
   await expectPopulatedDashboardSnapshot(
     await snapshotPromise,
     moduleId,
     dimensionId,
     supplier.paymentTermsOptionId,
   );
+  await expect(
+    page.getByRole("heading", { level: 1, name: dashboardResponse.name }),
+  ).toBeVisible();
+  const card = page.getByRole("article", {
+    name: "Suppliers by Payment terms",
+    exact: true,
+  });
+  await expect(
+    card.getByRole("img", { name: /^Bar chart: / }),
+  ).toHaveAccessibleName("Bar chart: Net 30 1");
 
-  await expect(page).toHaveURL(
-    new RegExp(
-      `/openview\\?section=dashboards&dashboard=[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`,
-      "i",
-    ),
+  // Move the chart one column right with the keyboard (BD8) and save.
+  await page.getByRole("button", { name: "Edit layout" }).click();
+  await page
+    .getByRole("button", { name: "Move or resize Suppliers by Payment terms" })
+    .focus();
+  await page.keyboard.press("ArrowRight");
+  const layoutSave = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/dashboards/${dashboardResponse.id}` &&
+      response.request().method() === "PATCH",
   );
-  const dashboardUrl = new URL(page.url());
-  expect(dashboardUrl.pathname).toBe("/openview");
-  expect(dashboardUrl.searchParams.get("section")).toBe("dashboards");
-  const dashboardId = dashboardUrl.searchParams.get("dashboard");
-  expect(dashboardId).toMatch(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-  );
-  if (!dashboardId)
-    throw new Error("saved Dashboard URL did not include its ID");
-  await expect(
-    page.getByRole("combobox", { name: "Dashboard", exact: true }),
-  ).toHaveValue(dashboardId);
-  await expect(
-    page.getByRole("heading", { name: dashboardName, exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("article", { name: "Count by Payment terms", exact: true }),
-  ).toBeVisible();
-  const table = page.getByRole("table", { name: /^Complete data for / });
-  await expect(table).toBeVisible();
-  await expect(
-    table.getByRole("columnheader", { name: "Group" }),
-  ).toBeVisible();
-  const net30Row = table.getByRole("row").filter({ hasText: "Net 30" });
-  await expect(net30Row.getByRole("cell")).toHaveText(["Net 30", "1", "1"]);
-  await expect(table.getByRole("caption")).toContainText(
-    "Complete results for the current Dashboard widget.",
-  );
+  await page.getByRole("button", { name: "Save layout" }).click();
+  const moved = await layoutSave;
+  expect(moved.status()).toBe(200);
+  expect(
+    (
+      moved.request().postDataJSON() as {
+        widgets: ReadonlyArray<Record<string, unknown>>;
+      }
+    ).widgets,
+  ).toEqual([
+    expect.objectContaining({ grid_column: 1, grid_row: 0, column_span: 2 }),
+  ]);
 
   const reloadSnapshotPromise = waitForDashboardSnapshot(page);
   await page.reload();
-  await expect(page).toHaveURL(
-    new RegExp(`[?&]dashboard=${dashboardId}(?:&|$)`),
-  );
-  await expect(
-    page.getByRole("combobox", { name: "Dashboard", exact: true }),
-  ).toHaveValue(dashboardId);
-  await expect(
-    page.getByRole("heading", { name: dashboardName, exact: true }),
-  ).toBeVisible();
   await expectPopulatedDashboardSnapshot(
     await reloadSnapshotPromise,
     moduleId,
     dimensionId,
     supplier.paymentTermsOptionId,
   );
-  await expect(net30Row.getByRole("cell")).toHaveText(["Net 30", "1", "1"]);
-
-  await page.getByRole("button", { name: "Dashboard options" }).click();
-  await page.getByRole("menuitem", { name: "Archive Dashboard" }).click();
+  // The moved place came back from the server: column 2 of the grid.
+  await expect(card).toHaveCSS("grid-column-start", "2");
   await expect(
-    page.getByRole("status").filter({ hasText: "Dashboard archived." }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Show archived" }).click();
-  await page.getByRole("button", { name: `Restore ${dashboardName}` }).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Dashboard restored." }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(
-    new RegExp(`[?&]dashboard=${dashboardId}(?:&|$)`),
-  );
-  await expect(
-    page.getByRole("combobox", { name: "Dashboard", exact: true }),
-  ).toHaveValue(dashboardId);
-  return dashboardName;
+    card.getByRole("img", { name: /^Bar chart: / }),
+  ).toHaveAccessibleName("Bar chart: Net 30 1");
+  return dashboardResponse.name;
 }
 
 type WindowQueryBody = Readonly<{
@@ -1595,15 +1620,11 @@ test.describe("Sandbox", () => {
   });
 
   test("Dashboard persistence", async ({ journey }) => {
-    const { page, runFixture } = journey;
+    const { page } = journey;
     const supplier = requireSupplier(journey);
-    const dashboardName = await exercisePrivateDashboard(
-      page,
-      runFixture.runId,
-      supplier,
-    );
+    const dashboardName = await exercisePrivateDashboard(page, supplier);
     await expect(
-      page.getByRole("heading", { name: dashboardName, exact: true }),
+      page.getByRole("heading", { level: 1, name: dashboardName }),
     ).toBeVisible();
   });
 
@@ -1627,8 +1648,8 @@ test.describe("Sandbox", () => {
     const { page } = journey;
     await exerciseLiveCharts(page, requireSupplier(journey));
     await expect(
-      page.getByRole("button", { name: "Print complete table" }),
-    ).toBeEnabled();
+      page.getByRole("toolbar", { name: "Edit layout" }),
+    ).toHaveCount(0);
   });
 
   test("Connected report and CSV", async ({ journey }) => {

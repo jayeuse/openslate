@@ -4,13 +4,14 @@ import { queryOptions } from "@tanstack/react-query";
 import {
   getOpenViewDashboard,
   listOpenViewDashboards,
-  type OpenViewDashboardWidgetInput,
+  type OpenViewWidgetSource,
 } from "./dashboards-api";
 import {
   queryOpenViewAggregateSnapshot,
   queryOpenViewAggregateSnapshots,
 } from "./analytics-api";
 import { queryOpenViewRecords } from "./views-api";
+import { listReadableRelationshipFields } from "./records-api";
 import { ApiContractError } from "@/lib/api";
 import {
   getOpenViewChart,
@@ -28,8 +29,9 @@ import {
 export const dashboardKeys = {
   all: ["openview", "dashboards"] as const,
   lists: ["openview", "dashboards", "list"] as const,
-  list: (archived: boolean) =>
-    ["openview", "dashboards", "list", archived] as const,
+  /** One department's dashboards, active or archived (BD3). */
+  list: (departmentId: string, archived: boolean) =>
+    ["openview", "dashboards", "list", departmentId, archived] as const,
   details: ["openview", "dashboards", "detail"] as const,
   detail: (id: string) => ["openview", "dashboards", "detail", id] as const,
   snapshots: ["openview", "dashboards", "snapshot"] as const,
@@ -37,9 +39,13 @@ export const dashboardKeys = {
     ["openview", "dashboards", "snapshot", id] as const,
 };
 
-export const dashboardListOptions = (archived: boolean) =>
+/**
+ * A department's dashboards by position: the home and the others (BD3). One
+ * page holds them; a department has one home and rarely more than a few.
+ */
+export const dashboardListOptions = (departmentId: string, archived: boolean) =>
   queryOptions({
-    queryKey: dashboardKeys.list(archived),
+    queryKey: dashboardKeys.list(departmentId, archived),
     queryFn: () =>
       listOpenViewDashboards({
         limit: DASHBOARD_PAGE_SIZE,
@@ -47,7 +53,9 @@ export const dashboardListOptions = (archived: boolean) =>
         sortBy: "position",
         sortOrder: "asc",
         deleted: archived ? "only" : "exclude",
+        departmentId,
       }),
+    enabled: Boolean(departmentId),
   });
 
 export const dashboardDetailOptions = (id: string) =>
@@ -96,7 +104,7 @@ export const dashboardRecordSnapshotOptions = (
 
 export const dashboardAggregateSnapshotOptions = (
   dashboardId: string,
-  widgets: DraftWidget[],
+  widgets: readonly DraftWidget[],
 ) =>
   queryOptions<SnapshotState[]>({
     // Inline cohorts refresh when an included module changes. A referenced
@@ -138,7 +146,7 @@ export const dashboardAggregateSnapshotOptions = (
 
 /** Fresh source authority is shared by grid reads, editor opening and previews. */
 export async function resolveDashboardWidgetDefinition(
-  widget: OpenViewDashboardWidgetInput,
+  widget: OpenViewWidgetSource,
   signal: AbortSignal,
 ) {
   let config = widget.config;
@@ -160,7 +168,7 @@ export async function resolveDashboardWidgetDefinition(
 /** Both persisted results and a real, unpersisted dialog draft use this read.
  * No Dashboard or widget identity is fabricated to enable a saved-only hook. */
 export async function queryDashboardWidgetData(
-  widget: OpenViewDashboardWidgetInput,
+  widget: OpenViewWidgetSource,
   page: number,
   pageSize: number,
   signal: AbortSignal,
@@ -190,4 +198,29 @@ export async function queryDashboardWidgetData(
   }
   signal.throwIfAborted();
   return data;
+}
+
+/** Relationship fields of readable modules, for the linked sources (BD11). */
+export const linkedFieldsOptions = () =>
+  queryOptions({
+    queryKey: ["openview", "fields", "relationships-readable"] as const,
+    queryFn: ({ signal }) => listReadableRelationshipFields(signal),
+  });
+
+/**
+ * The modules a department's dashboard may read (BE2): its own, then every
+ * module a relationship field links to one of them, in either direction.
+ */
+export function linkedModuleIds(
+  ownModuleIds: ReadonlySet<string>,
+  fields: readonly { moduleId: string; targetModuleId: string | null }[],
+): Set<string> {
+  const linked = new Set<string>();
+  for (const field of fields) {
+    if (!field.targetModuleId) continue;
+    if (ownModuleIds.has(field.moduleId)) linked.add(field.targetModuleId);
+    if (ownModuleIds.has(field.targetModuleId)) linked.add(field.moduleId);
+  }
+  for (const id of ownModuleIds) linked.delete(id);
+  return linked;
 }

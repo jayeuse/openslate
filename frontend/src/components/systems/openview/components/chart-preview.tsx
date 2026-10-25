@@ -42,6 +42,8 @@ export function OpenViewChartPreview({
   maxBarSize = 58,
   pieInnerRadius = 62,
   pieOuterRadius = 96,
+  oneColor = false,
+  showValueAxis = true,
 }: {
   data: OpenViewChartDatum[];
   type: "bar" | "line" | "pie";
@@ -55,6 +57,9 @@ export function OpenViewChartPreview({
   maxBarSize?: number;
   pieInnerRadius?: number;
   pieOuterRadius?: number;
+  /** Bars in the one series color instead of one color per category. */
+  oneColor?: boolean;
+  showValueAxis?: boolean;
 }) {
   const points =
     type === "line" ? data : data.filter((item) => item.value !== null);
@@ -89,6 +94,7 @@ export function OpenViewChartPreview({
             tickMargin={8}
           />
           <YAxis
+            hide={!showValueAxis}
             allowDecimals={allowDecimals}
             tickLine={false}
             axisLine={false}
@@ -102,7 +108,12 @@ export function OpenViewChartPreview({
             maxBarSize={maxBarSize}
           >
             {points.map((item) => (
-              <Cell key={item.key} fill={`var(--color-${item.key})`} />
+              <Cell
+                key={item.key}
+                fill={
+                  oneColor ? "var(--color-value)" : `var(--color-${item.key})`
+                }
+              />
             ))}
             {showLabels ? <LabelList dataKey="value" position="top" /> : null}
           </Bar>
@@ -117,6 +128,7 @@ export function OpenViewChartPreview({
             tickMargin={8}
           />
           <YAxis
+            hide={!showValueAxis}
             allowDecimals={allowDecimals}
             tickLine={false}
             axisLine={false}

@@ -115,6 +115,14 @@ export const defaultSignedInIdentity = authMeBody({
 
 /** Matches the event stream with or without its `org` parameter. */
 export const eventStreamUrl = (url: URL) => url.pathname === "/api/events";
+/**
+ * The sidebar's department read (OpenView part A, DA2): every signed-in page
+ * reads the departments in Sandbox order for the Departments section. Specs
+ * that count a page's own department reads leave it out.
+ */
+export const isSidebarDepartmentRead = (url: URL) =>
+  url.pathname === "/api/departments" &&
+  url.searchParams.get("sort_by") === "created_at";
 /** Matches the public look read with or without its `org` parameter. */
 export const appearanceUrl = (url: URL) =>
   url.pathname === "/api/workspace/appearance";

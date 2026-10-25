@@ -2219,9 +2219,8 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await search.fill("panel");
   await expect(page.getByText("Cooling panel 02")).toBeVisible();
   await expect(page.getByText("Centrifugal pump 04")).toHaveCount(0);
-  // Module pages live under the departments; the OpenView group starts closed there.
-  await page.getByRole("button", { name: "OpenView", exact: true }).click();
-  await page.getByRole("link", { name: "Dashboards" }).click();
+  // The department's Dashboard row leaves the module page (BD1).
+  await page.getByRole("link", { name: "Dashboard", exact: true }).click();
   const discardDialog = page.getByRole("alertdialog", {
     name: "Discard unsaved view changes?",
   });
@@ -5251,8 +5250,15 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
-          items: [],
-          pagination: wirePagination({ limit: 100, count: 0, total: 0 }),
+          items: [
+            {
+              id: moduleId,
+              name: "Equipment",
+              department_id: departmentId,
+              title_field_id: null,
+            },
+          ],
+          pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
         }),
       });
     }
@@ -5299,15 +5305,8 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
   });
   await page.goto("/openview?section=dashboards");
   await expect(
-    page.getByRole("heading", { level: 1, name: "Dashboards" }),
+    page.getByRole("heading", { name: "Set up the Field service dashboard" }),
   ).toBeVisible();
-  await expect(
-    page.getByText("No Dashboards yet.", { exact: false }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "New Dashboard" }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Dashboard name" }),
-  ).toHaveValue("");
   expect(dashboardListRequests).toBeGreaterThan(0);
   expect(savedViewRequests).toBe(0);
 });
@@ -6142,13 +6141,6 @@ for (const current of [
     url: `/openview?section=views&module=${moduleId}&view=${viewId}`,
     detail: "Private database routing detail",
   },
-  {
-    section: "Charts",
-    url: "/openview?section=charts",
-    detail: "Private chart data-source detail",
-    // The failure stays visible with the Chart filters open.
-    openFilters: true,
-  },
 ]) {
   test(`${current.section} request failures use safe destructive feedback without server detail and keep Retry visible`, async ({
     page,
@@ -6158,10 +6150,6 @@ for (const current of [
       route.fulfill({ status: 503, json: { detail: current.detail } }),
     );
     await page.goto(current.url);
-    if ("openFilters" in current)
-      await page
-        .getByRole("button", { name: "Filters (0)", exact: true })
-        .click();
     const failure = page
       .getByRole("alert")
       .filter({ hasText: "temporarily unavailable" });

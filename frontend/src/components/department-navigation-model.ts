@@ -61,6 +61,22 @@ export function moduleHref(moduleId: string): string {
   return `/openview?section=views&module=${encodeURIComponent(moduleId)}`;
 }
 
+/** The home dashboard of one department (BD1). */
+export function dashboardHref(departmentId: string): string {
+  return `/openview?section=dashboards&department=${encodeURIComponent(departmentId)}`;
+}
+
+/** The department whose dashboard a URL shows, or null on any other page. */
+export function currentDashboardDepartmentId(
+  pathname: string,
+  searchParams: URLSearchParams,
+): string | null {
+  return pathname === "/openview" &&
+    searchParams.get("section") === "dashboards"
+    ? searchParams.get("department")
+    : null;
+}
+
 /** Whether a URL shows a module page (OpenView's Views section). */
 export function isModulePage(
   pathname: string,

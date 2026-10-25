@@ -28,6 +28,8 @@ export type OpenViewUrlState = {
   module?: string;
   view?: string;
   dashboard?: string;
+  /** The department whose dashboard the dashboards section shows (BD1). */
+  department?: string;
   record?: string;
   report?: string;
   run?: string;
@@ -47,6 +49,7 @@ export function parseOpenViewUrl(
   const recordValue = url.searchParams.get("record");
   const viewValue = url.searchParams.get("view");
   const dashboardValue = url.searchParams.get("dashboard");
+  const departmentValue = url.searchParams.get("department");
   const reportValue = url.searchParams.get("report");
   const runValue = url.searchParams.get("run");
   const changesValue = url.searchParams.get("changes");
@@ -95,6 +98,9 @@ export function parseOpenViewUrl(
   if (view) result.view = view;
   if (dashboard) result.dashboard = dashboard;
   if (invalidReportSelection) result.invalidReportSelection = true;
+  const department = z.string().uuid().safeParse(departmentValue);
+  if (result.section === "dashboards" && department.success)
+    result.department = department.data;
   if (result.section === "reports" && report.success)
     result.report = report.data;
   if (result.section === "reports" && report.success && run.success)
@@ -127,6 +133,12 @@ export function serializeOpenViewUrl(state: OpenViewUrlState): string {
     if (isLegacyModule || isViewsUuid) parameters.set("module", state.module);
   }
   if (state.view) parameters.set("view", state.view);
+  if (
+    state.section === "dashboards" &&
+    state.department &&
+    z.string().uuid().safeParse(state.department).success
+  )
+    parameters.set("department", state.department);
   if (state.dashboard) parameters.set("dashboard", state.dashboard);
   if (state.record) parameters.set("record", state.record);
   if (state.section === "reports" && state.report)

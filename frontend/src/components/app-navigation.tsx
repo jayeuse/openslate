@@ -63,7 +63,9 @@ import { cn } from "@/lib/utils";
 import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { useDepartmentNavigation } from "@/components/department-navigation";
 import {
+  currentDashboardDepartmentId,
   currentModuleId,
+  dashboardHref,
   moduleHref,
 } from "@/components/department-navigation-model";
 
@@ -187,6 +189,10 @@ export function AppNavigation({
   );
   const departments = useDepartmentNavigation(pathname, searchParams);
   const moduleId = currentModuleId(pathname, searchParams);
+  const dashboardDepartmentId = currentDashboardDepartmentId(
+    pathname,
+    searchParams,
+  );
   const search = searchParams.toString();
   const activeGroupId = groups.find((group) =>
     isWorkspaceNavigationGroupActive(group, pathname, searchParams),
@@ -453,7 +459,7 @@ export function AppNavigation({
               <SidebarMenuButton
                 aria-label="Departments"
                 title="Departments"
-                isActive={moduleId !== null}
+                isActive={moduleId !== null || dashboardDepartmentId !== null}
                 className={cn(navigationRowSize(surface), navigationIconStroke)}
                 onClick={() => {
                   onExpandSidebar?.();
@@ -496,16 +502,25 @@ export function AppNavigation({
                       <DepartmentMark departmentIndex={department.index} />
                     </span>
                   ),
-                  active: department.modules.some(
-                    (module) => module.id === moduleId,
-                  ),
+                  active:
+                    department.id === dashboardDepartmentId ||
+                    department.modules.some((module) => module.id === moduleId),
                   listLabel: `${department.name} pages`,
-                  items: department.modules.map((module) => ({
-                    id: module.id,
-                    label: module.name,
-                    href: moduleHref(module.id),
-                    active: module.id === moduleId,
-                  })),
+                  // The department's home dashboard comes first (BD1).
+                  items: [
+                    {
+                      id: "dashboard",
+                      label: "Dashboard",
+                      href: dashboardHref(department.id),
+                      active: department.id === dashboardDepartmentId,
+                    },
+                    ...department.modules.map((module) => ({
+                      id: module.id,
+                      label: module.name,
+                      href: moduleHref(module.id),
+                      active: module.id === moduleId,
+                    })),
+                  ],
                 }),
               )}
             </SidebarMenu>

@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  currentDashboardDepartmentId,
   currentModuleId,
+  dashboardHref,
   departmentNavigation,
   moduleHref,
   moduleLocation,
@@ -65,17 +67,19 @@ test("a module page is the OpenView Views page for that module", () => {
   expect(moduleLocation(grouped, "missing")).toBeNull();
 });
 
-test("the OpenView group keeps Dashboards, Charts and Reports and is not current on a module page", () => {
+test("the OpenView group keeps Reports only and is not current on a module page or a dashboard", () => {
   const onModule = new URLSearchParams("section=views&module=quotes");
   const openView = getWorkspaceNavigation("/openview", onModule, "all").find(
     (group) => group.id === "openview",
   );
-  expect(openView?.items.map((item) => item.id)).toEqual([
-    "dashboards",
-    "charts",
-    "reports",
-  ]);
-  expect(openView?.href).toBe("/openview?section=dashboards&module=quotes");
+  expect(openView?.items.map((item) => item.id)).toEqual(["reports"]);
+  expect(openView?.href).toBe("/openview?section=reports&module=quotes");
+  const onDashboard = new URLSearchParams(
+    "section=dashboards&department=sales",
+  );
+  expect(
+    isWorkspaceNavigationGroupActive(openView!, "/openview", onDashboard),
+  ).toBe(false);
   expect(
     isWorkspaceNavigationGroupActive(openView!, "/openview", onModule),
   ).toBe(false);
@@ -86,8 +90,33 @@ test("the OpenView group keeps Dashboards, Charts and Reports and is not current
       new URLSearchParams("section=reports"),
     ),
   ).toBe(true);
-  expect(currentNavigationKey("/openview", onModule)).toBe("module:quotes");
+  expect(currentNavigationKey("/openview", onModule)).toBe(
+    "openview:module:quotes",
+  );
+  // Each department's dashboard is its own place, so the fill glides to it.
+  expect(currentNavigationKey("/openview", onDashboard)).toBe(
+    "openview:dashboard:sales",
+  );
+});
+
+test("a department's Dashboard row opens its home dashboard and marks that department", () => {
+  expect(dashboardHref("sales")).toBe(
+    "/openview?section=dashboards&department=sales",
+  );
+  const params = (search: string) => new URLSearchParams(search);
   expect(
-    currentNavigationKey("/openview", new URLSearchParams("section=charts")),
-  ).toBe("openview:charts");
+    currentDashboardDepartmentId(
+      "/openview",
+      params("section=dashboards&department=sales&dashboard=night"),
+    ),
+  ).toBe("sales");
+  expect(
+    currentDashboardDepartmentId(
+      "/openview",
+      params("section=views&module=quotes"),
+    ),
+  ).toBeNull();
+  expect(
+    currentDashboardDepartmentId("/boards", params("section=dashboards")),
+  ).toBeNull();
 });

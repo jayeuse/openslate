@@ -11,6 +11,7 @@ import {
   type OpenViewDashboardCreateInput,
   type OpenViewDashboard,
 } from "../../../src/components/systems/openview/adapters/dashboards-api";
+import { getOpenViewDashboardLayoutIssues } from "../../../src/components/systems/openview/adapters/dashboard-layout-issues";
 import { wirePagination } from "../../helpers/pagination";
 import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
 
@@ -84,7 +85,10 @@ const wireWidget = {
   id: widgetId,
   position: 0,
   widget_type: "chart",
-  size: "M",
+  grid_column: 0,
+  grid_row: 0,
+  column_span: 2,
+  row_span: 2,
   chart_id: null,
   config: { version: 1, chart_type: "bar", query: wireGroupQuery },
   created_at: timestamp,
@@ -127,6 +131,7 @@ function dashboardResponse(overrides: Record<string, unknown> = {}) {
     refresh_cadence: "manual",
     revision: 2,
     is_deleted: false,
+    is_home: true,
     created_at: timestamp,
     updated_at: timestamp,
     widgets: [wireWidget],
@@ -145,6 +150,7 @@ function expectedDashboard(): OpenViewDashboard {
     refreshCadence: "manual",
     revision: 2,
     isDeleted: false,
+    isHome: true,
     createdAt: timestamp,
     updatedAt: timestamp,
     widgets: [
@@ -152,7 +158,7 @@ function expectedDashboard(): OpenViewDashboard {
         id: widgetId,
         position: 0,
         widgetType: "chart",
-        size: "M",
+        placement: { column: 0, row: 0, columnSpan: 2, rowSpan: 2 },
         chartId: null,
         config: {
           version: 1,
@@ -225,6 +231,7 @@ test("creates and replaces the complete ordered chart list using the strict wire
       widgets: [
         {
           widgetType: "chart",
+          placement: { column: 0, row: 0, columnSpan: 2, rowSpan: 2 },
           config: { version: 1, chartType: "bar", query: groupQuery },
         },
       ],
@@ -240,7 +247,10 @@ test("creates and replaces the complete ordered chart list using the strict wire
       widgets: [
         {
           widget_type: "chart",
-          size: "M",
+          grid_column: 0,
+          grid_row: 0,
+          column_span: 2,
+          row_span: 2,
           chart_id: null,
           config: { version: 1, chart_type: "bar", query: wireGroupRequest },
         },
@@ -281,6 +291,7 @@ test("maps all live widget types and persists the visible refresh cadence", asyn
   const widgets = [
     {
       widgetType: "chart" as const,
+      placement: { column: 0, row: 1, columnSpan: 2, rowSpan: 2 },
       config: {
         version: 1 as const,
         chartType: "bar" as const,
@@ -289,14 +300,17 @@ test("maps all live widget types and persists the visible refresh cadence", asyn
     },
     {
       widgetType: "summary" as const,
+      placement: { column: 0, row: 0, columnSpan: 1, rowSpan: 1 },
       config: { version: 1 as const, query: groupQuery },
     },
     {
       widgetType: "workload" as const,
+      placement: { column: 2, row: 1, columnSpan: 2, rowSpan: 2 },
       config: { version: 1 as const, query: groupQuery },
     },
     {
       widgetType: "records" as const,
+      placement: { column: 0, row: 3, columnSpan: 4, rowSpan: 2 },
       config: { version: 1 as const, query: { moduleId, definition } },
     },
   ];
@@ -322,25 +336,37 @@ test("maps all live widget types and persists the visible refresh cadence", asyn
       widgets: [
         {
           widget_type: "chart",
-          size: "M",
+          grid_column: 0,
+          grid_row: 1,
+          column_span: 2,
+          row_span: 2,
           chart_id: null,
           config: { version: 1, chart_type: "bar", query: wireGroupRequest },
         },
         {
           widget_type: "summary",
-          size: "M",
+          grid_column: 0,
+          grid_row: 0,
+          column_span: 1,
+          row_span: 1,
           chart_id: null,
           config: { version: 1, query: wireGroupRequest },
         },
         {
           widget_type: "workload",
-          size: "M",
+          grid_column: 2,
+          grid_row: 1,
+          column_span: 2,
+          row_span: 2,
           chart_id: null,
           config: { version: 1, query: wireGroupRequest },
         },
         {
           widget_type: "records",
-          size: "M",
+          grid_column: 0,
+          grid_row: 3,
+          column_span: 4,
+          row_span: 2,
           chart_id: null,
           config: {
             version: 1,
@@ -394,6 +420,7 @@ test("serializes bounded date-series charts with numeric measures", async () => 
       widgets: [
         {
           widgetType: "chart",
+          placement: { column: 0, row: 0, columnSpan: 2, rowSpan: 2 },
           config: {
             version: 1,
             chartType: "line",
@@ -483,6 +510,7 @@ test("rejects malformed IDs, chart/query mismatches, and audience or snapshot da
         widgets: [
           {
             widgetType: "chart",
+            placement: { column: 0, row: 0, columnSpan: 2, rowSpan: 2 },
             config: {
               version: 1,
               chartType: "line",
@@ -502,6 +530,7 @@ test("rejects malformed IDs, chart/query mismatches, and audience or snapshot da
       widgets: [
         {
           widgetType: "chart",
+          placement: { column: 0, row: 0, columnSpan: 2, rowSpan: 2 },
           config: {
             version: 1,
             chartType: "bar",
@@ -571,5 +600,82 @@ test("rejects unexpected stored fields and preserves safe API conflicts", async 
     ).toBeNull();
   } finally {
     conflictFetch.restore();
+  }
+});
+
+test("a widget the grid migration could not place reads with no placement, and a partial placement is refused", async () => {
+  const unplaced = {
+    ...wireWidget,
+    grid_column: null,
+    grid_row: null,
+    column_span: null,
+    row_span: null,
+  };
+  const fetch = installFetch((input) =>
+    String(input).includes("?")
+      ? jsonResponse({
+          items: [dashboardResponse({ is_home: false, widgets: [unplaced] })],
+          pagination: pageResponse,
+        })
+      : jsonResponse(
+          dashboardResponse({ widgets: [{ ...unplaced, grid_row: 1 }] }),
+        ),
+  );
+  try {
+    const listed = await listOpenViewDashboards({ departmentId, home: false });
+    expect(listed.items[0]?.isHome).toBe(false);
+    expect(listed.items[0]?.widgets[0]?.placement).toBeNull();
+    expect(String(fetch.requests[0]?.input)).toContain(
+      `department_id=${departmentId}&home=false`,
+    );
+    await expect(getOpenViewDashboard(dashboardId)).rejects.toBeInstanceOf(
+      ApiContractError,
+    );
+  } finally {
+    fetch.restore();
+  }
+});
+
+test("a layout refusal names each broken rule by the saved list index", async () => {
+  const fetch = installFetch(() =>
+    jsonResponse(
+      {
+        detail: {
+          code: "dashboard_layout_invalid",
+          message: "The dashboard layout does not fit the grid",
+          errors: [
+            {
+              index: 1,
+              code: "overlap",
+              message: "This widget overlaps widget 1",
+            },
+            {
+              index: 2,
+              code: "size_not_allowed",
+              message: "A pie chart must be 2 × 2 to 3 × 3 (columns × rows)",
+            },
+          ],
+        },
+      },
+      422,
+    ),
+  );
+  try {
+    const failure = await updateOpenViewDashboard({
+      id: dashboardId,
+      revision: 2,
+      widgets: [],
+    }).catch((error: unknown) => error);
+    expect(getOpenViewDashboardLayoutIssues(failure)).toEqual([
+      { index: 1, code: "overlap", message: "This widget overlaps widget 1" },
+      {
+        index: 2,
+        code: "size_not_allowed",
+        message: "A pie chart must be 2 × 2 to 3 × 3 (columns × rows)",
+      },
+    ]);
+    expect(getOpenViewDashboardLayoutIssues(new Error("other"))).toBeNull();
+  } finally {
+    fetch.restore();
   }
 });

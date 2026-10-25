@@ -47,7 +47,7 @@ export const PAGE_GUIDES = {
     entries: [
       "Choose a record structure and a saved view to browse the records you can read.",
       "Filters, sorting, and visible columns help you find the right record. Open a record to inspect it before making a change.",
-      "Dashboards and Charts summarize accessible information. A chart does not grant access to its underlying records.",
+      "Each department's Dashboard summarizes the records you can read. A chart does not grant access to its underlying records.",
       "Reports prepares saved report results and exports. Editing and export controls depend on your access.",
     ],
   },

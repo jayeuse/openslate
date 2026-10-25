@@ -22,7 +22,7 @@ import {
   chartSourceStamp,
   type SavedChart,
 } from "../../adapters/charts-api";
-import type { OpenViewDashboardWidgetInput } from "../../adapters/dashboards-api";
+import type { OpenViewWidgetSource } from "../../adapters/dashboards-api";
 import { useOpenViewAccessDenied } from "../../adapters/openview-access";
 import {
   compileChartEditorDraft,
@@ -45,7 +45,7 @@ export type ChartSourceEditorProps = {
   refusedChartId?: string | null;
   onRetrySource?: () => void;
   children: (
-    input: OpenViewDashboardWidgetInput | null,
+    input: OpenViewWidgetSource | null,
     sourceStamp: string | null,
   ) => ReactNode;
 };
