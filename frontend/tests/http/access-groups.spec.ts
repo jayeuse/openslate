@@ -1,10 +1,12 @@
 import {
   expect,
   expectNoHorizontalScroll,
+  expectNoPageScroll,
   heldResponse,
   test,
   type Page,
 } from "./helpers/test";
+import { tableCardGaps } from "./helpers/layout";
 
 import {
   addPeople,
@@ -585,4 +587,20 @@ test("group members retain the complete later-page catalog and refresh paged mem
   expect(
     api.sent("PUT", `/api/access/groups/${ids.readers}/members`)[0]?.body,
   ).toMatchObject({ member_ids: [ids.ben, late] });
+});
+
+test("a short Groups list fills the page with its pager at the bottom, as People does", async ({
+  page,
+}) => {
+  await mockAccessApi(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/access?view=groups");
+  const table = page.getByRole("table", { name: "Groups", exact: true });
+  await expect(table.getByRole("row")).toHaveCount(3);
+  const gaps = await tableCardGaps(
+    page.getByRole("navigation", { name: "Group pages", exact: true }),
+  );
+  expect(gaps.frame).toBeLessThanOrEqual(24);
+  expect(gaps.pager).toBeLessThanOrEqual(1);
+  await expectNoPageScroll(page);
 });

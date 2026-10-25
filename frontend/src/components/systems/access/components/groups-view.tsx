@@ -472,7 +472,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
             ) : null}
           </Empty>
         ) : (
-          <div className="access-fill access-hug bg-card flex min-w-0 flex-col overflow-hidden rounded-md border">
+          <div className="access-fill bg-card flex min-w-0 flex-col overflow-hidden rounded-md border">
             <div className="access-fill access-scroll-table hidden md:block">
               <Table aria-label="Groups" className="table-fixed">
                 <colgroup>

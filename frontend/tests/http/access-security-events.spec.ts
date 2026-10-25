@@ -1,8 +1,14 @@
-import { authMeBody, expect, test, type Page } from "./helpers/test";
+import {
+  authMeBody,
+  expect,
+  expectNoPageScroll,
+  test,
+  type Page,
+} from "./helpers/test";
 import { person } from "./helpers/access-api";
 import { profilePreferences } from "./helpers/profile-api";
 import { openFilters, enterDay } from "./helpers/filters";
-import { cutTexts, smallTargets } from "./helpers/layout";
+import { cutTexts, smallTargets, tableCardGaps } from "./helpers/layout";
 import { eventLabels } from "../../src/components/systems/access/helpers/security-event-sentences";
 import { deferredMfaResponse, mfaUserA, mfaUserB } from "./helpers/mfa";
 import {
@@ -1862,3 +1868,20 @@ for (const [width, height] of [
     expect(await cutTexts(eventRows(page))).toEqual([]);
   });
 }
+
+test("a short Security events list fills the Audit page with its pager at the bottom", async ({
+  page,
+}) => {
+  await mockSecurityEvents(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openFeed(page);
+  const gaps = await tableCardGaps(
+    page.getByRole("navigation", {
+      name: "Security event pages",
+      exact: true,
+    }),
+  );
+  expect(gaps.frame).toBeLessThanOrEqual(24);
+  expect(gaps.pager).toBeLessThanOrEqual(1);
+  await expectNoPageScroll(page);
+});

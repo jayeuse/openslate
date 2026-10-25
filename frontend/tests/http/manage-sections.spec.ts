@@ -1,6 +1,8 @@
 import {
   expect,
   expectNoHorizontalScroll,
+  expectNoPageScroll,
+  heldResponse,
   signedInAs,
   test,
   type Locator,
@@ -13,7 +15,12 @@ import {
   readyBackupExport,
 } from "./helpers/manage-backups";
 import { mockManageSecurity } from "./helpers/manage-security";
-import { cutTexts, smallTargets, toolbarLines } from "./helpers/layout";
+import {
+  cutTexts,
+  smallTargets,
+  tableCardGaps,
+  toolbarLines,
+} from "./helpers/layout";
 
 // Who sees which Manage section, the section header, and the still page from
 // 1280px. The navigation rule itself is owned by the isolated
@@ -387,6 +394,56 @@ test("no Manage section scrolls the page at 1280 by 720", async ({ page }) => {
   await expect(
     page.getByRole("navigation", { name: "Jobs pages" }),
   ).toBeInViewport();
+});
+
+test("a short Activity list fills the Audit page with its pager at the bottom", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockManageBackups(page);
+  await mockAudit(page, 3);
+  await mockJobs(page);
+  await openSection(page, sections[2]);
+  const table = page.getByRole("table", {
+    name: "Activity history table",
+    exact: true,
+  });
+  await expect(table.getByRole("row")).toHaveCount(4);
+  const gaps = await tableCardGaps(
+    page.getByRole("navigation", { name: "Activity pages", exact: true }),
+  );
+  expect(gaps.frame).toBeLessThanOrEqual(24);
+  expect(gaps.pager).toBeLessThanOrEqual(1);
+  await expectNoPageScroll(page);
+});
+
+test("the Activity table frame does not move when its rows arrive", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockManageBackups(page);
+  await mockAudit(page, 3);
+  await mockJobs(page);
+  const gate = heldResponse();
+  await page.route(/\/api\/audit-logs\?/, async (route) => {
+    gate.enter();
+    await gate.released;
+    await route.fallback();
+  });
+  await page.goto("/manage?view=audit");
+  await gate.entered;
+  const loading = await page
+    .locator('[data-slot="loading-region"][aria-busy="true"] .bg-card')
+    .first()
+    .boundingBox();
+  gate.release();
+  await expect(page.getByText("Quote Q-1000").first()).toBeVisible();
+  const loaded = await page
+    .locator('table[aria-label="Activity history table"]')
+    .locator("xpath=ancestor::div[contains(@class,'bg-card')][1]")
+    .boundingBox();
+  expect(loaded?.y).toBeCloseTo(loading?.y ?? 0, 0);
+  expect(loaded?.height).toBeCloseTo(loading?.height ?? 0, 0);
 });
 
 const phone = { width: 390, height: 844 };

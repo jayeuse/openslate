@@ -68,3 +68,22 @@ export async function toolbarLines(toolbar: Locator) {
     return lines.map((line) => line.count);
   });
 }
+
+/**
+ * How a still-page table card sits in its frame (PD66): the space between
+ * the card's bottom edge and the bottom of #main-content, and between the
+ * pager and the card's bottom edge. `pager` is the pager's navigation.
+ */
+export async function tableCardGaps(pager: Locator) {
+  return pager.evaluate((nav) => {
+    const footer = nav.closest("fieldset")?.parentElement;
+    const card = footer?.parentElement;
+    const frame = document.getElementById("main-content");
+    if (!footer || !card || !frame) throw new Error("No pager card or frame");
+    const box = card.getBoundingClientRect();
+    return {
+      frame: Math.round(frame.getBoundingClientRect().bottom - box.bottom),
+      pager: Math.round(box.bottom - footer.getBoundingClientRect().bottom),
+    };
+  });
+}
