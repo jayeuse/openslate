@@ -373,9 +373,11 @@ export function prefetchOpenViewSection(
 ): void {
   const url = new URL(href, "http://openview.invalid");
   if (url.pathname !== "/openview") return;
-  const section = url.searchParams.get("section") ?? "views";
-  const reads: Promise<void>[] = [];
-  if (section === "views")
-    reads.push(client.prefetchQuery(boundedCatalogOptions()));
-  void Promise.all(reads);
+  // A module page (and its Reports view) needs the catalog and the
+  // person's role, which decides what they may change.
+  if ((url.searchParams.get("section") ?? "views") === "views")
+    void Promise.all([
+      client.prefetchQuery(boundedCatalogOptions()),
+      client.prefetchQuery(authMeOptions()),
+    ]);
 }
