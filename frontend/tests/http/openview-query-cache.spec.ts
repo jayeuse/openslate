@@ -501,8 +501,12 @@ for (const current of catalogDenialCases) {
     const api = await installOpenViewApi(page);
     await page.goto(`/openview?section=${current.section}`);
     const denial = page.getByText(current.denial);
-    // The catalog shows as the data-source choice.
-    const source = page.locator("option", { hasText: "Assets" });
+    // The catalog shows as the module page's title in Views (OD1) and as
+    // the data-source choice in Charts.
+    const source =
+      current.section === "views"
+        ? page.getByRole("heading", { level: 1, name: "Assets" })
+        : page.locator("option", { hasText: "Assets" });
     await expect(source).toHaveCount(1);
     await sendOpenViewEvent(page, "resync");
     await expect.poll(() => api.catalogReads.length).toBe(2);
@@ -704,10 +708,20 @@ test("a refusal in Charts or Dashboards hides cached Reports or Views until an a
   api.denyCatalog(false);
   await page.getByRole("button", { name: "Refresh Reports" }).click();
   await expect(report).toBeVisible();
+  // The refused catalog also hid the sidebar's departments; the server's
+  // next modules change reads it again and they return.
+  await sendOpenViewEvent(page, "invalidate", { entity: "modules" });
+  await expect(
+    sidebarLink(page, "Assets").or(
+      page
+        .getByRole("navigation", { name: "Main navigation" })
+        .getByRole("button", { name: "Operations", exact: true }),
+    ),
+  ).toBeVisible();
 
   await followSidebarLink(page, "Assets");
   await expect(page).toHaveURL(/section=views/);
-  const source = page.locator("option", { hasText: "Assets" });
+  const source = page.getByRole("heading", { level: 1, name: "Assets" });
   await expect(source).toHaveCount(1);
 
   // Dashboards reads the catalog itself, without the cache, and is refused.

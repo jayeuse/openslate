@@ -227,15 +227,13 @@ async function exerciseOpenView(
   supplier: SeededSupplier,
 ) {
   const viewName = `Full-stack OpenView ${runId.slice(0, 8)}`;
-  await page.goto("/openview?section=views");
-  const dataSource = page.getByLabel("Data source");
-  await expect(dataSource).toBeVisible();
-  await dataSource.selectOption({ label: "Suppliers" });
+  // Modules open from the sidebar's departments (OpenView part A).
+  const openedModuleId = await openModulePage(page, "Suppliers");
   await expect(
     page.getByRole("searchbox", { name: "Search Suppliers", exact: true }),
   ).toBeVisible();
-  await expect(dataSource).toHaveValue(supplier.moduleId);
-  await expect(dataSource).toHaveValue(
+  expect(openedModuleId).toBe(supplier.moduleId);
+  expect(openedModuleId).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
   );
   const moduleId = supplier.moduleId;
@@ -244,7 +242,9 @@ async function exerciseOpenView(
     recordResults.getByText(supplier.legalName, { exact: true }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Save view as" }).click();
+  // At rest a manager saves a new view from the view menu (OD5).
+  await page.getByRole("button", { name: "More view actions" }).click();
+  await page.getByRole("menuitem", { name: "Save as new view…" }).click();
   const saveDialog = page.getByRole("dialog", { name: "Save view" });
   await saveDialog.getByLabel("View name").fill(viewName);
   await saveDialog.getByRole("button", { name: "Save view" }).click();
@@ -265,13 +265,13 @@ async function exerciseOpenView(
   await expect(
     recordResults.getByText(supplier.legalName, { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "View actions" }).click();
+  await page.getByRole("button", { name: "More view actions" }).click();
   await page.getByRole("menuitem", { name: "Make default view" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "default view of this module" }),
   ).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "View actions" }).click();
+  await page.getByRole("button", { name: "More view actions" }).click();
   await expect(
     page.getByRole("menuitem", { name: "Clear default view" }),
   ).toBeVisible();
@@ -298,7 +298,7 @@ async function exerciseOpenView(
   await page
     .getByRole("searchbox", { name: "Search Suppliers", exact: true })
     .fill(currentSearch);
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect(
     page.getByRole("status").filter({ hasText: `“${viewName}” was saved.` }),
   ).toBeVisible();
@@ -306,7 +306,9 @@ async function exerciseOpenView(
   await concurrentPage
     .getByRole("searchbox", { name: "Search Suppliers", exact: true })
     .fill(`stale revision ${runId.slice(0, 6)}`);
-  await concurrentPage.getByRole("button", { name: "Save changes" }).click();
+  await concurrentPage
+    .getByRole("button", { name: "Save view", exact: true })
+    .click();
   const conflictDialog = concurrentPage.getByRole("dialog", {
     name: "Update saved view",
   });
@@ -322,7 +324,7 @@ async function exerciseOpenView(
   ).toHaveValue(currentSearch);
   await concurrentPage.close();
 
-  await page.getByRole("button", { name: "View actions" }).click();
+  await page.getByRole("button", { name: "More view actions" }).click();
   await page.getByRole("menuitem", { name: "Archive view" }).click();
   const archiveDialog = page.getByRole("alertdialog", {
     name: "Archive saved view?",
@@ -332,7 +334,8 @@ async function exerciseOpenView(
     page.getByRole("status").filter({ hasText: "archived" }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: /Archived views/ }).click();
+  await page.getByRole("button", { name: "More view actions" }).click();
+  await page.getByRole("menuitem", { name: /^Archived views/ }).click();
   const archivedDialog = page.getByRole("dialog", { name: "Archived views" });
   await expect(
     archivedDialog.getByText(viewName, { exact: true }),
@@ -1324,15 +1327,30 @@ async function expectEmptyWindowResponse(response: Response) {
   });
 }
 
+/** Opens a module page by its name, as the sidebar links it. */
+async function openModulePage(page: Page, name: string): Promise<string> {
+  const response = await page.request.get("/api/views/data-sources?limit=100");
+  expect(response.ok()).toBe(true);
+  const catalog = (await response.json()) as {
+    items: { id: string; name: string }[];
+  };
+  const moduleId = catalog.items.find((item) => item.name === name)?.id;
+  if (!moduleId) throw new Error(`${name} is not a readable module`);
+  await page.goto(`/openview?section=views&module=${moduleId}`);
+  await expect(
+    page.getByRole("heading", { level: 1, name, exact: true }),
+  ).toBeVisible();
+  return moduleId;
+}
+
+/** Layout settings sit at the foot of the Layout menu (OD4). */
+async function openLayoutSettings(page: Page) {
+  await page.getByRole("button", { name: /^Layout: / }).click();
+  await page.getByRole("menuitem", { name: "Layout settings…" }).click();
+}
+
 async function exerciseLiveCalendarAndTimeline(page: Page) {
-  await page.goto("/openview?section=views");
-  const dataSource = page.getByLabel("Data source");
-  await expect(dataSource).toBeVisible();
-  await expect(page).toHaveURL(/[?&]module=[0-9a-f-]{36}(?:&|$)/i);
-  const [moduleId] = await dataSource.selectOption({
-    label: "Purchase orders",
-  });
-  if (!moduleId) throw new Error("Purchase orders has no module ID");
+  const moduleId = await openModulePage(page, "Purchase orders");
   await expect(
     page.getByRole("searchbox", {
       name: "Search Purchase orders",
@@ -1340,9 +1358,8 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
     }),
   ).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`[?&]module=${moduleId}(?:&|$)`));
-  await expect(dataSource).toHaveValue(moduleId);
 
-  await page.getByRole("button", { name: "Layout settings" }).click();
+  await openLayoutSettings(page);
   const layoutSettings = page.getByRole("dialog", { name: "Layout settings" });
   await layoutSettings
     .getByLabel("Presentation layout")
@@ -1374,7 +1391,7 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
     await calendar.getByLabel("Window starts").inputValue(),
     await calendar.getByLabel("Window ends").inputValue(),
   );
-  await expect(dataSource).toHaveValue(moduleId);
+  await expect(page).toHaveURL(new RegExp(`[?&]module=${moduleId}(?:&|$)`));
   const calendarResponsePromise = waitForWindowQuery(
     page,
     "calendar",
@@ -1413,7 +1430,7 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
       .filter({ hasText: "No scheduled records in this date window." }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Layout settings" }).click();
+  await openLayoutSettings(page);
   await layoutSettings
     .getByLabel("Presentation layout")
     .selectOption("timeline");
@@ -1450,7 +1467,7 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
     await timeline.getByLabel("Window starts").inputValue(),
     await timeline.getByLabel("Window ends").inputValue(),
   );
-  await expect(dataSource).toHaveValue(moduleId);
+  await expect(page).toHaveURL(new RegExp(`[?&]module=${moduleId}(?:&|$)`));
   const timelineResponsePromise = waitForWindowQuery(
     page,
     "timeline",

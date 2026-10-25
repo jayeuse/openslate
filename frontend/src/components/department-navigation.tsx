@@ -12,6 +12,7 @@ import { useWorkspaceInteractionSuspended } from "@/components/systems/shared/ru
 import {
   departmentNavigation,
   departmentNavigationKey,
+  isRefusal,
   type NavigationDepartment,
 } from "@/components/department-navigation-model";
 
@@ -56,6 +57,12 @@ export function useDepartmentNavigation(
         void queryClient.invalidateQueries({ queryKey: openViewKeys.catalog });
     });
   }, [openViewSyncs, queryClient]);
-  if (!departments.data || !modules.data) return [];
+  if (
+    !departments.data ||
+    !modules.data ||
+    isRefusal(departments.error) ||
+    isRefusal(modules.error)
+  )
+    return [];
   return departmentNavigation(departments.data.items, modules.data.items);
 }

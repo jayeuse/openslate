@@ -48,7 +48,7 @@ async function installCatalog(
   target: Page,
   modules: { id: string; name: string; department: string }[],
 ) {
-  const state = { modules, departmentQueries: [] as string[] };
+  const state = { modules, refused: false, departmentQueries: [] as string[] };
   await target.route(
     (url) => url.pathname === "/api/departments",
     (route) => {
@@ -71,6 +71,7 @@ async function installCatalog(
     (url) => url.pathname === "/api/views/data-sources",
     (route) =>
       route.fulfill({
+        ...(state.refused ? { status: 403 } : {}),
         json: page(
           state.modules.map((module) => ({
             id: module.id,
@@ -173,6 +174,26 @@ test("a module published in the Sandbox appears without a reload", async ({
   await expect(
     nav.getByRole("button", { name: "Finance", exact: true }),
   ).toBeVisible();
+});
+
+test("a refused catalog read hides the department and module names it held", async ({
+  page: target,
+}) => {
+  await installOpenViewEventSource(target);
+  const state = await installCatalog(target, [
+    { id: ids.contacts, name: "Contacts", department: ids.sales },
+  ]);
+  await target.goto("/platform?section=search");
+  const nav = sidebar(target);
+  await expect(
+    nav.getByRole("button", { name: "Sales", exact: true }),
+  ).toBeVisible();
+  state.refused = true;
+  await sendOpenViewEvent(target, "invalidate", { entity: "modules" });
+  await expect(nav.getByRole("list", { name: "Departments" })).toHaveCount(0);
+  await expect(
+    nav.getByRole("button", { name: "Sales", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("a person who reads no module sees no Departments section", async ({

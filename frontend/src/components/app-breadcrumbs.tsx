@@ -18,6 +18,7 @@ import { departmentNavigationOptions } from "@/components/department-navigation"
 import {
   currentModuleId,
   departmentNavigation,
+  isRefusal,
   moduleLocation,
 } from "@/components/department-navigation-model";
 import {
@@ -164,7 +165,10 @@ function ModuleCrumbs({ moduleId }: { moduleId: string }) {
   });
   const modules = useQuery({ ...catalogFirstPageOptions(), enabled: false });
   const place =
-    departments.data && modules.data
+    departments.data &&
+    modules.data &&
+    !isRefusal(departments.error) &&
+    !isRefusal(modules.error)
       ? moduleLocation(
           departmentNavigation(departments.data.items, modules.data.items),
           moduleId,

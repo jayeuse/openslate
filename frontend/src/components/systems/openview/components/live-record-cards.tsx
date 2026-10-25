@@ -67,10 +67,13 @@ function recordValue(
 export function RecordPersonCard({
   row,
   field,
+  inline = false,
   children,
 }: {
   row: OpenViewRecord;
   field: Pick<OpenViewDataSourceField, "id" | "type">;
+  /** A table row's person: avatar and name in ink, on one line (OD6). */
+  inline?: boolean;
   children: ReactNode;
 }) {
   const id = row.data[field.id];
@@ -80,7 +83,17 @@ export function RecordPersonCard({
     typeof label === "string" &&
     label.trim() &&
     label !== "Unavailable user" ? (
-    <PersonCardPopover personId={id} label={label} />
+    <PersonCardPopover
+      personId={id}
+      label={label}
+      {...(inline
+        ? {
+            decoration: "none" as const,
+            className:
+              "text-foreground max-w-full xl:min-h-8 [&>span]:truncate",
+          }
+        : {})}
+    />
   ) : (
     <>{children}</>
   );

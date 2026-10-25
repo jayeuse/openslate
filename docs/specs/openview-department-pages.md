@@ -77,6 +77,17 @@ The module page is the umbrella's Views direction (comp `views.html`), with the 
 - **No access** (OD13): "No records to show yet" with the reason and no action.
 - **Words**: the glossary rows that belong to these screens (umbrella OV-F12).
 
+**Decisions made during A2** (in scope under the relayout delegation):
+
+| ID | Decision | Removes |
+| --- | --- | --- |
+| DA11 | The Layout control is a menu that names the current layout ("Table ▾"): the six layouts with their icons as radio items, then "Layout settings…" at its foot, which opens the existing settings (sort rules, grouping, the Kanban, Calendar, and Timeline fields). The items are plain menu items marked as radios, because the menu's radio parts would join the menu code that every cold page loads. | The six layout tabs; the phone Layout select; the Layout settings button. |
+| DA12 | With unsaved changes a manager sees "Save view" (primary) and, on an editable saved view, "Save as new view"; New record stays as an outline button. At rest, "Save as new view…" is in the view menu, so a manager can still name a view without changing it first. | The resting "Save view as" button. |
+| DA13 | The view menu holds Copy link (the address, unsaved changes included), Reset changes, and Archived views for everyone, then the manager's Save as new view…, Rename view…, Duplicate view, Make or Clear default view, and Archive view. The default view shows as "· default" in the view picker. | The "Module default" and "Revision N" badges; the "These changes live in the page address" sentence. |
+| DA14 | Refreshes report in the header's meta line ("Refreshing records…", a live status), not as banners above the table, so the page does not move while it reads. | The "Refreshing…" and "Navigation and conflicting actions are paused" banners; the table's "Updating matching records" row. |
+| DA15 | A refused catalog read hides the sidebar's Departments section and the breadcrumb's names, as OpenView hides retained names after a refusal; the next authorized catalog read (a server change event, or any OpenView page's read) brings them back. | Department and module names shown from a refused read. |
+| DA16 | The Filters popover holds the view's filter rows label-left: Match filters, each condition, Add filter, and Deleted. Chips read "Status: is Active". | The filter editor's heading and help sentence. |
+
 Of the umbrella's open questions, the first two are in-scope decisions under the relayout delegation and follow the recommendation: the record opens in a right sheet, and the quick filter shows the first choice field with counts. The third (dashboard widget pagers) belongs to part B.
 
 ## Phases

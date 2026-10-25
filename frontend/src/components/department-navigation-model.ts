@@ -4,6 +4,7 @@
  * the person can read. A module is a page: the OpenView Views page for it.
  */
 import { openViewKeys } from "@/components/systems/openview/adapters/openview-queries";
+import { ApiError } from "@/lib/api";
 
 /** The departments read in Sandbox order (the catalog first page holds the modules). */
 export const departmentNavigationKey = () =>
@@ -47,9 +48,27 @@ export function departmentNavigation(
     .filter((department) => department.modules.length > 0);
 }
 
+/**
+ * Whether a read was refused. A refused catalog hides the section, as
+ * OpenView hides retained names after a refusal (openview-access.ts).
+ */
+export function isRefusal(error: unknown): boolean {
+  return error instanceof ApiError && [401, 403].includes(error.status);
+}
+
 /** The page of one module. */
 export function moduleHref(moduleId: string): string {
   return `/openview?section=views&module=${encodeURIComponent(moduleId)}`;
+}
+
+/** Whether a URL shows a module page (OpenView's Views section). */
+export function isModulePage(
+  pathname: string,
+  searchParams: URLSearchParams,
+): boolean {
+  if (pathname !== "/openview") return false;
+  const section = searchParams.get("section");
+  return section === null || section === "views";
 }
 
 /** The module a URL shows as its page, or null on any other page. */
@@ -57,10 +76,9 @@ export function currentModuleId(
   pathname: string,
   searchParams: URLSearchParams,
 ): string | null {
-  if (pathname !== "/openview") return null;
-  const section = searchParams.get("section");
-  if (section !== null && section !== "views") return null;
-  return searchParams.get("module");
+  return isModulePage(pathname, searchParams)
+    ? searchParams.get("module")
+    : null;
 }
 
 /** The department and module a module page shows, for the breadcrumb. */

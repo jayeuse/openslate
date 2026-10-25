@@ -1077,13 +1077,12 @@ test("a selected data source beyond the catalog page resolves after reload", asy
 }) => {
   await installLinksApi(page, { homeSourceOffPage: true });
   await openLinksPanel(page);
-  await expect(page.getByLabel("Data source", { exact: true })).toHaveValue(
-    sourceModuleId,
-  );
+  // The module page names its module (OD1); the open record dialog hides
+  // the page from the accessibility tree, so the title is found by its tag.
+  const title = page.locator("h1", { hasText: "Service requests" });
+  await expect(title).toBeVisible();
   await page.reload();
-  await expect(page.getByLabel("Data source", { exact: true })).toHaveValue(
-    sourceModuleId,
-  );
+  await expect(title).toBeVisible();
   await expect(
     page.getByRole("dialog", { name: "Record details" }),
   ).toBeVisible();
@@ -1118,10 +1117,9 @@ test("an off-page source refusal recovers through Retry catalog", async ({
     "OpenView data is unavailable. Sign in or ask for access, then retry.",
     { exact: true },
   );
-  const source = page.getByLabel("Data source", { exact: true });
-  const sourceLabel = page.getByRole("option", {
+  const sourceLabel = page.getByRole("heading", {
+    level: 1,
     name: "Service requests",
-    exact: true,
   });
   await expect(denial).toBeVisible();
   await expect(sourceLabel).toHaveCount(0);
@@ -1136,8 +1134,7 @@ test("an off-page source refusal recovers through Retry catalog", async ({
   } finally {
     recovery.resolve();
   }
-  await expect(source).toHaveValue(sourceModuleId);
-  await expect(source.locator("option:checked")).toHaveText("Service requests");
+  await expect(sourceLabel).toBeVisible();
   await expect(denial).toHaveCount(0);
   expect(api.state.recordWrites).toEqual([]);
 });
@@ -1317,7 +1314,7 @@ test("temporary off-page fields wait for detail hydration and survive reload", a
         },
       });
     await expect(
-      page.getByText("Temporary changes", { exact: true }),
+      page.getByText("Unsaved changes", { exact: true }),
     ).toBeVisible();
     await expect(page).toHaveURL(/[?&]changes=[A-Za-z0-9_-]+/);
   };
