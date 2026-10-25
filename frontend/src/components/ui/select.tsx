@@ -11,7 +11,8 @@ const selectVariants = cva(
   {
     variants: {
       size: {
-        default: "h-10 px-3 text-sm",
+        // 16px below 768px, so iOS Safari does not zoom on focus (PD56).
+        default: "h-10 px-3 text-base md:text-sm",
         sm: "h-8 px-2.5 text-xs",
       },
     },

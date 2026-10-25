@@ -82,10 +82,12 @@ class WorkerLease:
 class TransferLease:
     """One physical slot survives response cancellation until all workers release it."""
 
-    def __init__(self) -> None:
+    def __init__(self, wait_seconds: float = 0) -> None:
         if _storage_cleanup_uncertain:
             raise _busy()
-        if not _slots.acquire(blocking=False):
+        if not (
+            _slots.acquire(timeout=wait_seconds) if wait_seconds else _slots.acquire(blocking=False)
+        ):
             raise _busy()
         if _storage_cleanup_uncertain:
             _slots.release()
@@ -114,8 +116,9 @@ class TransferLease:
 
 
 @contextmanager
-def transfer_slot() -> Iterator[TransferLease]:
-    lease = TransferLease()
+def transfer_slot(wait_seconds: float = 0) -> Iterator[TransferLease]:
+    """Admit one transfer; with ``wait_seconds``, wait that long for a slot before refusing."""
+    lease = TransferLease(wait_seconds)
     try:
         yield lease
     finally:

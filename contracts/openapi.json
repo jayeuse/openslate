@@ -12213,6 +12213,136 @@
         "title": "PersonCardResponse",
         "type": "object"
       },
+      "PersonProfileGroup": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PersonProfileGroup",
+        "type": "object"
+      },
+      "PersonProfilePublicResponse": {
+        "description": "A guest's view of a profile: the same three fields as the guest person card.",
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "job_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Title"
+          }
+        },
+        "required": [
+          "display_name",
+          "job_title",
+          "avatar_url"
+        ],
+        "title": "PersonProfilePublicResponse",
+        "type": "object"
+      },
+      "PersonProfileResponse": {
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/PersonProfileGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "job_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Title"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          }
+        },
+        "required": [
+          "display_name",
+          "job_title",
+          "avatar_url",
+          "phone",
+          "bio",
+          "role",
+          "groups"
+        ],
+        "title": "PersonProfileResponse",
+        "type": "object"
+      },
       "PersonalPreferences": {
         "additionalProperties": false,
         "properties": {
@@ -57128,6 +57258,81 @@
           }
         ],
         "summary": "Update User Preferences",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/profile": {
+      "get": {
+        "description": "A person's profile in the bound organization (PD17); 404 when it is not available.",
+        "operationId": "get_person_profile_api_users__user_id__profile_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/PersonProfileResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PersonProfilePublicResponse"
+                    }
+                  ],
+                  "title": "Response Get Person Profile Api Users  User Id  Profile Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Person Profile",
         "tags": [
           "users"
         ]

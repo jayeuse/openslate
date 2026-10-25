@@ -176,6 +176,11 @@ class ProfileWire:
                     bio=self.profile["bio"] if is_actor else None,
                 )
             return self.response(request, body=public)
+        if path == f"/api/users/{self.admin_id}/profile" and method == "GET":
+            public = {"display_name": "Administrator", "job_title": None, "avatar_url": None}
+            if identity == self.admin_id or self.role != "guest":
+                public.update(phone=None, bio=None, role="admin", groups=[])
+            return self.response(request, body=public)
         if path.endswith("/avatar"):
             assert path == f"/api/users/{self.actor_id}/avatar"
             if self.profile["avatar_file_id"] is None:

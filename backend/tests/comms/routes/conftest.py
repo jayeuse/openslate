@@ -10,7 +10,7 @@ from uuid import UUID
 import pytest
 from fastapi import Depends, Request
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import (
@@ -212,6 +212,11 @@ class MessageRoutes:
                 CommsConversationCounter.org_id == org.id,
                 CommsConversationCounter.conversation_id == org.conversation,
             ).values(last_seq=count))
+            # Fresh statistics, as autoanalyze would give a real installation within a
+            # minute. Without them a database-wide ANALYZE taken while the table was empty
+            # (test_cold_load_latency) leaves reltuples = 0, and the planner scans the
+            # whole table for every purge batch.
+            connection.execute(text("ANALYZE comms_messages"))
         return identities
 
     def hide_other_conversation(self) -> None:

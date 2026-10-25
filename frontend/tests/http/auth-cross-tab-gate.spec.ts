@@ -327,7 +327,7 @@ test("blurring during the first session check does not strand an unverified work
   try {
     await page.goto("/platform?section=search");
     await session.entered;
-    await expect(page.getByText("Checking your session…")).toBeVisible();
+    await expect(page.getByText("Checking your session…")).toHaveCount(0);
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
     session.release();
     await expect(page.getByRole("heading", { name: "Platform" })).toBeVisible();
@@ -336,7 +336,7 @@ test("blurring during the first session check does not strand an unverified work
   }
 });
 
-test("a returning tab conceals the old account before revalidation and ignores delayed old responses", async ({
+test("a returning tab checks in the background and ignores delayed old-account responses", async ({
   context,
   page,
 }) => {
@@ -416,24 +416,11 @@ test("a returning tab conceals the old account before revalidation and ignores d
   await notices.getByRole("button", { name: "Refresh" }).click();
   await oldNotice.entered;
   holdNextSession = true;
-  const concealedImmediately = await page.evaluate(() => {
-    window.dispatchEvent(new FocusEvent("focus"));
-    const modal = document.querySelector<HTMLDialogElement>(
-      'dialog[aria-label="Session verification"]',
-    );
-    const hit = document.elementFromPoint(
-      window.innerWidth / 2,
-      window.innerHeight / 2,
-    );
-    return (
-      modal?.matches(":modal") === true &&
-      hit !== null &&
-      (hit === modal || modal.contains(hit))
-    );
-  });
-  expect(concealedImmediately).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   await oldSession.entered;
-  await expect(notices).toHaveCount(0);
+  await expect(
+    page.getByRole("dialog", { name: "Session verification" }),
+  ).toBeHidden();
 
   const otherTab = await context.newPage();
   await otherTab.goto("about:blank");
@@ -442,11 +429,7 @@ test("a returning tab conceals the old account before revalidation and ignores d
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   await newSession.entered;
   try {
-    await expect(
-      page
-        .getByRole("dialog", { name: "Session verification" })
-        .getByText("Checking your session…"),
-    ).toBeVisible();
+    await expect(page.getByText("Checking your session…")).toHaveCount(0);
   } finally {
     oldSession.release();
     oldNotice.release();
@@ -462,7 +445,7 @@ test("a returning tab conceals the old account before revalidation and ignores d
   await expect(currentNotices.getByText("Scheduled report run")).toHaveCount(0);
 });
 
-test("a returning tab with a revoked session hides the workspace and redirects to login", async ({
+test("a returning tab with a revoked session goes to sign-in", async ({
   page,
 }) => {
   let authenticated = true;
@@ -489,58 +472,12 @@ test("a returning tab with a revoked session hides the workspace and redirects t
   await expect(page.getByRole("heading", { name: "Platform" })).toBeVisible();
 
   authenticated = false;
-  const concealedImmediately = await page.evaluate(() => {
-    window.dispatchEvent(new FocusEvent("focus"));
-    const modal = document.querySelector<HTMLDialogElement>(
-      'dialog[aria-label="Session verification"]',
-    );
-    return modal?.matches(":modal") === true;
-  });
-  expect(concealedImmediately).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   await expect(page.getByRole("heading", { name: "Platform" })).toHaveCount(0);
   await expect(page).toHaveURL(/\/login$/);
 });
 
-test("a same-account recheck preserves an in-progress workspace input behind the privacy curtain", async ({
-  page,
-}) => {
-  let holdNextSession = false;
-  const recheck = heldResponse();
-  await page.route("**/api/auth/session", async (route) => {
-    if (holdNextSession) {
-      holdNextSession = false;
-      recheck.enter();
-      await recheck.released;
-    }
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userA,
-        default_organization_blocked: null,
-        setup_required: false,
-      }),
-    });
-  });
-
-  await page.goto("/platform?section=search");
-  const search = page.getByRole("searchbox", { name: "Search workspace" });
-  await search.fill("unsaved search draft");
-  holdNextSession = true;
-  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  await recheck.entered;
-  await expect(
-    page.getByRole("dialog", { name: "Session verification" }),
-  ).toBeVisible();
-
-  recheck.release();
-  await expect(
-    page.getByRole("dialog", { name: "Session verification" }),
-  ).toBeHidden();
-  await expect(search).toHaveValue("unsaved search draft");
-});
-
-test("an unavailable returning-tab check stays private through Escape and recovers on Retry", async ({
+test("an unavailable returning-tab check keeps the page and the next return recovers", async ({
   page,
 }) => {
   let available = true;
@@ -563,18 +500,24 @@ test("an unavailable returning-tab check stays private through Escape and recove
   const search = page.getByRole("searchbox", { name: "Search workspace" });
   await search.fill("draft kept during outage");
 
+  const sessionAnswer = (status: number) =>
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/auth/session" &&
+        response.status() === status,
+    );
   available = false;
+  const failed = sessionAnswer(503);
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await failed;
   const curtain = page.getByRole("dialog", { name: "Session verification" });
-  await expect(
-    curtain.getByText("We can’t verify your session right now."),
-  ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Platform" })).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await expect(curtain).toBeVisible();
+  await expect(curtain).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Platform" })).toBeVisible();
 
   available = true;
-  await curtain.getByRole("button", { name: "Retry" }).click();
+  const recovered = sessionAnswer(200);
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await recovered;
   await expect(curtain).toBeHidden();
   await expect(search).toHaveValue("draft kept during outage");
 });
@@ -617,7 +560,7 @@ test("a returning tab starts a new identity check while an old refresh remains p
     const curtain = page.getByRole("dialog", {
       name: "Session verification",
     });
-    await expect(curtain).toBeVisible();
+    await expect(curtain).toBeHidden();
 
     oldSessionExpired = false;
     activeUser = userB;
@@ -632,8 +575,8 @@ test("a returning tab starts a new identity check while an old refresh remains p
 });
 
 // Leaving the window does not change who is signed in, so the workspace stays
-// visible and usable while away; returning covers it only while the session
-// is rechecked.
+// visible and usable while away. Returning checks the session and reads the
+// identity again in the background, with no cover (PD68).
 test("leaving the window keeps the workspace visible and returning keeps its input", async ({
   page,
 }) => {
@@ -648,68 +591,69 @@ test("leaving the window keeps the workspace visible and returning keeps its inp
   const recheck = page.waitForRequest(
     (request) => new URL(request.url()).pathname === "/api/auth/session",
   );
+  const identityRead = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === "/api/auth/me",
+  );
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   await recheck;
+  await identityRead;
   await expect(curtain).toBeHidden();
   await expect(search).toHaveValue("still typing");
 });
 
-// Session cookies are shared by every tab, so a sign-in in another tab covers
-// this one at once and keeps it covered until it opens the new account.
-test("another tab's sign-in covers this tab until it opens the new account", async ({
+// Session cookies are shared by every tab, so a sign-in in another tab reloads
+// this one into the new account at once. The old account's unsaved work cannot
+// stay, so no "Leave site?" prompt may keep its page on screen (PD68).
+test("another tab's sign-in reloads this tab into the new account with no Leave site prompt", async ({
   page,
   context,
 }) => {
   let activeUser = userA;
-  let holdNextSession = false;
-  const newSession = heldResponse();
   await page.route("**/api/auth/session", async (route) => {
-    if (holdNextSession) {
-      holdNextSession = false;
-      newSession.enter();
-      await newSession.released;
-    }
-    try {
-      await route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          authenticated: true,
-          user_id: activeUser,
-          default_organization_blocked: null,
-          setup_required: false,
-        }),
-      });
-    } catch {
-      // A superseded browser request may already have been aborted.
-    }
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        authenticated: true,
+        user_id: activeUser,
+        default_organization_blocked: null,
+        setup_required: false,
+      }),
+    });
   });
   await page.goto("/platform?section=search");
   const search = page.getByRole("searchbox", { name: "Search workspace" });
   await search.fill("A-only draft");
-  const curtain = page.getByRole("dialog", { name: "Session verification" });
+  // A feature's unload guard, added after the shell, as an unsaved editor does.
+  await page.evaluate(() =>
+    window.addEventListener("beforeunload", (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    }),
+  );
+  const prompts: string[] = [];
+  page.on("dialog", (dialog) => {
+    prompts.push(dialog.type());
+    void dialog.dismiss();
+  });
 
   activeUser = userB;
-  holdNextSession = true;
   const otherTab = await context.newPage();
   await otherTab.goto("/openview-print.css");
-  try {
-    await otherTab.evaluate(() =>
-      new BroadcastChannel("openslate-session").postMessage({
-        tabId: "another-tab",
-      }),
-    );
-    await expect(curtain).toBeVisible();
-    await page.bringToFront();
-    await newSession.entered;
-    await expect(curtain).toBeVisible();
-  } finally {
-    newSession.release();
-  }
-  await expect(curtain).toBeHidden();
+  const reloaded = page.waitForEvent("load");
+  await otherTab.evaluate(() =>
+    new BroadcastChannel("openslate-session").postMessage({
+      tabId: "another-tab",
+    }),
+  );
+  await reloaded;
+  expect(prompts).toEqual([]);
+  await expect(
+    page.getByRole("dialog", { name: "Session verification" }),
+  ).toBeHidden();
   await expect(search).toHaveValue("");
 });
 
-test("Retry starts a fresh check when the current session request never settles", async ({
+test("a new return replaces a session check that never settles", async ({
   page,
 }) => {
   let holdNextSession = false;
@@ -742,11 +686,16 @@ test("Retry starts a fresh check when the current session request never settles"
   try {
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
     await heldSession.entered;
-    const curtain = page.getByRole("dialog", {
-      name: "Session verification",
-    });
-    await curtain.getByRole("button", { name: "Check again" }).click();
-    await expect(curtain).toBeHidden();
+    const fresh = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/auth/session" &&
+        response.status() === 200,
+    );
+    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    await fresh;
+    await expect(
+      page.getByRole("dialog", { name: "Session verification" }),
+    ).toBeHidden();
     await expect(search).toHaveValue("still editing");
   } finally {
     heldSession.release();

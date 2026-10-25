@@ -756,21 +756,8 @@ textarea {
   }
 }
 
-/* Shared studio chrome: quiet surfaces and consistently reachable controls. */
-.app-shell [data-slot="sidebar-menu-button"] {
-  min-height: 2.75rem;
-}
-.app-shell
-  :is(
-    [data-slot="sidebar-menu-button"],
-    [data-slot="sidebar-menu-sub-button"]
-  ):not([aria-expanded])[data-active]:not([data-active="false"]) {
-  color: var(--action-text);
-  font-weight: 600;
-}
-.app-shell [data-slot="sidebar-menu-button"] svg {
-  stroke-width: 1.65;
-}
+/* Sidebar and drawer rows carry their own sizes, active ink and icon stroke
+   (app-navigation.tsx), so the rules also reach the drawer's portal. */
 
 /* The sidebar's thumb (Quiet Scrollbar Rule) uses its own ink. */
 .app-sidebar-scroll::-webkit-scrollbar-thumb {
@@ -872,6 +859,12 @@ html[data-density="spacious"]
     height: 2rem;
     min-height: 2rem;
   }
+  /* SearchSelect options are slim rows too, so a list of 400 timezones
+     opens below its field (PD55). */
+  :is(#main-content .slim-ui, .slim-ui) [role="option"] {
+    min-height: 2rem;
+    padding-block: 0.375rem;
+  }
   /* :where keeps this end padding weaker than the select rules below, so
      a select keeps room for its chevron. */
   :is(#main-content .slim-ui, .slim-ui)
@@ -965,16 +958,25 @@ html[data-density="spacious"]
     translate: 0.75rem 0;
   }
 
-  /* The Still Page Rule in Manage (MD1, docs/specs/manage-relayout.md): from
-     1280px each section fills the viewport under its header, each link of the
-     chain shrinks, and the section body is the panel that scrolls. Scroll
-     panels are relative so screen-reader text cannot stretch the page. */
-  .manage-ui .manage-fill {
+  /* The Still Page Rule in Access and Manage (MD1,
+     docs/specs/manage-relayout.md): from 1280px each section fills the
+     viewport under its header and each link of the chain (`access-fill`,
+     `manage-fill`) shrinks; only a scroll panel or a table scrolls. One rule
+     serves both pages, so the shared table skeleton and Security events fill
+     in either. A table card fills the height that is left, with its pager at
+     the bottom, however few its rows (PD66,
+     docs/specs/profile-sidebar-relayout.md). */
+  :is(.access-ui, .manage-ui) :is(.access-fill, .manage-fill),
+  :is(.access-ui, .manage-ui)
+    [data-slot="loading-region"]:is(.access-fill, .manage-fill)
+    > div {
     display: flex;
     flex: 1 1 0%;
     flex-direction: column;
     min-height: 0;
   }
+  /* Scroll panels are relative so screen-reader text cannot stretch the
+     page. */
   .manage-ui .manage-scroll {
     position: relative;
     flex: 1 1 0%;
@@ -983,15 +985,7 @@ html[data-density="spacious"]
     overscroll-behavior: contain;
   }
 
-  /* The Still Page Rule: from 1280px People, Groups and Security fill the
-     viewport; each link of the chain shrinks, and only the table scrolls. */
-  .access-ui .access-fill,
-  .access-ui [data-slot="loading-region"].access-fill > div {
-    display: flex;
-    flex: 1 1 0%;
-    flex-direction: column;
-    min-height: 0;
-  }
+  /* In Access only the table container scrolls. */
   .access-ui .access-scroll-table > [data-slot="table-container"] {
     flex: 1 1 0%;
     min-height: 0;
@@ -999,12 +993,6 @@ html[data-density="spacious"]
     overscroll-behavior: contain;
     /* Keyboard focus never lands under the sticky head. */
     scroll-padding-top: 2.25rem;
-  }
-  /* A short list hugs its rows; a long one still shrinks and scrolls. */
-  .access-ui .access-fill.access-hug,
-  .access-ui .access-hug .access-fill,
-  .access-ui .access-hug .access-scroll-table > [data-slot="table-container"] {
-    flex: 0 1 auto;
   }
   /* :where keeps this weaker than a look's own head band (Stockroom steel).
      The rule under the head is a shadow on the cell, so it stays with the

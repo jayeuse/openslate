@@ -78,6 +78,24 @@ test("Person card intent loads one target, keyboard opens and Escape restores fo
   }
 });
 
+test("Person card View profile opens that person's profile and closes the card", async ({
+  page,
+}) => {
+  const api = await installPersonCardApi(page);
+  await visit(page, api);
+  await trigger(page).click();
+  await expectMemberCard(page);
+  const link = card(page).getByRole("link", {
+    name: "View profile",
+    exact: true,
+  });
+  await expect(link).toHaveAttribute("href", `/profile?person=${cardTarget}`);
+  await link.click();
+  await expect(page).toHaveURL(new RegExp(`/profile\\?person=${cardTarget}$`));
+  await expect(card(page)).toHaveCount(0);
+  expect(api.writes).toEqual([]);
+});
+
 test("Person card guest DTO omits private keys and nullable member values remain truthful", async ({
   page,
 }) => {
@@ -86,7 +104,7 @@ test("Person card guest DTO omits private keys and nullable member values remain
   await visit(page, api);
   await trigger(page).click();
   await expect(card(page)).toContainText("Equipment coordinator");
-  await expect(card(page).getByText(/Email|Phone|Short bio/)).toHaveCount(0);
+  await expect(card(page).getByText(/Email|Phone|Bio/)).toHaveCount(0);
   expect(Object.keys(api.cards.get(cardTarget) as object).sort()).toEqual([
     "avatar_url",
     "display_name",
@@ -114,6 +132,12 @@ test("Person card guest DTO omits private keys and nullable member values remain
   await expect(
     card(page).getByText("Not provided", { exact: true }),
   ).toHaveCount(4);
+  // One name for the bio everywhere: the card, Profile and Account settings.
+  await expect(card(page).getByRole("term")).toHaveText([
+    "Email",
+    "Phone",
+    "Bio",
+  ]);
   await expect(card(page).getByText("ana@example.test")).toHaveCount(0);
   const bounds = await card(page).boundingBox();
   expect(bounds).not.toBeNull();

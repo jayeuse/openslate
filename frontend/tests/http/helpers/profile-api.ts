@@ -415,6 +415,38 @@ export async function installProfileApi(
       json: { detail: "Profile must use the private self route" },
     });
   });
+  // The Profile view reads the signed-in person's own profile (PD16).
+  await page.route(/\/api\/users\/[^/]+\/profile$/, (route) => {
+    const target = new URL(route.request().url()).pathname.split("/")[3];
+    const self = people.get(state.userId)!;
+    if (target !== state.userId || !self.role)
+      return route.fulfill({
+        status: 404,
+        json: {
+          detail: { code: "person_not_found", message: "Person not found" },
+        },
+      });
+    const shown = {
+      display_name: self.display_name ?? self.username,
+      job_title: self.job_title,
+      avatar_url: self.avatar_file_id
+        ? `/api/users/${state.userId}/avatar`
+        : null,
+    };
+    return route.fulfill({
+      headers: { "Cache-Control": "private, no-store" },
+      json:
+        self.role === "guest"
+          ? shown
+          : {
+              ...shown,
+              phone: self.phone,
+              bio: self.bio,
+              role: self.role,
+              groups: [],
+            },
+    });
+  });
   await page.route("**/api/auth/sessions", (route) =>
     route.fulfill({
       json: [

@@ -1017,7 +1017,6 @@ test("the shell keeps one active stream and only unavailable-stream focus refres
   await (await errorCountRead).finished();
   await expect.poll(() => state.countReads).toBeGreaterThan(2);
   const oldListReads = state.listReads.length;
-  const oldCountReads = state.countReads;
   const sessionCheck = heldResponse();
   state.session.hold = sessionCheck;
   state.count = 12;
@@ -1026,9 +1025,7 @@ test("the shell keeps one active stream and only unavailable-stream focus refres
   try {
     await expect(
       page.getByRole("dialog", { name: "Session verification" }),
-    ).toBeVisible();
-    expect(state.countReads).toBe(oldCountReads);
-    expect(state.listReads).toHaveLength(oldListReads);
+    ).toBeHidden();
   } finally {
     sessionCheck.release();
   }

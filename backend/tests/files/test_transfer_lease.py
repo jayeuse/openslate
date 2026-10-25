@@ -107,3 +107,13 @@ def test_fence_set_during_acquire_returns_newly_acquired_slot(monkeypatch):
     monkeypatch.setattr(providers, "_storage_cleanup_uncertain", False)
     with transfer_slot(), transfer_slot():
         pass
+
+
+def test_a_waiting_lease_is_refused_after_its_bound_while_both_slots_stay_busy():
+    with transfer_slot(), transfer_slot():
+        with pytest.raises(HTTPException) as caught:
+            with transfer_slot(wait_seconds=0.05):
+                pytest.fail("A waiting transfer was admitted past the two-slot bound")
+        assert caught.value.detail["code"] == "files_busy"
+    with transfer_slot(wait_seconds=0.05):
+        pass

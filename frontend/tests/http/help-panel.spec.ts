@@ -274,7 +274,10 @@ test("Help fits a phone and lists the existing Sandbox Build keys, not a new glo
   expect(metrics.pageWidth).toBeLessThanOrEqual(metrics.viewportWidth);
   await contact(page).scrollIntoViewIfNeeded();
   await expect(contact(page)).toBeInViewport();
-  const profile = shortcuts(page).getByRole("link", { name: /profile/i });
+  const profile = shortcuts(page).getByRole("link", {
+    name: "Open Account settings",
+    exact: true,
+  });
   await profile.scrollIntoViewIfNeeded();
   await expect(profile).toBeInViewport();
   expect((await profile.boundingBox())?.height).toBeGreaterThanOrEqual(44);
@@ -292,12 +295,15 @@ test("Help off text links to Profile and updates its guide after client navigati
   await visitPlatform(page);
   await openHelp(page);
   await expect(shortcuts(page)).toContainText(
-    "Shortcuts are off. Turn them on in your profile.",
+    "Shortcuts are off. Turn on Use shortcuts in Account settings › Appearance.",
   );
-  const profile = shortcuts(page).getByRole("link", { name: /profile/i });
-  await expect(profile).toHaveAttribute("href", /^\/profile(?:#look)?$/);
+  const profile = shortcuts(page).getByRole("link", {
+    name: "Open Account settings",
+    exact: true,
+  });
+  await expect(profile).toHaveAttribute("href", /^\/settings#look$/);
   await profile.click();
-  await expect(page).toHaveURL(/\/profile(?:#look)?$/);
+  await expect(page).toHaveURL(/\/settings#look$/);
   await expect(sheet(page)).toBeHidden();
   await openHelp(page);
   await expect(
@@ -330,7 +336,7 @@ test("Help pending preferences never claim shortcuts are on or off before confir
     await expect(shortcuts(page)).not.toContainText("Shortcuts are off.");
     hold.release();
     await expect(shortcuts(page)).toContainText(
-      "Shortcuts are off. Turn them on in your profile.",
+      "Shortcuts are off. Turn on Use shortcuts in Account settings › Appearance.",
     );
   } finally {
     hold.release();
@@ -348,13 +354,18 @@ test("Help failed preferences explain recovery without claiming enabled keys or 
     });
   await visitPlatform(page);
   await openHelp(page);
-  await expect(shortcuts(page)).toContainText(/preferences are unavailable/i);
+  await expect(shortcuts(page)).toContainText(
+    /shortcut preference could not be loaded/i,
+  );
   await expect(shortcuts(page)).not.toContainText(
     /loading|Private preference canary|F2/,
   );
   await expect(shortcuts(page)).toContainText("Undo");
   await expect(
-    shortcuts(page).getByRole("link", { name: /profile/i }),
+    shortcuts(page).getByRole("link", {
+      name: "Open Account settings",
+      exact: true,
+    }),
   ).toBeVisible();
   expect(api.writes).toEqual([]);
 });
@@ -603,7 +614,7 @@ test("Help Profile link asks before discarding a Manage draft and resumes only o
     .fill("Retained Help navigation draft");
   await openHelp(page);
   await shortcuts(page)
-    .getByRole("link", { name: /profile/i })
+    .getByRole("link", { name: "Open Account settings", exact: true })
     .click();
   const guard = page.getByRole("alertdialog", {
     name: "Discard unsaved Manage changes?",
@@ -618,15 +629,15 @@ test("Help Profile link asks before discarding a Manage draft and resumes only o
   );
   await openHelp(page);
   await shortcuts(page)
-    .getByRole("link", { name: /profile/i })
+    .getByRole("link", { name: "Open Account settings", exact: true })
     .click();
   await guard.getByRole("button", { name: /discard/i }).click();
-  await expect(page).toHaveURL(/\/profile(?:#look)?$/);
+  await expect(page).toHaveURL(/\/settings#look$/);
   await expect(sheet(page)).toBeHidden();
   expect(api.writes).toEqual([]);
 });
 
-for (const boundary of ["close", "account", "curtain"] as const) {
+for (const boundary of ["close", "account"] as const) {
   test(`Help ${boundary} aborts a held read and fences its late private response`, async ({
     page,
   }) => {
@@ -674,9 +685,8 @@ for (const boundary of ["close", "account", "curtain"] as const) {
           window.dispatchEvent(new Event("openslate:session-recheck")),
         );
         await session.entered;
-        await expect(
-          page.getByText("Checking your session…", { exact: true }),
-        ).toBeVisible();
+        // No cover (PD68): the next account is seen when the check answers.
+        session.release();
       }
       await expect.poll(() => api.aborts).toBeGreaterThan(aborts);
       await expect(sheet(page)).toBeHidden();
@@ -761,7 +771,10 @@ for (const viewport of [
       expect(metrics.pageWidth).toBeLessThanOrEqual(metrics.viewportWidth);
       await contact(page).scrollIntoViewIfNeeded();
       await expect(contact(page)).toBeInViewport();
-      const profile = shortcuts(page).getByRole("link", { name: /profile/i });
+      const profile = shortcuts(page).getByRole("link", {
+        name: "Open Account settings",
+        exact: true,
+      });
       await profile.scrollIntoViewIfNeeded();
       await expect(profile).toBeInViewport();
       expect((await profile.boundingBox())?.height).toBeGreaterThanOrEqual(44);

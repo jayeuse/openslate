@@ -8,25 +8,29 @@ import type { Locator } from "./test";
  * The visible interactive targets under 44px on their shorter side. A
  * visually hidden control (the file input behind Choose logo, a look radio
  * inside its tile) has a 1px box and is skipped; its visible target counts.
+ * `extra` adds selectors to the sweep, such as `[role="menuitem"]` for an
+ * open menu whose items are not buttons or links.
  */
-export async function smallTargets(scope: Locator) {
-  return scope.evaluate((root) =>
-    [
-      ...root.querySelectorAll<HTMLElement>(
-        'button, a[href], input, select, textarea, summary, [role="tab"], [role="combobox"]',
-      ),
-    ].flatMap((element) => {
-      const box = element.getBoundingClientRect();
-      if (box.width <= 1 || box.height <= 1) return [];
-      if (getComputedStyle(element).visibility === "hidden") return [];
-      const size = Math.round(Math.min(box.width, box.height));
-      if (size >= 44) return [];
-      const name =
-        element.getAttribute("aria-label") ||
-        element.textContent?.trim() ||
-        element.tagName;
-      return [`${name} (${size}px)`];
-    }),
+export async function smallTargets(scope: Locator, extra?: string) {
+  return scope.evaluate(
+    (root, more) =>
+      [
+        ...root.querySelectorAll<HTMLElement>(
+          `button, a[href], input, select, textarea, summary, [role="tab"], [role="combobox"]${more ? `, ${more}` : ""}`,
+        ),
+      ].flatMap((element) => {
+        const box = element.getBoundingClientRect();
+        if (box.width <= 1 || box.height <= 1) return [];
+        if (getComputedStyle(element).visibility === "hidden") return [];
+        const size = Math.round(Math.min(box.width, box.height));
+        if (size >= 44) return [];
+        const name =
+          element.getAttribute("aria-label") ||
+          element.textContent?.trim() ||
+          element.tagName;
+        return [`${name} (${size}px)`];
+      }),
+    extra ?? "",
   );
 }
 
@@ -62,5 +66,24 @@ export async function toolbarLines(toolbar: Locator) {
       else lines.push({ bottom: box.bottom, count: 1 });
     }
     return lines.map((line) => line.count);
+  });
+}
+
+/**
+ * How a still-page table card sits in its frame (PD66): the space between
+ * the card's bottom edge and the bottom of #main-content, and between the
+ * pager and the card's bottom edge. `pager` is the pager's navigation.
+ */
+export async function tableCardGaps(pager: Locator) {
+  return pager.evaluate((nav) => {
+    const footer = nav.closest("fieldset")?.parentElement;
+    const card = footer?.parentElement;
+    const frame = document.getElementById("main-content");
+    if (!footer || !card || !frame) throw new Error("No pager card or frame");
+    const box = card.getBoundingClientRect();
+    return {
+      frame: Math.round(frame.getBoundingClientRect().bottom - box.bottom),
+      pager: Math.round(box.bottom - footer.getBoundingClientRect().bottom),
+    };
   });
 }

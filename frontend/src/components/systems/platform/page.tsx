@@ -44,8 +44,8 @@ export default function Platform() {
 
   useEffect(() => {
     if (tab !== "Account") return;
-    const replace = () => router.replace("/profile#security");
-    if (requestNavigation("/profile#security", replace)) replace();
+    const replace = () => router.replace("/settings#security");
+    if (requestNavigation("/settings#security", replace)) replace();
   }, [tab, router, requestNavigation]);
 
   return (
@@ -56,7 +56,7 @@ export default function Platform() {
       />
       {tab === "Account" ? (
         <p role="status" className="text-muted-foreground text-sm">
-          Opening your profile…
+          Opening Account settings…
         </p>
       ) : null}
       {tab === "Import & export" ? (

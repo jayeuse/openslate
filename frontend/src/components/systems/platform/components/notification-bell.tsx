@@ -133,7 +133,7 @@ export function NotificationBell({ accountId }: { accountId: string | null }) {
             type="button"
             variant="ghost"
             size="icon"
-            className="relative size-11"
+            className="relative size-11 xl:size-8"
             disabled={!accountId}
             aria-label={
               knownCount === undefined
@@ -153,7 +153,7 @@ export function NotificationBell({ accountId }: { accountId: string | null }) {
         {knownCount !== undefined && knownCount > 0 && (
           <span
             aria-hidden="true"
-            className="bg-primary text-primary-foreground absolute top-0 right-0 min-w-4 rounded-full px-1 text-xs leading-4 tabular-nums"
+            className="bg-primary text-primary-foreground absolute top-0 right-0 min-w-4 rounded-full px-1 text-xs leading-4 tabular-nums xl:-top-1 xl:-right-1.5"
           >
             {knownCount > 99 ? "99+" : knownCount}
           </span>

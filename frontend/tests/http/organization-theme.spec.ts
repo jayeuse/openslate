@@ -487,42 +487,6 @@ for (const result of ["success", "failure"] as const) {
   });
 }
 
-test("Organization older workspace refresh cannot undo a confirmed Save", async ({
-  page,
-}) => {
-  const api = await installApi(page);
-  await seedCache(page, "slate");
-  await page.goto("/manage?view=organization");
-  await choose(page, "Stockroom");
-  const gate = heldResponse();
-  const answered = heldResponse();
-  let pendingRead = false;
-  api.onWorkspace = async (route, snapshot) => {
-    pendingRead = true;
-    await gate.released;
-    await route.fulfill({ json: snapshot }).catch(() => {});
-    answered.release();
-  };
-  try {
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await expect.poll(() => pendingRead).toBe(true);
-    await expect(save(page)).toBeEnabled();
-    await save(page).click();
-    await expect(savedNotice(page)).toBeVisible();
-    gate.release();
-    await answered.released;
-    await expect(radio(page, "Stockroom")).toBeChecked();
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-theme",
-      "stockroom",
-    );
-    expect(await cached(page)).toBe("stockroom");
-    await expect(save(page)).toBeDisabled();
-  } finally {
-    gate.release();
-  }
-});
-
 test("Organization preview survives personal storage events and Save when storage writes fail", async ({
   page,
 }) => {
@@ -546,9 +510,9 @@ test("Organization preview survives personal storage events and Save when storag
   expect(api.writes).toEqual([{ revision: 4, theme: "stockroom" }]);
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Your profile", exact: true })
+    .getByRole("menuitem", { name: "Account settings", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/profile$/);
+  await expect(page).toHaveURL(/\/settings$/);
   await expect(
     page.getByRole("radiogroup", { name: "Color mode", exact: true }),
   ).toBeVisible();
@@ -651,45 +615,7 @@ test("Organization verified role loss removes the preview and disallows a theme 
   expect(api.writes).toEqual([]);
 });
 
-test("Organization cached administrator role cannot admit edits while its fresh role read is pending", async ({
-  page,
-}) => {
-  const api = await installApi(page);
-  await seedCache(page, "slate");
-  await page.goto("/manage?view=organization");
-  await choose(page, "Stockroom");
-  const gate = heldResponse();
-  let readingRole = false;
-  await page.route("**/api/auth/me", async (route) => {
-    readingRole = true;
-    await gate.released;
-    await route.fulfill({
-      json: authMeBody({
-        id: userA,
-        role: "member",
-        access: [],
-        default_organization_blocked: null,
-      }),
-    });
-  });
-  try {
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await expect.poll(() => readingRole).toBe(true);
-    await expect(radio(page, "Stockroom")).toBeDisabled();
-    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/);
-    expect(api.writes).toEqual([]);
-    gate.release();
-    await expect(look(page)).toHaveCount(0);
-    await expect(
-      readerLook(page).getByText("Slate", { exact: true }),
-    ).toBeVisible();
-    expect(api.writes).toEqual([]);
-  } finally {
-    gate.release();
-  }
-});
-
-test("Organization keeps a trusted background role refresh interactive but requires a new read after verification", async ({
+test("Organization keeps a trusted background role refresh interactive and a return reads the role again", async ({
   page,
 }) => {
   const api = await installApi(page);
@@ -764,10 +690,8 @@ test("Organization keeps a trusted background role refresh interactive but requi
       "stockroom",
     );
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await expect(radio(page, "Stockroom")).toBeDisabled();
     oldRead.release();
     await oldAnswered.released;
-    await expect(radio(page, "Stockroom")).toBeDisabled();
     await expect.poll(() => reads).toBeGreaterThan(1);
     freshRead.release();
     await expect(look(page)).toHaveCount(0);

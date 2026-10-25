@@ -13,6 +13,15 @@ import {
   uploadAvatar,
   validAvatarSelection,
 } from "../../../src/components/profile/adapters/profile-api";
+import {
+  profileFacts,
+  type ProfileAboutRow,
+} from "../../../src/components/profile/domain/profile-rows";
+import {
+  getPersonProfile,
+  personProfileFromSelf,
+  type PersonProfile,
+} from "../../../src/components/profile/adapters/profile-api";
 import { installFetch } from "../platform/fixtures";
 
 // The private profile, its photo and the shared person card trust a reply
@@ -658,4 +667,234 @@ test("person photo bytes with an SVG media type are refused before the card chec
   } finally {
     mock.restore();
   }
+});
+
+// The Profile view (PD16–PD18): the server sends the full profile to
+// administrators and members and the three public fields to guests; the view
+// shows a row only for a field with a value.
+const fullProfile = {
+  display_name: "Rosa Reyes",
+  job_title: "Dispatch coordinator",
+  avatar_url: `/api/users/${target}/avatar`,
+  phone: "+63 917 555 0118",
+  bio: "Coordinates the morning dispatch.",
+  role: "member",
+  groups: [
+    { id: "00000000-0000-4000-8000-000000000a01", name: "Field Ops" },
+    { id: "00000000-0000-4000-8000-000000000a02", name: "Quality Review" },
+  ],
+};
+const guestProfile = {
+  display_name: "Rosa Reyes",
+  job_title: "Dispatch coordinator",
+  avatar_url: null,
+};
+
+test("a full profile maps to the Profile view without a cache or an auth refresh", async () => {
+  const mock = installFetch(() => Response.json(fullProfile));
+  try {
+    expect(await getPersonProfile(target)).toEqual({
+      personId: target,
+      displayName: "Rosa Reyes",
+      jobTitle: "Dispatch coordinator",
+      avatarUrl: `/api/users/${target}/avatar`,
+      phone: "+63 917 555 0118",
+      bio: "Coordinates the morning dispatch.",
+      role: "member",
+      groups: [
+        { id: "00000000-0000-4000-8000-000000000a01", name: "Field Ops" },
+        { id: "00000000-0000-4000-8000-000000000a02", name: "Quality Review" },
+      ],
+    });
+    expect(String(mock.requests[0]?.input)).toBe(
+      `/api/users/${target}/profile`,
+    );
+    expect(mock.requests[0]?.init?.cache).toBe("no-store");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a guest's profile has no phone, bio, role or groups", async () => {
+  const mock = installFetch(() => Response.json(guestProfile));
+  try {
+    expect(await getPersonProfile(target)).toEqual({
+      personId: target,
+      displayName: "Rosa Reyes",
+      jobTitle: "Dispatch coordinator",
+      avatarUrl: null,
+      phone: null,
+      bio: null,
+      role: null,
+      groups: [],
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+const profileWithoutGroups: Record<string, unknown> = { ...fullProfile };
+delete profileWithoutGroups.groups;
+for (const row of [
+  { name: "a full profile without its groups", body: profileWithoutGroups },
+  { name: "a profile with an id", body: { ...fullProfile, id: target } },
+  {
+    name: "a public profile with a private key",
+    body: { ...guestProfile, phone: "+1 555 0000" },
+  },
+  { name: "an unknown role", body: { ...fullProfile, role: "owner" } },
+  {
+    name: "an external photo URL",
+    body: { ...fullProfile, avatar_url: "https://example.test/private.png" },
+  },
+  {
+    name: "another person's photo URL",
+    body: { ...fullProfile, avatar_url: `/api/users/${otherUser}/avatar` },
+  },
+])
+  test(`the profile read refuses ${row.name}`, async () => {
+    const mock = installFetch(() => Response.json(row.body));
+    try {
+      await expect(getPersonProfile(target)).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
+    } finally {
+      mock.restore();
+    }
+  });
+
+test("an unavailable profile keeps its 404 so the view can say so", async () => {
+  const mock = installFetch(() =>
+    Response.json(
+      { detail: { code: "person_not_found", message: "Person not found" } },
+      { status: 404 },
+    ),
+  );
+  try {
+    await expect(getPersonProfile(target)).rejects.toMatchObject({
+      status: 404,
+      code: "person_not_found",
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+const mapped: PersonProfile = {
+  personId: target,
+  displayName: "Rosa Reyes",
+  jobTitle: "Dispatch coordinator",
+  avatarUrl: null,
+  phone: "+63 917 555 0118",
+  bio: "Coordinates the morning dispatch.",
+  role: "member",
+  groups: [{ id: "00000000-0000-4000-8000-000000000a01", name: "Field Ops" }],
+};
+const factRows: {
+  name: string;
+  profile: PersonProfile;
+  own?: boolean;
+  about: ProfileAboutRow[];
+  bio: string | null;
+  fillHint?: boolean;
+}[] = [
+  {
+    name: "every filled field",
+    profile: mapped,
+    about: [
+      { label: "Phone", value: "+63 917 555 0118", href: "tel:+639175550118" },
+      { label: "Role", value: "Member" },
+      { label: "Groups", groups: mapped.groups },
+    ],
+    bio: "Coordinates the morning dispatch.",
+  },
+  {
+    name: "no row for a blank phone, no groups and no Bio panel for a blank bio",
+    profile: { ...mapped, phone: "  ", bio: " ", role: "admin", groups: [] },
+    about: [{ label: "Role", value: "Administrator" }],
+    bio: null,
+  },
+  {
+    name: "the guest role label",
+    profile: { ...mapped, phone: null, bio: null, role: "guest", groups: [] },
+    about: [{ label: "Role", value: "Guest" }],
+    bio: null,
+  },
+  {
+    name: "nothing beside the name for a guest's view",
+    profile: { ...mapped, phone: null, bio: null, role: null, groups: [] },
+    about: [],
+    bio: null,
+  },
+  {
+    name: "the fill hint on your own profile with no job title, phone or bio",
+    profile: {
+      ...mapped,
+      jobTitle: " ",
+      phone: null,
+      bio: "",
+      role: "admin",
+      groups: [],
+    },
+    own: true,
+    about: [{ label: "Role", value: "Administrator" }],
+    bio: null,
+    fillHint: true,
+  },
+  {
+    name: "no fill hint on a guest's own profile, whose view has no phone or bio",
+    profile: {
+      ...mapped,
+      jobTitle: null,
+      phone: null,
+      bio: null,
+      role: null,
+      groups: [],
+    },
+    own: true,
+    about: [],
+    bio: null,
+  },
+  {
+    name: "no fill hint on your own profile once one of them is filled",
+    profile: { ...mapped, phone: null, bio: null, role: "admin", groups: [] },
+    own: true,
+    about: [{ label: "Role", value: "Administrator" }],
+    bio: null,
+  },
+  {
+    name: "no fill hint on another person's bare profile",
+    profile: {
+      ...mapped,
+      jobTitle: null,
+      phone: null,
+      bio: null,
+      role: "member",
+      groups: [],
+    },
+    about: [{ label: "Role", value: "Member" }],
+    bio: null,
+  },
+];
+for (const row of factRows)
+  test(`the Profile view shows ${row.name}`, () => {
+    expect(profileFacts(row.profile, row.own ?? false)).toEqual({
+      about: row.about,
+      bio: row.bio,
+      fillHint: row.fillHint ?? false,
+    });
+  });
+
+test("without an organization the own profile comes from the account, with no role or groups", () => {
+  const account = self({ display_name: null });
+  expect(personProfileFromSelf(account as never)).toEqual({
+    personId: userA,
+    displayName: "owned_person",
+    jobTitle: "Equipment coordinator",
+    avatarUrl: null,
+    phone: "+1 555 0101",
+    bio: "Coordinates shared equipment.",
+    role: null,
+    groups: [],
+  });
 });

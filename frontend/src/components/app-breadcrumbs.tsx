@@ -2,14 +2,23 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { skipToken, useQuery } from "@tanstack/react-query";
 import type { Route } from "next";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import {
   accessNavigationFor,
   getWorkspaceLocation,
 } from "@/components/workspace-navigation";
+import { cn } from "@/lib/utils";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
+import {
+  useAdmittedWorkspaceScope,
+  useVerifiedWorkspaceUserId,
+} from "@/components/systems/shared/runtime/workspace-identity";
+import { profileSelfKey } from "@/components/profile/adapters/profile-queries";
+import type { ProfileSelf } from "@/components/profile/adapters/profile-api";
+import { personProfileKey } from "@/components/profile/adapters/profile-view-keys";
+import type { PersonProfile } from "@/components/profile/adapters/profile-api";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -24,9 +33,15 @@ const routeLabels: Record<string, string> = {
   "/access": "Access",
   "/sandbox": "Sandbox",
   "/comms": "OpenComms",
+  "/settings": "Account settings",
   "/settings/appearance": "Appearance",
-  "/profile": "Profile",
 };
+
+// Profile and Account settings carry their whole title in the page heading,
+// the row under the bar on phones (PD49): a person's name or "Account
+// settings" would be cut beside the bar's 44px controls, so below 768px the
+// bar names no page there.
+const titledInPage = new Set(["/profile", "/settings"]);
 
 // Links in the header bar keep a 24px target.
 const crumbTarget = "inline-flex min-h-6 items-center";
@@ -55,7 +70,9 @@ export function AppBreadcrumbs() {
   );
   const current = location?.section ?? routeLabels[pathname] ?? "Workspace";
   return (
-    <Breadcrumb className="min-w-0">
+    <Breadcrumb
+      className={cn("min-w-0", titledInPage.has(pathname) && "max-md:hidden")}
+    >
       <BreadcrumbList className="flex-nowrap">
         <BreadcrumbItem className="max-sm:hidden">
           <BreadcrumbLink
@@ -85,10 +102,37 @@ export function AppBreadcrumbs() {
         ) : null}
         <BreadcrumbItem className="min-w-0">
           <BreadcrumbPage className="block min-h-6 truncate leading-6">
-            {current}
+            {pathname === "/profile" ? <ProfileCrumb /> : current}
           </BreadcrumbPage>
         </BreadcrumbItem>
       </BreadcrumbList>
     </Breadcrumb>
   );
+}
+
+/**
+ * "Your profile" on the person's own profile, the person's name on another
+ * profile, and "Profile" while it loads, when it is not available, or when
+ * the read failed, so the header never shows an id or names a hidden person.
+ *
+ * It only reads the cache that the Profile view (`useProfileView`) fills, by
+ * the same keys, so every page's header does not ship the profile read.
+ */
+function ProfileCrumb() {
+  const person = useSearchParams().get("person")?.toLowerCase() || null;
+  const viewerId = useVerifiedWorkspaceUserId();
+  const scope = useAdmittedWorkspaceScope();
+  const own = !person || person === viewerId.toLowerCase();
+  const read = useQuery<PersonProfile | ProfileSelf>({
+    // Without an organization the own profile comes from the account.
+    queryKey: scope
+      ? personProfileKey(viewerId, scope.org_id, own ? viewerId : person)
+      : profileSelfKey(viewerId),
+    queryFn: skipToken,
+  });
+  if (read.error) return "Profile";
+  if (own) return "Your profile";
+  return read.data && "displayName" in read.data
+    ? read.data.displayName
+    : "Profile";
 }

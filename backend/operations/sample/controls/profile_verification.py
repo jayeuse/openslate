@@ -113,6 +113,7 @@ def verify_profile_controls(
             "profile_text_read": ("/api/auth/me", 200),
             "preferences_changed_read": (prefs_path, 200),
             "visible_other_card": (f"/api/users/{admin_id}/card", 200),
+            "visible_other_profile": (f"/api/users/{admin_id}/profile", 200),
             "avatar_ready_read": (file_path, 200),
             "avatar_bound_read": ("/api/auth/me", 200),
             "own_avatar_read": (f"/api/users/{actor_id}/avatar", 200),

@@ -19,7 +19,9 @@ from app.common.dependencies.auth import (
 )
 from app.core.base_model import utc_now
 from app.core.database import get_db
+from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.auth.cookies import clear_browser_session
+from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.policy.scope import explain_access
 from app.systems.access.users.avatar_delivery import (
     ThumbnailSize,
@@ -50,12 +52,14 @@ from app.systems.access.users.membership import (
     require_current_membership,
 )
 from app.systems.access.users.models import Membership, User
-from app.systems.access.users.person_visibility import visible_person
+from app.systems.access.users.person_visibility import profile_person, visible_person
 from app.systems.access.users.schemas import (
     InvitationCreate,
     InvitationResponse,
     PersonCardPublicResponse,
     PersonCardResponse,
+    PersonProfilePublicResponse,
+    PersonProfileResponse,
     UserAccessResponse,
     UserCreate,
     UserListResponse,
@@ -157,6 +161,48 @@ def get_person_card(
         return PersonCardPublicResponse.model_validate(public)
     return PersonCardResponse.model_validate(
         {**public, "email": target.email, "phone": target.phone, "bio": target.bio}
+    )
+
+
+@router.get(
+    "/{user_id}/profile", response_model=PersonProfileResponse | PersonProfilePublicResponse
+)
+def get_person_profile(
+    user_id: UUID,
+    actor: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+    response: Response,
+) -> PersonProfileResponse | PersonProfilePublicResponse:
+    """A person's profile in the bound organization (PD17); 404 when it is not available."""
+    target, membership, viewer_role = profile_person(db, actor, user_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    public = {
+        "display_name": target.display_name or target.username,
+        "job_title": target.job_title,
+        "avatar_url": f"/api/users/{user_id}/avatar" if target.avatar_file_id else None,
+    }
+    if viewer_role == "guest":
+        return PersonProfilePublicResponse.model_validate(public)
+    groups = db.execute(
+        select(Group.id, Group.name)
+        .join(GroupMember, GroupMember.group_id == Group.id)
+        .where(
+            GroupMember.user_id == target.id,
+            GroupMember.org_id == bound_organization_column(),
+            Group.org_id == bound_organization_column(),
+            GroupMember.is_deleted.is_(False),
+            Group.is_deleted.is_(False),
+        )
+        .order_by(Group.name, Group.id)
+    ).all()
+    return PersonProfileResponse.model_validate(
+        {
+            **public,
+            "phone": target.phone,
+            "bio": target.bio,
+            "role": membership.role,
+            "groups": [{"id": group_id, "name": name} for group_id, name in groups],
+        }
     )
 
 

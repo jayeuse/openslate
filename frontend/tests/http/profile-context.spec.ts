@@ -42,7 +42,7 @@ for (const [width, theme] of [
       page.getByRole("heading", { name: "No organization yet" }),
     ).toBeVisible();
     const profile = page.getByRole("link", {
-      name: "Your profile",
+      name: "Account settings",
       exact: true,
     });
     await profile.focus();
@@ -60,7 +60,7 @@ for (const [width, theme] of [
     ).toHaveCount(0);
     await page.getByLabel("Phone", { exact: true }).fill("+1 555 0199");
     await page
-      .getByRole("button", { name: "Save identity", exact: true })
+      .getByRole("button", { name: "Save profile", exact: true })
       .click();
     await expect(
       page.getByText("Profile saved.", { exact: true }),
@@ -167,7 +167,7 @@ for (const blocked of ["ip_not_allowed", "mfa_required"] as const) {
       ),
     ).toBe("00000000-0000-4000-8000-000000000901");
     const profile = page.getByRole("link", {
-      name: "Your profile",
+      name: "Account settings",
       exact: true,
     });
     await expect(profile).toBeVisible();
@@ -178,7 +178,7 @@ for (const blocked of ["ip_not_allowed", "mfa_required"] as const) {
       fullPage: true,
     });
     await profile.press("Enter");
-    await expect(page).toHaveURL(/\/profile$/);
+    await expect(page).toHaveURL(/\/settings$/);
     await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
       "Maya Chen",
     );
@@ -218,7 +218,7 @@ test("Profile entry from a pinned-organization gate cannot bypass account-wide M
     page.getByLabel("Verification code", { exact: true }),
   ).toBeVisible();
   const profile = page.getByRole("link", {
-    name: "Your profile",
+    name: "Account settings",
     exact: true,
   });
   await expect(profile).toBeVisible();
@@ -231,7 +231,7 @@ test("Profile entry from a pinned-organization gate cannot bypass account-wide M
     ),
     profile.click(),
   ]);
-  await expect(page).toHaveURL(/\/profile$/);
+  await expect(page).toHaveURL(/\/settings$/);
   await expect(profile).toHaveCount(0);
   await expect(
     page.getByLabel("Verification code", { exact: true }),
@@ -326,7 +326,7 @@ test("Inline avatar stays in tab A after tab B changes the session default", asy
     await expect(
       page.getByText("Ana Santos", { exact: true }).first(),
     ).toBeVisible();
-    await tabB.goto("/profile");
+    await tabB.goto("/settings");
     await tabB
       .getByRole("button", { name: /^Organization:/ })
       .first()

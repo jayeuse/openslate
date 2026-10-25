@@ -16,6 +16,7 @@ const routes = [
   "/access",
   "/manage",
   "/platform",
+  "/settings",
   "/settings/appearance",
   "/profile",
   "/auth/email-change",

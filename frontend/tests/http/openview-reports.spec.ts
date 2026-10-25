@@ -1520,26 +1520,6 @@ test("Reports navigation preserves existing module context without inventing an 
   await expect(page.getByText("This Report link is invalid.")).toHaveCount(0);
 });
 
-test("reselecting the current Report does not skip its exact read after a same-account session check", async ({
-  page,
-}) => {
-  await installReportsApi(page);
-  await page.goto(`/openview?section=reports&report=${reportId}`);
-  await expect(page.getByRole("button", { name: "Run now" })).toBeVisible();
-  await page.getByRole("button", { name: "Operations review" }).click();
-  let currentReads = 0;
-  await page.route(`**/api/reports/${reportId}`, async (route) => {
-    currentReads += 1;
-    await route.fulfill({ status: 404, json: { detail: "Report not found" } });
-  });
-  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  await expect(
-    page.getByText("Selected Report could not be loaded. Try again."),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Run now" })).toHaveCount(0);
-  expect(currentReads).toBeGreaterThan(0);
-});
-
 test("a notice keeps dirty Report edits on canceled navigation and closes only after accepted navigation", async ({
   page,
 }) => {
@@ -1862,7 +1842,7 @@ for (const operation of ["new", "template"] as const) {
     try {
       await expect(
         page.getByRole("dialog", { name: "Session verification" }),
-      ).toBeVisible();
+      ).toBeHidden();
     } finally {
       session.release();
     }

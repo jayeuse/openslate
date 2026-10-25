@@ -380,10 +380,11 @@ test("Access controls are 32 px from 1280 px and keep the 44 px floor on a phone
   expect(await height(search)).toBe(32);
   expect(await height(invite)).toBe(32);
   expect(await height(segment)).toBe(28);
-  await expect(page.getByText("Search", { exact: true })).toHaveCSS(
-    "font-size",
-    "12px",
-  );
+  await expect(
+    page
+      .getByRole("region", { name: "Search people controls" })
+      .getByText("Search", { exact: true }),
+  ).toHaveCSS("font-size", "12px");
   await peopleRow(page, "Ben Cruz")
     .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();

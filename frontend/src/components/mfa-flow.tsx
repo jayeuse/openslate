@@ -408,7 +408,7 @@ export function MfaPresentation({
             <Alert role="note" variant="warning">
               {requirement.required
                 ? "Two-step verification is required now. Set up an authenticator app to continue."
-                : "Set up an authenticator app before the date above. You can keep using the workspace until then."}
+                : "Set up an authenticator app before the date above. You can keep working until then."}
             </Alert>
           )}
         </div>

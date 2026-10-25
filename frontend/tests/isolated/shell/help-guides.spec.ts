@@ -52,6 +52,11 @@ const guides: { href: string; title: string; tasks: RegExp[] }[] = [
     title: "Profile",
     tasks: [/identity|profile/i, /preference|look|sign.in/i],
   },
+  {
+    href: "/settings",
+    title: "Account settings",
+    tasks: [/identity/i, /sign-in/i, /appearance/i, /regional/i],
+  },
 ];
 
 for (const row of guides)

@@ -95,7 +95,7 @@ export default function EmailChangePage() {
       proof.current = null;
       setValid(false);
       if (!result.authenticated) setAcknowledged(true);
-      else router.replace("/profile#security");
+      else router.replace("/settings#security");
     } catch (failure: unknown) {
       if (current !== version.current || controller.signal.aborted) return;
       const outcome = emailChangeFailure(failure);

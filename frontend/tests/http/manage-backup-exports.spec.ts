@@ -907,41 +907,6 @@ for (const failure of [
   );
 }
 
-test("export keeps local input through a same-account privacy curtain", async ({
-  page,
-  baseURL,
-}) => {
-  const { exports } = await fixtures(page, baseURL);
-  await page.goto("/manage?view=backup");
-  await downloadAction(page).click();
-  const dialog = passphraseDialog(page);
-  await fillPassphrase(dialog, syntheticExportPassphrase);
-  const held = heldResponse();
-  exports.holdSession = held;
-  try {
-    await recheckSession(page);
-    await held.entered;
-    const curtain = page.getByRole("dialog", {
-      name: "Session verification",
-      exact: true,
-    });
-    await expect(curtain).toBeVisible();
-    await expect(dialog).toBeHidden();
-    held.release();
-    await expect(curtain).toBeHidden();
-    await expect(dialog.getByLabel("Passphrase", { exact: true })).toHaveValue(
-      syntheticExportPassphrase,
-    );
-    await dialog
-      .getByRole("button", { name: "Close export", exact: true })
-      .click();
-    expect(exports.createSubmissions).toBe(0);
-    expect(exports.backups.patches).toEqual([]);
-  } finally {
-    held.release();
-  }
-});
-
 test("export ignores a delayed prior-account admission without clearing the new account's pending confirmation", async ({
   page,
   baseURL,

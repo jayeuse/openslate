@@ -227,7 +227,7 @@ def test_comms_only_sharing_reveals_card_until_target_leaves(person_world):
     assert hidden.json() == {"detail": {"code": "person_not_found", "message": "Person not found"}}
 
 
-def test_removed_live_group_membership_hides_card_and_avatar_without_company_sharing(person_world):
+def test_removed_live_group_membership_hides_card_but_not_the_profile_photo(person_world):
     world = person_world
     shared(world, "group")
     native_avatar(world, owner_id=world.target_id, bind=True)
@@ -238,11 +238,12 @@ def test_removed_live_group_membership_hides_card_and_avatar_without_company_sha
         ).is_deleted = True
         db.commit()
     assert card(world).status_code == 404
+    # The photo follows the profile rule (PD17): a member sees every member's photo.
     assert (
         world.client.get(
             f"/api/users/{world.target_id}/avatar", headers=world.headers()
         ).status_code
-        == 404
+        == 200
     )
 
 
@@ -283,9 +284,10 @@ def test_board_visibility_requires_a_shared_live_board(person_world, defect):
     hidden = card(world)
     assert hidden.status_code == 404
     assert hidden.json() == {"detail": {"code": "person_not_found", "message": "Person not found"}}
+    # The photo follows the profile rule (PD17), not the shared Board.
     assert world.client.get(
         f"/api/users/{world.target_id}/avatar", headers=world.headers()
-    ).status_code == 404
+    ).status_code == 200
 
 
 @pytest.mark.parametrize("defect", ["disabled", "pending", "deleted", "unaccepted"])

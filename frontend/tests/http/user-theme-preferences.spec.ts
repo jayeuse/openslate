@@ -96,15 +96,15 @@ async function installIdentity(
 async function openAccount(page: Page) {
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Your profile", exact: true })
+    .getByRole("menuitem", { name: "Account settings", exact: true })
     .click();
   await expect(
-    page.getByRole("region", { name: "Look & behavior", exact: true }),
+    page.getByRole("region", { name: "Appearance", exact: true }),
   ).toBeVisible();
 }
 
 const look = (page: Page) =>
-  page.getByRole("region", { name: "Look & behavior", exact: true });
+  page.getByRole("region", { name: "Appearance", exact: true });
 
 const light = (page: Page) =>
   page.getByRole("radio", { name: "Light", exact: true });
@@ -252,14 +252,14 @@ test("legacy Appearance and Your profile share only confirmed theme saves, prese
     await expect(dark(page)).toBeDisabled();
     await expect(page.locator("html")).not.toHaveClass(/dark/);
     await openAccount(page);
-    // The Profile route now owns a pending-navigation guard. Section anchors
+    // Account settings owns a pending-navigation guard. Section anchors
     // still keep the incumbent controls mounted while the save is in flight.
-    await expect(page).toHaveURL(/\/profile#look$/);
-    await page
-      .getByRole("navigation", { name: "Profile sections", exact: true })
-      .getByRole("link", { name: "Sign-in & security", exact: true })
-      .click();
-    await expect(page).toHaveURL(/\/profile#security$/);
+    await expect(page).toHaveURL(/\/settings#look$/);
+    // The group anchors are in-page links; the section link bar is gone.
+    await page.evaluate(() => {
+      window.location.hash = "security";
+    });
+    await expect(page).toHaveURL(/\/settings#security$/);
     const control = dark(page);
     await expect(light(page)).toBeChecked();
     await expect(control).toBeDisabled();
@@ -299,9 +299,15 @@ test("legacy Appearance and Your profile share only confirmed theme saves, prese
       .poll(() => page.evaluate(() => localStorage.getItem("openslate-motion")))
       .toBeNull();
     await expect(page.locator("html")).not.toHaveAttribute("data-motion");
+    // The account row opens the read-only Profile view (PD16); the account
+    // menu leads back to Account settings and its confirmed saves.
+    await page.getByRole("link", { name: /^Your profile, / }).click();
+    await expect(page).toHaveURL(/\/profile$/);
+    await page.getByRole("button", { name: "Account", exact: true }).click();
     await page
-      .getByRole("button", { name: "Your profile", exact: true })
+      .getByRole("menuitem", { name: "Account settings", exact: true })
       .click();
+    await expect(page).toHaveURL(/\/settings$/);
     await expect(dark(page)).toBeChecked();
     await page.reload();
     await expect(dark(page)).toBeChecked();
@@ -690,7 +696,7 @@ test("additive regional appearance remains display-only while partial theme and 
   await page.goto("/settings/appearance");
   await expect(light(page)).toBeChecked();
   await expect(dark(page)).toBeEnabled();
-  await expect(page).toHaveURL(/\/profile#look$/);
+  await expect(page).toHaveURL(/\/settings#look$/);
   await dark(page).click();
   await expect(dark(page)).toBeChecked();
   await page.getByRole("switch", { name: "Reduce motion" }).click();
@@ -707,17 +713,20 @@ test("additive regional appearance remains display-only while partial theme and 
     page.getByRole("switch", { name: "Reduce motion" }),
   ).toBeChecked();
   await expect(
-    page.getByRole("switch", { name: "Convenience shortcuts" }),
+    page.getByRole("switch", { name: "Use shortcuts" }),
   ).toBeChecked();
+  // The timezone is a searchable select; its trigger shows the saved zone.
+  await expect(
+    page.getByRole("combobox", { name: "Timezone", exact: true }),
+  ).toContainText("Europe/London");
   for (const [label, value] of [
-    ["Timezone", "Europe/London"],
     ["Date format", "dmy"],
     ["Time format", "24h"],
-    ["First day of the week", "sunday"],
+    ["Week starts", "sunday"],
     ["Start page after sign-in", "manage"],
   ])
     await expect(page.getByLabel(label, { exact: true })).toHaveValue(value);
-  await expect(page).toHaveURL(/\/profile#look$/);
+  await expect(page).toHaveURL(/\/settings#look$/);
 });
 
 test("System follows OS color without writes and explicit color stays fixed", async ({
@@ -801,9 +810,9 @@ test("account motion and shortcut commands are partial and confirmed before prev
       "data-motion",
       "reduced",
     );
-    await page.getByRole("switch", { name: "Convenience shortcuts" }).click();
+    await page.getByRole("switch", { name: "Use shortcuts" }).click();
     await expect(
-      page.getByRole("switch", { name: "Convenience shortcuts" }),
+      page.getByRole("switch", { name: "Use shortcuts" }),
     ).not.toBeChecked();
     expect(writes).toEqual([
       { appearance: { motion: "reduce" } },
@@ -818,7 +827,7 @@ test("account motion and shortcut commands are partial and confirmed before prev
       page.getByRole("switch", { name: "Reduce motion" }),
     ).toBeChecked();
     await expect(
-      page.getByRole("switch", { name: "Convenience shortcuts" }),
+      page.getByRole("switch", { name: "Use shortcuts" }),
     ).not.toBeChecked();
   } finally {
     hold.release();
@@ -858,10 +867,8 @@ test("device text and density scale pages without changing account preferences",
   await expect(
     page.getByRole("combobox", { name: "Page spacing" }),
   ).toHaveValue("spacious");
-  for (const name of ["Color", "Text and display", "Motion", "Keyboard"])
-    await expect(
-      page.getByRole("heading", { name, exact: true }),
-    ).toBeVisible();
+  for (const name of ["Color", "Motion", "Keyboard shortcuts"])
+    await expect(page.getByRole("group", { name, exact: true })).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Appearance preview" }),
   ).toBeVisible();
@@ -962,9 +969,7 @@ test("blocked device storage still applies text and spacing without claiming per
     .toBe("20px");
   await expect(page.locator("html")).toHaveAttribute("data-text-size", "125");
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "Browser storage is unavailable" }),
+    page.getByRole("status").filter({ hasText: "this browser cannot keep it" }),
   ).toBeVisible();
   await page.evaluate(() =>
     window.dispatchEvent(
@@ -1044,6 +1049,8 @@ test("forced colors and increased contrast keep focus and borders visible at Lar
   page,
 }) => {
   await installIdentity(page);
+  // Below 1280px, where controls keep the 44px floor (slim from 1280px).
+  await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto("/settings/appearance");
   const select = page.getByRole("combobox", { name: "Text size" });
   await select.selectOption("125");
@@ -1122,77 +1129,6 @@ test("Retry keeps account controls locked until its authoritative read completes
   }
 });
 
-test("a write completing behind the session curtain waits for a fresh verified read", async ({
-  page,
-}) => {
-  await installIdentity(page);
-  const verification = heldResponse();
-  const write = heldResponse();
-  const writing = heldResponse();
-  const fresh = heldResponse();
-  const freshRequested = heldResponse();
-  let holdVerification = false;
-  let completed = false;
-  let writes = 0;
-  await page.route("**/api/auth/session", async (route) => {
-    if (holdVerification) await verification.released;
-    return route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: userA,
-        setup_required: false,
-        default_organization_blocked: null,
-      },
-    });
-  });
-  await page.route(`**${preferencePath(userA)}`, async (route) => {
-    if (route.request().method() === "PATCH") {
-      writes++;
-      writing.release();
-      await write.released;
-      completed = true;
-    } else if (completed) {
-      freshRequested.release();
-      await fresh.released;
-    }
-    await route.fulfill({ json: fullPreference(completed ? "dark" : "light") });
-  });
-  try {
-    await page.goto("/settings/appearance");
-    await expect(light(page)).toBeChecked();
-    await dark(page).click();
-    await writing.released;
-    holdVerification = true;
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await expect(
-      page.getByText("Checking your session…", { exact: true }),
-    ).toBeVisible();
-    const returned = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === preferencePath(userA) &&
-        response.request().method() === "PATCH",
-    );
-    write.release();
-    await returned;
-    await expect(page.locator("html")).not.toHaveClass(/dark/);
-    verification.release();
-    await freshRequested.released;
-    await expect(
-      page.getByText("Checking your session…", { exact: true }),
-    ).toBeHidden();
-    await expect(dark(page)).toBeDisabled();
-    await expect(light(page)).toBeChecked();
-    fresh.release();
-    await expect(dark(page)).toBeChecked();
-    await expect(dark(page)).toBeEnabled();
-    expect(writes).toBe(1);
-  } finally {
-    verification.release();
-    write.release();
-    fresh.release();
-  }
-});
-
 test("appearance switches keep their thumbs inside the track and a 44 pixel hit area at density extremes", async ({
   page,
 }) => {
@@ -1203,7 +1139,7 @@ test("appearance switches keep their thumbs inside the track and a 44 pixel hit 
   await page
     .getByRole("combobox", { name: "Page spacing" })
     .selectOption("spacious");
-  const toggle = page.getByRole("switch", { name: "Convenience shortcuts" });
+  const toggle = page.getByRole("switch", { name: "Use shortcuts" });
   await expect(toggle).toBeEnabled();
   // Measure the layout these settings produce, not the frame before they apply.
   await expect(page.locator("html")).toHaveAttribute("data-text-size", "125");
@@ -1240,89 +1176,6 @@ test("appearance switches keep their thumbs inside the track and a 44 pixel hit 
   if (!box) throw new Error("Switch hit target missing");
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2 + 21);
   await expect(toggle).not.toBeChecked();
-});
-
-test("an ordinary preference GET completing behind the curtain requires a fresh verified read", async ({
-  page,
-}) => {
-  await installIdentity(page);
-  const verification = heldResponse();
-  const ordinary = heldResponse();
-  const fresh = heldResponse();
-  let holdVerification = false;
-  let reads = 0;
-  let writes = 0;
-  let phase: "bootstrap" | "ordinary" | "fresh" = "bootstrap";
-  await page.route("**/api/auth/session", async (route) => {
-    if (holdVerification) await verification.released;
-    return route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: userA,
-        setup_required: false,
-        default_organization_blocked: null,
-      },
-    });
-  });
-  await page.route(`**${preferencePath(userA)}`, async (route) => {
-    if (route.request().method() !== "GET") {
-      writes += 1;
-      return route.fulfill({ status: 405 });
-    }
-    reads += 1;
-    const requestPhase = phase;
-    if (requestPhase === "ordinary") await ordinary.released;
-    if (requestPhase === "fresh") await fresh.released;
-    return route.fulfill({
-      json: fullPreference(requestPhase === "ordinary" ? "dark" : "light"),
-    });
-  });
-  try {
-    // Finish bootstrap before admitting either held request.
-    await page.goto("/settings/appearance");
-    await expect(light(page)).toBeChecked();
-    await expect(dark(page)).toBeEnabled();
-    const bootstrapReads = reads;
-    phase = "ordinary";
-    await page.evaluate(() =>
-      window.dispatchEvent(
-        new StorageEvent("storage", { key: "openslate-theme" }),
-      ),
-    );
-    await expect.poll(() => reads).toBe(bootstrapReads + 1);
-    holdVerification = true;
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    const curtain = page.getByText("Checking your session…", { exact: true });
-    await expect(curtain).toBeVisible();
-    const returned = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === preferencePath(userA) &&
-        response.request().method() === "GET",
-    );
-    ordinary.release();
-    const response = await returned;
-    await response.finished();
-    await expect(curtain).toBeVisible();
-    await expect(page.locator("html")).not.toHaveClass(/dark/);
-    phase = "fresh";
-    verification.release();
-    await expect(curtain).toBeHidden();
-    // The prospective post-verification GET is held: resuming must not admit account commands.
-    await expect.poll(() => reads).toBe(bootstrapReads + 2);
-    await expect(dark(page)).toBeDisabled();
-    await expect(light(page)).toBeChecked();
-    await expect(
-      page.getByRole("switch", { name: "Reduce motion" }),
-    ).toBeDisabled();
-    fresh.release();
-    await expect(light(page)).toBeChecked();
-    await expect(dark(page)).toBeEnabled();
-    expect(writes).toBe(0);
-  } finally {
-    verification.release();
-    ordinary.release();
-    fresh.release();
-  }
 });
 
 test("More contrast preserves the enabled unchecked Dark Slate switch cue", async ({

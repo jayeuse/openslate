@@ -1,8 +1,14 @@
-import { authMeBody, expect, test, type Page } from "./helpers/test";
+import {
+  authMeBody,
+  expect,
+  expectNoPageScroll,
+  test,
+  type Page,
+} from "./helpers/test";
 import { person } from "./helpers/access-api";
 import { profilePreferences } from "./helpers/profile-api";
 import { openFilters, enterDay } from "./helpers/filters";
-import { cutTexts, smallTargets } from "./helpers/layout";
+import { cutTexts, smallTargets, tableCardGaps } from "./helpers/layout";
 import { eventLabels } from "../../src/components/systems/access/helpers/security-event-sentences";
 import { deferredMfaResponse, mfaUserA, mfaUserB } from "./helpers/mfa";
 import {
@@ -918,35 +924,6 @@ test("Events a policy refusal conceals a cached feed on revisit until its own fr
   await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
 });
 
-test("Events curtain clears held detail and resumes only after fresh same-account role admission", async ({
-  page,
-}) => {
-  const state = await mockSecurityEvents(page);
-  await openFeed(page);
-  const detail = deferredMfaResponse();
-  const native = deferredMfaResponse();
-  state.holdDetail = detail;
-  state.auth.holdSession = native;
-  try {
-    const event = await details(page, "Sign-in failure");
-    await detail.begun;
-    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await native.begun;
-    await expect(eventRows(page)).toHaveCount(0);
-    await expect(event).toHaveCount(0);
-    detail.release();
-    native.release();
-    await expect(feed(page)).toBeVisible();
-    await expect(event).toHaveCount(0);
-    expect(state.commands).toEqual([]);
-    expect(state.security.writes).toEqual([]);
-  } finally {
-    detail.release();
-    native.release();
-  }
-});
-
 test("Events late prior-account list cannot populate the next account's feed", async ({
   page,
 }) => {
@@ -1368,7 +1345,6 @@ test("role loss closes a held detail and never re-admits cached events", async (
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await native.begun;
-    await expect(feed(page)).toHaveCount(0);
     held.release();
     native.release();
     await expect(
@@ -1862,3 +1838,20 @@ for (const [width, height] of [
     expect(await cutTexts(eventRows(page))).toEqual([]);
   });
 }
+
+test("a short Security events list fills the Audit page with its pager at the bottom", async ({
+  page,
+}) => {
+  await mockSecurityEvents(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openFeed(page);
+  const gaps = await tableCardGaps(
+    page.getByRole("navigation", {
+      name: "Security event pages",
+      exact: true,
+    }),
+  );
+  expect(gaps.frame).toBeLessThanOrEqual(24);
+  expect(gaps.pager).toBeLessThanOrEqual(1);
+  await expectNoPageScroll(page);
+});

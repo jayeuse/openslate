@@ -24,7 +24,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function openEmailRequest(page: Page) {
-  await page.goto("/profile#security");
+  await page.goto("/settings#security");
   await page.getByRole("button", { name: "Change email", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "Change email",
@@ -58,7 +58,7 @@ test("email request refuses a wrong password without refresh, replay or changed 
   await expect(dialog.getByRole("alert")).toContainText(
     /password|not.*accepted/i,
   );
-  await expect(page).toHaveURL(/\/profile#security$/);
+  await expect(page).toHaveURL(/\/settings#security$/);
   await expect(dialog.getByLabel("New email", { exact: true })).toHaveValue(
     changedEmail,
   );
@@ -135,44 +135,6 @@ test("an old account's delayed request cannot publish success into another Profi
   }
 });
 
-test("same-account reverification discards a delayed request without leaving the form stuck", async ({
-  page,
-}) => {
-  const profile = await installProfileApi(page);
-  const api = await installEmailChangeApi(page);
-  const hold = profileGate();
-  api.holdRequest = hold;
-  const dialog = await openEmailRequest(page);
-  try {
-    await dialog
-      .getByRole("button", { name: "Send confirmation emails", exact: true })
-      .click();
-    await hold.begun;
-    const reads = profile.selfReads.length;
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect.poll(() => profile.selfReads.length).toBeGreaterThan(reads);
-    await expect(dialog).toBeVisible();
-    hold.release();
-    await expect.poll(() => api.requestResponses).toBe(1);
-    await expect(
-      page.getByRole("status").filter({ hasText: /confirmation requested/i }),
-    ).toHaveCount(0);
-    await expect(
-      dialog.getByRole("button", { name: "Close", exact: true }),
-    ).toBeEnabled();
-    await dialog.getByRole("button", { name: "Close", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Change email", exact: true })
-      .click();
-    await expect(
-      dialog.getByLabel("Current password", { exact: true }),
-    ).toHaveValue("");
-    expect(api.requests).toHaveLength(1);
-  } finally {
-    hold.release();
-  }
-});
-
 for (const first of ["current", "new"] as const) {
   test(`${first}-address first acknowledgment has no identity/cookie claim; the other link enters protected admission`, async ({
     page,
@@ -222,7 +184,7 @@ for (const first of ["current", "new"] as const) {
     await expect(confirm(page)).toBeEnabled();
     expect(api.completions).toHaveLength(1);
     await confirm(page).click();
-    await expect(page).toHaveURL(/\/profile(?:#security)?$/);
+    await expect(page).toHaveURL(/\/settings(?:#security)?$/);
     await expect(page.getByText(changedEmail, { exact: true })).toBeVisible();
     expect(api.completions.at(-1)?.body).toEqual({ token_hash: finalProof });
     expect(api.refreshes).toBe(0);
@@ -316,7 +278,7 @@ test("final confirmation enters the incumbent MFA continuation before private Pr
       }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Your profile", exact: true }),
+      page.getByRole("heading", { name: "Account settings", exact: true }),
     ).toHaveCount(0);
     await expect(page.getByText(changedEmail, { exact: true })).toHaveCount(0);
     await page.getByLabel("Verification code", { exact: true }).fill("123456");
@@ -324,7 +286,7 @@ test("final confirmation enters the incumbent MFA continuation before private Pr
       .getByRole("button", { name: "Verify code", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "Your profile", exact: true }),
+      page.getByRole("heading", { name: "Account settings", exact: true }),
     ).toBeVisible();
     await expect(page.getByText(changedEmail, { exact: true })).toBeVisible();
     expect(api.completions).toHaveLength(1);

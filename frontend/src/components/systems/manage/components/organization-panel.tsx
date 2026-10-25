@@ -13,7 +13,8 @@ import {
   type WorkspaceProfileFormFields,
   type WorkspaceProfileField,
 } from "../adapters/workspace-api";
-import { OrganizationEditor, readableTimezone } from "./organization-editor";
+import { readableTimezone } from "@/lib/timezone-options";
+import { OrganizationEditor } from "./organization-editor";
 import { OrganizationFooter } from "./organization-footer";
 import { OrganizationReader } from "./organization-reader";
 import type { SettingsPanelForm } from "./panel-ui";

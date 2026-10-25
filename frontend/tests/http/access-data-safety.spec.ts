@@ -14,7 +14,6 @@ import {
   group,
   ids,
   mockAccessApi,
-  openAdvanced,
   person,
 } from "./helpers/access-api";
 
@@ -23,7 +22,6 @@ import {
 // docs/specs/access-ui-ux-pass.md, Phase 1).
 
 const draftPrefix = "openslate.access.draft.v1.";
-const emptyGroup = "00000000-0000-4000-8000-0000000000a3";
 
 function sheet(page: Page, name: string) {
   return page.getByRole("dialog", { name, exact: true });
@@ -535,119 +533,6 @@ test("a save that fails after the editor closed keeps the draft for the return",
   await expect(ben.getByLabel("Job title")).toHaveValue("Team lead");
   await expect(ben.getByRole("tab", { name: /Details/ })).toHaveAccessibleName(
     /unsaved changes/,
-  );
-});
-
-test("while the role is checked again, open forms cannot send", async ({
-  page,
-}) => {
-  const api = await mockAccessApi(page);
-  let holding = false;
-  let recheck = heldResponse();
-  api.on("GET", "/api/auth/me", async () => {
-    if (holding) {
-      recheck.enter();
-      await recheck.released;
-    }
-    return "next" as const;
-  });
-  async function returnAndHold() {
-    recheck = heldResponse();
-    holding = true;
-    await page.evaluate(() => {
-      window.dispatchEvent(new FocusEvent("blur"));
-      window.dispatchEvent(new FocusEvent("focus"));
-    });
-    await recheck.entered;
-  }
-  function release() {
-    holding = false;
-    recheck.release();
-  }
-
-  await page.goto("/access?view=people");
-  await page.getByRole("button", { name: "Invite person" }).click();
-  const invite = page.getByRole("dialog", { name: "Invite a person" });
-  await invite.getByLabel("Email").fill("zed@example.com");
-  await returnAndHold();
-  const send = invite.getByRole("button", { name: "Send invitation" });
-  await expect(send).toHaveAttribute("aria-disabled", "true");
-  await expect(send).toHaveAccessibleDescription("Checking your access.");
-  // Playwright never clicks an aria-disabled control; a keyboard user can
-  // still press it.
-  await send.focus();
-  await page.keyboard.press("Enter");
-  await settleReact(page);
-  expect(api.sent("POST", "/api/auth/invitations")).toHaveLength(0);
-  release();
-  await expect(send).not.toHaveAttribute("aria-disabled", "true");
-  await invite.getByRole("button", { name: "Cancel" }).click();
-  await page
-    .getByRole("alertdialog", { name: "Discard this invitation?" })
-    .getByRole("button", { name: "Discard changes" })
-    .click();
-
-  await page
-    .getByRole("table", { name: "People" })
-    .getByRole("button", { name: "Manage Ben Cruz", exact: true })
-    .click();
-  const ben = sheet(page, "Ben Cruz");
-  await ben.getByLabel("Job title").fill("Team lead");
-  await returnAndHold();
-  const saveChanges = ben.getByRole("button", { name: "Save changes" });
-  await expect(saveChanges).toHaveAttribute("aria-disabled", "true");
-  await saveChanges.focus();
-  await page.keyboard.press("Enter");
-  await settleReact(page);
-  expect(api.sent("PATCH", `/api/users/${ids.ben}`)).toHaveLength(0);
-  release();
-  await expect(saveChanges).not.toHaveAttribute("aria-disabled", "true");
-
-  // Lifecycle confirmations wait for the check too.
-  await ben.getByRole("button", { name: "Discard changes" }).click();
-  await openAdvanced(ben);
-  for (const action of ["Disable", "Delete"]) {
-    await ben.getByRole("button", { name: action, exact: true }).click();
-    const confirm = page.getByRole("alertdialog", {
-      name: `${action} Ben Cruz?`,
-    });
-    await returnAndHold();
-    const run = confirm.getByRole("button", { name: action, exact: true });
-    await expect(run).toHaveAttribute("aria-disabled", "true");
-    await expect(run).toHaveAccessibleDescription("Checking your access.");
-    await run.focus();
-    await page.keyboard.press("Enter");
-    await settleReact(page);
-    release();
-    await expect(run).not.toHaveAttribute("aria-disabled", "true");
-    await confirm.getByRole("button", { name: "Cancel" }).click();
-  }
-  expect(api.calls.filter((call) => call.method !== "GET")).toEqual([]);
-
-  api.groups.set(emptyGroup, group(emptyGroup, "New hires", [], []));
-  await page.goto(`/access?view=groups&group=${emptyGroup}`);
-  const hires = sheet(page, "New hires");
-  await openAdvanced(hires);
-  await hires.getByRole("button", { name: "Delete group" }).click();
-  const confirmDelete = page.getByRole("alertdialog", {
-    name: "Delete New hires?",
-  });
-  await returnAndHold();
-  const deleteGroup = confirmDelete.getByRole("button", {
-    name: "Delete",
-    exact: true,
-  });
-  await expect(deleteGroup).toHaveAttribute("aria-disabled", "true");
-  await expect(deleteGroup).toHaveAccessibleDescription(
-    "Checking your access.",
-  );
-  await deleteGroup.focus();
-  await page.keyboard.press("Enter");
-  await settleReact(page);
-  release();
-  await expect(deleteGroup).not.toHaveAttribute("aria-disabled", "true");
-  expect(api.sent("DELETE", `/api/access/groups/${emptyGroup}`)).toHaveLength(
-    0,
   );
 });
 

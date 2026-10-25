@@ -131,7 +131,7 @@ export function HelpPanel() {
           <Button
             variant="ghost"
             size="icon"
-            className="size-11"
+            className="size-11 xl:size-8"
             aria-label="Help"
             title="Help"
             disabled={suspended}
@@ -198,16 +198,17 @@ export function HelpPanel() {
             </h2>
             {preferencePending ? (
               <p className="text-muted-foreground text-sm" role="status">
-                Loading your confirmed shortcut preference…
+                Loading your shortcut preference…
               </p>
             ) : keyboardShortcuts === false ? (
               <p className="text-muted-foreground text-sm">
-                Shortcuts are off. Turn them on in your profile.
+                Shortcuts are off. Turn on Use shortcuts in Account settings ›
+                Appearance.
               </p>
             ) : disabled ? (
               <p className="text-muted-foreground text-sm">
-                Shortcut preferences are unavailable. Check your profile to
-                retry.
+                Your shortcut preference could not be loaded. Retry it in
+                Account settings.
               </p>
             ) : null}
             <p className="text-muted-foreground text-xs">
@@ -238,11 +239,11 @@ export function HelpPanel() {
               Arrow editing and Enter or Space activation always work.
             </p>
             <GuardedWorkspaceLink
-              href="/profile#look"
+              href="/settings#look"
               onAcceptedNavigate={() => setOpen(false)}
               className="text-primary focus-visible:outline-ring inline-flex min-h-11 items-center rounded-md text-sm underline underline-offset-4 focus-visible:outline-2"
             >
-              Open your profile
+              Open Account settings
             </GuardedWorkspaceLink>
           </section>
           <section

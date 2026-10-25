@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 
-import { unsavedChangesLabel } from "../state/organization-profile";
+import { unsavedChangesLabel } from "@/lib/unsaved-changes";
 
 /**
  * The pinned footer of the Organization settings (MD4): the save-state chip,

@@ -19,6 +19,7 @@ const routeTitles = [
   ["/manage", "Manage | OpenSlate"],
   ["/platform", "Platform | OpenSlate"],
   ["/profile", "Your profile | OpenSlate"],
+  ["/settings", "Account settings | OpenSlate"],
   ["/setup", "Setup guide | OpenSlate"],
 ] as const;
 
@@ -145,7 +146,7 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
-  await page.goto("/profile#look");
+  await page.goto("/settings#look");
   const textSize = page.getByRole("combobox", { name: "Text size" });
   await expect(textSize).toHaveValue("100");
   const sidebar = page.locator("#primary-sidebar");
@@ -154,7 +155,7 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
     (el) => el.getBoundingClientRect().width,
   );
   const heading = page.getByRole("heading", {
-    name: "Your profile",
+    name: "Account settings",
     exact: true,
   });
   const headingSize = () =>
@@ -165,7 +166,7 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
     .poll(() => sidebar.evaluate((el) => el.getBoundingClientRect().width))
     .toBeCloseTo(baseline * 1.25, 0);
   await expect(
-    page.getByRole("heading", { name: "Your profile", exact: true }),
+    page.getByRole("heading", { name: "Account settings", exact: true }),
   ).toHaveCSS("font-size", "37.5px");
   // Page headings scale with the text size, like the sidebar.
   await expect
@@ -202,7 +203,7 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
     Number(localStorage.getItem("openslate-sidebar-width")),
   );
   expect(stored).toBeCloseTo((increased + 40) / 1.25, 0);
-  const keyboard = page.getByRole("switch", { name: "Convenience shortcuts" });
+  const keyboard = page.getByRole("switch", { name: "Use shortcuts" });
   await keyboard.evaluate((el) => el.scrollIntoView({ block: "start" }));
   await keyboard.focus();
   const top = await page

@@ -164,6 +164,26 @@ class PersonCardResponse(PersonCardPublicResponse):
     bio: str | None
 
 
+class PersonProfileGroup(BaseModel):
+    id: UUID
+    name: str
+
+
+class PersonProfilePublicResponse(BaseModel):
+    """A guest's view of a profile: the same three fields as the guest person card."""
+
+    display_name: str
+    job_title: str | None
+    avatar_url: str | None
+
+
+class PersonProfileResponse(PersonProfilePublicResponse):
+    phone: str | None
+    bio: str | None
+    role: UserRole
+    groups: list[PersonProfileGroup]
+
+
 class AppearancePreferences(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

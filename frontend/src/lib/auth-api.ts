@@ -94,6 +94,12 @@ export type AccessEntry = {
   level: AccessLevel;
 };
 export type AccountRole = z.output<typeof accountRole>;
+/** The membership role as people read it ("Administrator", "Member", "Guest"). */
+export const membershipRoleLabels: Record<AccountRole, string> = {
+  admin: "Administrator",
+  member: "Member",
+  guest: "Guest",
+};
 /** One organization the account belongs to, as `/auth/me` lists it. */
 export type OrganizationMembership = {
   orgId: string;

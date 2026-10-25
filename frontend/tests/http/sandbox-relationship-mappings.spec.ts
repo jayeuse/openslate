@@ -4856,7 +4856,9 @@ test("disabled convenience shortcuts preserve canvas buttons and essential arrow
   ).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Canvas controls", exact: true }),
-  ).toContainText("Convenience shortcuts are off in Appearance");
+  ).toContainText(
+    "Shortcuts are off. Turn on Use shortcuts in Account settings › Appearance",
+  );
 });
 
 for (const preference of ["off", "pending"] as const) {

@@ -12,7 +12,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RotateCcw,
-  Settings,
+  Settings2,
   UserCircle,
   X,
 } from "lucide-react";
@@ -36,7 +36,13 @@ import {
   CommsAttention,
   useCommsUnreadCount,
 } from "@/components/systems/comms/components/comms-attention";
-import { AppNavigation } from "@/components/app-navigation";
+import {
+  AppNavigation,
+  navigationActiveInk,
+  navigationIconStroke,
+  navigationRowSize,
+  type NavigationSurface,
+} from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { HelpPanel } from "@/components/help/help-panel";
 import {
@@ -49,6 +55,7 @@ import {
   clearVerifiedWorkspaceSessionSnapshot,
   registerWorkspaceSessionClear,
   WorkspaceSignOutProvider,
+  useVerifiedWorkspaceUserId,
   useWorkspaceInteractionSuspended,
 } from "@/components/systems/shared/runtime/workspace-identity";
 import { WorkspaceLogo } from "@/components/systems/shared/runtime/workspace-logo";
@@ -82,13 +89,21 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import { signOut, requestSessionRecheck } from "@/lib/auth-api";
+import {
+  membershipRoleLabels,
+  requestSessionRecheck,
+  signOut,
+} from "@/lib/auth-api";
 import { ApiError } from "@/lib/api";
 
 const SIDEBAR_COLLAPSED_KEY = "openslate-sidebar-collapsed";
 const SIDEBAR_WIDTH_KEY = "openslate-sidebar-width";
-const SIDEBAR_MIN_WIDTH = 271;
-const SIDEBAR_MAX_WIDTH = 400;
+const SIDEBAR_DEFAULT_WIDTH = 240;
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_MAX_WIDTH = 360;
+// The old default (and minimum). Every browser stored it on load, so a stored
+// 271 is the old default, not a choice; it opens at the new default (PD22).
+const SIDEBAR_PREVIOUS_DEFAULT_WIDTH = 271;
 
 function clampSidebarWidth(width: number) {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width));
@@ -195,7 +210,7 @@ export function AppShell({
   const sidebarCollapsed = isComms
     ? commsSidebarCollapsed
     : savedSidebarCollapsed;
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_MIN_WIDTH);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [resizing, setResizing] = useState(false);
   const resizeStart = useRef<{
     pointerId: number;
@@ -229,7 +244,11 @@ export function AppShell({
   useEffect(() => {
     try {
       const storedWidth = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
-      if (storedWidth !== null && Number.isFinite(Number(storedWidth))) {
+      if (
+        storedWidth !== null &&
+        Number.isFinite(Number(storedWidth)) &&
+        Number(storedWidth) !== SIDEBAR_PREVIOUS_DEFAULT_WIDTH
+      ) {
         setSidebarWidth(clampSidebarWidth(Number(storedWidth)));
       }
       setSidebarCollapsed(
@@ -307,7 +326,7 @@ export function AppShell({
     } catch {
       toast.add({
         title: "Could not sign out",
-        description: "Your workspace is still active. Try again.",
+        description: "You are still signed in. Try again.",
         type: "error",
       });
       return;
@@ -317,7 +336,8 @@ export function AppShell({
 
   const sidebarStyle = {
     "--sidebar-width": `${sidebarWidth / 16}rem`,
-    "--sidebar-width-icon": "64px",
+    // The rail scales with the text size, like the sidebar width.
+    "--sidebar-width-icon": "3.5rem",
   } as CSSProperties;
 
   if (signOutCleanup !== "active")
@@ -396,18 +416,15 @@ export function AppShell({
               failed={logoFailed}
               onRetry={retryLogo}
             />
-            <SidebarContent className="app-sidebar-scroll px-3 pt-5">
+            <SidebarContent className="app-sidebar-scroll px-2 pt-1 pb-2 group-data-[collapsible=icon]:px-1.5 xl:group-data-[collapsible=icon]:px-3">
               <AppNavigation
                 pathname={pathname}
                 searchParams={navigationSearchParams}
                 collapsed={sidebarCollapsed}
                 onExpandSidebar={() => setSidebarOpen(true)}
               />
-              <div className="bg-sidebar sticky bottom-0 z-10 -mx-3 mt-auto px-3 pt-3 pb-2">
-                <AppCommsLink collapsed={sidebarCollapsed} />
-              </div>
             </SidebarContent>
-            <AppSidebarFooter collapsed={sidebarCollapsed} showToggle />
+            <AppSidebarFooter surface="sidebar" collapsed={sidebarCollapsed} />
             {!sidebarCollapsed ? (
               <div
                 role="separator"
@@ -420,7 +437,8 @@ export function AppShell({
                 aria-valuetext={`${Math.round(sidebarWidth * sidebarScale)} pixels`}
                 tabIndex={0}
                 title="Drag to resize. Double-click to reset."
-                className="hover:bg-primary/20 focus-visible:bg-primary/20 focus-visible:outline-ring absolute inset-y-0 -right-1 z-40 w-2 cursor-col-resize touch-none focus-visible:outline-2"
+                // An 8px hit area that draws a 4px handle on hover and focus.
+                className="focus-visible:outline-ring absolute inset-y-0 -right-1 z-40 w-2 cursor-col-resize touch-none after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2 after:rounded-full after:bg-transparent after:transition-colors after:duration-(--motion-fast) hover:after:bg-(--action) focus-visible:outline-2 focus-visible:after:bg-(--action) motion-reduce:after:transition-none"
                 onPointerDown={(event) => {
                   if (!event.isPrimary || event.button !== 0) return;
                   event.preventDefault();
@@ -459,7 +477,7 @@ export function AppShell({
                   resizeStart.current = null;
                   setResizing(false);
                 }}
-                onDoubleClick={() => setSidebarWidth(SIDEBAR_MIN_WIDTH)}
+                onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
                 onKeyDown={(event) => {
                   if (
                     !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
@@ -491,12 +509,12 @@ export function AppShell({
               className="flex h-full w-72 max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0"
             >
               <SheetTitle className="sr-only">OpenSlate navigation</SheetTitle>
-              <div className="flex h-14 shrink-0 items-center justify-between gap-1 border-b px-4">
+              <div className="flex min-h-15 shrink-0 items-center justify-between gap-1 border-b px-2 py-1">
                 <GuardedWorkspaceLink
                   href={"/openview" as Route}
                   aria-label={`${brand?.display_name ?? "OpenSlate"} workspace`}
                   onAcceptedNavigate={closeMobileNavigation}
-                  className="flex shrink-0 items-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
+                  className="flex size-11 shrink-0 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
                 >
                   <WorkspaceLogo
                     blob={logoBlob}
@@ -533,16 +551,14 @@ export function AppShell({
                   <X className="size-4" aria-hidden="true" />
                 </button>
               </div>
-              <div className="app-sidebar-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
+              <div className="app-sidebar-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pt-2 pb-2">
                 <AppNavigation
                   pathname={pathname}
                   searchParams={navigationSearchParams}
+                  surface="drawer"
                 />
-                <div className="bg-card sticky bottom-0 z-10 -mx-4 mt-auto px-4 pt-3 pb-2">
-                  <AppCommsLink collapsed={false} />
-                </div>
               </div>
-              <AppSidebarFooter collapsed={false} />
+              <AppSidebarFooter surface="drawer" collapsed={false} />
             </SheetContent>
           </Sheet>
 
@@ -624,38 +640,71 @@ function AppSidebarHeader({
   onRetry: () => void;
 }) {
   const name = brand?.display_name ?? "OpenSlate";
+  const toggleLabel = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  const logo = (
+    <WorkspaceLogo
+      blob={blob}
+      name={name}
+      mark={brand?.mark ?? "OS"}
+      hidden={concealed}
+      // 9px holds a three-letter mark ("HOG") in 24px; the 12px badge size
+      // clips it by 2px, and no smaller type token exists (PD65).
+      className="size-6 text-[0.5625rem]"
+    />
+  );
   return (
-    <SidebarHeader className="shrink-0 gap-4 px-4 pt-4 pb-2">
+    <SidebarHeader className="shrink-0 gap-1 px-2 pt-2 pb-1 group-data-[collapsible=icon]:px-1.5 xl:group-data-[collapsible=icon]:px-3">
       <div
         className={cn(
-          "flex min-w-0 items-center gap-1",
+          "flex min-h-11 min-w-0 items-center gap-0.5 xl:min-h-10",
           collapsed && "flex-col",
         )}
       >
-        <GuardedWorkspaceLink
-          href={"/openview" as Route}
-          aria-label={`${name} workspace`}
-          className="flex shrink-0 items-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
-        >
-          <WorkspaceLogo
-            blob={blob}
+        {collapsed ? (
+          // The rail: the mark opens the organization menu, whose first item
+          // is the workspace home (PD26).
+          <OrganizationMenu
             name={name}
-            mark={brand?.mark ?? "OS"}
-            hidden={concealed}
+            organizationId={organizationId}
+            onSwitchOrganization={onSwitchOrganization}
+            mark={logo}
           />
-        </GuardedWorkspaceLink>
-        <OrganizationMenu
-          name={name}
-          organizationId={organizationId}
-          onSwitchOrganization={onSwitchOrganization}
-          iconOnly={collapsed}
-        />
+        ) : (
+          <>
+            <GuardedWorkspaceLink
+              href={"/openview" as Route}
+              aria-label={`${name} workspace`}
+              className="flex size-11 shrink-0 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 xl:size-8"
+            >
+              {logo}
+            </GuardedWorkspaceLink>
+            <OrganizationMenu
+              name={name}
+              organizationId={organizationId}
+              onSwitchOrganization={onSwitchOrganization}
+            />
+          </>
+        )}
+        <SidebarTrigger
+          type="button"
+          aria-label={toggleLabel}
+          title={toggleLabel}
+          aria-expanded={!collapsed}
+          aria-controls="primary-sidebar"
+          className="text-sidebar-muted hover:bg-sidebar-accent hover:text-sidebar-foreground size-11 shrink-0 justify-center xl:size-8"
+        >
+          {collapsed ? (
+            <PanelLeftOpen aria-hidden="true" />
+          ) : (
+            <PanelLeftClose aria-hidden="true" />
+          )}
+        </SidebarTrigger>
       </div>
       {failed ? (
         <Button
           type="button"
           variant="ghost"
-          className="min-h-11"
+          className="min-h-11 xl:min-h-8"
           aria-label="Retry logo"
           onClick={onRetry}
         >
@@ -672,13 +721,16 @@ function AppSidebarHeader({
 
 const commsDescription = "Messages and channels";
 
-function AppCommsLink({ collapsed }: { collapsed: boolean }) {
+type ShellRowProps = { surface: NavigationSurface; collapsed: boolean };
+
+function AppCommsLink({ surface, collapsed }: ShellRowProps) {
   const pathname = usePathname();
   const router = useRouter();
   const active = pathname === "/comms" || pathname.startsWith("/comms/");
   const descriptionId = useId();
   const unread = useCommsUnreadCount();
   const label = unread ? `OpenComms, ${unread} unread` : "OpenComms";
+  const drawer = surface === "drawer";
 
   return (
     <SidebarMenu>
@@ -695,14 +747,27 @@ function AppCommsLink({ collapsed }: { collapsed: boolean }) {
           isActive={active}
           aria-current={active ? "page" : undefined}
           aria-label={label}
-          aria-describedby={collapsed ? undefined : descriptionId}
-          title={collapsed ? `${label} — ${commsDescription}` : undefined}
-          className={cn("relative min-h-11", !collapsed && "h-auto py-1.5")}
+          aria-describedby={drawer ? descriptionId : undefined}
+          aria-description={drawer ? undefined : commsDescription}
+          title={
+            drawer
+              ? undefined
+              : collapsed
+                ? `${label} — ${commsDescription}`
+                : commsDescription
+          }
+          className={cn(
+            "relative",
+            navigationRowSize(surface),
+            navigationActiveInk,
+            navigationIconStroke,
+            drawer && "h-auto py-1.5",
+          )}
         >
           <MessageSquare aria-hidden="true" />
           <span className="flex min-w-0 flex-col">
             <span className="truncate">OpenComms</span>
-            {!collapsed ? (
+            {drawer ? (
               <span
                 id={descriptionId}
                 className="text-sidebar-muted truncate text-xs font-normal"
@@ -730,62 +795,76 @@ function AppCommsLink({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function AppSidebarFooter({
-  collapsed,
-  showToggle = false,
-}: {
-  collapsed: boolean;
-  showToggle?: boolean;
-}) {
-  const router = useRouter();
-  const requestNavigation = useWorkspaceNavigationRequest();
-
-  function navigate(href: Route) {
-    const resume = () => router.push(href);
-    if (requestNavigation(href, resume)) resume();
-  }
+/**
+ * The signed-in person: their avatar, name and role in this organization.
+ * The row is a link to their own profile and is current only there: on
+ * /profile, or on /profile?person= with their own id.
+ */
+function AppAccountRow({ surface, collapsed }: ShellRowProps) {
+  const pathname = usePathname();
+  const person = useSearchParams().get("person");
+  const userId = useVerifiedWorkspaceUserId();
+  const suspended = useWorkspaceInteractionSuspended();
+  const identity = useQuery({ ...authMeOptions(), enabled: !suspended });
+  const self =
+    !suspended && identity.data?.id === userId ? identity.data : undefined;
+  const name = self ? (self.displayName ?? self.username) : undefined;
+  const role = self?.currentOrganization?.role;
+  const label = name ? `Your profile, ${name}` : "Your profile";
+  const active =
+    pathname === "/profile" &&
+    (!person || person.toLowerCase() === userId.toLowerCase());
+  const drawer = surface === "drawer";
 
   return (
-    <SidebarFooter className="border-sidebar-accent/60 relative shrink-0 border-t px-4 py-3">
-      <SidebarMenu>
-        {showToggle ? (
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              render={<SidebarTrigger />}
-              type="button"
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              aria-expanded={!collapsed}
-              aria-controls="primary-sidebar"
-            >
-              {collapsed ? (
-                <PanelLeftOpen className="size-4 shrink-0" aria-hidden="true" />
-              ) : (
-                <PanelLeftClose
-                  className="size-4 shrink-0"
-                  aria-hidden="true"
-                />
-              )}
-              <span className={cn("truncate", collapsed && "sr-only")}>
-                Collapse sidebar
-              </span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ) : null}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            type="button"
-            aria-label={collapsed ? "Your profile" : undefined}
-            title={collapsed ? "Your profile" : undefined}
-            onClick={() => navigate("/profile")}
-          >
-            <Settings className="size-4 shrink-0" aria-hidden="true" />
-            <span className={cn("truncate", collapsed && "sr-only")}>
-              Your profile
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          render={<GuardedWorkspaceLink href={"/profile" as Route} />}
+          isActive={active}
+          aria-current={active ? "page" : undefined}
+          aria-label={label}
+          aria-description={role ? membershipRoleLabels[role] : undefined}
+          title={collapsed ? label : undefined}
+          className={cn(
+            "h-auto gap-2 py-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-1!",
+            drawer ? "min-h-12" : navigationRowSize(surface),
+            !drawer && "xl:min-h-10 xl:group-data-[collapsible=icon]:min-h-8",
+            navigationActiveInk,
+          )}
+        >
+          {self ? (
+            <PersonAvatar
+              name={name ?? ""}
+              avatarUrl={
+                self.avatarFileId ? `/api/users/${self.id}/avatar` : null
+              }
+              size={drawer ? "default" : "sm"}
+            />
+          ) : (
+            <UserCircle aria-hidden="true" className="size-6! shrink-0" />
+          )}
+          <span className="grid min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+            <span className="truncate text-sm leading-4.5">
+              {name ?? "Your profile"}
             </span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
+            {role ? (
+              <span className="text-sidebar-muted truncate text-xs leading-4 font-normal">
+                {membershipRoleLabels[role]}
+              </span>
+            ) : null}
+          </span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+}
+
+function AppSidebarFooter({ surface, collapsed }: ShellRowProps) {
+  return (
+    <SidebarFooter className="shrink-0 gap-0.5 border-t border-(--sidebar-border) px-2 py-2 group-data-[collapsible=icon]:px-1.5 xl:group-data-[collapsible=icon]:px-3">
+      <AppCommsLink surface={surface} collapsed={collapsed} />
+      <AppAccountRow surface={surface} collapsed={collapsed} />
     </SidebarFooter>
   );
 }
@@ -818,15 +897,17 @@ function AppHeaderActions({
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-1 sm:gap-3">
+    <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+      {/* A quiet control that opens Platform search; it navigates, so it
+          stays a link (PD21). */}
       <GuardedWorkspaceLink
         href={"/platform" as Route}
         aria-label="Search workspace"
         title="Search workspace"
-        className="text-muted-foreground hover:bg-muted flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-2 rounded-md px-3 text-sm sm:min-w-52 sm:justify-start sm:border"
+        className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex size-11 shrink-0 items-center justify-center gap-2 rounded-md text-sm transition-colors hover:bg-(--surface-hover) focus-visible:outline-2 focus-visible:outline-offset-2 sm:w-auto sm:bg-(--surface-sunken) sm:px-3 xl:h-8"
       >
         <Search className="size-4" aria-hidden="true" />
-        <span className="hidden sm:inline">Search workspace…</span>
+        <span className="hidden sm:inline">Search</span>
       </GuardedWorkspaceLink>
       <NotificationBell accountId={verifiedUserId} />
       <CommsAttention />
@@ -837,7 +918,7 @@ function AppHeaderActions({
             <Button
               variant="ghost"
               size="icon"
-              className="size-11"
+              className="size-11 xl:size-8"
               aria-label="Account"
             />
           }
@@ -848,7 +929,7 @@ function AppHeaderActions({
               avatarUrl={
                 self.avatarFileId ? `/api/users/${self.id}/avatar` : null
               }
-              size="default"
+              size="sm"
             />
           ) : (
             <UserCircle className="size-5" aria-hidden="true" />
@@ -857,6 +938,7 @@ function AppHeaderActions({
         <DropdownMenuContent align="end" aria-label="Account">
           <DropdownMenuGroup>
             <DropdownMenuItem
+              className="min-h-11 xl:min-h-8"
               render={
                 <GuardedWorkspaceLink
                   href={"/profile" as Route}
@@ -867,7 +949,22 @@ function AppHeaderActions({
               <UserCircle aria-hidden="true" />
               Your profile
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={requestLogout}>
+            <DropdownMenuItem
+              className="min-h-11 xl:min-h-8"
+              render={
+                <GuardedWorkspaceLink
+                  href={"/settings" as Route}
+                  onAcceptedNavigate={() => onAccountOpenChange(false)}
+                />
+              }
+            >
+              <Settings2 aria-hidden="true" />
+              Account settings
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 xl:min-h-8"
+              onClick={requestLogout}
+            >
               <LogOut aria-hidden="true" />
               Sign out
             </DropdownMenuItem>

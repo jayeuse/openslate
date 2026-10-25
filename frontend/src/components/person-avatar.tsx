@@ -18,13 +18,14 @@ export function personInitials(name: string): string {
   return letters.join("").toLocaleUpperCase() || "?";
 }
 
-/** The 64-pixel thumbnail of an account avatar URL the server returned. */
+/** A thumbnail (64 or 256 pixels) of an account avatar URL the server returned. */
 export function avatarThumbnailUrl(
   avatarUrl: string | null | undefined,
+  size: 64 | 256 = 64,
 ): string | undefined {
   if (!avatarUrl || !AVATAR_PATH.test(avatarUrl)) return undefined;
   const orgId = currentOrganizationId();
-  return `${avatarUrl}?size=64${orgId ? `&org=${encodeURIComponent(orgId)}` : ""}`;
+  return `${avatarUrl}?size=${size}${orgId ? `&org=${encodeURIComponent(orgId)}` : ""}`;
 }
 
 type PersonAvatarProps = {

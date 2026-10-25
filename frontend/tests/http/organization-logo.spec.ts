@@ -38,12 +38,8 @@ const header = (page: Page) =>
   page.getByRole("complementary", { name: "Primary sidebar" });
 const patches = (api: Awaited<ReturnType<typeof installLogoApi>>) =>
   api.writes.filter(({ path }) => path === "/workspace");
-const field = (page: Page, name: string) =>
-  page.getByLabel(name, { exact: true });
 const look = (page: Page) =>
   page.getByRole("radiogroup", { name: "Organization look" });
-const radio = (page: Page, name: string) =>
-  look(page).getByRole("radio", { name: new RegExp(`^${name}`) });
 
 test("Logo draft stays local until settings save, then saved header and removal use the committed brand", async ({
   page,
@@ -458,7 +454,7 @@ test("Logo retained-candidate refusal rechecks the session before any further pu
       name: "Session verification",
       exact: true,
     });
-    await expect(curtain).toBeVisible();
+    await expect(curtain).toBeHidden();
     await expect.poll(() => api.sessionReads).toBe(sessionsBeforeRefusal + 1);
     await expect(
       page.getByText(untrustedLogoMessage, { exact: true }),
@@ -837,66 +833,6 @@ test("Logo saved brand updates through the existing SSE stream and a client-side
     }),
   ).toBeVisible();
   expect(api.logoReads).toBe(reads);
-});
-
-test("Logo privacy curtain conceals a selected preview and restores only the same account draft", async ({
-  page,
-}) => {
-  const api = await installLogoApi(page);
-  await page.addInitScript(() =>
-    localStorage.setItem("openslate-org-theme", "slate"),
-  );
-  await page.goto("/manage?view=organization");
-  // One session check conceals three drafts: a contact, a look and a logo.
-  await openProfile(page);
-  await field(page, "Contact email").fill("retained@example.com");
-  await expect(radio(page, "Stockroom")).toBeEnabled();
-  await look(page).locator("label").filter({ hasText: "Stockroom" }).click();
-  await pick(page);
-  const gate = heldResponse();
-  const requested = heldResponse();
-  api.onSession = async (route) => {
-    requested.release();
-    await gate.released;
-    await route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: api.actor,
-        organization_id: defaultOrganization.org_id,
-        setup_required: false,
-        default_organization_blocked: null,
-      },
-    });
-  };
-  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  await requested.released;
-  const curtain = page.getByRole("dialog", {
-    name: "Session verification",
-    exact: true,
-  });
-  await expect(curtain).toBeVisible();
-  await expect(
-    page.getByRole("img", { name: "Harbor Services logo", exact: true }),
-  ).toHaveCount(0);
-  await expect(field(page, "Contact email")).toHaveCount(0);
-  await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/);
-  expect(
-    await page.evaluate(() => localStorage.getItem("openslate-org-theme")),
-  ).toBe("slate");
-  gate.release();
-  await expect(curtain).toBeHidden();
-  await expect(
-    preview(page).getByRole("img", {
-      name: "Harbor Services logo",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(field(page, "Contact email")).toHaveValue(
-    "retained@example.com",
-  );
-  await expect(radio(page, "Stockroom")).toBeChecked();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "stockroom");
-  expect(api.writes).toEqual([]);
 });
 
 test("Logo late upload cannot commit settings after the verified account changes", async ({
