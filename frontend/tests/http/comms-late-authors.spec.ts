@@ -5,7 +5,6 @@ import {
   defaultSignedInIdentity,
   defaultOrganization,
   heldResponse,
-  recheckSession,
 } from "./helpers/test";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
 import type { LiveMessage } from "../../src/components/systems/comms/contract/types";
@@ -162,21 +161,9 @@ test("late and later-page authors use current authorized metadata without per-me
     servers.push(
       await installCommsLiveApi(page, { role, messageStore: messages }),
     );
-    gate = heldResponse();
-    gates.push(gate);
-    await recheckSession(page);
-    await gate.entered;
-    await expect(
-      page.getByText("late@example.test", { exact: true }),
-    ).toHaveCount(0);
-    await expect(
-      page.getByRole("button", {
-        name: "Person card: Late arrival",
-        exact: true,
-      }),
-    ).toHaveCount(0);
-    gate.release();
-    gate = null;
+    // A same-account check no longer restarts Comms (PD68); the next load
+    // reads the guest role.
+    await page.reload();
     await expect(current).toBeVisible();
     await current
       .getByRole("button", { name: "Person card: Late arrival", exact: true })

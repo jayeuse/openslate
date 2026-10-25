@@ -390,25 +390,3 @@ test("revocation discovered during trusted activity does not revive the session"
   await expect(page).toHaveURL(/\/login$/);
   expect(state.renewedUsers).toEqual([]);
 });
-
-test("an activity verification outage opens the existing private gate and recovers through Retry", async ({
-  page,
-  baseURL,
-}) => {
-  const { state, search, advance } = await workspaceSession(page, baseURL);
-  await search.fill("preserved draft");
-  await advance(6);
-  state.sessionFailure = 503;
-  await search.press("ArrowRight");
-  const curtain = page.getByRole("dialog", { name: "Session verification" });
-  await expect(
-    curtain.getByText("We can’t verify your session right now."),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Platform", exact: true }),
-  ).toHaveCount(0);
-  state.sessionFailure = 0;
-  await curtain.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(curtain).toBeHidden();
-  await expect(search).toHaveValue("preserved draft");
-});

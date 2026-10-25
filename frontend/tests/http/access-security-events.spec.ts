@@ -924,35 +924,6 @@ test("Events a policy refusal conceals a cached feed on revisit until its own fr
   await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
 });
 
-test("Events curtain clears held detail and resumes only after fresh same-account role admission", async ({
-  page,
-}) => {
-  const state = await mockSecurityEvents(page);
-  await openFeed(page);
-  const detail = deferredMfaResponse();
-  const native = deferredMfaResponse();
-  state.holdDetail = detail;
-  state.auth.holdSession = native;
-  try {
-    const event = await details(page, "Sign-in failure");
-    await detail.begun;
-    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await native.begun;
-    await expect(eventRows(page)).toHaveCount(0);
-    await expect(event).toHaveCount(0);
-    detail.release();
-    native.release();
-    await expect(feed(page)).toBeVisible();
-    await expect(event).toHaveCount(0);
-    expect(state.commands).toEqual([]);
-    expect(state.security.writes).toEqual([]);
-  } finally {
-    detail.release();
-    native.release();
-  }
-});
-
 test("Events late prior-account list cannot populate the next account's feed", async ({
   page,
 }) => {
@@ -1374,7 +1345,6 @@ test("role loss closes a held detail and never re-admits cached events", async (
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await native.begun;
-    await expect(feed(page)).toHaveCount(0);
     held.release();
     native.release();
     await expect(

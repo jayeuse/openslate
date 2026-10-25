@@ -637,7 +637,7 @@ test("Help Profile link asks before discarding a Manage draft and resumes only o
   expect(api.writes).toEqual([]);
 });
 
-for (const boundary of ["close", "account", "curtain"] as const) {
+for (const boundary of ["close", "account"] as const) {
   test(`Help ${boundary} aborts a held read and fences its late private response`, async ({
     page,
   }) => {
@@ -685,9 +685,8 @@ for (const boundary of ["close", "account", "curtain"] as const) {
           window.dispatchEvent(new Event("openslate:session-recheck")),
         );
         await session.entered;
-        await expect(
-          page.getByText("Checking your session…", { exact: true }),
-        ).toBeVisible();
+        // No cover (PD68): the next account is seen when the check answers.
+        session.release();
       }
       await expect.poll(() => api.aborts).toBeGreaterThan(aborts);
       await expect(sheet(page)).toBeHidden();

@@ -4,9 +4,11 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { AppQueryProvider } from "@/components/query-provider";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
   clearAccessDraftsForAccountChange,
   clearVerifiedWorkspaceSessionSnapshot,
@@ -119,29 +121,24 @@ function SessionVerificationMessage({
           We can’t verify your session right now. Your sign-in details are still
           available.
         </Alert>
-      ) : (
-        <p
-          className="text-muted-foreground text-center text-sm text-balance"
-          role="status"
-        >
-          Checking your session…
-        </p>
-      )}
-      <div className="mt-5 flex flex-wrap justify-center gap-3">
-        <Button className="min-h-11" onClick={onRetry} type="button">
-          {unavailable ? "Retry" : "Check again"}
-        </Button>
-        {onSignOut && (
-          <Button
-            className="min-h-11"
-            variant="outline"
-            onClick={onSignOut}
-            type="button"
-          >
-            Sign out
+      ) : null}
+      {(unavailable || draftCleanupFailed) && (
+        <div className="mt-5 flex flex-wrap justify-center gap-3">
+          <Button className="min-h-11" onClick={onRetry} type="button">
+            {unavailable ? "Retry" : "Check again"}
           </Button>
-        )}
-      </div>
+          {onSignOut && (
+            <Button
+              className="min-h-11"
+              variant="outline"
+              onClick={onSignOut}
+              type="button"
+            >
+              Sign out
+            </Button>
+          )}
+        </div>
+      )}
       {signOutError && (
         <Alert variant="destructive" className="mt-3">
           Sign-out could not finish. Try again.
@@ -149,6 +146,19 @@ function SessionVerificationMessage({
       )}
     </div>
   );
+}
+
+/**
+ * A background check confirmed the same account: read who is signed in
+ * again, without a cover, so a changed role reaches the open page.
+ */
+function RefreshIdentityAfterCheck({ version }: { version: number }) {
+  const client = useQueryClient();
+  useEffect(() => {
+    if (version > 0)
+      void client.invalidateQueries({ queryKey: authMeOptions().queryKey });
+  }, [client, version]);
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -207,7 +217,10 @@ export function AppPage({ children }: AppPageProps) {
   const activityAttempt = useRef<{ userId: string; at: number } | null>(null);
   const stopActivityRenewal = useRef<(() => void) | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
+  const [identityCheck, setIdentityCheck] = useState(0);
   const mounted = useRef(false);
+  const identityReload = useRef(false);
+  const coverOrganizationSwitch = useRef<(() => void) | null>(null);
   const curtain = useRef<HTMLDialogElement | null>(null);
   const protectedWorkspace = useRef<HTMLDivElement | null>(null);
   const queue = useRef<CheckQueue>({
@@ -222,9 +235,17 @@ export function AppPage({ children }: AppPageProps) {
 
   useEffect(() => {
     mounted.current = true;
+    // Registered at shell mount, before any feature's "Leave site?" guard,
+    // so it runs first: the old account's unsaved work cannot stay after
+    // another tab changed the account, and no prompt may keep it on screen.
+    function skipGuardsOnIdentityReload(event: Event) {
+      if (identityReload.current) event.stopImmediatePropagation();
+    }
+    window.addEventListener("beforeunload", skipGuardsOnIdentityReload);
     return () => {
       mounted.current = false;
       supersedeSessionCheck(queue.current);
+      window.removeEventListener("beforeunload", skipGuardsOnIdentityReload);
     };
   }, []);
 
@@ -309,24 +330,26 @@ export function AppPage({ children }: AppPageProps) {
       });
     }
 
-    // Another tab signed in or out, or the session asked for a check: who is
-    // signed in may have changed, so cover first, then check. A hidden tab
-    // checks when it returns.
-    function concealAndRecheck() {
+    // Returning to the window, or a feature's refused request: check the
+    // session in the background, with no cover and no pause, so the page and
+    // any file picker keep working. A check already running may answer for
+    // old cookies or never settle, so start a fresh one; a hidden tab checks
+    // when it returns.
+    function recheckInBackground() {
       if (signOutAccepted.current) return;
-      concealWorkspace();
+      supersedeSessionCheck(queue.current);
       if (document.visibilityState === "visible")
         setRetryVersion((version) => version + 1);
     }
 
-    // Leaving the window does not change who is signed in, so the workspace
-    // stays visible while away. Returning covers it only while the session is
-    // rechecked, which is also when features re-read roles and permissions.
-    function recheckOnReturn() {
-      if (signOutAccepted.current || document.visibilityState !== "visible")
-        return;
-      concealWorkspace();
-      setRetryVersion((version) => version + 1);
+    // Another tab signed in or out: this tab's cookies already belong to the
+    // next account, or to none. Reload at once instead of covering the page;
+    // the reload opens the next account or the sign-in page.
+    function reloadForIdentityChange() {
+      if (signOutAccepted.current) return;
+      supersedeSessionCheck(queue.current);
+      identityReload.current = true;
+      window.location.reload();
     }
 
     // MFA setup and verification show credential material, such as the
@@ -335,22 +358,32 @@ export function AppPage({ children }: AppPageProps) {
       if (mfaRequired || mfaOpen) concealWorkspace();
     }
 
+    // An organization switch is a navigation: cover the old organization's
+    // page until the next one is checked, so it cannot act for the new one.
+    coverOrganizationSwitch.current = () => {
+      concealWorkspace();
+      setRetryVersion((version) => version + 1);
+    };
+
     function onVisibilityChange() {
-      if (document.visibilityState === "visible") recheckOnReturn();
+      if (document.visibilityState === "visible") recheckInBackground();
       else concealCredentials();
     }
 
     window.addEventListener("blur", concealCredentials);
-    window.addEventListener("focus", recheckOnReturn);
-    window.addEventListener(sessionRecheckEvent, concealAndRecheck);
+    window.addEventListener("focus", recheckInBackground);
+    window.addEventListener(sessionRecheckEvent, recheckInBackground);
     document.addEventListener("visibilitychange", onVisibilityChange);
-    const stopIdentityChanges = subscribeIdentityChanges(concealAndRecheck);
+    const stopIdentityChanges = subscribeIdentityChanges(
+      reloadForIdentityChange,
+    );
     return () => {
       window.removeEventListener("blur", concealCredentials);
-      window.removeEventListener("focus", recheckOnReturn);
-      window.removeEventListener(sessionRecheckEvent, concealAndRecheck);
+      window.removeEventListener("focus", recheckInBackground);
+      window.removeEventListener(sessionRecheckEvent, recheckInBackground);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       stopIdentityChanges();
+      coverOrganizationSwitch.current = null;
     };
   }, [hideMfa, mfaOpen, mfaRequired]);
 
@@ -659,6 +692,8 @@ export function AppPage({ children }: AppPageProps) {
           setForceFallback(false);
           setUnavailable(false);
           setChecking(false);
+          if (!contextChanged && previousUserId === responseUserId)
+            setIdentityCheck((version) => version + 1);
         } else if (result === "mfa" && mfaStatus !== null) {
           try {
             if (curtain.current && !curtain.current.open)
@@ -788,7 +823,7 @@ export function AppPage({ children }: AppPageProps) {
       throw new Error("The workspace account is no longer available");
     if (orgId === organizationIdRef.current) return;
     await openOrganization(orgId, verifiedUserId);
-    requestSessionRecheck();
+    coverOrganizationSwitch.current?.();
   }
 
   async function signOutFromGate() {
@@ -934,6 +969,7 @@ export function AppPage({ children }: AppPageProps) {
           suspended={checking}
         >
           <AppQueryProvider>
+            <RefreshIdentityAfterCheck version={identityCheck} />
             {accountOnly ? (
               <WorkspaceNavigationGuardProvider
                 onAcceptedNavigation={() => undefined}

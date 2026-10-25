@@ -135,44 +135,6 @@ test("an old account's delayed request cannot publish success into another Profi
   }
 });
 
-test("same-account reverification discards a delayed request without leaving the form stuck", async ({
-  page,
-}) => {
-  const profile = await installProfileApi(page);
-  const api = await installEmailChangeApi(page);
-  const hold = profileGate();
-  api.holdRequest = hold;
-  const dialog = await openEmailRequest(page);
-  try {
-    await dialog
-      .getByRole("button", { name: "Send confirmation emails", exact: true })
-      .click();
-    await hold.begun;
-    const reads = profile.selfReads.length;
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect.poll(() => profile.selfReads.length).toBeGreaterThan(reads);
-    await expect(dialog).toBeVisible();
-    hold.release();
-    await expect.poll(() => api.requestResponses).toBe(1);
-    await expect(
-      page.getByRole("status").filter({ hasText: /confirmation requested/i }),
-    ).toHaveCount(0);
-    await expect(
-      dialog.getByRole("button", { name: "Cancel", exact: true }),
-    ).toBeEnabled();
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Change email", exact: true })
-      .click();
-    await expect(
-      dialog.getByLabel("Current password", { exact: true }),
-    ).toHaveValue("");
-    expect(api.requests).toHaveLength(1);
-  } finally {
-    hold.release();
-  }
-});
-
 for (const first of ["current", "new"] as const) {
   test(`${first}-address first acknowledgment has no identity/cookie claim; the other link enters protected admission`, async ({
     page,

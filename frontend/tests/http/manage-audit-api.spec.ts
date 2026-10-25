@@ -1478,22 +1478,12 @@ test("Audit CSV failure retains its pinned preview and Retry refuses malformed o
   await expect(preview).toBeHidden();
 });
 
-test("Audit Close, Escape, route leave and session concealment suppress pending CSV downloads", async ({
+test("Audit Close, Escape, route leave and another tab's sign-in suppress pending CSV downloads", async ({
   page,
   context,
 }) => {
   const api = createAuditRoute(makeAuditLogs());
-  // Another tab's sign-in conceals the workspace until the session is checked.
-  let sessionHold: ReturnType<typeof heldResponse> | null = null;
-  await page.route("**/api/auth/session", async (route) => {
-    const held = sessionHold;
-    if (held) {
-      sessionHold = null;
-      held.enter();
-      await held.released;
-    }
-    await route.fallback();
-  });
+  // Another tab's sign-in reloads this tab into the next account (PD68).
   const otherTab = await context.newPage();
   await otherTab.goto("/openview-print.css");
   // `response` holds the export answer; `handled` is entered once it is sent.
@@ -1524,7 +1514,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
     }
     await api.handle(route);
   });
-  for (const method of ["Close", "Escape", "leave", "concealment"] as const) {
+  for (const method of ["Close", "Escape", "leave", "reload"] as const) {
     await page.goto("/manage?view=organization");
     await expect(
       page.getByRole("heading", { name: "Organization", exact: true }),
@@ -1544,7 +1534,6 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
     ).toBeEnabled();
     hold = { response: heldResponse(), handled: heldResponse() };
     const barrier = hold;
-    const session = heldResponse();
     const before = started;
     try {
       await preview
@@ -1560,19 +1549,14 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
           .getByRole("button", { name: "Close export", exact: true })
           .click();
       if (method === "Escape") await page.keyboard.press("Escape");
-      if (method === "concealment") {
-        sessionHold = session;
+      if (method === "reload") {
+        const reloaded = page.waitForEvent("load");
         await otherTab.evaluate(() =>
           new BroadcastChannel("openslate-session").postMessage({
             tabId: "another-tab",
           }),
         );
-        await expect(
-          page.getByRole("dialog", {
-            name: "Session verification",
-            exact: true,
-          }),
-        ).toBeVisible();
+        await reloaded;
       }
       if (method === "leave") {
         await page.goBack();
@@ -1584,30 +1568,12 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
       await expect(preview).toBeHidden();
       barrier.response.release();
       await barrier.handled.entered;
-      if (method === "concealment") {
-        await session.entered;
-        session.release();
-        await expect(
-          page.getByRole("dialog", {
-            name: "Session verification",
-            exact: true,
-          }),
-        ).toBeHidden();
-        await expect(preview).toBeVisible();
-        await expect(
-          preview.getByRole("button", { name: "Download CSV", exact: true }),
-        ).toBeEnabled();
-        await preview
-          .getByRole("button", { name: "Close export", exact: true })
-          .click();
-      }
       expect(downloads).toBe(0);
       await expect(
         page.getByText(/Downloaded \d+ filtered audit/),
       ).toBeHidden();
     } finally {
       barrier.response.release();
-      session.release();
       hold = null;
     }
   }

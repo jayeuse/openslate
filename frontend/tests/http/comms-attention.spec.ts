@@ -343,7 +343,7 @@ test("regaining leadership after a session check does not read the unread baseli
   await check.entered;
   await expect(
     page.getByRole("dialog", { name: "Session verification" }),
-  ).toBeVisible();
+  ).toBeHidden();
   baseline.release();
   await expect.poll(() => state.listReads).toBe(1);
   session.hold = null;

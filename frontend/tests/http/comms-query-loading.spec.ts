@@ -1493,7 +1493,7 @@ test("a later change to a held message never takes the read of an earlier one", 
   }
 });
 
-test("after a session re-check Comms waits for a fresh identity read", async ({
+test("after a same-account session check Comms keeps running without a new bootstrap", async ({
   page,
 }, testInfo) => {
   const api = await prepare(page);
@@ -1515,10 +1515,12 @@ test("after a session re-check Comms waits for a fresh identity read", async ({
       .poll(() => since("/api/auth/session").filter((call) => call.completedAt))
       .not.toEqual([]);
     await settleReact(page, 4);
-    // The cached identity predates the re-check: Comms does not start on it.
+    // The identity is read again in the background; Comms keeps its runtime
+    // and does not start again (PD68).
     expect(since("/api/comms/bootstrap")).toEqual([]);
     identity.release();
-    await expect.poll(() => since("/api/comms/bootstrap").length).toBe(1);
+    await settleReact(page, 4);
+    expect(since("/api/comms/bootstrap")).toEqual([]);
     await ready(page);
   } finally {
     identity.release();

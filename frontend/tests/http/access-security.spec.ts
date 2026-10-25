@@ -1758,44 +1758,6 @@ test("a failed background session reread retains rows while disabling session-en
   ).toBeEnabled();
 });
 
-// Preservation proof for the relocated owner's existing account/command guards.
-test("a same-account curtain preserves the Access policy draft until fresh role admission", async ({
-  page,
-}) => {
-  const security = await mockManageSecurity(page);
-  const identity = await mockMfa(page);
-  await page.goto("/access?view=security");
-  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  const policy = page.getByRole("dialog", {
-    name: "Account policy",
-    exact: true,
-  });
-  const timeout = policy.getByLabel("Session timeout", { exact: true });
-  await timeout.selectOption("30 minutes");
-  const recheck = deferredMfaResponse();
-  identity.holdSession = recheck;
-  try {
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await recheck.begun;
-    const curtain = page.getByRole("dialog", {
-      name: "Session verification",
-      exact: true,
-    });
-    await expect(curtain).toBeVisible();
-    await expect(policy).toBeHidden();
-    expect(security.writes).toEqual([]);
-    recheck.release();
-    await expect(curtain).toBeHidden();
-    await expect(timeout).toHaveValue("30 minutes");
-    await expect(
-      policy.getByRole("button", { name: "Save settings", exact: true }),
-    ).toBeEnabled();
-    expect(security.writes).toEqual([]);
-  } finally {
-    recheck.release();
-  }
-});
-
 test("a late prior-account policy response cannot replace the new owner's draft or pending command", async ({
   page,
 }) => {
@@ -2097,7 +2059,7 @@ test("invalid local policy and unavailable caller address retain the draft witho
   await expect(save).toBeDisabled();
 });
 
-for (const transition of ["same-account curtain", "new account"] as const) {
+for (const transition of ["new account"] as const) {
   test(`a late caller address cannot edit the draft after ${transition}`, async ({
     page,
   }) => {
@@ -2149,7 +2111,6 @@ for (const transition of ["same-account curtain", "new account"] as const) {
     try {
       await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
       await recheck.begun;
-      await expect(policy).toBeHidden();
       recheck.release();
       await expect(
         page.getByRole("dialog", { name: "Session verification", exact: true }),
