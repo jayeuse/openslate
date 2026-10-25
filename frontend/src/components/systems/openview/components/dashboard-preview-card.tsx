@@ -45,9 +45,7 @@ export function PreviewCard({
         style={style}
         className="text-muted-foreground flex shrink-0 items-center justify-center rounded-lg border border-dashed p-4 text-center text-sm"
       >
-        {stale
-          ? "The setup changed. Update the preview to see it."
-          : "Update the preview to see this chart with your records."}
+        Update the preview to see this chart with your records.
       </div>
     );
   const widget = {
@@ -61,30 +59,41 @@ export function PreviewCard({
     placement: { column: 0, row: 0, columnSpan: columns, rowSpan: rows },
   } as DraftWidget;
   return (
-    <div style={style} className={cn("flex shrink-0", stale && "opacity-60")}>
-      <DashboardWidgetCard
-        widget={widget}
-        kind={kind}
-        dashboard={dashboard}
-        sources={sources}
-        departmentNames={departmentNames}
-        read={{
-          snapshot: {
-            widgetKey: "preview",
-            configSignature: "preview",
-            data,
-          },
-          loading: false,
-          error: "",
-          locked: false,
-        }}
-        issues={[]}
-        stacked={false}
-        style={{ flex: 1 }}
-        modeProps={{ mode: "view" }}
-        refreshSignal={0}
-        preview
-      />
+    <div style={style} className="relative flex shrink-0">
+      {stale ? (
+        // The last preview stays, dimmed, until the next Update preview.
+        <p
+          role="status"
+          className="bg-popover absolute inset-x-3 top-12 z-10 rounded-md border px-3 py-2 text-center text-sm shadow-sm"
+        >
+          The setup changed. Update the preview.
+        </p>
+      ) : null}
+      <div className={cn("flex flex-1", stale && "opacity-50")}>
+        <DashboardWidgetCard
+          widget={widget}
+          kind={kind}
+          dashboard={dashboard}
+          sources={sources}
+          departmentNames={departmentNames}
+          read={{
+            snapshot: {
+              widgetKey: "preview",
+              configSignature: "preview",
+              data,
+            },
+            loading: false,
+            error: "",
+            locked: false,
+          }}
+          issues={[]}
+          stacked={false}
+          style={{ flex: 1 }}
+          modeProps={{ mode: "view" }}
+          refreshSignal={0}
+          preview
+        />
+      </div>
     </div>
   );
 }

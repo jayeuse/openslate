@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
+import { tintRowClassName } from "@/components/systems/access/components/row-open-button";
 import {
   archiveOpenViewChart,
   chartArchiveUsage,
@@ -81,6 +82,13 @@ export function DashboardSavedCharts(props: {
 }) {
   const id = useId();
   const client = useQueryClient();
+  // Opening the list puts focus in its search.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() =>
+      document.getElementById(`${id}-search`)?.focus(),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [id]);
   const [search, setSearch] = useState("");
   const [archived, setArchived] = useState(false);
   const list = useQuery(
@@ -186,6 +194,7 @@ export function DashboardSavedCharts(props: {
       <div className="-mx-5 grid min-h-0 flex-1 lg:grid-cols-[22.5rem_minmax(0,1fr)]">
         <div className="flex min-h-0 flex-col gap-2 border-b px-5 py-4 lg:border-r lg:border-b-0">
           <Input
+            id={`${id}-search`}
             type="search"
             aria-label="Find a saved chart"
             placeholder="Find a saved chart"
@@ -227,16 +236,21 @@ export function DashboardSavedCharts(props: {
                 return (
                   <li
                     key={chart.id}
+                    data-state={
+                      chart.id === selectedId ? "selected" : undefined
+                    }
                     className={cn(
+                      tintRowClassName,
                       "flex items-center gap-1 rounded-md pr-1",
-                      chart.id === selectedId && "bg-action-tint",
                     )}
                   >
                     <button
                       type="button"
-                      aria-pressed={chart.id === selectedId}
+                      aria-current={
+                        chart.id === selectedId ? "true" : undefined
+                      }
                       onClick={() => setSelectedId(chart.id)}
-                      className="hover:bg-muted flex min-h-11 min-w-0 flex-1 flex-col justify-center rounded-md px-2 py-1 text-left xl:min-h-10"
+                      className="flex min-h-11 min-w-0 flex-1 flex-col justify-center rounded-md px-2 py-1 text-left xl:min-h-10"
                     >
                       <span className="truncate text-sm font-medium">
                         {chart.name}

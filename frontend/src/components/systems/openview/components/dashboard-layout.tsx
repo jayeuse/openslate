@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useRef,
   useState,
   type CSSProperties,
@@ -268,7 +269,9 @@ export function DashboardLayout(props: LayoutProps) {
   }
 
   const editing = props.edit !== null && !props.stacked;
-  const ordered = props.stacked ? readingOrder(props.widgets) : props.widgets;
+  // Cards, preset spaces and empty cells share one list in reading order (row,
+  // then column), so Tab and screen readers follow the grid as it looks.
+  const ordered = readingOrder(props.widgets);
   const placed = ordered.filter((widget) => props.stacked || widget.placement);
   const cards = placed.map((widget) => {
     const kind = kindOf(widget.key);
@@ -373,55 +376,78 @@ export function DashboardLayout(props: LayoutProps) {
           props.stacked
             ? "flex flex-col gap-3"
             : "grid min-w-0 grid-cols-4 grid-rows-[repeat(5,7rem)] gap-3 xl:min-h-0 xl:flex-1 xl:grid-rows-[repeat(5,minmax(7rem,1fr))] xl:overflow-auto xl:overscroll-contain",
-          editing &&
-            "bg-muted/50 rounded-lg bg-[linear-gradient(var(--rule)_1px,transparent_1px),linear-gradient(90deg,var(--rule)_1px,transparent_1px)] p-3",
+          editing && "bg-muted/50 rounded-lg p-3",
         )}
       >
-        {editing
-          ? freeCells(items).map(({ column, row }) => (
-              <button
-                key={`free-${column}-${row}`}
-                type="button"
-                style={area({ column, row, columnSpan: 1, rowSpan: 1 })}
-                aria-label={`Add a widget at column ${column + 1}, row ${row + 1}`}
-                onClick={() => props.edit?.onAddAt(column, row)}
-                className="text-muted-foreground hover:text-foreground focus-visible:ring-ring bg-card flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-dashed border-(--rule-strong) text-sm font-medium hover:border-(--ink-muted) focus-visible:ring-2 focus-visible:outline-none"
-              >
-                <Plus aria-hidden="true" className="size-4" />
-                Add
-              </button>
-            ))
-          : null}
-        {editing
-          ? props.spaces.map((space) => (
-              <div
-                key={space.key}
-                style={area(space.placement)}
-                className="bg-card relative flex min-h-0 items-center justify-center rounded-lg border border-dashed border-(--rule-strong)"
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="min-h-11"
-                  onClick={() => props.edit?.onFillSpace(space.key)}
-                >
-                  <Plus aria-hidden="true" />
-                  Add a {SIZE_RULES[space.kind].label}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute top-1 right-1 size-11"
-                  aria-label={`Remove this ${SIZE_RULES[space.kind].label} space`}
-                  onClick={() => props.edit?.onRemoveSpace(space.key)}
-                >
-                  <X aria-hidden="true" />
-                </Button>
-              </div>
-            ))
-          : null}
-        {cards}
+        {props.stacked
+          ? cards
+          : [
+              ...placed.map((widget, index) => ({
+                key: widget.key,
+                placement: widget.placement!,
+                node: cards[index],
+              })),
+              ...(editing
+                ? props.spaces.map((space) => ({
+                    key: space.key,
+                    placement: space.placement,
+                    node: (
+                      <div
+                        key={space.key}
+                        style={area(space.placement)}
+                        className="bg-card relative flex min-h-0 items-center justify-center rounded-lg border border-dashed border-(--rule-strong)"
+                      >
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="min-h-11"
+                          onClick={() => props.edit?.onFillSpace(space.key)}
+                        >
+                          <Plus aria-hidden="true" />
+                          Add a {SIZE_RULES[space.kind].label}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-1 right-1 size-11"
+                          aria-label={`Remove this ${SIZE_RULES[space.kind].label} space`}
+                          onClick={() => props.edit?.onRemoveSpace(space.key)}
+                        >
+                          <X aria-hidden="true" />
+                        </Button>
+                      </div>
+                    ),
+                  }))
+                : []),
+              ...(editing
+                ? freeCells(items).map(({ column, row }) => ({
+                    key: `free-${column}-${row}`,
+                    placement: { column, row, columnSpan: 1, rowSpan: 1 },
+                    node: (
+                      <button
+                        key={`free-${column}-${row}`}
+                        type="button"
+                        style={area({ column, row, columnSpan: 1, rowSpan: 1 })}
+                        aria-label={`Add a widget at column ${column + 1}, row ${row + 1}`}
+                        onClick={() => props.edit?.onAddAt(column, row)}
+                        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring bg-card flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-dashed border-(--rule-strong) text-sm font-medium hover:border-(--ink-muted) focus-visible:ring-2 focus-visible:outline-none"
+                      >
+                        <Plus aria-hidden="true" className="size-4" />
+                        Add
+                      </button>
+                    ),
+                  }))
+                : []),
+            ]
+              .sort(
+                (a, b) =>
+                  a.placement.row - b.placement.row ||
+                  a.placement.column - b.placement.column,
+              )
+              .map((entry) => (
+                <Fragment key={entry.key}>{entry.node}</Fragment>
+              ))}
         {preview ? (
           <div
             aria-hidden="true"

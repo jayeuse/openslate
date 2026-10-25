@@ -74,6 +74,19 @@ export function isCategoricalField(field: OpenViewDataSourceField): boolean {
   return CATEGORICAL_TYPES.has(field.type);
 }
 
+/**
+ * The field a new chart groups by: a choice first, then a person, then yes or
+ * no. Free text groups one bar per record, so it is never picked for you; with
+ * nothing better the chart waits for its Group by.
+ */
+export function defaultDimension(
+  fields: readonly OpenViewDataSourceField[],
+): OpenViewDataSourceField | undefined {
+  for (const type of ["select", "user", "boolean"])
+    for (const field of fields) if (field.type === type) return field;
+  return undefined;
+}
+
 export function operatorsFor(field: OpenViewDataSourceField): FilterOperator[] {
   if (["text", "long_text", "email", "url"].includes(field.type)) {
     return [...COMMON_FILTER_OPERATORS, "contains", "prefix", "suffix"];
@@ -305,7 +318,7 @@ export function newChartEditorDraft(
   moduleId: string,
   fields: OpenViewDataSourceField[],
 ): ChartEditorDraft {
-  const dimension = fields.find(isCategoricalField);
+  const dimension = defaultDimension(fields);
   return {
     widgetType: "chart",
     chartType: "bar",

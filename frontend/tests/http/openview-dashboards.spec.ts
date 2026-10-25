@@ -668,3 +668,76 @@ test("a reader of a department whose dashboards are all archived is offered no r
     page.getByRole("button", { name: "Archived dashboards…" }),
   ).toHaveCount(0);
 });
+
+test("cards, spaces and empty cells follow reading order, so a move changes the Tab order and the saved order", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page, {
+    identity: manager,
+    dashboards: [
+      dashboardWire({
+        widgets: [
+          equipmentNumber(at(0, 0, 1, 1)),
+          invoicesNumber(at(1, 0, 1, 1)),
+        ],
+      }),
+    ],
+  });
+  await page.goto(homeUrl);
+  await editLayout(page);
+  await page
+    .getByRole("button", { name: "Move or resize Number of Equipment" })
+    .focus();
+  await page.keyboard.press("ArrowDown");
+  // Row 1 now reads: an empty cell, Invoices, two empty cells; Equipment
+  // has moved to row 2.
+  await card(page, "Number of Invoices")
+    .getByRole("button", { name: "Number of Invoices, actions" })
+    .focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Add a widget at column 3, row 1" }),
+  ).toBeFocused();
+  await page.getByRole("button", { name: "Save layout" }).click();
+  await expect(page.getByRole("toolbar", { name: "Edit layout" })).toHaveCount(
+    0,
+  );
+  const saved = api.writes.at(-1)?.body?.widgets as {
+    config: { query: { module_id: string } };
+    grid_row: number;
+  }[];
+  expect(
+    saved.map((item) => [item.config.query.module_id, item.grid_row]),
+  ).toEqual([
+    [ids.invoices, 0],
+    [ids.equipment, 1],
+  ]);
+});
+
+test("a widget whose read fails says so and reads again on Retry", async ({
+  page,
+}) => {
+  await installDashboardApi(page, { identity: reader });
+  let failChecks = true;
+  await page.route("**/api/records/aggregate-snapshots", (route) => {
+    const body = route.request().postDataJSON() as {
+      queries: { module_id: string }[];
+    };
+    if (failChecks && body.queries[0]?.module_id === ids.checks) {
+      failChecks = false;
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Unavailable" }),
+      });
+    }
+    return route.fallback();
+  });
+  await page.goto(homeUrl);
+  const failed = card(page, "Quality checks by Result");
+  await expect(failed.getByRole("alert")).toBeVisible();
+  await expect(card(page, "Equipment by Category")).toContainText("Repair");
+  await failed.getByRole("button", { name: "Retry" }).click();
+  await expect(failed).toContainText("Repair");
+  await expect(failed.getByRole("alert")).toHaveCount(0);
+});

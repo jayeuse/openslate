@@ -3,6 +3,7 @@
 import {
   useEffect,
   useId,
+  type KeyboardEvent,
   useMemo,
   useRef,
   useState,
@@ -24,6 +25,14 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   DialogFrameFooter,
@@ -150,24 +159,68 @@ export function DashboardChartBuilder(props: {
   onClose: () => void;
   onApply: (result: BuilderResult) => void;
 }) {
+  // A changed setup is not dropped by a click outside or Escape: the person
+  // keeps editing or discards it, as the layout's leave guard asks.
+  const changed = useRef(false);
+  const [confirming, setConfirming] = useState(false);
   return (
-    <Dialog
-      open={props.request !== null}
-      onOpenChange={(open) => {
-        if (!open) props.onClose();
-      }}
-    >
-      <DialogContent
-        className={cn(
-          dialogFrameContentClass,
-          "h-[min(43.75rem,calc(100dvh-3rem))] max-w-[min(67.5rem,calc(100vw-2rem))] gap-0 overflow-hidden",
-        )}
+    <>
+      <Dialog
+        open={props.request !== null}
+        onOpenChange={(open) => {
+          if (open) return;
+          if (changed.current) setConfirming(true);
+          else props.onClose();
+        }}
       >
-        {props.request ? (
-          <BuilderBody {...props} request={props.request} />
-        ) : null}
-      </DialogContent>
-    </Dialog>
+        <DialogContent
+          className={cn(
+            dialogFrameContentClass,
+            "h-[min(43.75rem,calc(100dvh-3rem))] max-w-[min(67.5rem,calc(100vw-2rem))] gap-0 overflow-hidden",
+          )}
+        >
+          {props.request ? (
+            <BuilderBody
+              {...props}
+              request={props.request}
+              onChanged={(value) => {
+                changed.current = value;
+              }}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent className="slim-ui">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard this chart?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your changes to its setup are not on the dashboard yet.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={() => setConfirming(false)}
+            >
+              Keep editing
+            </Button>
+            <Button
+              variant="destructive"
+              className="min-h-11"
+              onClick={() => {
+                setConfirming(false);
+                changed.current = false;
+                props.onClose();
+              }}
+            >
+              Discard
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -180,8 +233,17 @@ function BuilderBody({
   sources,
   onClose,
   onApply,
-}: Parameters<typeof DashboardChartBuilder>[0] & { request: BuilderRequest }) {
+  onChanged,
+}: Parameters<typeof DashboardChartBuilder>[0] & {
+  request: BuilderRequest;
+  onChanged: (changed: boolean) => void;
+}) {
   const id = useId();
+  // Anything the person sets marks the setup as changed (not the fields the
+  // builder fills in itself, nor a saved chart it reads).
+  const [touched, setTouched] = useState(false);
+  useEffect(() => onChanged(touched), [touched, onChanged]);
+  const kindButtons = useRef<(HTMLButtonElement | null)[]>([]);
   const own = useMemo(
     () => sources.filter((source) => source.departmentId === departmentId),
     [sources, departmentId],
@@ -264,6 +326,7 @@ function BuilderBody({
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<{
     signature: string;
+    kind: WidgetKind;
     data: DashboardWidgetData;
   } | null>(null);
   const previewRead = useRef<AbortController | null>(null);
@@ -282,7 +345,38 @@ function BuilderBody({
   });
   const titleText = everywhere && reference ? reference.name : generatedTitle;
 
+  function moveKind(event: KeyboardEvent<HTMLButtonElement>, from: number) {
+    const step =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (!step) return;
+    event.preventDefault();
+    for (let offset = 1; offset < KINDS.length; offset++) {
+      const index = (from + step * offset + KINDS.length) % KINDS.length;
+      if (!request.sizes(KINDS[index].kind).length) continue;
+      changeKind(KINDS[index].kind);
+      kindButtons.current[index]?.focus();
+      return;
+    }
+  }
+  // Back from the saved charts, focus returns to the chosen kind.
+  const wasSaved = useRef(savedMode);
+  useEffect(() => {
+    if (wasSaved.current && !savedMode) {
+      const index = KINDS.findIndex((option) => option.kind === kind);
+      kindButtons.current[index]?.focus();
+    }
+    wasSaved.current = savedMode;
+  }, [savedMode, kind]);
+  const editDraft: Dispatch<SetStateAction<ChartEditorDraft>> = (change) => {
+    setTouched(true);
+    setDraft(change);
+  };
   function changeKind(next: WidgetKind) {
+    setTouched(true);
     setDraft((current) => draftForKind(current, next, fields, today));
   }
 
@@ -299,7 +393,8 @@ function BuilderBody({
         size ? 4 + Math.max(0, size.rows - 2) * 3 : 5,
         controller.signal,
       );
-      if (!controller.signal.aborted) setPreview({ signature: key, data });
+      if (!controller.signal.aborted)
+        setPreview({ signature: key, kind, data });
     } catch (failure) {
       if (!controller.signal.aborted)
         setError(
@@ -405,7 +500,7 @@ function BuilderBody({
                     aria-labelledby={`${id}-kinds`}
                     className="grid grid-cols-3 gap-1.5"
                   >
-                    {KINDS.map((option) => {
+                    {KINDS.map((option, index) => {
                       const room = request.sizes(option.kind).length > 0;
                       const rule = SIZE_RULES[option.kind];
                       const reason = room
@@ -418,8 +513,14 @@ function BuilderBody({
                             type="button"
                             role="radio"
                             aria-checked={checked}
+                            // One Tab stop; the arrow keys choose (radio group).
+                            tabIndex={checked ? 0 : -1}
+                            ref={(element) => {
+                              kindButtons.current[index] = element;
+                            }}
                             disabled={pending}
                             onClick={() => changeKind(option.kind)}
+                            onKeyDown={(event) => moveKind(event, index)}
                             className={cn(
                               "flex h-14 flex-col items-center justify-center gap-1 rounded-md border text-xs",
                               checked
@@ -445,7 +546,7 @@ function BuilderBody({
                     value={draft.moduleId}
                     disabled={pending}
                     onValueChange={(moduleId) =>
-                      setDraft((current) =>
+                      editDraft((current) =>
                         draftOnModule(current, moduleId, [], today),
                       )
                     }
@@ -485,7 +586,7 @@ function BuilderBody({
                 <KindRows
                   id={id}
                   draft={draft}
-                  setDraft={setDraft}
+                  setDraft={editDraft}
                   fields={fields}
                   kind={kind}
                   disabled={pending}
@@ -497,7 +598,10 @@ function BuilderBody({
                       value={reuseName}
                       maxLength={120}
                       placeholder={generatedTitle}
-                      onChange={(event) => setReuseName(event.target.value)}
+                      onChange={(event) => {
+                        setTouched(true);
+                        setReuseName(event.target.value);
+                      }}
                     />
                   ) : (
                     <p id={`${id}-title`} className="truncate py-1.5 text-sm">
@@ -512,6 +616,7 @@ function BuilderBody({
                     disabled={pending || sizes.length === 0}
                     onValueChange={(value) => {
                       const [columns, rows] = value.split(" × ").map(Number);
+                      setTouched(true);
                       setChosenSize({ columns, rows });
                     }}
                   >
@@ -563,9 +668,9 @@ function BuilderBody({
                 </DisabledReason>
               </div>
               <PreviewCard
-                data={preview?.signature === signature ? preview.data : null}
+                data={preview?.data ?? null}
                 stale={Boolean(preview && preview.signature !== signature)}
-                kind={kind}
+                kind={preview?.kind ?? kind}
                 size={size}
                 sources={sources}
                 departmentNames={departmentNames}
@@ -599,7 +704,10 @@ function BuilderBody({
                 <Checkbox
                   checked={everywhere}
                   disabled={pending}
-                  onCheckedChange={(checked) => setEverywhere(checked === true)}
+                  onCheckedChange={(checked) => {
+                    setTouched(true);
+                    setEverywhere(checked === true);
+                  }}
                 />
                 Change “{reference.name}” everywhere
               </label>
@@ -609,6 +717,7 @@ function BuilderBody({
                   checked={saveForReuse}
                   disabled={pending}
                   onCheckedChange={(checked) => {
+                    setTouched(true);
                     setSaveForReuse(checked === true);
                     if (checked === true && !reuseName)
                       setReuseName(generatedTitle);
@@ -790,7 +899,9 @@ function KindRows({
             value={draft.dimension?.fieldId ?? ""}
             disabled={disabled || !categories.length}
             placeholder={
-              categories.length ? "Choose a field" : "No category fields"
+              categories.length
+                ? "Choose what to group by"
+                : "No category fields"
             }
             onValueChange={(fieldId) =>
               setDraft((current) =>

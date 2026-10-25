@@ -45,6 +45,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { LoadingRegion } from "@/components/ui/loading-region";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Select } from "@/components/ui/select";
 import { departmentNavigationOptions } from "@/components/department-navigation";
 import {
@@ -92,6 +94,7 @@ import {
   freeCells,
   freeSpaceAt,
   layoutIssues,
+  readingOrder,
   sizesAt,
   type GridItem,
   type Placement,
@@ -534,8 +537,10 @@ export default function ServerBackedDashboards() {
       setEdit(null);
       return;
     }
+    // Saved in reading order, so the saved order and position match the grid.
+    const ordered = readingOrder(edit.widgets);
     const local = layoutIssues(
-      edit.widgets.flatMap((widget) =>
+      ordered.flatMap((widget) =>
         widget.placement
           ? [
               {
@@ -547,14 +552,14 @@ export default function ServerBackedDashboards() {
       ),
     );
     if (local.length) {
-      setIssues(issueMap(edit.widgets, local));
+      setIssues(issueMap(ordered, local));
       return;
     }
     setSaving(true);
     setError("");
     setConflict(false);
     try {
-      const widgetsInput = inputWidgets(edit.widgets);
+      const widgetsInput = inputWidgets(ordered);
       const saved =
         edit.dashboardId && edit.revision
           ? await updateOpenViewDashboard({
@@ -574,7 +579,7 @@ export default function ServerBackedDashboards() {
     } catch (failure) {
       const layout = getOpenViewDashboardLayoutIssues(failure);
       const conflicted = getOpenViewDashboardConflict(failure);
-      if (layout) setIssues(issueMap(edit.widgets, layout));
+      if (layout) setIssues(issueMap(ordered, layout));
       else if (conflicted?.code === "stale_revision") setConflict(true);
       else
         setError(
@@ -867,22 +872,25 @@ export default function ServerBackedDashboards() {
       ) : null}
 
       {resource.loading ? (
-        <div
-          role="status"
-          aria-label="Loading the dashboard"
-          className="grid grid-cols-4 grid-rows-[repeat(5,7rem)] gap-3 max-md:flex max-md:flex-col xl:min-h-0 xl:flex-1 xl:grid-rows-[repeat(5,minmax(7rem,1fr))]"
-        >
-          {PRESETS[0].spaces.map((space, index) => (
-            <div
-              key={index}
-              style={{
-                gridColumn: `${space.placement.column + 1} / span ${space.placement.columnSpan}`,
-                gridRow: `${space.placement.row + 1} / span ${space.placement.rowSpan}`,
-              }}
-              className="bg-muted/50 rounded-lg border max-md:h-32"
-            />
-          ))}
-        </div>
+        <LoadingRegion
+          loading
+          label="Loading the dashboard…"
+          className="flex min-h-0 flex-col xl:flex-1 [&>div]:xl:flex-1"
+          skeleton={
+            <div className="grid h-full grid-cols-4 grid-rows-[repeat(5,7rem)] gap-3 max-md:flex max-md:flex-col xl:grid-rows-[repeat(5,minmax(7rem,1fr))]">
+              {PRESETS[0].spaces.map((space) => (
+                <Skeleton
+                  key={`${space.placement.column}-${space.placement.row}`}
+                  style={{
+                    gridColumn: `${space.placement.column + 1} / span ${space.placement.columnSpan}`,
+                    gridRow: `${space.placement.row + 1} / span ${space.placement.rowSpan}`,
+                  }}
+                  className="rounded-lg max-md:h-32"
+                />
+              ))}
+            </div>
+          }
+        />
       ) : noDashboard && !effectiveDepartmentId && readable?.length === 0 ? (
         <section className="flex flex-col gap-1 py-6">
           <h2 className="text-lg font-semibold">No dashboard yet</h2>

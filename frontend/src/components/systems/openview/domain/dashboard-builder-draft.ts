@@ -7,6 +7,7 @@ import type { OpenViewDataSourceField } from "../adapters/views-api";
 import {
   changeChartEditorWidgetType,
   editorFieldReference,
+  defaultDimension,
   isCategoricalField,
   newChartEditorDraft,
   type ChartEditorDraft,
@@ -133,7 +134,11 @@ export function fillDraft(
     return date ? { ...draft, dateField: editorFieldReference(date) } : draft;
   }
   if (draft.dimension) return draft;
-  const category = own.find(isCategoricalField);
+  // A Number adds up all its groups and hides Group by, so any category
+  // serves; a chart that shows its groups waits for a meaningful one.
+  const category =
+    defaultDimension(own) ??
+    (draft.widgetType === "summary" ? own.find(isCategoricalField) : undefined);
   return category
     ? { ...draft, dimension: editorFieldReference(category) }
     : draft;

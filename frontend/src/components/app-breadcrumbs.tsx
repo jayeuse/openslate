@@ -19,6 +19,7 @@ import {
   currentDashboardDepartmentId,
   currentModuleId,
   departmentNavigation,
+  isModulePage,
   isRefusal,
   moduleLocation,
 } from "@/components/department-navigation-model";
@@ -79,7 +80,16 @@ export function AppBreadcrumbs() {
     hash,
     accessNavigationFor(identity.data),
   );
-  const current = location?.section ?? routeLabels[pathname] ?? "Workspace";
+  // OpenView has no sidebar group now: without a module or department its
+  // page is the records landing, or the dashboard landing.
+  const openViewLabel =
+    pathname === "/openview"
+      ? isModulePage(pathname, new URLSearchParams(searchParams.toString()))
+        ? "Records"
+        : "Dashboard"
+      : undefined;
+  const current =
+    location?.section ?? openViewLabel ?? routeLabels[pathname] ?? "Workspace";
   const moduleId = currentModuleId(
     pathname,
     new URLSearchParams(searchParams.toString()),

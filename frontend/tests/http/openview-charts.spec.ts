@@ -67,7 +67,8 @@ test("an empty cell opens the builder with its space, and kinds that do not fit 
     0,
   );
   const saved = api.writes.at(-1)?.body?.widgets as Record<string, unknown>[];
-  expect(saved.at(-1)).toMatchObject({
+  // The layout saves in reading order: the new number is third on row 1.
+  expect(saved[2]).toMatchObject({
     widget_type: "summary",
     grid_column: 3,
     grid_row: 0,
@@ -144,4 +145,38 @@ test("Edit chart on a saved chart uses a copy here unless it is changed everywhe
   expect(api.writes.at(-1)?.body?.widgets).toMatchObject([
     { widget_type: "chart", chart_id: null, config: { chart_type: "pie" } },
   ]);
+});
+
+test("Show as is one Tab stop chosen with the arrow keys, and a changed setup survives Escape until discarded", async ({
+  page,
+}) => {
+  await installDashboardApi(page, {
+    identity: manager,
+    dashboards: [dashboardWire({ widgets: [] })],
+  });
+  await page.goto(homeUrl);
+  await editLayout(page);
+  await page.getByRole("button", { name: "Add widget" }).click();
+  const builder = page.getByRole("dialog", { name: "Add a chart" });
+  const bar = builder.getByRole("radio", { name: "Bar" });
+  await expect(bar).toHaveAttribute("aria-checked", "true");
+  await expect(builder.getByRole("radio", { name: "Line" })).toHaveAttribute(
+    "tabindex",
+    "-1",
+  );
+  await bar.focus();
+  await page.keyboard.press("ArrowRight");
+  const line = builder.getByRole("radio", { name: "Line" });
+  await expect(line).toBeFocused();
+  await expect(line).toHaveAttribute("aria-checked", "true");
+
+  await page.keyboard.press("Escape");
+  const confirm = page.getByRole("alertdialog", {
+    name: "Discard this chart?",
+  });
+  await confirm.getByRole("button", { name: "Keep editing" }).click();
+  await expect(line).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  await confirm.getByRole("button", { name: "Discard" }).click();
+  await expect(builder).toHaveCount(0);
 });

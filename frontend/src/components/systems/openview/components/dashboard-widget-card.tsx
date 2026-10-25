@@ -19,6 +19,8 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { LoadingRegion } from "@/components/ui/loading-region";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -166,6 +168,7 @@ function RecordsWidgetCard(props: CardProps) {
         loading: read.loading,
         error: read.error,
         locked: read.locked,
+        refresh: read.refresh,
       }}
       paging={{ page, setPage, pageSize }}
     />
@@ -243,6 +246,7 @@ function WidgetCardFrame(
   return (
     <article
       aria-label={title}
+      data-slot="card"
       data-widget-kind={kind}
       style={props.style}
       onPointerDown={
@@ -255,7 +259,7 @@ function WidgetCardFrame(
           : undefined
       }
       className={cn(
-        "bg-card relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border",
+        "bg-card border-card-edge relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border",
         props.stacked && stackedHeight(kind),
         edit && "ring-1 ring-(--rule-strong)",
         edit?.handles.dragging && "z-20 opacity-90 shadow-lg",
@@ -275,7 +279,10 @@ function WidgetCardFrame(
             <GripVertical aria-hidden="true" className="size-4" />
           </button>
         ) : null}
-        <h2 className="min-w-0 truncate text-[0.8125rem] font-semibold">
+        <h2
+          data-slot="card-title"
+          className="min-w-0 truncate text-sm font-semibold"
+        >
           {title}
         </h2>
         {linked ? (
@@ -325,7 +332,7 @@ function WidgetCardFrame(
         />
       </div>
       {edit?.handles.sizeTag ? (
-        <span className="text-action-text bg-action-tint pointer-events-none absolute right-6 bottom-2 rounded-sm px-1.5 py-0.5 text-[0.6875rem] font-medium">
+        <span className="text-action-text bg-action-tint pointer-events-none absolute right-6 bottom-2 rounded-sm px-1.5 py-0.5 text-xs font-medium">
           {edit.handles.sizeTag}
         </span>
       ) : null}
@@ -381,9 +388,19 @@ function WidgetBody({
     );
   if (read.error && !read.snapshot)
     return (
-      <p role="alert" className="text-muted-foreground mt-auto text-sm">
-        {read.error}
-      </p>
+      <div role="alert" className="mt-auto flex flex-col items-start gap-1">
+        <p className="text-danger-text text-sm">{read.error}</p>
+        {read.refresh ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 xl:min-h-8"
+            onClick={read.refresh}
+          >
+            Retry
+          </Button>
+        ) : null}
+      </div>
     );
   if (!read.snapshot && unsaved)
     return (
@@ -393,10 +410,11 @@ function WidgetBody({
     );
   if (!read.snapshot)
     return (
-      <div
-        role="status"
-        aria-label={read.loading ? "Loading" : "Not loaded yet"}
-        className="bg-muted/60 mt-1 flex-1 animate-pulse rounded-md motion-reduce:animate-none"
+      <LoadingRegion
+        loading
+        label="Loading this widget…"
+        className="mt-1 flex min-h-0 flex-1 flex-col [&>div]:flex-1"
+        skeleton={<Skeleton className="h-full min-h-8 w-full" />}
       />
     );
   const data = read.snapshot.data;
@@ -419,9 +437,11 @@ function WidgetBody({
         <p className="font-display text-3xl leading-none font-semibold tracking-tight tabular-nums">
           {value === null ? "—" : value.toLocaleString()}
         </p>
-        <p className="text-muted-foreground mt-1 truncate text-xs">
-          {numberCaption(moduleName, query)}
-        </p>
+        {numberCaption(moduleName, query) ? (
+          <p className="text-muted-foreground mt-1 truncate text-xs">
+            {numberCaption(moduleName, query)}
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -500,12 +520,13 @@ function numberCaption(
     toDate?: string;
   } | null,
 ): string {
-  const parts = [moduleName ?? "Records"];
+  // The title already names the records; the caption adds what narrows them.
+  const parts: string[] = [];
   const filters = query?.definition.filters.length ?? 0;
   if (filters) parts.push(filters === 1 ? "1 filter" : `${filters} filters`);
   if (query?.fromDate && query.toDate)
     parts.push(`${query.fromDate} to ${query.toDate}`);
-  return parts.join(" · ");
+  return parts.length ? [moduleName ?? "Records", ...parts].join(" · ") : "";
 }
 
 function TableBody({
@@ -526,13 +547,21 @@ function TableBody({
   const visible = result.items.slice(offset, offset + rows);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <table className="w-full table-fixed text-[0.8125rem]">
+      <table className="w-full table-fixed text-sm">
         <thead>
           <tr className="text-muted-foreground h-7 border-b text-xs">
-            <th scope="col" className="truncate text-left font-normal">
+            <th
+              data-slot="table-head"
+              scope="col"
+              className="truncate text-left font-normal"
+            >
               {groupLabel}
             </th>
-            <th scope="col" className="w-28 text-right font-normal">
+            <th
+              data-slot="table-head"
+              scope="col"
+              className="w-28 text-right font-normal"
+            >
               {valueLabel}
             </th>
           </tr>
@@ -592,11 +621,12 @@ function RecordsBody({
   const { pagination } = result;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <table className="w-full table-fixed text-[0.8125rem]">
+      <table className="w-full table-fixed text-sm">
         <thead>
           <tr className="text-muted-foreground h-7 border-b text-xs">
             {columns.map((column) => (
               <th
+                data-slot="table-head"
                 key={column.id}
                 scope="col"
                 className="truncate text-left font-normal"
@@ -709,6 +739,12 @@ function CompactPager({
 }
 
 const MENU_ROW = "min-h-11 xl:min-h-8";
+/**
+ * A row that cannot be chosen dims only its label: the reason beside it stays
+ * in full muted ink, so it keeps its contrast (the menu dims a whole
+ * disabled row by default).
+ */
+const REASON_ROW = "data-disabled:opacity-100";
 const DIRECTIONS: Record<Direction, string> = {
   left: "Move left",
   right: "Move right",
@@ -748,7 +784,7 @@ function WidgetMenu({
             type="button"
             variant="ghost"
             size="icon"
-            className="ml-auto size-11 shrink-0"
+            className="ml-auto size-11 shrink-0 xl:size-8"
             aria-label={`${title}, actions`}
           />
         }
@@ -774,10 +810,15 @@ function WidgetMenu({
                     role="menuitemradio"
                     aria-checked={checked}
                     disabled={!size.allowed}
-                    className={MENU_ROW}
+                    className={cn(MENU_ROW, REASON_ROW)}
                     onClick={() => edit.onSize(size.columns, size.rows)}
                   >
-                    <span className="tabular-nums">
+                    <span
+                      className={cn(
+                        "tabular-nums",
+                        !size.allowed && "opacity-50",
+                      )}
+                    >
                       {size.columns} × {size.rows}
                     </span>
                     {size.allowed ? null : (
@@ -797,10 +838,12 @@ function WidgetMenu({
               <DropdownMenuItem
                 key={direction}
                 disabled={!change.ok}
-                className={MENU_ROW}
+                className={cn(MENU_ROW, REASON_ROW)}
                 onClick={() => edit.onMove(direction)}
               >
-                {DIRECTIONS[direction]}
+                <span className={cn(!change.ok && "opacity-50")}>
+                  {DIRECTIONS[direction]}
+                </span>
                 {change.ok ? null : (
                   <span className="text-muted-foreground ml-auto text-xs">
                     {change.reason}

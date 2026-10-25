@@ -95,6 +95,9 @@ export function OpenViewChartPreview({
           />
           <YAxis
             hide={!showValueAxis}
+            // Without a value axis the tallest bar reaches the top; its value
+            // label sits in the top margin.
+            domain={showValueAxis ? undefined : [0, "dataMax"]}
             allowDecimals={allowDecimals}
             tickLine={false}
             axisLine={false}

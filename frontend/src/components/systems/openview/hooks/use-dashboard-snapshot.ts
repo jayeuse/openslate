@@ -216,6 +216,8 @@ export type WidgetRead = {
   loading: boolean;
   error: string;
   locked: boolean;
+  /** Reads this widget's source again (its Retry). */
+  refresh?: () => void;
 };
 
 function readError(error: unknown, fetching: boolean): string {
@@ -285,6 +287,9 @@ export function useDashboardAggregateSnapshots(
         loading: visible && result.isFetching,
         error: readError(result.error, result.isFetching),
         locked,
+        refresh: () => {
+          if (!result.isFetching) void result.refetch();
+        },
       });
   });
   return {
