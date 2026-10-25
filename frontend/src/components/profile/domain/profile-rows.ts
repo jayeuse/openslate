@@ -1,5 +1,5 @@
 import { membershipRoleLabels } from "@/lib/auth-api";
-import type { PersonProfile } from "../adapters/profile-api";
+import type { PersonProfile } from "../adapters/profile-view-api";
 
 /** One label-left row of the About panel. */
 export type ProfileAboutRow =

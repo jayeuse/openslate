@@ -11,7 +11,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import type { Route } from "next";
-import { ArrowRight, X, UserRound } from "lucide-react";
+import { ChevronRight, X, UserRound } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -322,7 +322,7 @@ function BoundPersonCard({
               className="text-action-text focus-visible:outline-ring inline-flex min-h-11 items-center gap-1.5 rounded-sm text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2"
             >
               View profile
-              <ArrowRight aria-hidden="true" className="size-4" />
+              <ChevronRight aria-hidden="true" className="size-4" />
             </GuardedWorkspaceLink>
           </div>
         ) : null}

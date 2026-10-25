@@ -12,11 +12,9 @@ import {
 import {
   personProfileFromSelf,
   type PersonProfile,
-} from "../adapters/profile-api";
-import {
-  personProfileOptions,
-  profileSelfOptions,
-} from "../adapters/profile-queries";
+} from "../adapters/profile-view-api";
+import { profileSelfOptions } from "../adapters/profile-queries";
+import { personProfileOptions } from "../adapters/profile-view-queries";
 
 export type ProfileView =
   | { status: "loading"; own: boolean }

@@ -28,9 +28,9 @@ import {
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
   profileSelfKey,
-  personProfilesKey,
   profileSelfOptions,
 } from "@/components/profile/adapters/profile-queries";
+import { personProfilesKey } from "@/components/profile/adapters/profile-view-keys";
 import {
   changedFields,
   IDENTITY_FIELDS,

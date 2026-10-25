@@ -15,7 +15,7 @@ import {
   GuardedWorkspaceLink,
   useWorkspaceNavigationRequest,
 } from "@/components/workspace-navigation-guard";
-import type { PersonProfile } from "./adapters/profile-api";
+import type { PersonProfile } from "./adapters/profile-view-api";
 import { profileFacts } from "./domain/profile-rows";
 import { useAdmittedWorkspaceScope } from "@/components/systems/shared/runtime/workspace-identity";
 import { cn } from "@/lib/utils";

@@ -12,8 +12,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RotateCcw,
+  Settings2,
   UserCircle,
-  UserCog,
   X,
 } from "lucide-react";
 import {
@@ -958,7 +958,7 @@ function AppHeaderActions({
                 />
               }
             >
-              <UserCog aria-hidden="true" />
+              <Settings2 aria-hidden="true" />
               Account settings
             </DropdownMenuItem>
             <DropdownMenuItem

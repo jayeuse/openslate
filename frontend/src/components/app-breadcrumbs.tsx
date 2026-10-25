@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { skipToken, useQuery } from "@tanstack/react-query";
 import type { Route } from "next";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import {
@@ -11,7 +11,14 @@ import {
 } from "@/components/workspace-navigation";
 import { cn } from "@/lib/utils";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
-import { useProfileView } from "@/components/profile/hooks/use-profile-view";
+import {
+  useAdmittedWorkspaceScope,
+  useVerifiedWorkspaceUserId,
+} from "@/components/systems/shared/runtime/workspace-identity";
+import { profileSelfKey } from "@/components/profile/adapters/profile-queries";
+import type { ProfileSelf } from "@/components/profile/adapters/profile-api";
+import { personProfileKey } from "@/components/profile/adapters/profile-view-keys";
+import type { PersonProfile } from "@/components/profile/adapters/profile-view-api";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -105,12 +112,27 @@ export function AppBreadcrumbs() {
 
 /**
  * "Your profile" on the person's own profile, the person's name on another
- * profile, and "Profile" while it loads or when it is not available, so the
- * header never shows an id or names a hidden person.
+ * profile, and "Profile" while it loads, when it is not available, or when
+ * the read failed, so the header never shows an id or names a hidden person.
+ *
+ * It only reads the cache that the Profile view (`useProfileView`) fills, by
+ * the same keys, so every page's header does not ship the profile read.
  */
 function ProfileCrumb() {
-  const view = useProfileView();
-  if (view.status !== "ready")
-    return view.status === "loading" && view.own ? "Your profile" : "Profile";
-  return view.own ? "Your profile" : view.profile.displayName;
+  const person = useSearchParams().get("person")?.toLowerCase() || null;
+  const viewerId = useVerifiedWorkspaceUserId();
+  const scope = useAdmittedWorkspaceScope();
+  const own = !person || person === viewerId.toLowerCase();
+  const read = useQuery<PersonProfile | ProfileSelf>({
+    // Without an organization the own profile comes from the account.
+    queryKey: scope
+      ? personProfileKey(viewerId, scope.org_id, own ? viewerId : person)
+      : profileSelfKey(viewerId),
+    queryFn: skipToken,
+  });
+  if (read.error) return "Profile";
+  if (own) return "Your profile";
+  return read.data && "displayName" in read.data
+    ? read.data.displayName
+    : "Profile";
 }

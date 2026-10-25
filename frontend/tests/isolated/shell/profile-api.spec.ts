@@ -4,8 +4,6 @@ import { ZodError } from "zod";
 import { ApiContractError, ApiError } from "../../../src/lib/api";
 import {
   getPersonCard,
-  getPersonProfile,
-  personProfileFromSelf,
   profileNeedsSessionRecheck,
   readOwnAvatar,
   readPersonAvatar,
@@ -19,7 +17,11 @@ import {
   profileFacts,
   type ProfileAboutRow,
 } from "../../../src/components/profile/domain/profile-rows";
-import type { PersonProfile } from "../../../src/components/profile/adapters/profile-api";
+import {
+  getPersonProfile,
+  personProfileFromSelf,
+  type PersonProfile,
+} from "../../../src/components/profile/adapters/profile-view-api";
 import { installFetch } from "../platform/fixtures";
 
 // The private profile, its photo and the shared person card trust a reply
