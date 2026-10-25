@@ -2185,6 +2185,8 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await search.fill("panel");
   await expect(page.getByText("Cooling panel 02")).toBeVisible();
   await expect(page.getByText("Centrifugal pump 04")).toHaveCount(0);
+  // Module pages live under the departments; the OpenView group starts closed there.
+  await page.getByRole("button", { name: "OpenView", exact: true }).click();
   await page.getByRole("link", { name: "Dashboards" }).click();
   const discardDialog = page.getByRole("alertdialog", {
     name: "Discard unsaved view changes?",
@@ -5112,7 +5114,13 @@ test("a legacy sample Board URL cannot create a local OpenView record link", asy
   await expect(page).toHaveURL(
     "/boards?board=sample-board-organization&section=overview",
   );
-  expect(api.requests).toHaveLength(0);
+  // The sidebar's Departments section reads the catalog on every page; no
+  // other OpenView read may start from the legacy link.
+  expect(
+    api.requests.filter(
+      (request) => !/\/api\/views\/data-sources(\?|$)/.test(request),
+    ),
+  ).toHaveLength(0);
 });
 
 test("Dashboard section loads the live Dashboard API without fetching saved Views", async ({

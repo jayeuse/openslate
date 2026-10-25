@@ -312,6 +312,29 @@ export const test = base.extend({
           : route.fallback();
       },
     );
+    // The sidebar's Departments section reads these on every signed-in route
+    // (docs/specs/openview-department-pages.md). By default the person reads
+    // no module, so the section stays hidden; journeys that show departments
+    // or open a module page route them at page level.
+    const emptyPage = (url: URL) => ({
+      items: [],
+      pagination: {
+        limit: Number(url.searchParams.get("limit") ?? 100),
+        offset: Number(url.searchParams.get("offset") ?? 0),
+        count: 0,
+        total: 0,
+        has_more: false,
+      },
+    });
+    await context.route(
+      (url) =>
+        url.pathname === "/api/departments" ||
+        url.pathname === "/api/views/data-sources",
+      (route) =>
+        route.request().method() === "GET"
+          ? route.fulfill({ json: emptyPage(new URL(route.request().url())) })
+          : route.fallback(),
+    );
     // Only off Comms: there an unmocked bootstrap selects the sample runtime.
     await context.route("**/api/comms/bootstrap", (route) =>
       new URL(route.request().frame().url()).pathname.startsWith("/comms")

@@ -10,7 +10,16 @@ import {
   getWorkspaceLocation,
 } from "@/components/workspace-navigation";
 import { cn } from "@/lib/utils";
-import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
+import {
+  authMeOptions,
+  catalogFirstPageOptions,
+} from "@/components/systems/openview/adapters/openview-queries";
+import { departmentNavigationOptions } from "@/components/department-navigation";
+import {
+  currentModuleId,
+  departmentNavigation,
+  moduleLocation,
+} from "@/components/department-navigation-model";
 import {
   useAdmittedWorkspaceScope,
   useVerifiedWorkspaceUserId,
@@ -69,6 +78,11 @@ export function AppBreadcrumbs() {
     accessNavigationFor(identity.data),
   );
   const current = location?.section ?? routeLabels[pathname] ?? "Workspace";
+  const moduleId = currentModuleId(
+    pathname,
+    new URLSearchParams(searchParams.toString()),
+  );
+  if (moduleId) return <ModuleCrumbs moduleId={moduleId} />;
   return (
     <Breadcrumb
       className={cn("min-w-0", titledInPage.has(pathname) && "max-md:hidden")}
@@ -135,4 +149,44 @@ function ProfileCrumb() {
   return read.data && "displayName" in read.data
     ? read.data.displayName
     : "Profile";
+}
+
+/**
+ * "Sales › Contacts" on a module page (DA8). It reads the cache the sidebar
+ * fills, so the header adds no read; it shows "Records" until that lands.
+ * It observes with the real reads, disabled: a skipToken observer would leave
+ * the shared queries without a read when they refresh.
+ */
+function ModuleCrumbs({ moduleId }: { moduleId: string }) {
+  const departments = useQuery({
+    ...departmentNavigationOptions(),
+    enabled: false,
+  });
+  const modules = useQuery({ ...catalogFirstPageOptions(), enabled: false });
+  const place =
+    departments.data && modules.data
+      ? moduleLocation(
+          departmentNavigation(departments.data.items, modules.data.items),
+          moduleId,
+        )
+      : null;
+  return (
+    <Breadcrumb className="min-w-0">
+      <BreadcrumbList className="flex-nowrap">
+        {place ? (
+          <>
+            <BreadcrumbItem className="shrink-0 max-sm:hidden">
+              {place.department.name}
+            </BreadcrumbItem>
+            <BreadcrumbSeparator className="max-sm:hidden" />
+          </>
+        ) : null}
+        <BreadcrumbItem className="min-w-0">
+          <BreadcrumbPage className="block min-h-6 truncate leading-6">
+            {place?.module.name ?? "Records"}
+          </BreadcrumbPage>
+        </BreadcrumbItem>
+      </BreadcrumbList>
+    </Breadcrumb>
+  );
 }

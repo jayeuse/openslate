@@ -120,6 +120,27 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       ),
     }),
   );
+  // The sidebar's Departments section names the catalog's department.
+  await page.route(
+    (url) => url.pathname === "/api/departments",
+    (route) =>
+      route.fulfill({
+        json: pageOf(
+          [
+            {
+              id: departmentId,
+              department_name: "Operations",
+              created_at: "2026-09-01T00:00:00Z",
+              updated_at: "2026-09-01T00:00:00Z",
+              deleted_at: null,
+              is_deleted: false,
+              performed_by: null,
+            },
+          ],
+          { limit: 100 },
+        ),
+      }),
+  );
   await page.route("**/api/views/data-sources**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     // Fields need records.read like the catalog: they follow its refusal.
@@ -349,6 +370,23 @@ function sidebarLink(page: Page, name: string) {
     .getByRole("link", { name, exact: true });
 }
 
+/**
+ * Follows a sidebar link without hover or focus, first opening its group:
+ * Assets under its department (the module page), or an OpenView section.
+ */
+async function followSidebarLink(page: Page, name: string) {
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  const link = sidebarLink(page, name);
+  if (!(await link.count()))
+    await nav
+      .getByRole("button", {
+        name: name === "Assets" ? "Operations" : "OpenView",
+        exact: true,
+      })
+      .dispatchEvent("click");
+  await link.dispatchEvent("click");
+}
+
 test("revisiting Reports within the cache window shows its list at once without a new request", async ({
   page,
 }) => {
@@ -367,12 +405,12 @@ test("revisiting Reports within the cache window shows its list at once without 
   );
   expect(streamsAfterFirstLoad).toBeGreaterThan(0);
 
-  await sidebarLink(page, "Charts").click();
+  await followSidebarLink(page, "Charts");
   await expect(page).toHaveURL(/section=charts/);
   await expect(page.getByRole("heading", { name: "Charts" })).toBeVisible();
 
   await resetLoadingProbe(page);
-  await sidebarLink(page, "Reports").click();
+  await followSidebarLink(page, "Reports");
   await expect(page).toHaveURL(/section=reports/);
   await expect(
     page.getByRole("button", { name: "Alpha report" }),
@@ -400,7 +438,7 @@ test("a Reports list prefetched before the stream connects refreshes once it con
   await sidebarLink(page, "Reports").hover();
   await expect.poll(() => api.reportLists.length).toBe(1);
 
-  await sidebarLink(page, "Reports").click();
+  await followSidebarLink(page, "Reports");
   await expect(
     page.getByRole("button", { name: "Alpha report" }),
   ).toBeVisible();
@@ -529,7 +567,7 @@ test("a refused catalog page or refresh hides cached data sources from a new Rep
   // must read the catalog again before it may show any data source.
   const release = api.holdCatalog();
   const reads = api.catalogReads.length;
-  await sidebarLink(page, "Reports").click();
+  await followSidebarLink(page, "Reports");
   await expect(page).toHaveURL(/section=reports/);
   await page.getByRole("button", { name: "New Report" }).click();
   await expect(page.locator("#report-source")).toBeVisible();
@@ -649,7 +687,7 @@ test("a refusal in Charts or Dashboards hides cached Reports or Views until an a
   await page.goto("/openview?section=reports");
   const report = page.getByRole("button", { name: "Alpha report" });
   await expect(report).toBeVisible();
-  await sidebarLink(page, "Charts").click();
+  await followSidebarLink(page, "Charts");
   await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(1);
   await sendOpenViewEvent(page, "resync");
   await expect.poll(() => api.catalogReads.length).toBeGreaterThan(1);
@@ -659,7 +697,7 @@ test("a refusal in Charts or Dashboards hides cached Reports or Views until an a
   await expect(page.locator("option", { hasText: "Assets" })).toHaveCount(0);
 
   // The Reports list is still cached as a success, but access was refused.
-  await sidebarLink(page, "Reports").click();
+  await followSidebarLink(page, "Reports");
   await expect(page).toHaveURL(/section=reports/);
   await expect(report).toHaveCount(0);
 
@@ -667,7 +705,7 @@ test("a refusal in Charts or Dashboards hides cached Reports or Views until an a
   await page.getByRole("button", { name: "Refresh Reports" }).click();
   await expect(report).toBeVisible();
 
-  await sidebarLink(page, "Views").dispatchEvent("click");
+  await followSidebarLink(page, "Assets");
   await expect(page).toHaveURL(/section=views/);
   const source = page.locator("option", { hasText: "Assets" });
   await expect(source).toHaveCount(1);
@@ -678,14 +716,14 @@ test("a refusal in Charts or Dashboards hides cached Reports or Views until an a
   // moment this journey does not control.
   api.denyCatalog(true);
   const reads = api.catalogReads.length;
-  await sidebarLink(page, "Dashboards").dispatchEvent("click");
+  await followSidebarLink(page, "Dashboards");
   await expect.poll(() => api.catalogReads.length).toBeGreaterThan(reads);
 
   // Back in Views the cached catalog reads again. While those reads are
   // out, the refusal Dashboards saw already hides the cached names.
   const release = api.holdCatalog();
   const before = api.catalogReads.length;
-  await sidebarLink(page, "Views").dispatchEvent("click");
+  await followSidebarLink(page, "Assets");
   await expect(page).toHaveURL(/section=views/);
   await expect.poll(() => api.catalogReads.length).toBeGreaterThan(before);
   await expect(source).toHaveCount(0);

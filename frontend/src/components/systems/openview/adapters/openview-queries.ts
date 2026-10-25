@@ -167,10 +167,12 @@ export type ModuleWorkspace = {
 export const boundedCatalogOptions = () =>
   queryOptions({
     queryKey: openViewKeys.boundedCatalog(),
-    queryFn: async () => {
-      const page = await listOpenViewDataSources({
-        limit: CATALOG_PAGE_SIZE,
-        offset: 0,
+    // The sidebar reads the same first page. A read already in flight is
+    // shared; otherwise this reads again, so a retry is a new read.
+    queryFn: async ({ client }) => {
+      const page = await client.fetchQuery({
+        ...catalogFirstPageOptions(),
+        staleTime: 0,
       });
       return {
         items: page.items,

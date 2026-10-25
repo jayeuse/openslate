@@ -1510,6 +1510,8 @@ test("Reports navigation preserves existing module context without inventing an 
 }) => {
   await installReportsApi(page);
   await page.goto(`/openview?section=views&module=${moduleId}`);
+  // Module pages live under the departments; the OpenView group starts closed there.
+  await page.getByRole("button", { name: "OpenView", exact: true }).click();
   await page.getByRole("link", { name: "Reports", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Reports", exact: true }),

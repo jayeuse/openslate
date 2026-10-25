@@ -206,6 +206,10 @@ function visibleItems(
   auditManager: boolean,
 ): readonly { id: string; label: string }[] {
   const items = definition.items;
+  // Module pages live under the departments (DA5); OpenView keeps its other
+  // sections until parts B and C replace them.
+  if (definition.id === "openview")
+    return items.filter((item) => item.id !== "views");
   // Every Sandbox API requires an administrator (`require_admin`).
   if (definition.id === "sandbox") return access === "all" ? items : [];
   if (definition.id === "manage")
@@ -415,8 +419,18 @@ export function isWorkspaceNavigationItemActive(
 export function isWorkspaceNavigationGroupActive(
   group: WorkspaceNavigationGroup,
   pathname: string,
+  searchParams?: URLSearchParams,
 ): boolean {
-  return group.href.split("?")[0] === pathname;
+  if (group.href.split("?")[0] !== pathname) return false;
+  // A module page belongs to its department, not to the OpenView group.
+  const definition = workspaceNavigationDefinitions.find(
+    (entry) => entry.id === group.id,
+  );
+  return !(
+    definition?.id === "openview" &&
+    searchParams &&
+    sectionFor(definition, searchParams) === "views"
+  );
 }
 
 /** OpenComms, Profile and Account settings sit outside the sidebar groups. */
@@ -439,7 +453,11 @@ export function currentNavigationKey(
     (candidate) => candidate.pathname === pathname,
   );
   if (!definition) return null;
-  return `${definition.id}:${sectionFor(definition, searchParams, hash)}`;
+  const section = sectionFor(definition, searchParams, hash);
+  // Each module page is its own place, so the fill glides between modules.
+  if (definition.id === "openview" && section === "views")
+    return `module:${searchParams.get("module") ?? ""}`;
+  return `${definition.id}:${section}`;
 }
 
 /**

@@ -5188,7 +5188,9 @@ test("a department reader sees its Dashboards without change controls", async ({
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
 
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
-  await expect(page.getByText("Field service", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("main").getByText("Field service", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText(/private|only you/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "New Dashboard" })).toHaveCount(
     0,

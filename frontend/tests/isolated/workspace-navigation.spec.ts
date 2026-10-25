@@ -350,14 +350,6 @@ test("sidebar section links retain only each screen's relevant deep-link context
     )?.href,
   ).toBe("/openview?section=dashboards&module=incidents&dashboard=weekly");
   expect(
-    item(
-      "/openview",
-      "section=dashboards&module=incidents&dashboard=weekly",
-      "openview",
-      "views",
-    )?.href,
-  ).toBe("/openview?section=views&module=incidents");
-  expect(
     item("/sandbox", "rule=approval&inspect=orders", "sandbox", "triggers")
       ?.href,
   ).toBe("/sandbox?section=triggers&rule=approval&inspect=orders");
