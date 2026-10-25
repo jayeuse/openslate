@@ -928,7 +928,14 @@ test("a link inside the record's department shows no department name", async ({
   await expect(
     linkField(page, "Follow-up visit").getByRole("listitem"),
   ).toContainText("Loading Bay follow-up visitService visits");
-  await expect(page.getByText(/· Field service/)).toHaveCount(0);
+  // The sheet's meta line names the record's own department; the links
+  // panel does not repeat it.
+  await expect(
+    page
+      .getByRole("dialog", { name: "Record details" })
+      .getByRole("tabpanel")
+      .getByText(/· Field service/),
+  ).toHaveCount(0);
   await linkField(page, "Follow-up visit")
     .getByRole("button", { name: "Add link" })
     .click();

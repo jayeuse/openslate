@@ -111,7 +111,7 @@ export function SavedViewFilterControls({
         <div className="grid max-w-xl gap-2">
           <Field>
             <FieldLabel htmlFor="openview-eligible-user-search">
-              Search eligible people
+              Search people
             </FieldLabel>
             <Input
               id="openview-eligible-user-search"
@@ -122,18 +122,18 @@ export function SavedViewFilterControls({
               onChange={(event) => setUserSearch(event.target.value)}
             />
             <FieldDescription>
-              Only people who can read this data source can be selected.
+              Only people who can read these records can be chosen.
             </FieldDescription>
           </Field>
           {assignableUsers.isFetching ? (
             <p role="status" className="text-muted-foreground text-sm">
-              Loading eligible people…
+              Loading people…
             </p>
           ) : null}
           {assignableUsers.isError ? (
             <div className="flex flex-wrap items-center gap-2">
               <p role="alert" className="text-destructive text-sm">
-                Eligible people could not be loaded.
+                People could not be loaded.
               </p>
               <Button
                 type="button"
@@ -149,14 +149,14 @@ export function SavedViewFilterControls({
           !assignableUsers.isError &&
           assignableUsers.data?.pagination.hasMore ? (
             <p className="text-muted-foreground text-sm">
-              Showing the first 100 eligible people. Search to narrow the list.
+              Showing the first 100 people. Search to narrow the list.
             </p>
           ) : null}
           {!assignableUsers.isFetching &&
           !assignableUsers.isError &&
           assignableUsers.data?.items.length === 0 ? (
             <p className="text-muted-foreground text-sm">
-              No eligible people match this search.
+              No one matches this search.
             </p>
           ) : null}
         </div>
@@ -284,7 +284,7 @@ export function SavedViewFilterControls({
                         return (
                           <div
                             key={option.id}
-                            className="flex min-h-8 items-center gap-2"
+                            className="flex min-h-11 items-center gap-2 xl:min-h-8"
                           >
                             <Checkbox
                               id={optionId}
@@ -332,7 +332,7 @@ export function SavedViewFilterControls({
                         <Button
                           type="button"
                           variant="ghost"
-                          className="min-h-9"
+                          className="min-h-11 xl:min-h-8"
                           onClick={() =>
                             onUpdateFilter(index, (item) => ({
                               ...item,
@@ -386,7 +386,7 @@ export function SavedViewFilterControls({
                       onUpdateFilter(index, (item) => ({ ...item, value }))
                     }
                   >
-                    <option value="">Choose an eligible person</option>
+                    <option value="">Choose a person</option>
                     {value &&
                     assignableUsers.isSuccess &&
                     !assignableUsers.isFetching &&

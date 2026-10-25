@@ -1000,7 +1000,7 @@ export function LiveCalendar(props: LiveCalendarProps) {
             Calendar · {props.dateField.name}
           </h2>
           <p className="text-muted-foreground text-sm">
-            Live records grouped by their selected schedule date.
+            Records grouped by their date.
           </p>
         </header>
         <LoadingRegion
@@ -1365,7 +1365,7 @@ function ResolvedLiveCalendar({
             Calendar · {dateFieldTitle}
           </h2>
           <p className="text-muted-foreground text-sm">
-            Live records grouped by their selected schedule date.
+            Records grouped by their date.
           </p>
         </header>
         {moveError ? (

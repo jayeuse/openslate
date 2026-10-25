@@ -1843,8 +1843,15 @@ async function openLayoutSettings(page: Page) {
 
 async function openColumns(page: Page) {
   const dialog = page.getByRole("dialog", { name: "Columns" });
-  if (!(await dialog.isVisible()))
-    await page.getByRole("button", { name: "Columns", exact: true }).click();
+  if (!(await dialog.isVisible())) {
+    const button = page.getByRole("button", { name: "Columns", exact: true });
+    // On a phone Columns is in the view menu.
+    if (await button.isVisible()) await button.click();
+    else {
+      await page.getByRole("button", { name: "More view actions" }).click();
+      await page.getByRole("menuitem", { name: "Columns…" }).click();
+    }
+  }
   await expect(dialog).toBeVisible();
   return dialog;
 }
@@ -2934,7 +2941,8 @@ test("saved table presentation controls persist and drive the rendered table", a
     },
   });
 
-  await page.setViewportSize({ width: 390, height: 844 });
+  // Phones list records as rows; the table's controls show from 768px.
+  await page.setViewportSize({ width: 768, height: 1024 });
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   const table = page.getByRole("table");
   await expect(table.getByRole("columnheader")).toHaveText([
@@ -3036,6 +3044,8 @@ test("saved table presentation controls persist and drive the rendered table", a
   const scrolled = await table.evaluate((element) => {
     const container = element.parentElement;
     if (!container) return false;
+    // The table fits at 768px; a narrower container makes it scroll.
+    container.style.width = "360px";
     container.scrollLeft = container.scrollWidth;
     return container.scrollLeft > 0;
   });
@@ -3321,6 +3331,28 @@ test("the quick filter narrows the view by the first choice field with counts th
   await expect(page.getByText("Unsaved changes")).toHaveCount(0);
 });
 
+test("a click anywhere on a record's row opens it, though its name cell is pinned", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  // All records: the default draft pins the name column.
+  await page.goto("/openview?section=views&module=" + moduleId);
+  const firstRow = page
+    .getByRole("table")
+    .getByRole("rowgroup")
+    .nth(1)
+    .getByRole("row")
+    .first();
+  // A real click on the second cell, outside the pinned name cell.
+  const cell = await firstRow.getByRole("cell").nth(1).boundingBox();
+  if (!cell) throw new Error("The second cell has no box");
+  await page.mouse.click(cell.x + cell.width / 2, cell.y + cell.height / 2);
+  await expect(page).toHaveURL(/[?&]record=/);
+  await expect(
+    page.getByRole("dialog", { name: "Record details" }),
+  ).toBeVisible();
+});
+
 test("Views exposes its filter, column, and layout editors on demand", async ({
   page,
 }) => {
@@ -3518,7 +3550,9 @@ test("Views inspector follows the filtered page in both directions and reopens s
       },
     });
   });
-  await inspector.getByRole("button", { name: "Copy safe link" }).click();
+  // Copy link is in the record menu of the sheet header (OD7).
+  await inspector.getByRole("button", { name: "More record actions" }).click();
+  await page.getByRole("menuitem", { name: "Copy link" }).click();
   const copiedLink = await page.evaluate(
     () => (window as Window & { copiedSafeLink?: string }).copiedSafeLink,
   );
@@ -3697,11 +3731,6 @@ test("closing record details returns to the page reached through inspector navig
   await expect(
     inspector.getByRole("heading", { name: "Equipment 26" }),
   ).toBeVisible();
-  await expect(
-    inspector.getByText(
-      "Showing this linked record. The saved view query remains unchanged.",
-    ),
-  ).toBeVisible();
   await inspector.getByRole("button", { name: "Close" }).click();
 
   await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
@@ -3861,11 +3890,6 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
   await expect(linkedRecord).toBeVisible();
   await expect(
     linkedRecord.getByRole("heading", { name: "In service" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(
-      "Kanban lanes and counts continue to use the saved view query.",
-    ),
   ).toBeVisible();
   expect(api.recordQueryRequests).toHaveLength(1);
   expect(api.groupedQueryRequests).toHaveLength(groupedRequestCount);
@@ -5005,9 +5029,7 @@ test("Timeline renders complete intervals and keeps unscheduled records separate
   await openRecord.click();
   await expect(page).toHaveURL(new RegExp(`record=${recordTwoId}`));
   await expect(
-    page
-      .getByRole("dialog", { name: "Record details" })
-      .getByText("Showing this linked record."),
+    page.getByRole("dialog", { name: "Record details" }),
   ).toBeVisible();
 });
 
@@ -5699,14 +5721,19 @@ test("record details delete only after confirmation", async ({ page }) => {
     `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
   );
   const details = page.getByRole("dialog", { name: "Record details" });
-  await details.getByRole("button", { name: "Delete record" }).click();
+  // Delete is in the record menu of the sheet header (OD7).
+  const openRecordMenu = () =>
+    details.getByRole("button", { name: "More record actions" }).click();
+  await openRecordMenu();
+  await page.getByRole("menuitem", { name: "Delete record" }).click();
   const confirm = page.getByRole("alertdialog", {
     name: "Delete this record?",
   });
   await confirm.getByRole("button", { name: "Cancel" }).click();
   expect(commands.calls.some((call) => call.method === "DELETE")).toBe(false);
 
-  await details.getByRole("button", { name: "Delete record" }).click();
+  await openRecordMenu();
+  await page.getByRole("menuitem", { name: "Delete record" }).click();
   await confirm.getByRole("button", { name: "Delete record" }).click();
   await expect(page.getByText(/^Record deleted\./)).toBeVisible();
   expect(commands.calls.find((call) => call.method === "DELETE")?.path).toBe(
@@ -6779,7 +6806,10 @@ test.describe("export journeys", () => {
         });
         await cancel.scrollIntoViewIfNeeded();
         const control = await cancel.boundingBox();
-        expect(control!.height).toBeGreaterThanOrEqual(44);
+        // Slim controls are 32px from 1280px; phones keep the 44px floor.
+        expect(control!.height).toBeGreaterThanOrEqual(
+          page.viewportSize()!.width >= 1280 ? 32 : 44,
+        );
         expect(control!.y + control!.height).toBeLessThanOrEqual(
           page.viewportSize()!.height,
         );

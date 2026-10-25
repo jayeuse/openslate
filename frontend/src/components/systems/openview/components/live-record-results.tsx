@@ -1,5 +1,6 @@
 "use client";
 
+import { useSyncExternalStore, type MouseEvent } from "react";
 import type {
   OpenViewDataSourceField,
   OpenViewPresentation,
@@ -54,10 +55,38 @@ type LiveRecordResultsProps = {
   presentation: ResultsPresentation;
   pending: boolean;
   pageSize: number;
+  /** The record open in the sheet, tinted in the list. */
+  selectedId: string | null;
   onOpenRecord: (recordId: string) => void;
   onPageIndexChange: (pageIndex: number) => void;
   onPageSizeChange: (pageSize: number) => void;
 };
+
+const NARROW_QUERY = "(max-width: 47.99rem)";
+
+function subscribeNarrow(onChange: () => void) {
+  const query = window.matchMedia(NARROW_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+/**
+ * True below the md breakpoint, where records are two-line rows. One layout
+ * renders at a time, so no record is in the page twice; the first render
+ * assumes a wide screen.
+ */
+function useNarrowScreen(): boolean {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia(NARROW_QUERY).matches,
+    () => false,
+  );
+}
+
+/** A cell's click opens the record, unless it hit a control of its own. */
+function opensRecord(event: MouseEvent<HTMLElement>): boolean {
+  return !(event.target as Element).closest("button, a, [role=button]");
+}
 
 export function LiveRecordResults({
   region,
@@ -69,10 +98,18 @@ export function LiveRecordResults({
   presentation,
   pending,
   pageSize,
+  selectedId,
   onOpenRecord,
   onPageIndexChange,
   onPageSizeChange,
 }: LiveRecordResultsProps) {
+  const narrow = useNarrowScreen();
+  const cellValue = (row: OpenViewRecord, field: OpenViewDataSourceField) =>
+    formatOpenViewFieldValue(
+      openViewRecordFieldValue(row, field),
+      field.type,
+      region,
+    );
   return (
     // The panel fills the page; only its rows scroll and the pager stays at
     // the bottom (OD6). The page header counts the records and reports a
@@ -95,6 +132,42 @@ export function LiveRecordResults({
             onOpenRecord={onOpenRecord}
           />
         </div>
+      ) : narrow ? (
+        // Phones: a two-line row per record, its name, then the next two
+        // filled fields (DESIGN.md, Access phone rows).
+        <ul aria-label="Records" className="divide-border divide-y">
+          {page.rows.map((row) => {
+            const [first, ...rest] = tableFields;
+            const title = first ? cellValue(row, first) : "Open record";
+            const details = rest
+              .map((field) => cellValue(row, field))
+              .filter((value) => value && value !== "—")
+              .slice(0, 2)
+              .join(" · ");
+            return (
+              <li
+                key={row.id}
+                data-record-id={row.id}
+                data-state={row.id === selectedId ? "selected" : undefined}
+                className={cn(
+                  openRowClassName,
+                  tintRowClassName,
+                  "flex min-h-14 items-center px-4 py-1.5",
+                )}
+              >
+                {/* The name names the button; the second line describes it. */}
+                <RowOpenButton
+                  title={title}
+                  subtitle={details || undefined}
+                  label={
+                    first?.type === "user" ? `Open record: ${title}` : title
+                  }
+                  onOpen={() => onOpenRecord(row.id)}
+                />
+              </li>
+            );
+          })}
+        </ul>
       ) : (
         <div className="access-fill access-scroll-table">
           <Table className="min-w-[36rem] text-left text-sm">
@@ -121,27 +194,31 @@ export function LiveRecordResults({
             <TableBody>
               {page.rows.map((row) => (
                 // OD6: one line per record; the whole row opens it.
+                // A pinned cell is sticky, which keeps the open button's
+                // overlay inside it, so the row opens the record itself.
                 <TableRow
                   key={row.id}
+                  data-record-id={row.id}
+                  data-state={row.id === selectedId ? "selected" : undefined}
                   className={cn(
                     openRowClassName,
                     tintRowClassName,
+                    "group",
                     presentation.density === "compact"
                       ? "h-11 xl:h-8"
                       : "h-11 xl:h-10",
                   )}
+                  onClick={(event) => {
+                    if (opensRecord(event)) onOpenRecord(row.id);
+                  }}
                 >
                   {tableFields.map((field, index) => {
-                    const value = formatOpenViewFieldValue(
-                      openViewRecordFieldValue(row, field),
-                      field.type,
-                      region,
-                    );
+                    const value = cellValue(row, field);
                     return (
                       <TableCell
                         key={field.id}
                         className={cn(
-                          "max-w-80 overflow-hidden px-4 align-middle",
+                          "max-w-80 overflow-hidden px-4 align-middle xl:max-w-60",
                           presentation.wrap
                             ? cn(
                                 "break-words whitespace-normal",
@@ -151,7 +228,7 @@ export function LiveRecordResults({
                               )
                             : "py-0 whitespace-nowrap",
                           field.id === pinnedFieldId &&
-                            "bg-card sticky left-0 z-10",
+                            "bg-card sticky left-0 z-10 group-hover:bg-[color-mix(in_oklab,var(--ink)_6%,var(--card))] group-data-[state=selected]:bg-[color-mix(in_oklab,var(--ink)_14%,var(--card))]",
                         )}
                       >
                         {index === 0 ? (

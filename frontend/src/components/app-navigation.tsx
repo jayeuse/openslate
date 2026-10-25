@@ -455,7 +455,21 @@ export function AppNavigation({
                 title="Departments"
                 isActive={moduleId !== null}
                 className={cn(navigationRowSize(surface), navigationIconStroke)}
-                onClick={onExpandSidebar}
+                onClick={() => {
+                  onExpandSidebar?.();
+                  // This button leaves with the rail; focus moves to the
+                  // current department, or the first one.
+                  requestAnimationFrame(() => {
+                    const list = navRef.current?.querySelector(
+                      `[aria-labelledby="${descriptionIdPrefix}-departments"]`,
+                    );
+                    list
+                      ?.querySelector<HTMLElement>(
+                        'button[data-active="true"], button',
+                      )
+                      ?.focus();
+                  });
+                }}
               >
                 <BarChart3 aria-hidden="true" />
               </SidebarMenuButton>

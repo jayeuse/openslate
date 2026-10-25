@@ -79,7 +79,7 @@ export function LayoutMenu({
             key={item.value}
             role="menuitemradio"
             aria-checked={item.value === layout}
-            className="min-h-11"
+            className="min-h-11 xl:min-h-8"
             onClick={() => onLayoutChange(item.value)}
           >
             <item.icon aria-hidden="true" />
@@ -90,7 +90,10 @@ export function LayoutMenu({
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="min-h-11" onClick={onOpenSettings}>
+        <DropdownMenuItem
+          className="min-h-11 xl:min-h-8"
+          onClick={onOpenSettings}
+        >
           Layout settings…
         </DropdownMenuItem>
       </DropdownMenuContent>

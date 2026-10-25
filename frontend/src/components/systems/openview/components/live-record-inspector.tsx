@@ -1,5 +1,8 @@
 "use client";
-import { RecordPersonCard } from "./live-record-cards";
+import {
+  formatOpenViewFieldValue,
+  RecordPersonCard,
+} from "./live-record-cards";
 
 import type { ReactNode } from "react";
 import type { OpenViewGroupSelector } from "../adapters/analytics-api";
@@ -17,7 +20,6 @@ import { RecordHistoryPanel } from "./record-history-panel";
 import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import { RecordFilesPanel } from "./record-files-panel";
 import { RecordLinksPanel } from "./record-links-panel";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -77,7 +79,10 @@ export type RecordControls = {
 
 type LiveRecordInspectorProps = {
   region: WorkspaceRegion | undefined;
-  actions: ReactNode;
+  /** The sheet header's place for Edit and the record menu. */
+  actionsSlot: HTMLElement | null;
+  /** Items the record menu always holds (Copy link). */
+  menuItems: ReactNode;
   controls?: RecordControls;
   record: OpenViewRecord | null;
   recordLoading: boolean;
@@ -85,7 +90,6 @@ type LiveRecordInspectorProps = {
   inspectionLoading: boolean;
   inspectionError: string;
   fields: readonly OpenViewDataSourceField[];
-  primaryFieldId: string | null;
   onRetryRecord: () => void;
 };
 
@@ -96,7 +100,8 @@ function readableValue(value: unknown): string {
   return "—";
 }
 
-function updatedDate(
+/** When a record last changed, for the sheet's meta line. */
+export function recordUpdatedDate(
   value: string,
   region: WorkspaceRegion | undefined,
 ): string {
@@ -105,39 +110,55 @@ function updatedDate(
   return region ? formatWorkspaceDate(value, region) : "Date unavailable";
 }
 
+/** A record's name: its primary field, else the view's first field. */
+export function recordTitle(
+  record: OpenViewRecord,
+  fields: readonly OpenViewDataSourceField[],
+  primaryFieldId: string | null,
+): string {
+  const primaryField =
+    fields.find((field) => field.id === primaryFieldId) ?? fields[0];
+  return primaryField
+    ? readableValue(openViewRecordFieldValue(record, primaryField))
+    : `Record ${record.id.slice(0, 8)}`;
+}
+
+/**
+ * The record sheet's body (OD7): the Details, Linked records, Files, and
+ * History tabs, with only the open tab scrolling. The sheet header, which
+ * the workspace owns, holds the name, Previous and Next, and Close; Edit and
+ * the record menu render into it through `actionsSlot`.
+ */
 export function LiveRecordInspector({
   region,
-  actions,
+  actionsSlot,
+  menuItems,
   record,
   recordLoading,
   recordError,
   inspectionLoading,
   inspectionError,
   fields,
-  primaryFieldId,
   onRetryRecord,
   controls,
 }: LiveRecordInspectorProps) {
-  const primaryField =
-    fields.find((field) => field.id === primaryFieldId) ?? fields[0];
-  const title = record
-    ? primaryField
-      ? readableValue(openViewRecordFieldValue(record, primaryField))
-      : `Record ${record.id.slice(0, 8)}`
-    : "";
-
   const details = record ? (
     fields.length > 0 ? (
       <dl className="divide-y">
         {fields.map((field) => (
           <div
             key={field.id}
-            className="grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(8rem,0.8fr)_minmax(0,1.2fr)] sm:gap-4"
+            className="grid min-w-0 gap-1 py-2.5 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-center sm:gap-4"
           >
             <dt className="text-muted-foreground text-sm">{field.name}</dt>
             <dd className="min-w-0 text-sm wrap-anywhere">
-              <RecordPersonCard row={record} field={field}>
-                {readableValue(openViewRecordFieldValue(record, field))}
+              {/* One date format and people in ink, as in the table (OD6). */}
+              <RecordPersonCard row={record} field={field} inline>
+                {formatOpenViewFieldValue(
+                  openViewRecordFieldValue(record, field),
+                  field.type,
+                  region,
+                )}
               </RecordPersonCard>
             </dd>
           </div>
@@ -156,109 +177,116 @@ export function LiveRecordInspector({
     )
   ) : null;
 
-  return (
-    <section aria-label="Record details content" className="min-w-0">
+  const status = (
+    <>
       {inspectionLoading ? (
-        <p role="status" className="text-muted-foreground py-2 text-sm">
+        <p role="status" className="text-muted-foreground px-5 pt-3 text-sm">
           Loading adjacent records…
         </p>
       ) : null}
       {inspectionError ? (
-        <p role="alert" className="text-destructive py-2 text-sm">
+        <p role="alert" className="text-destructive px-5 pt-3 text-sm">
           {inspectionError}
         </p>
       ) : null}
+    </>
+  );
+  const panelClassName = "min-h-0 flex-1 overflow-y-auto px-5 py-3";
+  return (
+    <section
+      aria-label="Record details content"
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
+    >
+      {status}
       {record ? (
-        <>
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b py-4">
-            <div className="min-w-0">
-              <h2 className="text-xl font-semibold wrap-anywhere">{title}</h2>
-            </div>
-            {record.isDeleted ? (
-              <Badge variant="destructive">Deleted</Badge>
-            ) : controls?.canWrite ? null : (
-              <Badge variant="secondary">Read-only</Badge>
-            )}
-          </div>
-          {controls ? (
-            <Tabs defaultValue="details" className="min-w-0 pt-4">
+        controls ? (
+          <Tabs defaultValue="details" className="min-h-0 flex-1 gap-0">
+            <div className="shrink-0 border-b px-5 py-3">
               <TabsList
                 aria-label="Record sections"
                 className="max-w-full flex-nowrap justify-start overflow-x-auto"
               >
-                <TabsTrigger value="details" className="min-h-11 shrink-0">
+                <TabsTrigger
+                  value="details"
+                  className="min-h-11 shrink-0 xl:min-h-8"
+                >
                   Details
                 </TabsTrigger>
-                <TabsTrigger value="links" className="min-h-11 shrink-0">
+                <TabsTrigger
+                  value="links"
+                  className="min-h-11 shrink-0 xl:min-h-8"
+                >
                   Linked records
                 </TabsTrigger>
-                <TabsTrigger value="files" className="min-h-11 shrink-0">
+                <TabsTrigger
+                  value="files"
+                  className="min-h-11 shrink-0 xl:min-h-8"
+                >
                   Files
                 </TabsTrigger>
                 {controls.canReadHistory ? (
-                  <TabsTrigger value="history" className="min-h-11 shrink-0">
+                  <TabsTrigger
+                    value="history"
+                    className="min-h-11 shrink-0 xl:min-h-8"
+                  >
                     History
                   </TabsTrigger>
                 ) : null}
               </TabsList>
-              <TabsContent value="details" className="mt-0" keepMounted>
-                <RecordDetailsControls
-                  key={record.id}
-                  record={record}
-                  moduleId={controls.moduleId}
-                  fields={controls.editableFields}
-                  fieldsHasMore={controls.fieldsHasMore}
-                  fieldsLoadingMore={controls.fieldsLoadingMore}
-                  onLoadMoreFields={controls.onLoadMoreFields}
-                  canWrite={controls.canWrite}
-                  onChanged={controls.onChanged}
-                  onEditingChange={controls.onEditingChange}
-                >
-                  {details}
-                </RecordDetailsControls>
-              </TabsContent>
-              <TabsContent value="links" className="mt-0">
-                <RecordLinksPanel
-                  key={record.id}
-                  record={record}
-                  dataSources={controls.dataSources}
-                  canWrite={controls.canWrite}
-                  onChanged={controls.onChanged}
-                />
-              </TabsContent>
-              <TabsContent value="files" className="mt-0">
-                <RecordFilesPanel
-                  key={record.id}
-                  record={record}
-                  canWrite={controls.canWrite}
+            </div>
+            <TabsContent value="details" className={panelClassName} keepMounted>
+              <RecordDetailsControls
+                key={record.id}
+                record={record}
+                moduleId={controls.moduleId}
+                fields={controls.editableFields}
+                fieldsHasMore={controls.fieldsHasMore}
+                fieldsLoadingMore={controls.fieldsLoadingMore}
+                onLoadMoreFields={controls.onLoadMoreFields}
+                canWrite={controls.canWrite}
+                onChanged={controls.onChanged}
+                onEditingChange={controls.onEditingChange}
+                actionsSlot={actionsSlot}
+                menuItems={menuItems}
+              >
+                {details}
+              </RecordDetailsControls>
+            </TabsContent>
+            <TabsContent value="links" className={panelClassName}>
+              <RecordLinksPanel
+                key={record.id}
+                record={record}
+                dataSources={controls.dataSources}
+                canWrite={controls.canWrite}
+                onChanged={controls.onChanged}
+              />
+            </TabsContent>
+            <TabsContent value="files" className={panelClassName}>
+              <RecordFilesPanel
+                key={record.id}
+                record={record}
+                canWrite={controls.canWrite}
+                region={region}
+              />
+            </TabsContent>
+            {controls.canReadHistory ? (
+              <TabsContent value="history" className={panelClassName}>
+                <RecordHistoryPanel
                   region={region}
+                  recordId={record.id}
+                  moduleId={controls.moduleId}
+                  departmentId={controls.departmentId}
+                  fields={controls.editableFields}
+                  version={`${record.updatedAt}:${String(record.isDeleted)}`}
                 />
               </TabsContent>
-              {controls.canReadHistory ? (
-                <TabsContent value="history" className="mt-0">
-                  <RecordHistoryPanel
-                    region={region}
-                    recordId={record.id}
-                    moduleId={controls.moduleId}
-                    departmentId={controls.departmentId}
-                    fields={controls.editableFields}
-                    version={`${record.updatedAt}:${String(record.isDeleted)}`}
-                  />
-                </TabsContent>
-              ) : null}
-            </Tabs>
-          ) : (
-            details
-          )}
-          <p className="text-muted-foreground border-t pt-3 text-sm">
-            Updated{" "}
-            <time dateTime={record.updatedAt}>
-              {updatedDate(record.updatedAt, region)}
-            </time>
-          </p>
-        </>
+            ) : null}
+          </Tabs>
+        ) : (
+          <div className={panelClassName}>{details}</div>
+        )
       ) : recordError ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <p role="alert" className="text-destructive text-sm">
             {recordError}
           </p>
@@ -272,11 +300,11 @@ export function LiveRecordInspector({
           </Button>
         </div>
       ) : recordLoading ? (
-        <p role="status" className="text-muted-foreground py-6 text-sm">
+        <p role="status" className="text-muted-foreground px-5 py-6 text-sm">
           Loading linked record…
         </p>
       ) : (
-        <Empty className="py-6">
+        <Empty className="px-5 py-6">
           <EmptyHeader>
             <EmptyTitle>This record is unavailable</EmptyTitle>
             <EmptyDescription>
@@ -285,9 +313,6 @@ export function LiveRecordInspector({
           </EmptyHeader>
         </Empty>
       )}
-      {record ? (
-        <div className="flex flex-wrap gap-2 border-t pt-4">{actions}</div>
-      ) : null}
     </section>
   );
 }

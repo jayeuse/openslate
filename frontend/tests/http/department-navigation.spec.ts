@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { expect, test } from "./helpers/test";
+import { expect, signedInAs, test } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -224,4 +224,30 @@ test("the collapsed rail shows one Departments button that opens the sidebar", a
   await expect(
     nav.getByRole("button", { name: "Sales", exact: true }),
   ).toBeVisible();
+});
+
+test("a module page with no readable module says why, and only an administrator is offered the Sandbox", async ({
+  page: target,
+}) => {
+  // The fixture's catalog is empty: nothing this person can read.
+  await target.goto("/openview?section=views");
+  await expect(
+    target.getByRole("heading", { level: 2, name: "Nothing published yet" }),
+  ).toBeVisible();
+  await expect(
+    target.getByRole("link", { name: "Open Sandbox", exact: true }),
+  ).toBeVisible();
+
+  await signedInAs(target, {
+    id: "00000000-0000-4000-8000-0000000000aa",
+    role: "member",
+  });
+  await target.reload();
+  await expect(
+    target.getByRole("heading", { level: 2, name: "No records to show yet" }),
+  ).toBeVisible();
+  await expect(target.getByText(/Access › Groups/)).toBeVisible();
+  await expect(
+    target.getByRole("link", { name: "Open Sandbox", exact: true }),
+  ).toHaveCount(0);
 });

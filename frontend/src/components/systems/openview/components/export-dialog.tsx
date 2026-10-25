@@ -17,9 +17,14 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
+import { cn } from "@/lib/utils";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -216,20 +221,28 @@ export function ExportDialog({
         if (!open) cancel();
       }}
     >
-      <DialogContent className="sm:max-w-xl" finalFocus={returnFocus}>
+      <DialogContent
+        className={cn(dialogFrameContentClass, "sm:max-w-xl")}
+        finalFocus={returnFocus}
+      >
         <form
+          className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
             void download();
           }}
         >
-          <DialogHeader>
-            <DialogTitle>Export records</DialogTitle>
-            <DialogDescription>
-              Choose the columns and format for your current view.
-            </DialogDescription>
-          </DialogHeader>
-          <FieldGroup className="mt-5 gap-5">
+          <DialogFrameHeader
+            title={<DialogTitle>Export records</DialogTitle>}
+            description={
+              <DialogDescription>
+                Choose the columns and format for your current view.
+              </DialogDescription>
+            }
+            closeLabel="Close export"
+            onClose={cancel}
+          />
+          <FieldGroup className="gap-5">
             <Field>
               <FieldLabel htmlFor={`${id}-format`}>Format</FieldLabel>
               <Select
@@ -385,24 +398,26 @@ export function ExportDialog({
               </p>
             ) : null}
           </FieldGroup>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={cancel}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              className="min-h-11"
-              disabled={pending || empty || suspended || denied}
-              aria-describedby={empty ? `${id}-columns-error` : undefined}
-            >
-              {pending ? "Downloading…" : "Download"}
-            </Button>
-          </DialogFooter>
+          <DialogFrameFooter>
+            <DialogFooter className="mt-0">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={cancel}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="min-h-11"
+                disabled={pending || empty || suspended || denied}
+                aria-describedby={empty ? `${id}-columns-error` : undefined}
+              >
+                {pending ? "Downloading…" : "Download"}
+              </Button>
+            </DialogFooter>
+          </DialogFrameFooter>
         </form>
       </DialogContent>
     </Dialog>

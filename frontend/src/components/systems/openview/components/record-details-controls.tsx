@@ -8,6 +8,8 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
+import { MoreHorizontal, Pencil } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getApiFieldErrors } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
@@ -51,6 +53,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type Editing = {
   /** The complete stored record the form started from. */
@@ -76,6 +85,10 @@ type RecordDetailsControlsProps = {
   onChanged: (message: string) => void;
   /** Reports whether the edit form is open, so the dialog can guard it. */
   onEditingChange?: (editing: boolean) => void;
+  /** The sheet header's place for Edit and the record menu (OD7). */
+  actionsSlot: HTMLElement | null;
+  /** Items the record menu always holds (Copy link). */
+  menuItems: ReactNode;
 };
 
 /** Focuses after React renders the next state. */
@@ -110,6 +123,8 @@ export function RecordDetailsControls({
   children,
   onChanged,
   onEditingChange,
+  actionsSlot,
+  menuItems,
 }: RecordDetailsControlsProps) {
   const [editing, setEditing] = useState<Editing | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -369,8 +384,65 @@ export function RecordDetailsControls({
       </Alert>
     ) : null;
 
+  // OD7: a quiet Edit and the record menu sit in the sheet header; Delete is
+  // in the menu. While the form is open they step aside.
+  const headerActions = actionsSlot
+    ? createPortal(
+        <>
+          {editable && !editing ? (
+            <Button
+              ref={editButtonRef}
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              // While it opens, the visible "Opening…" is the name.
+              aria-label={pending === "open" ? undefined : "Edit record"}
+              disabled={busy || fieldsHasMore || fieldsLoadingMore}
+              onClick={() => void startEditing()}
+            >
+              <Pencil aria-hidden="true" />
+              {pending === "open" ? "Opening…" : "Edit"}
+            </Button>
+          ) : null}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-11"
+                  aria-label="More record actions"
+                />
+              }
+            >
+              <MoreHorizontal aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="slim-ui min-w-48">
+              {menuItems}
+              {editable && !editing ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    className="min-h-11 xl:min-h-8"
+                    disabled={busy}
+                    onClick={() => setConfirmDelete(true)}
+                  >
+                    Delete record
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>,
+        actionsSlot,
+      )
+    : null;
+
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {headerActions}
       {error ? (
         <Alert role="alert" variant="destructive">
           {error}
@@ -457,28 +529,7 @@ export function RecordDetailsControls({
       ) : (
         <>
           {metadataGuard}
-          {editable ? (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                ref={editButtonRef}
-                type="button"
-                className="min-h-11"
-                disabled={busy || fieldsHasMore || fieldsLoadingMore}
-                onClick={() => void startEditing()}
-              >
-                {pending === "open" ? "Opening…" : "Edit record"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="text-destructive min-h-11"
-                disabled={busy}
-                onClick={() => setConfirmDelete(true)}
-              >
-                Delete record
-              </Button>
-            </div>
-          ) : record.isDeleted && (canWrite || isAdmin) ? (
+          {record.isDeleted && (canWrite || isAdmin) ? (
             <div className="flex flex-wrap gap-2">
               {canWrite ? (
                 <Button

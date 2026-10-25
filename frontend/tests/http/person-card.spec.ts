@@ -32,6 +32,14 @@ async function visit(
   await page.goto(api.href);
   if (surface === "platform" || surface === "access")
     await page.getByRole("searchbox", { name: "Search workspace" }).fill("Ana");
+  // On a phone OpenView lists records as two-line rows; the person card is
+  // in the record's sheet.
+  if (surface === "openview" && (page.viewportSize()?.width ?? 1440) < 768)
+    await page
+      .getByRole("list", { name: "Records" })
+      .getByRole("button")
+      .first()
+      .click();
   await expect(trigger(page).first()).toBeVisible();
 }
 async function expectMemberCard(page: Page) {
@@ -474,7 +482,9 @@ test("Person card selected assignee remains inspectable without changing the rec
   const inspector = page.getByRole("region", {
     name: "Record details content",
   });
-  await inspector
+  // Edit sits in the record sheet's header (OD7).
+  await page
+    .getByRole("dialog", { name: "Record details" })
     .getByRole("button", { name: "Edit record", exact: true })
     .click();
   const assignee = inspector.getByRole("combobox", {
@@ -496,7 +506,10 @@ for (const layout of ["Table", "Grid"] as const) {
   }) => {
     const api = await installPersonCardApi(page, "openview", "admin", true);
     await page.goto(api.href);
-    await page.getByRole("tab", { name: layout, exact: true }).click();
+    await page.getByRole("button", { name: /^Layout: / }).click();
+    await page
+      .getByRole("menuitemradio", { name: layout, exact: true })
+      .click();
     await expect(trigger(page).first()).toBeVisible();
     await trigger(page).first().click();
     await expectMemberCard(page);

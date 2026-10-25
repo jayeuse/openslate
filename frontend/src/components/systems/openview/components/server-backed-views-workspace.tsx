@@ -14,8 +14,29 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Route } from "next";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
-import { Columns3, Download, MoreHorizontal, Plus } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Columns3,
+  Download,
+  MoreHorizontal,
+  Plus,
+  X,
+} from "lucide-react";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { PageHeader } from "@/components/page-header";
+import { DisabledReason } from "@/components/ui/disabled-reason";
+import { cn } from "@/lib/utils";
+import {
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import {
   queryOpenViewGroupedRecords,
   type OpenViewGroupSelector,
@@ -67,15 +88,14 @@ import {
   FilterSelect,
   type FilterChip,
 } from "@/components/systems/access/components/access-toolbar";
+import { LayoutFieldPicker } from "./layout-field-picker";
 import { LayoutMenu } from "./layout-menu";
 import { QuickFilter, useQuickFilterCounts } from "./quick-filter";
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
@@ -125,6 +145,8 @@ import { useServerViewsResource } from "../hooks/use-server-views-resource";
 import { LiveGroupedResults } from "./live-grouped-results";
 import {
   LiveRecordInspector,
+  recordTitle,
+  recordUpdatedDate,
   type RecordInspectionContext,
   type RecordInspectionPage,
 } from "./live-record-inspector";
@@ -166,6 +188,8 @@ const SAVED_VIEW_LAYOUT_LABELS: Record<SavedViewLayout, string> = {
   timeline: "Timeline",
 };
 const GROUP_PAGE_SIZE = 12;
+/** The module page's search, where focus returns when nothing else fits. */
+const SEARCH_ID = "openview-search";
 const DEFAULT_RECORD_PAGE_SIZE = 25;
 
 type RecordPageState = {
@@ -428,6 +452,9 @@ export default function ServerBackedViewsWorkspace({
   const [saveName, setSaveName] = useState("");
   // Save as new view creates a view even while a saved one is selected.
   const [saveAsNew, setSaveAsNew] = useState(false);
+  // The record sheet header's place for Edit and the record menu.
+  const [recordActionsSlot, setRecordActionsSlot] =
+    useState<HTMLDivElement | null>(null);
   const [saveError, setSaveError] = useState("");
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -1460,7 +1487,7 @@ export default function ServerBackedViewsWorkspace({
       await navigator.clipboard.writeText(
         new URL(path, window.location.origin).href,
       );
-      setNotice("Safe link copied.");
+      setNotice("Link copied.");
     } catch {
       setInspectionError("Copy is unavailable in this browser.");
     }
@@ -1757,7 +1784,7 @@ export default function ServerBackedViewsWorkspace({
       )
     ) {
       setActionError(
-        "These unsaved moves belong to another data source. Discard them before moving records here.",
+        "These unsaved moves belong to another module. Discard them before moving records here.",
       );
       return;
     }
@@ -2494,26 +2521,34 @@ export default function ServerBackedViewsWorkspace({
   };
 
   if (!catalogError && catalog?.length === 0) {
+    // OD13: one state for a person with no readable module. Only an
+    // administrator can publish one, so only they are offered the Sandbox.
+    const administrator = identity.data?.role === "admin";
     return (
-      <div className="flex min-w-0 flex-col gap-5">
-        <OpenViewHeader />
+      <div className="openview-ui slim-ui flex min-w-0 flex-col">
+        <PageHeader title="Records" />
         <Empty>
           <EmptyHeader>
             <EmptyTitle role="heading" aria-level={2}>
-              Nothing published yet
+              {administrator
+                ? "Nothing published yet"
+                : "No records to show yet"}
             </EmptyTitle>
             <EmptyDescription>
-              OpenView shows records from published modules. Design your modules
-              in the Sandbox and publish them to see records here.
+              {administrator
+                ? "Records appear here once a module is published in the Sandbox."
+                : "An administrator can give access in Access › Groups."}
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>
-            <Button asChild className="min-h-11">
-              <GuardedWorkspaceLink href={"/sandbox" as Route}>
-                Open Sandbox
-              </GuardedWorkspaceLink>
-            </Button>
-          </EmptyContent>
+          {administrator ? (
+            <EmptyContent>
+              <Button asChild className="min-h-11">
+                <GuardedWorkspaceLink href={"/sandbox" as Route}>
+                  Open Sandbox
+                </GuardedWorkspaceLink>
+              </Button>
+            </EmptyContent>
+          ) : null}
         </Empty>
       </div>
     );
@@ -2552,42 +2587,20 @@ export default function ServerBackedViewsWorkspace({
     !linkedRecordRow,
   );
   const linkedRecord = linkedRecordLoading ? null : linkedRecordRow;
-  const inspectionActions = linkedRecord ? (
-    <div className="flex flex-wrap items-center gap-2">
-      {activeInspectionContext ? (
-        <>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={!hasPreviousInspectedRecord || inspectionLoading}
-            onClick={() => void navigateInspectedRecord(-1)}
-          >
-            Previous record
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={!hasNextInspectedRecord || inspectionLoading}
-            onClick={() => void navigateInspectedRecord(1)}
-          >
-            Next record
-          </Button>
-        </>
-      ) : null}
-      <Button
-        type="button"
-        variant="outline"
-        className="min-h-11"
-        onClick={() => void copyInspectedRecordLink()}
-      >
-        Copy safe link
-      </Button>
-    </div>
-  ) : null;
+  const copyRecordLinkItem = (
+    <DropdownMenuItem
+      className="min-h-11 xl:min-h-8"
+      onClick={() => void copyInspectedRecordLink()}
+    >
+      Copy link
+    </DropdownMenuItem>
+  );
+  // While a record is open the list reads that record only, so its count
+  // would read "1 record"; the count waits for the list.
   const recordTotal =
-    currentRecordPage && !generalGroupedView ? currentRecordPage.total : null;
+    currentRecordPage && !generalGroupedView && !isUuid(requestedRecord)
+      ? currentRecordPage.total
+      : null;
   // Refreshes report here, in the meta line, so the page never shifts.
   const status = metadataLoadingMore
     ? "Loading more fields and views…"
@@ -2613,19 +2626,46 @@ export default function ServerBackedViewsWorkspace({
   // OD5: one primary. With unsaved changes a manager saves the view;
   // otherwise a writer adds a record.
   const saving = dirty && canManageViews;
+  // A blocked save says why (the Four Moments Rule); a running action
+  // blocks it without a reason, as it ends on its own.
+  const saveBlockedReason = pendingAction
+    ? null
+    : saveConflict
+      ? "Resolve the conflict in the save dialog first."
+      : incompleteFilters
+        ? "Complete or remove the unfinished filter first."
+        : incompletePresentation
+          ? presentationLayout === "kanban"
+            ? "Choose a field to group the lanes first."
+            : presentationLayout === "calendar"
+              ? "Choose a date field first."
+              : presentationLayout === "timeline"
+                ? "Choose start and end fields first."
+                : "Finish the layout settings first."
+          : null;
+  const openExport = () => {
+    if (!canExport || !moduleId) return;
+    setExportContext({
+      key: exportContextKey,
+      moduleId,
+      viewId: activeSaved?.id ?? null,
+      definition: normalizedDraftDefinition,
+      fields: tableFields,
+    });
+  };
   const headerActions = moduleId ? (
     <>
       <div className="flex min-w-0 items-center gap-2">
         <label
           htmlFor="openview-saved-view"
-          className="text-muted-foreground shrink-0 text-sm"
+          className="text-muted-foreground shrink-0 text-sm max-sm:sr-only"
         >
           View
         </label>
         <Select
           id="openview-saved-view"
           aria-label="Saved view"
-          className="min-h-11 min-w-0 sm:w-48"
+          className="min-h-11 w-36 min-w-0 sm:w-48"
           value={activeSaved?.id ?? ""}
           disabled={!currentWorkspace || Boolean(pendingAction)}
           onValueChange={selectSavedView}
@@ -2641,22 +2681,15 @@ export default function ServerBackedViewsWorkspace({
             ))}
         </Select>
       </div>
+      {/* On a phone Export moves into the view menu, so the header keeps
+          the view, the menu and the primary on one line. */}
       <Button
         ref={exportButtonRef}
         type="button"
         variant="outline"
-        className="min-h-11"
+        className="min-h-11 max-sm:hidden"
         disabled={!canExport}
-        onClick={() => {
-          if (!canExport || !moduleId) return;
-          setExportContext({
-            key: exportContextKey,
-            moduleId,
-            viewId: activeSaved?.id ?? null,
-            definition: normalizedDraftDefinition,
-            fields: tableFields,
-          });
-        }}
+        onClick={openExport}
       >
         <Download aria-hidden="true" />
         Export
@@ -2678,14 +2711,28 @@ export default function ServerBackedViewsWorkspace({
         <DropdownMenuContent align="end" className="slim-ui min-w-56">
           <DropdownMenuGroup>
             <DropdownMenuItem
-              className="min-h-11"
+              className="min-h-11 sm:hidden xl:min-h-8"
+              disabled={!canExport}
+              onClick={openExport}
+            >
+              Export…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 md:hidden xl:min-h-8"
+              disabled={Boolean(pendingAction)}
+              onClick={() => setViewPanel({ kind: "columns", open: true })}
+            >
+              Columns…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 xl:min-h-8"
               onClick={() => void copyViewLink()}
             >
               Copy link
             </DropdownMenuItem>
             {dirty ? (
               <DropdownMenuItem
-                className="min-h-11"
+                className="min-h-11 xl:min-h-8"
                 disabled={Boolean(pendingAction) || Boolean(saveConflict)}
                 onClick={resetChanges}
               >
@@ -2693,7 +2740,7 @@ export default function ServerBackedViewsWorkspace({
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuItem
-              className="min-h-11"
+              className="min-h-11 xl:min-h-8"
               disabled={!currentWorkspace || Boolean(pendingAction)}
               onClick={() => setArchivedOpen(true)}
             >
@@ -2707,7 +2754,7 @@ export default function ServerBackedViewsWorkspace({
               <DropdownMenuGroup>
                 {saving ? null : (
                   <DropdownMenuItem
-                    className="min-h-11"
+                    className="min-h-11 xl:min-h-8"
                     disabled={savePending}
                     onClick={() => openSaveDialog(true)}
                   >
@@ -2716,7 +2763,7 @@ export default function ServerBackedViewsWorkspace({
                 )}
                 {saveTarget ? (
                   <DropdownMenuItem
-                    className="min-h-11"
+                    className="min-h-11 xl:min-h-8"
                     disabled={
                       Boolean(pendingAction) || dirty || Boolean(saveConflict)
                     }
@@ -2727,7 +2774,7 @@ export default function ServerBackedViewsWorkspace({
                 ) : null}
                 {activeSaved ? (
                   <DropdownMenuItem
-                    className="min-h-11"
+                    className="min-h-11 xl:min-h-8"
                     disabled={savePending}
                     onClick={() => void duplicateActiveView()}
                   >
@@ -2736,7 +2783,7 @@ export default function ServerBackedViewsWorkspace({
                 ) : null}
                 {canEditSaved ? (
                   <DropdownMenuItem
-                    className="min-h-11"
+                    className="min-h-11 xl:min-h-8"
                     disabled={Boolean(pendingAction)}
                     onClick={() => {
                       if (currentDefault && !routedView)
@@ -2757,7 +2804,7 @@ export default function ServerBackedViewsWorkspace({
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 <DropdownMenuItem
-                  className="min-h-11"
+                  className="min-h-11 xl:min-h-8"
                   disabled={Boolean(pendingAction)}
                   onClick={() => setArchiveOpen(true)}
                 >
@@ -2769,46 +2816,53 @@ export default function ServerBackedViewsWorkspace({
         </DropdownMenuContent>
       </DropdownMenu>
       {canWriteRecords ? (
-        <Button
-          type="button"
-          variant={saving ? "outline" : "default"}
-          className="min-h-11"
-          disabled={
-            Boolean(pendingAction) ||
-            Boolean(currentWorkspace?.fieldsHasMore) ||
-            metadataLoadingMore
-          }
-          title={
+        <DisabledReason
+          reason={
             currentWorkspace?.fieldsHasMore
               ? "Load all fields before creating a record."
-              : undefined
+              : null
           }
-          onClick={() => setCreateRecordOpen(true)}
         >
-          <Plus aria-hidden="true" />
-          New record
-        </Button>
+          <Button
+            type="button"
+            variant={saving ? "outline" : "default"}
+            className="min-h-11"
+            disabled={
+              Boolean(pendingAction) ||
+              Boolean(currentWorkspace?.fieldsHasMore) ||
+              metadataLoadingMore
+            }
+            onClick={() => setCreateRecordOpen(true)}
+          >
+            <Plus aria-hidden="true" />
+            New record
+          </Button>
+        </DisabledReason>
       ) : null}
       {saving && canEditSaved ? (
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11"
-          disabled={savePending}
-          onClick={() => openSaveDialog(true)}
-        >
-          Save as new view
-        </Button>
+        <DisabledReason reason={saveBlockedReason}>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            disabled={savePending}
+            onClick={() => openSaveDialog(true)}
+          >
+            Save as new view
+          </Button>
+        </DisabledReason>
       ) : null}
       {saving ? (
-        <Button
-          type="button"
-          className="min-h-11"
-          disabled={savePending}
-          onClick={canEditSaved ? saveChanges : () => openSaveDialog(true)}
-        >
-          Save view
-        </Button>
+        <DisabledReason reason={saveBlockedReason}>
+          <Button
+            type="button"
+            className="min-h-11"
+            disabled={savePending}
+            onClick={canEditSaved ? saveChanges : () => openSaveDialog(true)}
+          >
+            Save view
+          </Button>
+        </DisabledReason>
       ) : null}
     </>
   ) : null;
@@ -2864,8 +2918,8 @@ export default function ServerBackedViewsWorkspace({
               className="flex flex-wrap items-center justify-between gap-3"
             >
               <span>
-                OpenView loads metadata in bounded pages. More fields or saved
-                views are available.
+                This module has more fields or saved views than the first page
+                shows.
               </span>
               <Button
                 type="button"
@@ -2938,7 +2992,7 @@ export default function ServerBackedViewsWorkspace({
                 className="min-h-11"
                 onClick={refreshModule}
               >
-                Retry data source
+                Retry views and fields
               </Button>
             </Alert>
           ) : null}
@@ -3040,7 +3094,7 @@ export default function ServerBackedViewsWorkspace({
             {moduleError && !currentWorkspace ? (
               <Empty>
                 <EmptyHeader>
-                  <EmptyTitle>Data source unavailable</EmptyTitle>
+                  <EmptyTitle>Records unavailable</EmptyTitle>
                   <EmptyDescription>{moduleError}</EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent>
@@ -3057,9 +3111,9 @@ export default function ServerBackedViewsWorkspace({
             ) : !moduleName || !moduleId ? (
               <Empty>
                 <EmptyHeader>
-                  <EmptyTitle>No data source selected</EmptyTitle>
+                  <EmptyTitle>No module selected</EmptyTitle>
                   <EmptyDescription>
-                    Select an active catalog module to continue.
+                    Choose a module in the sidebar.
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
@@ -3067,6 +3121,7 @@ export default function ServerBackedViewsWorkspace({
               <div className="access-fill flex min-w-0 flex-col gap-3">
                 <AccessToolbar
                   searchLabel={`Search ${moduleName}`}
+                  searchId={SEARCH_ID}
                   placeholder={`Search ${moduleName.toLowerCase()}`}
                   query={draft.definition.search ?? ""}
                   onQueryChange={(query) =>
@@ -3130,10 +3185,11 @@ export default function ServerBackedViewsWorkspace({
                   }
                   actions={
                     <div className="flex items-center gap-2">
+                      {/* On a phone Columns moves into the view menu. */}
                       <Button
                         type="button"
                         variant="outline"
-                        className="min-h-11"
+                        className="min-h-11 max-md:hidden"
                         disabled={Boolean(pendingAction)}
                         onClick={() =>
                           setViewPanel({ kind: "columns", open: true })
@@ -3260,10 +3316,23 @@ export default function ServerBackedViewsWorkspace({
                         onOpenRecord={openRecordFromResults}
                       />
                     ) : (
-                      <Alert role="note">
-                        Choose an active queried field to load Kanban lane
-                        counts.
-                      </Alert>
+                      <LayoutFieldPicker
+                        title="Choose how to group the lanes"
+                        missing="No field to group the lanes by"
+                        rows={[
+                          {
+                            id: "openview-empty-kanban-field",
+                            label: "Group lanes by",
+                            value: draft.presentation.groupByFieldId,
+                            options: queriedFields,
+                            onChange: (groupByFieldId) =>
+                              updatePresentation((current) => ({
+                                ...current,
+                                groupByFieldId,
+                              })),
+                          },
+                        ]}
+                      />
                     )
                   ) : activeLayout === "calendar" ? (
                     moduleId && calendarDateField ? (
@@ -3293,10 +3362,23 @@ export default function ServerBackedViewsWorkspace({
                         onOpenRecord={openRecordFromResults}
                       />
                     ) : (
-                      <Alert role="note">
-                        Choose an active queried DATE or DATETIME field to load
-                        Calendar records.
-                      </Alert>
+                      <LayoutFieldPicker
+                        title="Choose the date that places each record"
+                        missing="No date field to place records on"
+                        rows={[
+                          {
+                            id: "openview-empty-calendar-field",
+                            label: "Date",
+                            value: draft.presentation.dateFieldId,
+                            options: dateFields,
+                            onChange: (dateFieldId) =>
+                              updatePresentation((current) => ({
+                                ...current,
+                                dateFieldId,
+                              })),
+                          },
+                        ]}
+                      />
                     )
                   ) : activeLayout === "timeline" ? (
                     moduleId && timelineStartField && timelineEndField ? (
@@ -3324,10 +3406,34 @@ export default function ServerBackedViewsWorkspace({
                         onOpenRecord={openRecordFromResults}
                       />
                     ) : (
-                      <Alert role="note">
-                        Choose active queried start and end DATE or DATETIME
-                        fields to load Timeline records.
-                      </Alert>
+                      <LayoutFieldPicker
+                        title="Choose when each record starts and ends"
+                        missing="No date fields to place records on"
+                        rows={[
+                          {
+                            id: "openview-empty-timeline-start",
+                            label: "Starts",
+                            value: draft.presentation.timelineStartFieldId,
+                            options: dateFields,
+                            onChange: (timelineStartFieldId) =>
+                              updatePresentation((current) => ({
+                                ...current,
+                                timelineStartFieldId,
+                              })),
+                          },
+                          {
+                            id: "openview-empty-timeline-end",
+                            label: "Ends",
+                            value: draft.presentation.timelineEndFieldId,
+                            options: dateFields,
+                            onChange: (timelineEndFieldId) =>
+                              updatePresentation((current) => ({
+                                ...current,
+                                timelineEndFieldId,
+                              })),
+                          },
+                        ]}
+                      />
                     )
                   ) : rowError && pageRows.length === 0 ? (
                     <Empty>
@@ -3370,7 +3476,7 @@ export default function ServerBackedViewsWorkspace({
                       <EmptyHeader>
                         <EmptyTitle>No active fields</EmptyTitle>
                         <EmptyDescription>
-                          This data source has records but no active fields to
+                          This module has records but no active fields to
                           display.
                         </EmptyDescription>
                       </EmptyHeader>
@@ -3378,6 +3484,9 @@ export default function ServerBackedViewsWorkspace({
                   ) : (
                     <LiveRecordResults
                       region={displayRegion}
+                      selectedId={
+                        isUuid(requestedRecord) ? requestedRecord : null
+                      }
                       page={{
                         rows: pageRows,
                         offset: renderedRecordOffset,
@@ -3415,17 +3524,31 @@ export default function ServerBackedViewsWorkspace({
                       setViewPanel((current) => ({ ...current, open: false }));
                   }}
                 >
-                  <DialogContent className="max-w-5xl">
-                    <DialogHeader>
-                      <DialogTitle>
-                        {viewPanel.kind === "columns"
-                          ? "Columns"
-                          : "Layout settings"}
-                      </DialogTitle>
-                      <DialogDescription>
-                        Changes are kept in this view draft until you save them.
-                      </DialogDescription>
-                    </DialogHeader>
+                  <DialogContent
+                    className={cn(dialogFrameContentClass, "max-w-5xl")}
+                  >
+                    <DialogFrameHeader
+                      title={
+                        <DialogTitle>
+                          {viewPanel.kind === "columns"
+                            ? "Columns"
+                            : "Layout settings"}
+                        </DialogTitle>
+                      }
+                      description={
+                        <DialogDescription>
+                          Changes apply to the view as you make them.
+                        </DialogDescription>
+                      }
+                      closeLabel={
+                        viewPanel.kind === "columns"
+                          ? "Close columns"
+                          : "Close layout settings"
+                      }
+                      onClose={() =>
+                        setViewPanel((current) => ({ ...current, open: false }))
+                      }
+                    />
 
                     {viewPanel.kind === "columns" ? (
                       <SavedViewColumnControls
@@ -3504,98 +3627,160 @@ export default function ServerBackedViewsWorkspace({
                         />
                       </div>
                     ) : null}
-
-                    <DialogFooter>
-                      <DialogClose
-                        render={
-                          <Button variant="outline" className="min-h-11" />
-                        }
-                      >
-                        Close
-                      </DialogClose>
-                    </DialogFooter>
                   </DialogContent>
                 </Dialog>
 
-                <Dialog
+                <Sheet
                   open={isUuid(requestedRecord)}
                   dismissible={!recordEditing}
                   onOpenChange={(open) => {
                     if (!open && isUuid(requestedRecord)) returnToResults();
                   }}
                 >
-                  <DialogContent className="flex max-w-2xl flex-col overflow-y-hidden">
-                    <DialogHeader>
-                      <DialogTitle>Record details</DialogTitle>
-                      <DialogDescription className="space-y-1">
-                        <span className="block">
-                          Showing this linked record. The saved view query
-                          remains unchanged.
-                        </span>
-                        {activeLayout === "kanban" ? (
-                          <span className="block">
-                            Kanban lanes and counts continue to use the saved
-                            view query.
-                          </span>
+                  {/* OD7: the record opens in a right sheet. Its name is
+                      the heading; the sheet keeps the name "Record
+                      details" for assistive technology. */}
+                  <SheetContent
+                    className="openview-ui slim-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,40rem)]"
+                    // The sheet opens from the address, so focus returns to
+                    // the record's row, or else the search.
+                    finalFocus={() =>
+                      (isUuid(requestedRecord)
+                        ? document.querySelector<HTMLElement>(
+                            `[data-record-id="${requestedRecord}"] button`,
+                          )
+                        : null) ??
+                      document.getElementById(SEARCH_ID) ??
+                      true
+                    }
+                  >
+                    <SheetTitle className="sr-only">Record details</SheetTitle>
+                    <header className="flex shrink-0 items-start gap-3 border-b p-5 pr-3">
+                      <div className="min-w-0 flex-1">
+                        <h2 className="text-lg leading-tight font-semibold wrap-anywhere">
+                          {linkedRecord
+                            ? recordTitle(
+                                linkedRecord,
+                                queriedFields,
+                                draft.presentation.primaryFieldId,
+                              )
+                            : linkedRecordLoading
+                              ? "Loading record…"
+                              : "Record unavailable"}
+                        </h2>
+                        {linkedRecord ? (
+                          <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
+                            <span>
+                              {[moduleName, departmentName]
+                                .filter(Boolean)
+                                .join(" · ")}
+                              {" · Updated "}
+                              <time dateTime={linkedRecord.updatedAt}>
+                                {recordUpdatedDate(
+                                  linkedRecord.updatedAt,
+                                  displayRegion,
+                                )}
+                              </time>
+                            </span>
+                            {linkedRecord.isDeleted ? (
+                              <Badge variant="destructive">Deleted</Badge>
+                            ) : canWriteRecords ? null : (
+                              <Badge variant="secondary">Read-only</Badge>
+                            )}
+                          </p>
                         ) : null}
-                        <span className="block">
-                          Details show the fields selected in this view. Editing
-                          shows every field.
-                        </span>
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="min-h-0 flex-1 overflow-y-auto">
-                      <LiveRecordInspector
-                        region={displayRegion}
-                        actions={recordEditing ? null : inspectionActions}
-                        record={linkedRecord}
-                        recordLoading={linkedRecordLoading}
-                        recordError={ordinaryRecordPage?.error ?? ""}
-                        inspectionLoading={inspectionLoading}
-                        inspectionError={inspectionError}
-                        fields={queriedFields}
-                        primaryFieldId={draft.presentation.primaryFieldId}
-                        onRetryRecord={() =>
-                          setRecordRetry((value) => value + 1)
-                        }
-                        controls={
-                          moduleId && source
-                            ? {
-                                moduleId,
-                                departmentId: source.departmentId,
-                                editableFields: fields,
-                                fieldsHasMore: Boolean(
-                                  currentWorkspace?.fieldsHasMore,
-                                ),
-                                fieldsLoadingMore: metadataLoadingMore,
-                                onLoadMoreFields: () =>
-                                  void loadMoreModuleMetadata(),
-                                dataSources: catalog ?? [],
-                                canWrite: canWriteRecords,
-                                canReadHistory: canReadRecordHistory,
-                                onChanged: (message) => {
-                                  if (message) setNotice(message);
-                                  setRecordChanges((value) => value + 1);
-                                },
-                                onEditingChange: setRecordEditing,
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {linkedRecord &&
+                        activeInspectionContext &&
+                        !recordEditing ? (
+                          <>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-11"
+                              aria-label="Previous record"
+                              disabled={
+                                !hasPreviousInspectedRecord || inspectionLoading
                               }
-                            : undefined
-                        }
-                      />
-                    </div>
-                    {recordEditing ? null : (
-                      <DialogFooter>
-                        <DialogClose
+                              onClick={() => void navigateInspectedRecord(-1)}
+                            >
+                              <ChevronUp aria-hidden="true" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-11"
+                              aria-label="Next record"
+                              disabled={
+                                !hasNextInspectedRecord || inspectionLoading
+                              }
+                              onClick={() => void navigateInspectedRecord(1)}
+                            >
+                              <ChevronDown aria-hidden="true" />
+                            </Button>
+                          </>
+                        ) : null}
+                        {/* Edit and the record menu render here. */}
+                        <div
+                          ref={setRecordActionsSlot}
+                          className="flex items-center gap-1"
+                        />
+                        <SheetClose
                           render={
-                            <Button variant="outline" className="min-h-11" />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-11"
+                              aria-label="Close"
+                              disabled={recordEditing}
+                            />
                           }
                         >
-                          Close
-                        </DialogClose>
-                      </DialogFooter>
-                    )}
-                  </DialogContent>
-                </Dialog>
+                          <X aria-hidden="true" />
+                        </SheetClose>
+                      </div>
+                    </header>
+                    <LiveRecordInspector
+                      region={displayRegion}
+                      actionsSlot={recordActionsSlot}
+                      menuItems={copyRecordLinkItem}
+                      record={linkedRecord}
+                      recordLoading={linkedRecordLoading}
+                      recordError={ordinaryRecordPage?.error ?? ""}
+                      inspectionLoading={inspectionLoading}
+                      inspectionError={inspectionError}
+                      fields={queriedFields}
+                      onRetryRecord={() => setRecordRetry((value) => value + 1)}
+                      controls={
+                        moduleId && source
+                          ? {
+                              moduleId,
+                              departmentId: source.departmentId,
+                              editableFields: fields,
+                              fieldsHasMore: Boolean(
+                                currentWorkspace?.fieldsHasMore,
+                              ),
+                              fieldsLoadingMore: metadataLoadingMore,
+                              onLoadMoreFields: () =>
+                                void loadMoreModuleMetadata(),
+                              dataSources: catalog ?? [],
+                              canWrite: canWriteRecords,
+                              canReadHistory: canReadRecordHistory,
+                              onChanged: (message) => {
+                                if (message) setNotice(message);
+                                setRecordChanges((value) => value + 1);
+                              },
+                              onEditingChange: setRecordEditing,
+                            }
+                          : undefined
+                      }
+                    />
+                  </SheetContent>
+                </Sheet>
                 {exportContext &&
                 exportContext.key === exportContextKey &&
                 canExport ? (
@@ -3617,7 +3802,7 @@ export default function ServerBackedViewsWorkspace({
                   <RecordCreateDialog
                     open={createRecordOpen}
                     moduleId={moduleId}
-                    moduleName={moduleName ?? "this data source"}
+                    moduleName={moduleName ?? "this module"}
                     fields={fields}
                     onOpenChange={setCreateRecordOpen}
                     onCreated={(created) => {
@@ -3642,25 +3827,33 @@ export default function ServerBackedViewsWorkspace({
               }
             }}
           >
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>
-                  {saveConflict
-                    ? "Update saved view"
-                    : renameTarget
-                      ? "Rename view"
-                      : "Save view"}
-                </DialogTitle>
-                <DialogDescription>
-                  {renameTarget ? "Rename" : "Save"} this view for everyone who
-                  can read this module in the{" "}
-                  <DepartmentName
-                    departmentId={source?.departmentId}
-                    fallback="current"
-                  />{" "}
-                  department. Record access still follows each person’s access.
-                </DialogDescription>
-              </DialogHeader>
+            <DialogContent className={dialogFrameContentClass}>
+              <DialogFrameHeader
+                title={
+                  <DialogTitle>
+                    {saveConflict
+                      ? "Update saved view"
+                      : renameTarget
+                        ? "Rename view"
+                        : "Save view"}
+                  </DialogTitle>
+                }
+                description={
+                  <DialogDescription>
+                    {renameTarget ? "Rename" : "Save"} this view for everyone
+                    who can read this module in the{" "}
+                    <DepartmentName
+                      departmentId={source?.departmentId}
+                      fallback="current"
+                    />{" "}
+                    department. Record access still follows each person’s
+                    access.
+                  </DialogDescription>
+                }
+                closeLabel="Close without saving"
+                closeDisabled={Boolean(pendingAction) || Boolean(saveConflict)}
+                onClose={() => setSaveOpen(false)}
+              />
               {saveConflict ? (
                 <Alert
                   role="alert"
@@ -3735,38 +3928,40 @@ export default function ServerBackedViewsWorkspace({
                   />
                 </Field>
               </FieldGroup>
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={Boolean(pendingAction) || Boolean(saveConflict)}
-                  onClick={() => setSaveOpen(false)}
-                >
-                  Cancel
-                </Button>
-                {!saveConflict ? (
+              <DialogFrameFooter>
+                <DialogFooter className="mt-0">
                   <Button
                     type="button"
+                    variant="outline"
                     className="min-h-11"
-                    disabled={
-                      Boolean(pendingAction) ||
-                      incompleteFilters ||
-                      incompletePresentation ||
-                      !saveName.trim()
-                    }
-                    onClick={() =>
-                      void saveView(
-                        renameTarget ? "update" : "create",
-                        saveName,
-                      )
-                    }
+                    disabled={Boolean(pendingAction) || Boolean(saveConflict)}
+                    onClick={() => setSaveOpen(false)}
                   >
-                    {pendingAction ||
-                      (renameTarget ? "Rename view" : "Save view")}
+                    Cancel
                   </Button>
-                ) : null}
-              </DialogFooter>
+                  {!saveConflict ? (
+                    <Button
+                      type="button"
+                      className="min-h-11"
+                      disabled={
+                        Boolean(pendingAction) ||
+                        incompleteFilters ||
+                        incompletePresentation ||
+                        !saveName.trim()
+                      }
+                      onClick={() =>
+                        void saveView(
+                          renameTarget ? "update" : "create",
+                          saveName,
+                        )
+                      }
+                    >
+                      {pendingAction ||
+                        (renameTarget ? "Rename view" : "Save view")}
+                    </Button>
+                  ) : null}
+                </DialogFooter>
+              </DialogFrameFooter>
             </DialogContent>
           </Dialog>
 
@@ -3824,13 +4019,18 @@ export default function ServerBackedViewsWorkspace({
               }
             }}
           >
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Archived views</DialogTitle>
-                <DialogDescription>
-                  Only your archived saved views can be restored here.
-                </DialogDescription>
-              </DialogHeader>
+            <DialogContent className={dialogFrameContentClass}>
+              <DialogFrameHeader
+                title={<DialogTitle>Archived views</DialogTitle>}
+                description={
+                  <DialogDescription>
+                    Only your archived saved views can be restored here.
+                  </DialogDescription>
+                }
+                closeLabel="Close archived views"
+                closeDisabled={Boolean(pendingAction)}
+                onClose={() => setArchivedOpen(false)}
+              />
               {archivedError ? (
                 <Alert role="alert" variant="destructive">
                   {archivedError}
@@ -3879,17 +4079,6 @@ export default function ServerBackedViewsWorkspace({
                   </EmptyHeader>
                 </Empty>
               )}
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={Boolean(pendingAction)}
-                  onClick={() => setArchivedOpen(false)}
-                >
-                  Close
-                </Button>
-              </DialogFooter>
             </DialogContent>
           </Dialog>
 

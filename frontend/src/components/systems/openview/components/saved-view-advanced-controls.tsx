@@ -327,7 +327,7 @@ export function SavedViewAdvancedControls({
                   Saved field unavailable
                 </option>
               ) : null}
-              <option value="">Choose a queried field</option>
+              <option value="">Choose a field</option>
               {queriedFields.map((field) => (
                 <option key={field.id} value={field.id}>
                   {field.name}
@@ -339,8 +339,7 @@ export function SavedViewAdvancedControls({
             id="openview-kanban-group-field-help"
             className="text-muted-foreground max-w-prose text-sm"
           >
-            Lane counts are server-provided. Only one lane’s bounded page of
-            records is loaded at a time.
+            Each lane shows its count; one lane’s records load at a time.
           </p>
         </div>
       ) : null}
@@ -560,11 +559,11 @@ export function SavedViewAdvancedControls({
       {incompletePresentation ? (
         <Alert role="note">
           {presentationLayout === "kanban"
-            ? "Choose an active queried field for Kanban lanes before saving this presentation."
+            ? "Choose a field to group the lanes before saving the view."
             : presentationLayout === "calendar"
-              ? "Choose an active queried date or datetime field before saving this Calendar presentation."
+              ? "Choose a date field before saving the view."
               : presentationLayout === "timeline"
-                ? "Choose active queried start and end date fields, and clear any unavailable optional fields, before saving this Timeline presentation."
+                ? "Choose start and end date fields, and clear any unavailable optional fields, before saving the view."
                 : "Complete the saved presentation fields before saving."}
         </Alert>
       ) : null}
