@@ -319,13 +319,18 @@ def _notify_work(
 
 
 def current_user_notification_query(
-    db: Session, user_id: UUID, *, lock_user: bool = True
+    db: Session, user_id: UUID, *, lock_user: bool = True, read: bool = False
 ) -> Select[tuple[InAppNotification]]:
-    """Apply one current visibility policy; count reads do not lock the recipient."""
+    """Apply one current visibility policy; count reads do not lock the recipient.
+
+    A read-state change locks the recipient exclusively, which also holds back a new
+    notice's recipient key check. A list (``read``) shares the lock: account writers
+    still wait for it, while other reads of the row, such as the photo, do not (PD67).
+    """
 
     user_query = select(User).where(User.id == user_id).execution_options(populate_existing=True)
     if lock_user:
-        user_query = user_query.with_for_update(of=User)
+        user_query = user_query.with_for_update(of=User, read=read)
     user = db.scalar(user_query)
     if (
         user is None

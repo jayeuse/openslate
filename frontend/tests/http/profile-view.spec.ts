@@ -2,6 +2,7 @@ import { installAttentionApi } from "./helpers/comms-attention";
 import { smallTargets } from "./helpers/layout";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import {
+  avatarPng,
   installProfileApi,
   profileSelf,
   profileUserA,
@@ -111,6 +112,45 @@ test("your own profile shows your facts and Account settings, and the account ro
     page.getByRole("heading", { name: "Account settings", exact: true }),
   ).toBeVisible();
   await expect(accountRow(page)).not.toHaveAttribute("aria-current", "page");
+});
+
+test("a photo whose first read is refused is read once more and shows (PD67)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installProfileApi(page);
+  await serveProfile(page, profileUserB, {
+    json: {
+      ...rosa,
+      avatar_url: `/api/users/${profileUserB}/avatar`,
+      phone: null,
+      bio: null,
+      role: "member",
+      groups: [],
+    },
+  });
+  const statuses: number[] = [];
+  await page.route(
+    new RegExp(`/api/users/${profileUserB}/avatar\\?`),
+    (route) => {
+      // Several photos load at once; the server can refuse one while busy.
+      const status = statuses.length === 0 ? 503 : 200;
+      statuses.push(status);
+      return status === 503
+        ? route.fulfill({
+            status,
+            json: { detail: { code: "files_busy", message: "Busy" } },
+          })
+        : route.fulfill({
+            contentType: "image/png",
+            headers: { "Cache-Control": "private, no-store" },
+            body: avatarPng,
+          });
+    },
+  );
+  await page.goto(`/profile?person=${profileUserB}`);
+  await expect(main(page).locator('[data-slot="avatar-image"]')).toBeVisible();
+  expect(statuses.slice(0, 2)).toEqual([503, 200]);
 });
 
 test("another member's profile names them in the breadcrumb, hides empty fields, and has no settings button", async ({

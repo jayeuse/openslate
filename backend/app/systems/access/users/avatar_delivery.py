@@ -2,14 +2,16 @@
 
 from enum import IntEnum
 from io import BytesIO
+from time import sleep
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, Header, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from PIL import Image, ImageOps
+from psycopg.errors import LockNotAvailable
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.common.dependencies.auth import (
@@ -74,6 +76,29 @@ def _bound_avatar(db: Session, identity: CurrentIdentity, target_id: UUID) -> Fi
     return ready_avatar(file, target_id)
 
 
+def _current_avatar(db: Session, identity: CurrentIdentity, target_id: UUID) -> File:
+    """``_bound_avatar``, tried again when another request briefly holds a row it locks.
+
+    The locks stay NOWAIT: this read takes the session lock before the person's row,
+    the reverse of the writers' order, so it must never wait while it holds the
+    session. A refused lock rolls back (releasing the session) and tries again after
+    a short pause; a page load's notifications read locks the viewer's row (PD67).
+    """
+    for pause in AVATAR_LOCK_RETRY_PAUSES:
+        try:
+            return _bound_avatar(db, identity, target_id)
+        except OperationalError as exc:
+            if not isinstance(exc.orig, LockNotAvailable):
+                raise
+            db.rollback()
+            sleep(pause)
+    return _bound_avatar(db, identity, target_id)
+
+
+AVATAR_SLOT_WAIT_SECONDS = 2.0
+AVATAR_LOCK_RETRY_PAUSES = (0.05, 0.2)
+
+
 class ThumbnailSize(IntEnum):
     SMALL = 64
     LARGE = 256
@@ -102,9 +127,13 @@ def deliver_avatar(
     bearer: HTTPAuthorizationCredentials | None,
     thumbnail_size: ThumbnailSize | None = None,
 ) -> Response:
-    with transfer_slot():
+    # A page shows several sizes of one photo at once; queue briefly for one of the
+    # two transfer slots instead of refusing the third read (PD67). Return the pooled
+    # connection first: every check below runs again in a new transaction.
+    db.rollback()
+    with transfer_slot(wait_seconds=AVATAR_SLOT_WAIT_SECONDS):
         try:
-            file = _bound_avatar(db, identity, target_id)
+            file = _current_avatar(db, identity, target_id)
             file_id, digest, size = file.id, file.digest, file.actual_size
             content, media_type, _ = read_content(db, file, storage)
             # Reuse the complete existing resolver, not merely a pre-I/O user snapshot.
@@ -112,7 +141,7 @@ def deliver_avatar(
                 request, target_id, get_account_identity(request, bearer, db), db,
                 request.query_params.get("org"),
             )
-            file = _bound_avatar(db, current, target_id)
+            file = _current_avatar(db, current, target_id)
             if file.id != file_id or file.digest != digest or file.actual_size != size:
                 raise error("avatar_changed", "Avatar changed; reload", 409)
             db.commit()

@@ -24,9 +24,29 @@ function Avatar({
   );
 }
 
-function AvatarImage({ className, ...props }: AvatarPrimitive.Image.Props) {
+/** Retries a failed photo once after 500 ms before the fallback stays (PD67). */
+function AvatarImage({
+  className,
+  onLoadingStatusChange,
+  ...props
+}: AvatarPrimitive.Image.Props) {
+  const [retried, setRetried] = React.useState<unknown>();
+  const timer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+  React.useEffect(() => {
+    const queued = timer;
+    return () => clearTimeout(queued.current);
+  }, []);
   return (
     <AvatarPrimitive.Image
+      key={retried === props.src ? 1 : 0}
+      onLoadingStatusChange={(status) => {
+        onLoadingStatusChange?.(status);
+        if (status === "error" && retried !== props.src && !timer.current)
+          timer.current = setTimeout(() => {
+            timer.current = undefined;
+            setRetried(props.src);
+          }, 500);
+      }}
       data-slot="avatar-image"
       className={cn(
         "aspect-square size-full rounded-full object-cover",

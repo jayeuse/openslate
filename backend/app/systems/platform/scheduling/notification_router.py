@@ -350,7 +350,7 @@ def list_notifications(
 ) -> NotificationListResponse:
     """Count and page only references currently visible to the recipient."""
 
-    statement = current_user_notification_query(db, user.id)
+    statement = current_user_notification_query(db, user.id, read=True)
     if params.status == "unread":
         statement = statement.where(InAppNotification.read_at.is_(None))
     result = execute_standard_list(db, statement, params, NOTIFICATION_LIST_SPEC)
