@@ -463,7 +463,7 @@ Each phase ends with tests that fail first, one code review, targeted screenshot
 | Exit | Criterion |
 | --- | --- |
 | EXIT-1 | Posts, Calendar (Month and Week), Kanban, Gantt, My calendar, and All boards do not scroll the document at 1280×720 or 1440×900; only panels scroll. |
-| EXIT-2 | From 1280px, controls are 32px and rows 40px; at 390, every target is at least 44px and nothing scrolls the page sideways (the Gantt panel may). |
+| EXIT-2 | From 1280px, controls are 32px and rows 40px (the Posts list's two-line rows, BR11, are the one exception); at 390, every target is at least 44px and nothing scrolls the page sideways (the Gantt panel may). |
 | EXIT-3 | No request to a removed route from any page; FN1 holds for every role. |
 | EXIT-4 | Every capability in both maps has its home or its recorded removal, for each role that has it now; every URL in Preserved behavior opens the same thing. |
 | EXIT-5 | Cold Comms JavaScript stays under 548,000 gzip bytes locally and in CI. |
