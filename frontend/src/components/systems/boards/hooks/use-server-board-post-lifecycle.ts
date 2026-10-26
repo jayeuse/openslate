@@ -2,78 +2,59 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
-import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
+import { toast } from "@/components/ui/toast";
 import {
   archiveBoardPost,
   deleteBoardPost,
-  listBoardPosts,
   restoreBoardPost,
   unpublishBoardPost,
   type BoardPost,
-  type BoardPostView,
 } from "../adapters/board-posts-api";
 import {
   getBoardPostManageState,
   type BoardPostManageState,
 } from "../adapters/board-post-manage-state-api";
 import { getMyBoardAccess } from "../adapters/board-tools-api";
-import type {
-  PostLifecycleAction,
-  PostLifecycleView,
-} from "../components/server-backed-board-post-lifecycle";
 
-type InternalState = PostLifecycleView & { key: string };
-
-function emptyState(
-  key: string,
-  active: boolean,
-  view: BoardPostView,
-): InternalState {
-  return {
-    key,
-    status: "loading",
-    active,
-    canManage: false,
-    view,
-    page: null,
-    pending: false,
-    conflict: false,
-    error: null,
-    notice: null,
-    confirmation: null,
-  };
-}
+export type PostLifecycleAction = {
+  kind: "unpublish" | "archive" | "restore" | "delete";
+  boardId: string;
+  postId: string;
+  title: string;
+  boardRevision: number;
+  postRevision: number;
+};
 
 function isDenial(error: unknown): error is ApiError {
   return error instanceof ApiError && [401, 403, 404].includes(error.status);
 }
 
-export function postLifecycleFailure(
-  view: PostLifecycleView,
-  error: unknown,
-): PostLifecycleView {
-  const safe = {
-    ...view,
-    canManage: false,
-    page: null,
-    pending: false,
-    confirmation: null,
-    notice: null,
-  };
+/**
+ * The words a failed post action shows. A conflict asks for a refresh; a
+ * denial hides the post; anything else is a generic retry.
+ */
+export function postActionFailure(error: unknown): {
+  message: string;
+  denied: boolean;
+  conflict: boolean;
+} {
   if (isDenial(error))
-    return { ...safe, status: "denied", conflict: false, error: null };
+    return {
+      message: "This post is not available.",
+      denied: true,
+      conflict: false,
+    };
   if (error instanceof ApiError && error.status === 409)
     return {
-      ...safe,
-      status: "error",
+      message:
+        "This post changed elsewhere. Refresh posts before trying again.",
+      denied: false,
       conflict: true,
-      error: "This post changed elsewhere. Refresh posts before trying again.",
     };
   return {
-    ...safe,
-    status: "error",
+    message: "Post request failed. Try again.",
+    denied: false,
     conflict: false,
-    error: "Post request failed. Try again.",
   };
 }
 
@@ -144,363 +125,205 @@ export function prepareBoardPostLifecycleAction(
   };
 }
 
-export function useServerBoardPostLifecycle({
+async function runAction(action: PostLifecycleAction): Promise<void> {
+  const { boardId, postId, boardRevision, postRevision } = action;
+  if (action.kind === "unpublish")
+    await unpublishBoardPost(boardId, postId, boardRevision, postRevision);
+  else if (action.kind === "archive")
+    await archiveBoardPost(boardId, postId, boardRevision, postRevision);
+  else if (action.kind === "restore")
+    await restoreBoardPost(boardId, postId, boardRevision, postRevision);
+  else {
+    const deletion = await deleteBoardPost(
+      boardId,
+      postId,
+      boardRevision,
+      postRevision,
+    );
+    if (deletion.outcome !== "deleted") throw new ApiError(409, "Post changed");
+  }
+}
+
+const DONE: Record<PostLifecycleAction["kind"], string> = {
+  unpublish: "Post unpublished",
+  archive: "Post archived",
+  restore: "Post restored",
+  delete: "Draft deleted",
+};
+
+/**
+ * The reading pane's post actions (BR12, BR14): each reads the post's
+ * current revisions first. Restore acts at once; Unpublish, Archive and
+ * Delete draft wait for their confirmation. The result shows as a toast, with
+ * Undo where the step can be reversed (the Four Moments Rule).
+ */
+export function useBoardPostActions({
   boardId,
-  boardStatus,
-  refreshKey,
+  canManage,
   onChanged,
   onAccessDenied,
 }: {
   boardId: string;
-  boardStatus: "active" | "archived";
-  refreshKey: number;
-  onChanged?: (boardId: string) => void;
+  canManage: boolean;
+  /** After a change, or `null` after a conflict: refresh what shows. */
+  onChanged: (action: PostLifecycleAction | null) => void;
   onAccessDenied?: (boardId: string) => void;
 }) {
-  const actorId = useVerifiedWorkspaceUserId();
-  const [selectedView, setSelectedView] = useState<BoardPostView>("published");
-  const [offset, setOffset] = useState(0);
-  const [retryKey, setRetryKey] = useState(0);
-  const scope = `${boardId}:${actorId}:${boardStatus}:${selectedView}:${offset}`;
-  const key = `${scope}:${retryKey}`;
-  const active = boardStatus === "active";
-  const [state, setState] = useState<InternalState>(() =>
-    emptyState(key, active, selectedView),
+  const [pendingPostId, setPendingPostId] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<PostLifecycleAction | null>(
+    null,
   );
-  const current =
-    state.key === key ? state : emptyState(key, active, selectedView);
-  const loadSequence = useRef(0);
-  const mutationSequence = useRef(0);
-  const operationPendingRef = useRef(false);
-  const ownerScope = useRef(scope);
-  const deferredReload = useRef(false);
-  const mounted = useRef(false);
-
+  const sequence = useRef(0);
+  const scope = useRef(boardId);
+  const latest = useRef({ onChanged, onAccessDenied, canManage });
   useEffect(() => {
-    mounted.current = true;
+    latest.current = { onChanged, onAccessDenied, canManage };
+  });
+  useEffect(() => {
+    scope.current = boardId;
+    sequence.current += 1;
+    setPendingPostId(null);
+    setConfirmation(null);
     return () => {
-      mounted.current = false;
-      loadSequence.current += 1;
-      mutationSequence.current += 1;
-      operationPendingRef.current = false;
+      sequence.current += 1;
     };
-  }, []);
+  }, [boardId]);
 
-  function flushDeferredReload() {
-    if (
-      deferredReload.current &&
-      mounted.current &&
-      ownerScope.current === scope &&
-      !operationPendingRef.current
-    ) {
-      deferredReload.current = false;
-      setRetryKey((value) => value + 1);
-    }
-  }
-  const onAccessDeniedRef = useRef(onAccessDenied);
-
-  useEffect(() => {
-    onAccessDeniedRef.current = onAccessDenied;
-  }, [onAccessDenied]);
-
-  useEffect(() => {
-    if (ownerScope.current === scope && operationPendingRef.current) {
-      deferredReload.current = true;
-      return;
-    }
-    if (ownerScope.current !== scope) {
-      ownerScope.current = scope;
-      mutationSequence.current += 1;
-      operationPendingRef.current = false;
-    }
-    deferredReload.current = false;
-    const request = ++loadSequence.current;
-    if (!active) {
-      setState({ ...emptyState(key, false, selectedView), status: "ready" });
-      return () => {
-        loadSequence.current += 1;
-      };
-    }
-    setState((previous) => ({
-      ...emptyState(key, true, selectedView),
-      notice: previous.key.startsWith(`${scope}:`) ? previous.notice : null,
-    }));
-    void (async () => {
-      try {
-        const access = await getMyBoardAccess(boardId);
-        if (request !== loadSequence.current) return;
-        if (!access.manage) {
-          setState({
-            ...emptyState(key, true, selectedView),
-            status: "denied",
-          });
-          return;
-        }
-        const page = await listBoardPosts(boardId, {
-          view: selectedView,
-          offset,
-          limit: 25,
-          sortBy: "updated_at",
-          sortOrder: "desc",
-        });
-        if (request !== loadSequence.current) return;
-        setState((previous) => ({
-          ...emptyState(key, true, selectedView),
-          status: "ready",
-          canManage: true,
-          page,
-          notice: previous.key.startsWith(`${scope}:`) ? previous.notice : null,
-        }));
-      } catch (error) {
-        if (request !== loadSequence.current) return;
-        if (!isDenial(error)) {
-          setState({
-            ...emptyState(key, true, selectedView),
-            status: "error",
-            error: "Posts are unavailable. Try again.",
-          });
-          return;
-        }
-        setState({ ...emptyState(key, true, selectedView), status: "denied" });
-        if (request === loadSequence.current)
-          await notifyIfBoardViewLost(boardId, (id) => {
-            if (request === loadSequence.current)
-              onAccessDeniedRef.current?.(id);
-          });
-      }
-    })();
-    return () => {
-      loadSequence.current += 1;
-    };
-  }, [active, boardId, key, offset, refreshKey, scope, selectedView]);
-
-  async function clearOnDenied(
-    scopeKey: string,
-    operation: number,
-    error: unknown,
-  ): Promise<void> {
-    if (operation !== mutationSequence.current) return;
-    setState((previous) =>
-      previous.key === scopeKey
-        ? { ...previous, ...postLifecycleFailure(previous, error) }
-        : previous,
-    );
-    await notifyIfBoardViewLost(boardId, (id) => {
-      if (operation === mutationSequence.current)
-        onAccessDeniedRef.current?.(id);
-    });
+  function current(operation: number): boolean {
+    return operation === sequence.current && scope.current === boardId;
   }
 
-  function failAction(
-    scopeKey: string,
-    operation: number,
-    error: unknown,
-  ): void {
-    if (operation !== mutationSequence.current) return;
-    if (isDenial(error)) {
-      void clearOnDenied(scopeKey, operation, error);
-      return;
-    }
-    setState((previous) =>
-      previous.key !== scopeKey
-        ? previous
-        : { ...previous, ...postLifecycleFailure(previous, error) },
-    );
+  function fail(operation: number, error: unknown) {
+    if (!current(operation)) return;
+    setPendingPostId(null);
+    setConfirmation(null);
+    const failure = postActionFailure(error);
+    toast.add({ title: failure.message, type: "error" });
+    // A conflict refreshes the list and the pane, so the next try is current.
+    if (failure.conflict) latest.current.onChanged(null);
+    if (failure.denied)
+      void notifyIfBoardViewLost(boardId, (id) => {
+        if (current(operation)) latest.current.onAccessDenied?.(id);
+      });
   }
 
-  async function execute(
-    action: PostLifecycleAction,
-    operation: number,
-  ): Promise<void> {
-    try {
-      if (action.kind === "unpublish")
-        await unpublishBoardPost(
-          action.boardId,
-          action.postId,
-          action.boardRevision,
-          action.postRevision,
-        );
-      else if (action.kind === "archive")
-        await archiveBoardPost(
-          action.boardId,
-          action.postId,
-          action.boardRevision,
-          action.postRevision,
-        );
-      else if (action.kind === "restore")
-        await restoreBoardPost(
-          action.boardId,
-          action.postId,
-          action.boardRevision,
-          action.postRevision,
-        );
-      else {
-        const deletion = await deleteBoardPost(
-          action.boardId,
-          action.postId,
-          action.boardRevision,
-          action.postRevision,
-        );
-        if (deletion.outcome !== "deleted")
-          throw new ApiError(409, "Post changed");
-      }
-      if (operation !== mutationSequence.current) return;
-      setState((previous) =>
-        previous.key === key
-          ? {
-              ...emptyState(key, active, selectedView),
-              notice:
-                action.kind === "unpublish"
-                  ? "Post unpublished."
-                  : action.kind === "archive"
-                    ? "Post archived."
-                    : action.kind === "restore"
-                      ? "Post restored."
-                      : "Draft deleted.",
-            }
-          : previous,
-      );
-      setRetryKey((value) => value + 1);
-      onChanged?.(boardId);
-    } catch (error) {
-      failAction(key, operation, error);
-    } finally {
-      if (operation === mutationSequence.current) {
-        operationPendingRef.current = false;
-        flushDeferredReload();
-      }
-    }
-  }
-
-  function beginAction(
+  /** Reads the post's revisions and returns the action they allow. */
+  async function prepare(
     item: BoardPost,
     kind: PostLifecycleAction["kind"],
-  ): void {
-    if (
-      !active ||
-      current.status !== "ready" ||
-      !current.canManage ||
-      current.conflict ||
-      current.pending ||
-      operationPendingRef.current ||
-      !current.page?.items.some((row) => row.id === item.id && row === item)
-    )
-      return;
-    const operation = ++mutationSequence.current;
-    operationPendingRef.current = true;
-    setState((previous) =>
-      previous.key === key
-        ? { ...previous, pending: true, error: null, notice: null }
-        : previous,
+  ): Promise<PostLifecycleAction | "kept" | null> {
+    const state = await getBoardPostManageState(boardId, item.id);
+    const resolved = resolveDeleteKind(kind, state);
+    if (resolved === null) return "kept";
+    return prepareBoardPostLifecycleAction(
+      { ...item, boardRevision: state.boardRevision },
+      state,
+      resolved,
     );
+  }
+
+  async function execute(action: PostLifecycleAction, operation: number) {
+    try {
+      await runAction(action);
+      if (!current(operation)) return;
+      setPendingPostId(null);
+      setConfirmation(null);
+      latest.current.onChanged(action);
+      const undo: PostLifecycleAction["kind"] | null =
+        action.kind === "restore"
+          ? "archive"
+          : action.kind === "archive" && latest.current.canManage
+            ? "restore"
+            : null;
+      toast.add({
+        title: DONE[action.kind],
+        type: "success",
+        action: undo
+          ? {
+              label: "Undo",
+              onClick: () => void reverse(action, undo),
+            }
+          : undefined,
+      });
+    } catch (error) {
+      fail(operation, error);
+    }
+  }
+
+  /** Undo: the opposite step on the same post, without a second question. */
+  async function reverse(
+    done: PostLifecycleAction,
+    kind: PostLifecycleAction["kind"],
+  ) {
+    if (scope.current !== done.boardId) return;
+    const operation = ++sequence.current;
+    setPendingPostId(done.postId);
+    try {
+      const state = await getBoardPostManageState(done.boardId, done.postId);
+      if (!current(operation)) return;
+      const action: PostLifecycleAction = {
+        kind,
+        boardId: done.boardId,
+        postId: done.postId,
+        title: done.title,
+        boardRevision: state.boardRevision,
+        postRevision: state.postRevision,
+      };
+      if (
+        (kind === "archive" && state.status === "archived") ||
+        (kind === "restore" && state.status !== "archived")
+      )
+        throw new ApiError(409, "Post changed");
+      await runAction(action);
+      if (!current(operation)) return;
+      setPendingPostId(null);
+      latest.current.onChanged(action);
+      toast.add({ title: DONE[kind], type: "success" });
+    } catch (error) {
+      fail(operation, error);
+    }
+  }
+
+  function begin(item: BoardPost, kind: PostLifecycleAction["kind"]) {
+    if (pendingPostId !== null || item.boardId !== boardId) return;
+    const operation = ++sequence.current;
+    setPendingPostId(item.id);
     void (async () => {
       try {
-        const managerState = await getBoardPostManageState(boardId, item.id);
-        if (operation !== mutationSequence.current) return;
-        const resolved = resolveDeleteKind(kind, managerState);
-        if (resolved === null) {
-          setState((previous) =>
-            previous.key === key
-              ? {
-                  ...previous,
-                  pending: false,
-                  notice:
-                    "This post was published, so it keeps its edit history. It stays archived and cannot be deleted.",
-                }
-              : previous,
-          );
+        const action = await prepare(item, kind);
+        if (!current(operation)) return;
+        if (action === "kept") {
+          setPendingPostId(null);
+          toast.add({
+            title: "This post was published, so it stays archived.",
+            type: "info",
+          });
           return;
         }
-        const action = prepareBoardPostLifecycleAction(
-          item,
-          managerState,
-          resolved,
-        );
-        if (action === null) {
-          failAction(key, operation, new ApiError(409, "Post changed"));
-          return;
-        }
-        if (resolved === "restore") {
-          await execute(action, operation);
-        } else {
-          setState((previous) =>
-            previous.key === key
-              ? { ...previous, pending: false, confirmation: action }
-              : previous,
-          );
+        if (action === null) throw new ApiError(409, "Post changed");
+        if (action.kind === "restore") await execute(action, operation);
+        else {
+          setPendingPostId(null);
+          setConfirmation(action);
         }
       } catch (error) {
-        failAction(key, operation, error);
-      } finally {
-        if (operation === mutationSequence.current) {
-          operationPendingRef.current = false;
-          flushDeferredReload();
-        }
+        fail(operation, error);
       }
     })();
   }
 
-  function confirm(): void {
-    const action = current.confirmation;
-    if (
-      !action ||
-      current.status !== "ready" ||
-      current.conflict ||
-      current.pending ||
-      operationPendingRef.current ||
-      action.boardId !== boardId ||
-      action.kind === "restore"
-    )
-      return;
-    const operation = ++mutationSequence.current;
-    operationPendingRef.current = true;
-    setState((previous) =>
-      previous.key === key ? { ...previous, pending: true } : previous,
-    );
+  function confirm() {
+    const action = confirmation;
+    if (!action || pendingPostId !== null || action.boardId !== boardId) return;
+    const operation = ++sequence.current;
+    setPendingPostId(action.postId);
     void execute(action, operation);
   }
 
-  function cancelConfirmation(): void {
-    if (current.pending) return;
-    setState((previous) =>
-      previous.key === key ? { ...previous, confirmation: null } : previous,
-    );
+  function cancel() {
+    if (pendingPostId !== null) return;
+    setConfirmation(null);
   }
 
-  function retry(): void {
-    if (current.pending) return;
-    setRetryKey((value) => value + 1);
-  }
-
-  function selectView(view: BoardPostView): void {
-    if (current.pending || operationPendingRef.current || view === selectedView)
-      return;
-    setSelectedView(view);
-    setOffset(0);
-  }
-
-  function selectPage(next: number): void {
-    if (
-      current.pending ||
-      operationPendingRef.current ||
-      current.status !== "ready" ||
-      !current.page ||
-      !Number.isInteger(next) ||
-      next < 0 ||
-      next % 25 !== 0 ||
-      (next > offset && !current.page.pagination.hasMore)
-    )
-      return;
-    setOffset(next);
-  }
-
-  return {
-    view: current,
-    selectView,
-    selectPage,
-    retry,
-    beginAction,
-    confirm,
-    cancelConfirmation,
-  };
+  return { pendingPostId, confirmation, begin, confirm, cancel };
 }

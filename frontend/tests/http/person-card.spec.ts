@@ -40,6 +40,14 @@ async function visit(
       .getByRole("button")
       .first()
       .click();
+  // A phone lists posts first; the author's card is in the open post.
+  if (surface === "posts" && (page.viewportSize()?.width ?? 1440) < 1024)
+    await page
+      .getByRole("region", { name: "Posts", exact: true })
+      .getByRole("listitem")
+      .first()
+      .getByRole("button")
+      .click();
   await expect(trigger(page).first()).toBeVisible();
 }
 async function expectMemberCard(page: Page) {
@@ -568,19 +576,12 @@ for (const surface of [
         page.getByRole("region", { name: "Record details content" }),
       ).toContainText("Pump inspection");
     } else if (surface === "posts") {
-      await page
-        .getByRole("button", {
-          name: "Open post",
-          exact: true,
-        })
-        .click();
-      const reader = page.getByRole("dialog", {
+      // The author's card lives in the reading pane, which opens the first
+      // post from 1024px.
+      const reader = page.getByRole("article", {
         name: "Maintenance update",
         exact: true,
       });
-      await trigger(reader).click();
-      await expectMemberCard(page);
-      await page.keyboard.press("Escape");
       await expect(reader).toBeVisible();
       await reader.getByRole("button", { name: "Edited", exact: true }).click();
       const history = page.getByRole("dialog", {

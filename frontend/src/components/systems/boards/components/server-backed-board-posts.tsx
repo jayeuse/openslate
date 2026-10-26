@@ -1,166 +1,244 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
-import { ChevronDown, Search, SlidersHorizontal } from "lucide-react";
-import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
+import { Plus } from "lucide-react";
+import { FilterRow } from "@/components/systems/access/components/access-toolbar";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
-import { PaginationControls } from "@/components/ui/pagination-controls";
 import { SearchSelect } from "@/components/ui/search-select";
+import { toast } from "@/components/ui/toast";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
-import { ApiError } from "@/lib/api";
 import type { WorkspaceRegion } from "@/lib/date-time";
+import type { BoardManagementBoard } from "../adapters/board-management-api";
 import { readBoardPost, type BoardPost } from "../adapters/board-posts-api";
+import type { BoardPostAuthorChoice } from "../adapters/board-post-author-api";
 import {
-  postFeedQueryForSort,
+  canEditPost,
+  parsePostShow,
+  postAudienceLine,
+  postListEmpty,
+  postMenuActions,
+  postRowMeta,
+  postStatesFor,
+  postViewForState,
+  postingReason,
+  type PostMenuAction,
+  type PostViewer,
+} from "../domain/post-list";
+import { useServerBoardPostEditor } from "../hooks/use-server-board-post-editor";
+import { useBoardPostActions } from "../hooks/use-server-board-post-lifecycle";
+import {
   normalizePublishedPostSearch,
-  useServerBoardPostAuthors,
+  postFeedFailure,
+  postFeedQueryForSort,
   useServerBoardPostAuthorLabels,
+  useServerBoardPostAuthors,
   useServerBoardPosts,
   type PublishedPostSort,
 } from "../hooks/use-server-board-posts";
-import type { BoardPostAuthorChoice } from "../adapters/board-post-author-api";
-import { BoardEmpty } from "./ui";
-import {
-  ServerBoardPostFeedDisplay,
-  ServerBoardPostReader,
-} from "./server-board-post-feed-display";
+import { canonicalBoardUrl } from "../hooks/use-server-boards";
+import { BoardPostList } from "./board-post-list";
+import { BoardPostPane, type PostPaneState } from "./board-post-pane";
+import { BoardPostEditorDialog } from "./server-backed-board-post-editor";
 import { ServerBoardPostHistory } from "./server-board-post-history";
-export { ServerBoardPostFeedDisplay } from "./server-board-post-feed-display";
+import { ConfirmAction } from "./ui";
 
-const PAGE_SIZE_OPTIONS = [5, 10, 25] as const;
-const SORT_OPTIONS: readonly {
-  value: PublishedPostSort;
-  label: string;
-}[] = [
-  { value: "newest", label: "Newest first" },
-  { value: "oldest", label: "Oldest first" },
-  { value: "title", label: "Title A–Z" },
-];
+const PAGE_SIZE = 25;
+const WIDE_QUERY = "(min-width: 64rem)";
 
-export function ServerBackedBoardPosts({
-  region,
-  boardId,
-  refreshKey,
-  selectedPostId = null,
-  onSelectPost,
-}: {
-  boardId: string;
+function subscribeWide(onChange: () => void) {
+  const query = window.matchMedia(WIDE_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+/** True from 1024px, where the list and the reading pane sit side by side. */
+function useSideBySide(): boolean {
+  return useSyncExternalStore(
+    subscribeWide,
+    () => window.matchMedia(WIDE_QUERY).matches,
+    () => false,
+  );
+}
+
+export type PostParams = { post?: string | null; show?: string | null };
+
+type PostsProps = {
+  board: BoardManagementBoard;
   region: WorkspaceRegion | undefined;
   refreshKey: number;
-  selectedPostId?: string | null;
-  onSelectPost?: (postId: string | null) => void;
-}) {
+  /** `?post=`: the open post. */
+  selectedPostId: string | null;
+  /** `?show=`: the list state. */
+  show: string | null;
+  /** Replaces the post and state in the address. */
+  onParams: (params: PostParams) => void;
+  /** The header's slot for the tab's one primary action. */
+  primarySlot: HTMLElement | null;
+  guest: boolean;
+  onChanged: () => void;
+  onAccessDenied: (boardId: string) => void;
+  onDraftStateChange: (
+    boardId: string,
+    dirty: boolean,
+    pending: boolean,
+  ) => void;
+};
+
+/**
+ * The Posts tab (BR10–BR15): from 1024px a list panel and a reading pane
+ * side by side; on a phone the list, then the post as its own view.
+ */
+export function ServerBackedBoardPosts(props: PostsProps) {
   const actorId = useVerifiedWorkspaceUserId();
   return (
     <ScopedServerBackedBoardPosts
-      region={region}
-      key={`${actorId}:${boardId}`}
-      boardId={boardId}
-      refreshKey={refreshKey}
-      selectedPostId={selectedPostId}
-      onSelectPost={onSelectPost}
+      key={`${actorId}:${props.board.id}`}
+      {...props}
     />
   );
 }
 
+const MENU_CONFIRM = {
+  unpublish: {
+    title: "Unpublish post?",
+    description:
+      "Readers no longer see it, and a scheduled replacement is canceled.",
+    action: "Unpublish post",
+  },
+  archive: {
+    title: "Archive post?",
+    description: "Readers no longer see it. A board manager can restore it.",
+    action: "Archive post",
+  },
+  delete: {
+    title: "Delete draft?",
+    description:
+      "It was never published, so it goes with its files and record links.",
+    action: "Delete draft",
+  },
+} as const;
+
 function ScopedServerBackedBoardPosts({
+  board,
   region,
-  boardId,
   refreshKey,
   selectedPostId,
-  onSelectPost,
-}: {
-  boardId: string;
-  region: WorkspaceRegion | undefined;
-  refreshKey: number;
-  selectedPostId: string | null;
-  onSelectPost?: (postId: string | null) => void;
-}) {
-  const id = useId();
+  show,
+  onParams,
+  primarySlot,
+  guest,
+  onChanged,
+  onAccessDenied,
+  onDraftStateChange,
+}: PostsProps) {
+  const boardId = board.id;
   const actorId = useVerifiedWorkspaceUserId();
-  const [detailRetry, setDetailRetry] = useState(0);
-  const detailKey = `${actorId}:${boardId}:${selectedPostId}:${refreshKey}:${detailRetry}`;
-  const [detail, setDetail] = useState<{
-    key: string;
-    post: BoardPost | null;
-    error: string | null;
-  } | null>(null);
-  const [historyPost, setHistoryPost] = useState<BoardPost | null>(null);
-  const [cardHistoryAuthorId, setCardHistoryAuthorId] = useState<string | null>(
-    null,
-  );
-  const selectedDetail = detail?.key === detailKey ? detail : null;
-  const selectedPost = selectedDetail?.post ?? null;
-  const historyOpen =
-    selectedPost !== null && historyPost?.id === selectedPost.id;
+  const sideBySide = useSideBySide();
+  const states = postStatesFor(board.level);
+  const state = parsePostShow(show, board.level);
+  const active = board.status === "active";
+  const viewer: PostViewer = {
+    actorId,
+    canWrite: board.level !== "read",
+    canManage: board.level === "manage",
+    boardActive: active,
+  };
+  const canPost = active && viewer.canWrite;
 
+  // The editor: New post in the header and Edit in the pane open one owner.
+  const editor = useServerBoardPostEditor({
+    boardId,
+    boardRevision: board.revision,
+    boardStatus: board.status,
+    refreshKey,
+    onPublished: onChanged,
+  });
+  // The board's level shows New post at once; the editor's access check can
+  // still withdraw it.
+  const mayPost =
+    canPost && (editor.view.canEdit || editor.view.status === "loading");
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorMode, setEditorMode] = useState<"new" | "edit">("new");
+  const editorChanged = editor.view.dirty || editor.view.scheduleDirty;
   useEffect(() => {
-    if (!actorId || selectedPostId === null) {
-      setDetail(null);
-      setHistoryPost(null);
-      return;
-    }
-    let active = true;
-    void readBoardPost(boardId, selectedPostId, "published")
-      .then((post) => {
-        if (active) setDetail({ key: detailKey, post, error: null });
-      })
-      .catch((error: unknown) => {
-        if (active)
-          setDetail({
-            key: detailKey,
-            post: null,
-            error:
-              error instanceof ApiError &&
-              [401, 403, 404].includes(error.status)
-                ? "This post is unavailable or you no longer have access."
-                : "Could not load the published post. Try again.",
-          });
-      });
-    return () => {
-      active = false;
-    };
-  }, [actorId, boardId, detailKey, selectedPostId]);
-  const [offset, setOffset] = useState(0);
-  const [pageSize, setPageSize] = useState<number>(25);
-  const [sort, setSort] = useState<PublishedPostSort>("newest");
-  const [searchDraft, setSearchDraft] = useState("");
+    onDraftStateChange(boardId, editorChanged, editor.view.pending);
+  }, [boardId, editorChanged, editor.view.pending, onDraftStateChange]);
+  useEffect(
+    () => () => onDraftStateChange(boardId, false, false),
+    [boardId, onDraftStateChange],
+  );
+
+  // The list: search applies as it is typed, after a short pause.
+  const [query, setQuery] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
+  useEffect(() => {
+    const next = normalizePublishedPostSearch(query);
+    const timer = setTimeout(() => setAppliedSearch(next), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+  const [sort, setSort] = useState<PublishedPostSort>("newest");
   const [selectedAuthor, setSelectedAuthor] =
     useState<BoardPostAuthorChoice | null>(null);
   const [authorSearch, setAuthorSearch] = useState("");
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const listScope = `${state}:${appliedSearch}:${selectedAuthor?.id ?? ""}:${sort}`;
+  const [paging, setPaging] = useState({ scope: listScope, offset: 0 });
   const authors = useServerBoardPostAuthors(boardId, refreshKey, authorSearch);
   const authorSelectionGone = authors.state.status === "denied";
   const visibleAuthorId = authorSelectionGone
     ? null
     : (selectedAuthor?.id ?? null);
-  const effectiveOffset = authorSelectionGone ? 0 : offset;
-  const queryOptions = {
-    limit: pageSize,
-    ...postFeedQueryForSort(sort),
-  };
-  const { state, retry } = useServerBoardPosts(
+  const offset =
+    authorSelectionGone || paging.scope !== listScope ? 0 : paging.offset;
+  const feed = useServerBoardPosts(
     boardId,
-    effectiveOffset,
+    offset,
     refreshKey,
     appliedSearch,
     visibleAuthorId,
     authors.readyToRead,
-    queryOptions,
+    { limit: PAGE_SIZE, ...postFeedQueryForSort(sort) },
+    state,
   );
+
+  // The open post, read in the view of the list it came from.
+  const view = postViewForState(state);
+  const [detailRetry, setDetailRetry] = useState(0);
+  const detailKey = `${boardId}:${view}:${selectedPostId}:${refreshKey}:${detailRetry}`;
+  const [detail, setDetail] = useState<{
+    key: string;
+    post: BoardPost | null;
+    transient: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!actorId || selectedPostId === null) return;
+    let live = true;
+    void readBoardPost(boardId, selectedPostId, view)
+      .then((post) => {
+        if (live) setDetail({ key: detailKey, post, transient: false });
+      })
+      .catch((error: unknown) => {
+        if (live)
+          setDetail({
+            key: detailKey,
+            post: null,
+            transient: postFeedFailure(error).retain,
+          });
+      });
+    return () => {
+      live = false;
+    };
+  }, [actorId, boardId, detailKey, selectedPostId, view]);
+  const openDetail = detail?.key === detailKey ? detail : null;
+  const openPost = selectedPostId !== null ? (openDetail?.post ?? null) : null;
+
+  const loaded = authorSelectionGone ? null : feed.state.data;
+  // Expiry words compare with the time the page was read.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => setNow(Date.now()), [loaded]);
   const knownAuthorIds = [
-    ...(state.data?.items.map((post) => post.authorId) ?? []),
-    ...(selectedPost ? [selectedPost.authorId] : []),
-    ...(cardHistoryAuthorId ? [cardHistoryAuthorId] : []),
+    ...(loaded?.items.map((post) => post.authorId) ?? []),
+    ...(openPost ? [openPost.authorId] : []),
   ];
   const labels = useServerBoardPostAuthorLabels(
     boardId,
@@ -169,339 +247,330 @@ function ScopedServerBackedBoardPosts({
     authors.readyToRead,
   );
   const authorsDenied = authorSelectionGone || labels.denied;
-  const choices = authorsDenied ? null : authors.state.data;
-  const page = authorsDenied ? null : state.data;
-  const authorError = authors.state.error ?? labels.state.error;
-  const retryAuthors = () => {
-    authors.retry();
-    labels.retry();
-  };
+  // A refused author read hides every row, not only the names.
+  const page = authorsDenied ? null : loaded;
   const knownLabels = new Map(
     (labels.state.data ?? []).map((choice) => [choice.id, choice.label]),
   );
-  const authorLabels = Object.fromEntries(
+  const authorLabel = (authorId: string) =>
     authorsDenied
-      ? []
-      : knownAuthorIds.map((authorId) => [
-          authorId,
-          knownLabels.get(authorId) ??
-            (labels.state.status === "loading"
-              ? "Loading author…"
-              : "Author unavailable"),
-        ]),
+      ? "Author unavailable"
+      : (knownLabels.get(authorId) ??
+        (labels.state.status === "loading"
+          ? "Loading author…"
+          : "Author unavailable"));
+
+  // A page past the end (posts left the list) steps back to the last page.
+  useEffect(() => {
+    if (!page || page.pagination.count > 0 || offset === 0) return;
+    const total = page.pagination.total;
+    setPaging({
+      scope: listScope,
+      offset: total === 0 ? 0 : Math.floor((total - 1) / PAGE_SIZE) * PAGE_SIZE,
+    });
+  }, [listScope, offset, page]);
+
+  // From 1024px a bare Posts view opens its first post, replacing the
+  // address (BR12); a phone keeps the list.
+  const firstId = page?.items[0]?.id ?? null;
+  useEffect(() => {
+    if (sideBySide && selectedPostId === null && firstId !== null)
+      onParams({ post: firstId });
+  }, [firstId, onParams, selectedPostId, sideBySide]);
+
+  const actions = useBoardPostActions({
+    boardId,
+    canManage: viewer.canManage,
+    onChanged: (action) => {
+      onChanged();
+      if (action && action.postId === selectedPostId) onParams({ post: null });
+    },
+    onAccessDenied,
+  });
+  const [historyPost, setHistoryPost] = useState<BoardPost | null>(null);
+
+  function runMenu(post: BoardPost, action: PostMenuAction) {
+    if (action === "history") {
+      setHistoryPost(post);
+      return;
+    }
+    if (action === "copy-link") {
+      const href = `${window.location.origin}${canonicalBoardUrl(board, "posts", `post=${post.id}`)}`;
+      void navigator.clipboard
+        .writeText(href)
+        .then(() => toast.add({ title: "Link copied", type: "success" }))
+        .catch(() =>
+          toast.add({ title: "The link could not be copied.", type: "error" }),
+        );
+      return;
+    }
+    actions.begin(post, action);
+  }
+
+  const paneState: PostPaneState =
+    selectedPostId === null
+      ? { kind: "none" }
+      : authorsDenied
+        ? {
+            kind: "unavailable",
+            retry: () => {
+              authors.retry();
+              labels.retry();
+            },
+          }
+        : openDetail === null
+          ? { kind: "loading" }
+          : openDetail.post
+            ? { kind: "post", post: openDetail.post }
+            : {
+                kind: "unavailable",
+                retry: openDetail.transient
+                  ? () => setDetailRetry((value) => value + 1)
+                  : null,
+              };
+
+  const rows = (page?.items ?? []).map((post) => ({
+    id: post.id,
+    title: post.title,
+    pinned: post.pinned,
+    meta: postRowMeta(post, authorLabel(post.authorId), region, now).filter(
+      (part) => part !== "Pinned",
+    ),
+  }));
+  const filtered = appliedSearch !== "" || visibleAuthorId !== null;
+  const emptyCopy = postListEmpty(
+    state,
+    filtered,
+    mayPost ? null : postingReason(board, guest),
   );
-  const activeFilterCount = visibleAuthorId === null ? 0 : 1;
-  const filtersId = `${id}-filters`;
-  const filterCountId = `${id}-filter-count`;
+  const authorError = authors.state.error ?? labels.state.error;
+  const clearFilters = () => setSelectedAuthor(null);
+  const openNew = () => {
+    editor.newDraft();
+    setEditorMode("new");
+    setEditorOpen(true);
+  };
 
-  useEffect(() => {
-    if (!authorSelectionGone) return;
-    setSelectedAuthor(null);
-    setOffset(0);
-  }, [authorSelectionGone]);
-
-  useEffect(() => {
-    if (authorSelectionGone || state.status !== "ready" || !page) return;
-    const { offset: loadedOffset, total } = page.pagination;
-    if (loadedOffset === 0 || loadedOffset < total) return;
-    const lastValidOffset =
-      total === 0 ? 0 : Math.floor((total - 1) / pageSize) * pageSize;
-    if (loadedOffset !== lastValidOffset) setOffset(lastValidOffset);
-  }, [authorSelectionGone, page, pageSize, state.status]);
+  const newPost = mayPost ? (
+    <Button
+      type="button"
+      className="min-h-11 xl:min-h-8"
+      disabled={!editor.view.canEdit || editor.view.pending}
+      onClick={openNew}
+    >
+      <Plus aria-hidden="true" />
+      New post
+    </Button>
+  ) : null;
 
   return (
-    <div
-      className="flex w-full min-w-0 flex-col gap-4"
-      aria-busy={state.status === "loading"}
-    >
-      <Card
-        aria-label="Post search and filters"
-        className="min-w-0 self-auto overflow-hidden rounded-lg"
+    <div className="slim-ui flex min-w-0 flex-col gap-4 lg:grid lg:grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)] xl:min-h-0 xl:flex-1 xl:grid-rows-[minmax(0,1fr)]">
+      {primarySlot && newPost ? createPortal(newPost, primarySlot) : null}
+      <div
+        className={
+          selectedPostId !== null
+            ? "flex min-w-0 flex-col max-lg:hidden xl:min-h-0"
+            : "flex min-w-0 flex-col xl:min-h-0"
+        }
       >
-        <form
-          role="search"
-          className="grid min-w-0 gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,14rem)_auto] sm:items-end"
-          onSubmit={(event) => {
-            event.preventDefault();
-            setAppliedSearch(normalizePublishedPostSearch(searchDraft));
-            setOffset(0);
-          }}
-        >
-          <Field className="min-w-0">
-            <FieldLabel htmlFor={`${id}-search`}>Search</FieldLabel>
-            <div className="relative">
-              <Search
-                aria-hidden="true"
-                className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-              />
-              <Input
-                id={`${id}-search`}
-                aria-label="Search posts"
-                type="search"
-                maxLength={100}
-                placeholder="Search posts"
-                className="min-h-11 pl-9"
-                value={searchDraft}
-                onChange={(event) =>
-                  setSearchDraft(event.currentTarget.value.slice(0, 100))
+        <BoardPostList
+          states={states}
+          state={state}
+          onStateChange={(next) =>
+            onParams({ show: next === "published" ? null : next, post: null })
+          }
+          query={query}
+          onQueryChange={(value) => setQuery(value.slice(0, 100))}
+          sort={sort}
+          onSortChange={setSort}
+          chips={
+            selectedAuthor && !authorsDenied
+              ? [
+                  {
+                    key: "author",
+                    label: "Author",
+                    value: selectedAuthor.label,
+                    onRemove: clearFilters,
+                  },
+                ]
+              : []
+          }
+          onClearFilters={clearFilters}
+          filters={
+            <FilterRow>
+              <SearchSelect
+                label="Author"
+                value={visibleAuthorId ?? ""}
+                options={[
+                  { value: "", label: "All authors" },
+                  ...((authorsDenied ? null : authors.state.data) ?? []).map(
+                    (choice) => ({ value: choice.id, label: choice.label }),
+                  ),
+                ]}
+                selectedOption={
+                  selectedAuthor && !authorsDenied
+                    ? { value: selectedAuthor.id, label: selectedAuthor.label }
+                    : undefined
                 }
-              />
-            </div>
-          </Field>
-          <Field className="min-w-0">
-            <FieldLabel htmlFor={`${id}-sort`}>Sort</FieldLabel>
-            <NativeSelect
-              id={`${id}-sort`}
-              aria-label="Sort posts"
-              className="w-full [&_select]:min-h-11"
-              value={sort}
-              onChange={(event) => {
-                const nextSort = SORT_OPTIONS.find(
-                  (option) => option.value === event.currentTarget.value,
-                );
-                if (!nextSort) return;
-                setSort(nextSort.value);
-                setOffset(0);
-              }}
-            >
-              {SORT_OPTIONS.map((option) => (
-                <NativeSelectOption key={option.value} value={option.value}>
-                  {option.label}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </Field>
-          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-            <Button type="submit" variant="outline" className="min-h-11">
-              Search
-            </Button>
-            {(appliedSearch || searchDraft) && (
-              <Button
-                type="button"
-                variant="ghost"
-                className="min-h-11"
-                onClick={() => {
-                  setSearchDraft("");
-                  setAppliedSearch("");
-                  setOffset(0);
+                search={authorSearch}
+                onSearchChange={(value) => setAuthorSearch(value.slice(0, 100))}
+                loading={
+                  authors.state.status === "loading" && !authors.loadingMore
+                }
+                loadingMore={authors.loadingMore}
+                error={authorError ?? undefined}
+                onRetry={() => {
+                  authors.retry();
+                  labels.retry();
                 }}
-              >
-                Clear search
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 gap-2"
-              aria-label="More filters"
-              aria-expanded={filtersExpanded}
-              aria-controls={filtersId}
-              aria-describedby={filterCountId}
-              onClick={() => setFiltersExpanded((current) => !current)}
-            >
-              <SlidersHorizontal aria-hidden="true" /> More filters
-              {activeFilterCount > 0 && (
-                <Badge variant="secondary" aria-hidden="true">
-                  {activeFilterCount}
-                </Badge>
-              )}
-              <ChevronDown
-                aria-hidden="true"
-                className={filtersExpanded ? "rotate-180" : undefined}
+                hasMore={authors.state.pagination?.hasMore}
+                onLoadMore={authors.loadMore}
+                disabled={authorsDenied}
+                onValueChange={(value) => {
+                  const choice =
+                    authors.state.data?.find((item) => item.id === value) ??
+                    (selectedAuthor?.id === value ? selectedAuthor : null);
+                  if (value && !choice) return;
+                  setSelectedAuthor(value ? choice : null);
+                }}
               />
-            </Button>
-            <span id={filterCountId} className="sr-only">
-              {activeFilterCount} active filters
-            </span>
-          </div>
-        </form>
-        <div
-          id={filtersId}
-          role="region"
-          aria-label="Post filters"
-          hidden={!filtersExpanded}
-          className="border-t p-3"
-        >
-          <div className="max-w-sm">
-            <SearchSelect
-              label="Post author"
-              value={authorsDenied ? "" : (visibleAuthorId ?? "")}
-              options={[
-                { value: "", label: "All authors" },
-                ...(choices ?? []).map((choice) => ({
-                  value: choice.id,
-                  label: choice.label,
-                })),
-              ]}
-              selectedOption={
-                selectedAuthor && !authorsDenied
-                  ? { value: selectedAuthor.id, label: selectedAuthor.label }
-                  : undefined
-              }
-              search={authorSearch}
-              onSearchChange={(value) => setAuthorSearch(value.slice(0, 100))}
-              loading={
-                authors.state.status === "loading" && !authors.loadingMore
-              }
-              loadingMore={authors.loadingMore}
-              error={authorError ?? undefined}
-              onRetry={retryAuthors}
-              hasMore={authors.state.pagination?.hasMore}
-              onLoadMore={authors.loadMore}
-              disabled={authorsDenied}
-              onValueChange={(value) => {
-                const choice =
-                  choices?.find((item) => item.id === value) ??
-                  (selectedAuthor?.id === value ? selectedAuthor : null);
-                if (value && !choice) return;
-                setSelectedAuthor(value ? choice : null);
-                setOffset(0);
-              }}
-            />
-          </div>
-        </div>
-      </Card>
-      {authorError && (
-        <Alert variant="destructive">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>{authorError}</span>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={retryAuthors}
-            >
-              Retry authors
-            </Button>
-          </div>
-        </Alert>
-      )}
-      {state.error && (
-        <Alert variant="destructive">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>
-              {page ? "Showing the last loaded posts. " : ""}
-              {state.error}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              onClick={retry}
-            >
-              Retry
-            </Button>
-          </div>
-        </Alert>
-      )}
-      {page && (
-        <ServerBoardPostFeedDisplay
-          region={region}
+            </FilterRow>
+          }
           page={page}
-          appliedSearch={appliedSearch}
-          authorLabels={authorLabels}
-          onReadPost={onSelectPost}
-          onHistoryAuthorChange={setCardHistoryAuthorId}
-        />
-      )}
-      {!page && state.status === "loading" && (
-        <p role="status" className="text-muted-foreground py-8 text-sm">
-          Loading published posts…
-        </p>
-      )}
-      {!page && state.status === "error" && (
-        <BoardEmpty
-          title="Posts unavailable"
-          description="No post content is shown. Retry or ask a Board manager to check your access."
-        />
-      )}
-      {page && page.pagination.total > 0 && (
-        <div
-          data-slot="card"
-          className="border-card-edge bg-card shadow-card flex min-w-0 flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
-        >
-          <p className="text-muted-foreground text-sm" role="status">
-            {page.pagination.count > 0
-              ? `Showing ${page.pagination.offset + 1}–${page.pagination.offset + page.pagination.count} of ${page.pagination.total}`
-              : `No posts on this page · ${page.pagination.total} total`}
-          </p>
-          <div className="flex flex-wrap items-center gap-3 sm:justify-end">
-            <div className="flex items-center gap-2">
-              <label
-                htmlFor={`${id}-page-size`}
-                className="text-muted-foreground text-sm"
-              >
-                Rows per page
-              </label>
-              <NativeSelect
-                id={`${id}-page-size`}
-                aria-label="Rows per page"
-                className="w-20 [&_select]:min-h-11"
-                value={String(pageSize)}
-                disabled={state.status === "loading"}
-                onChange={(event) => {
-                  const nextPageSize = PAGE_SIZE_OPTIONS.find(
-                    (option) => String(option) === event.currentTarget.value,
-                  );
-                  if (nextPageSize === undefined) return;
-                  setPageSize(nextPageSize);
-                  setOffset(0);
-                }}
-              >
-                {PAGE_SIZE_OPTIONS.map((option) => (
-                  <NativeSelectOption key={option} value={String(option)}>
-                    {option}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </div>
-            <PaginationControls
-              ariaLabel="Post pages"
-              className="w-auto"
-              pageCount={Math.max(
-                1,
-                Math.ceil(page.pagination.total / pageSize),
-              )}
-              pageIndex={Math.floor(page.pagination.offset / pageSize)}
-              onPageIndexChange={(nextPageIndex) =>
-                setOffset(nextPageIndex * pageSize)
-              }
-            />
-          </div>
-        </div>
-      )}
-      {actorId &&
-        selectedPostId !== null &&
-        (!historyOpen || authorsDenied) && (
-          <ServerBoardPostReader
-            region={region}
-            post={authorsDenied ? null : selectedPost}
-            authorLabel={
-              selectedPost
-                ? (authorLabels[selectedPost.authorId] ?? "Author unavailable")
-                : "Author unavailable"
+          rows={rows}
+          loading={feed.state.status === "loading"}
+          error={feed.state.error ?? authorError}
+          onRetry={() => {
+            if (feed.state.error) feed.retry();
+            if (authorError) {
+              authors.retry();
+              labels.retry();
             }
-            loading={!authorsDenied && selectedDetail === null}
-            error={authorsDenied ? authorError : selectedDetail?.error}
-            onRetry={() => {
-              if (authorsDenied) retryAuthors();
-              else setDetailRetry((current) => current + 1);
-            }}
-            onHistory={setHistoryPost}
-            onClose={() => onSelectPost?.(null)}
-            finalFocus={() => document.getElementById(`${id}-search`)}
-          />
-        )}
-      {historyOpen && selectedPost && !authorsDenied && (
+          }}
+          selectedId={selectedPostId}
+          onOpen={(postId) => onParams({ post: postId })}
+          onPage={(next) => setPaging({ scope: listScope, offset: next })}
+          empty={
+            <div className="flex flex-col items-start gap-2 p-5">
+              <h3 data-slot="empty-title" className="font-medium">
+                {emptyCopy.title}
+              </h3>
+              <p className="text-muted-foreground text-sm">
+                {emptyCopy.description}
+              </p>
+              {filtered ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 xl:min-h-8"
+                  onClick={() => {
+                    setQuery("");
+                    setAppliedSearch("");
+                    clearFilters();
+                  }}
+                >
+                  Clear search and filters
+                </Button>
+              ) : mayPost && (state === "published" || state === "drafts") ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 xl:min-h-8"
+                  disabled={!editor.view.canEdit}
+                  onClick={openNew}
+                >
+                  <Plus aria-hidden="true" />
+                  New post
+                </Button>
+              ) : null}
+            </div>
+          }
+        />
+      </div>
+      <div
+        className={
+          selectedPostId === null
+            ? "flex min-w-0 flex-col max-lg:hidden xl:min-h-0"
+            : "flex min-w-0 flex-col xl:min-h-0"
+        }
+      >
+        <BoardPostPane
+          state={paneState}
+          region={region}
+          authorLabel={openPost ? authorLabel(openPost.authorId) : ""}
+          canEdit={
+            openPost !== null &&
+            canEditPost(openPost, viewer) &&
+            editor.view.canEdit
+          }
+          actions={openPost ? postMenuActions(openPost, viewer) : []}
+          busy={
+            (openPost !== null && actions.pendingPostId === openPost.id) ||
+            editor.view.pending
+          }
+          onEdit={() => {
+            if (!openPost) return;
+            void editor.edit(openPost.id).then((opened) => {
+              if (!opened) return;
+              setEditorMode("edit");
+              setEditorOpen(true);
+            });
+          }}
+          onAction={(action) => {
+            if (openPost) runMenu(openPost, action);
+          }}
+          onBack={() => onParams({ post: null })}
+        />
+      </div>
+      <BoardPostEditorDialog
+        boardId={boardId}
+        editor={editor}
+        open={editorOpen}
+        mode={editorMode}
+        audience={postAudienceLine(board)}
+        onClose={() => setEditorOpen(false)}
+        onPublished={(postId) => {
+          setEditorOpen(false);
+          toast.add({ title: "Post published", type: "success" });
+          onParams({ post: postId, show: null });
+        }}
+      />
+      {historyPost ? (
         <ServerBoardPostHistory
           region={region}
           boardId={boardId}
-          postId={selectedPost.id}
-          title={selectedPost.title}
-          authorLabels={authorLabels}
+          postId={historyPost.id}
+          title={historyPost.title}
+          authorLabels={Object.fromEntries(knownLabels)}
           onClose={() => setHistoryPost(null)}
         />
-      )}
+      ) : null}
+      <ConfirmAction
+        open={actions.confirmation !== null}
+        title={
+          actions.confirmation && actions.confirmation.kind !== "restore"
+            ? MENU_CONFIRM[actions.confirmation.kind].title
+            : ""
+        }
+        description={
+          actions.confirmation && actions.confirmation.kind !== "restore"
+            ? MENU_CONFIRM[actions.confirmation.kind].description
+            : ""
+        }
+        action={
+          actions.confirmation && actions.confirmation.kind !== "restore"
+            ? MENU_CONFIRM[actions.confirmation.kind].action
+            : ""
+        }
+        phrase={
+          actions.confirmation?.kind === "delete"
+            ? actions.confirmation.title
+            : undefined
+        }
+        disabled={actions.pendingPostId !== null}
+        onCancel={actions.cancel}
+        onConfirm={actions.confirm}
+      />
     </div>
   );
 }

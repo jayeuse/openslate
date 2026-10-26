@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { BoardPost } from "../../../src/components/systems/boards/adapters/board-posts-api";
 import {
   ServerBoardPostEditorDisplay,
+  publishBlockedReason,
   type PostEditorView,
 } from "../../../src/components/systems/boards/components/server-backed-board-post-editor";
 
@@ -34,10 +35,6 @@ const baseView: PostEditorView = {
   active: true,
   canEdit: true,
   canManage: false,
-  drafts: [draft],
-  offset: 0,
-  total: 1,
-  hasMore: false,
   selected: draft,
   form: {
     pinned: false,
@@ -56,16 +53,16 @@ const baseView: PostEditorView = {
   pending: false,
   error: null,
   notice: null,
-  displayed: null,
 };
 
-function markup(view: PostEditorView): string {
+function markup(view: PostEditorView, scheduleOpen = false): string {
   return renderToStaticMarkup(
     createElement(ServerBoardPostEditorDisplay, {
       boardId,
       view,
-      onNew: () => undefined,
-      onSelect: () => undefined,
+      audience: "Everyone who reads Sales sees this post.",
+      scheduleOpen,
+      onToggleSchedule: () => undefined,
       onChange: () => undefined,
       onSave: () => undefined,
       onPublish: () => undefined,
@@ -73,8 +70,6 @@ function markup(view: PostEditorView): string {
       onCancelSchedule: () => undefined,
       onScheduleTimeChange: () => undefined,
       onRetry: () => undefined,
-      onClose: () => undefined,
-      onPage: () => undefined,
       onAttachmentBusyChange: () => undefined,
       onRecordLinkBusyChange: () => undefined,
       refreshAttachmentVersions: async () => ({
@@ -85,95 +80,79 @@ function markup(view: PostEditorView): string {
   );
 }
 
-test("editable draft shows save and publish without an audience control", () => {
+test("the editor's footer holds Publish, Schedule and Save draft beside one consequence line", () => {
   const html = markup(baseView);
-  expect(html).toContain("New post");
+  expect(html).toContain(">Publish<");
+  expect(html).toContain("Schedule…");
   expect(html).toContain("Save draft");
-  expect(html).toContain("Publish now");
+  expect(html).toContain("Everyone who reads Sales sees this post.");
+  expect(html).toContain("Draft saved");
+  expect(html).toContain("Private change");
   expect(html).not.toContain("audience");
-  expect(html).toContain("Private change");
+  expect(html).not.toContain("Publish now");
 });
 
-test("author can choose and edit a published post from the authoring list", () => {
-  const ownPublished: BoardPost = {
-    ...draft,
-    status: "published",
-    publishAt: now,
-  };
-  const html = markup({
+test("the editor carries no rule sentences", () => {
+  const html = markup({ ...baseView, selected: null }, true);
+  for (const sentence of [
+    "sent to the server in UTC",
+    "Save this draft before",
+    "Up to 20 HTTP or HTTPS links",
+    "Save your changes as a draft",
+    "Save changes before publishing",
+    "Saving this draft cancels",
+  ])
+    expect(html).not.toContain(sentence);
+});
+
+test("a post that is not saved as a draft offers to save before files and record links", () => {
+  const unsaved = markup({ ...baseView, selected: null, dirty: true });
+  expect(unsaved).toContain("Save draft to attach");
+  expect(unsaved).toContain("Save draft to link");
+  const published = markup({
     ...baseView,
-    drafts: [ownPublished],
-    selected: ownPublished,
-    dirty: true,
+    selected: { ...draft, status: "published", publishAt: now },
   });
-  expect(html).toContain("Private change");
-  expect(html).toContain("Published");
-  expect(html).toContain("Edit post");
-  expect(html).toContain("Save draft");
-  expect(html).toContain(
-    "Save your changes as a draft before managing attachments and Record links.",
+  expect(published).toContain("Save draft to attach");
+});
+
+test("Schedule… opens a local date and time with the zone beside it", () => {
+  expect(markup(baseView)).not.toContain(
+    'type="datetime-local" step="1" value="2035',
   );
-});
-
-test("saved drafts offer device-local scheduling with an explicit UTC conversion", () => {
-  const html = markup(baseView);
-  expect(html).toContain("Publication date and time");
-  expect(html).toContain('type="datetime-local"');
+  const html = markup(baseView, true);
+  expect(html).toContain("Publish at");
+  expect(html).toContain('value="2035-06-01T12:30"');
   expect(html).toContain("Asia/Manila");
-  expect(html).toContain("sent to the server in UTC");
-  expect(html).toContain("Schedule publication");
-  expect(html).not.toContain("notification sent");
+  expect(html).toContain(">Schedule<");
 });
 
-test("scheduled drafts offer revision-safe rescheduling and cancellation", () => {
+test("a scheduled post shows when it publishes, with Reschedule and Cancel schedule", () => {
   const scheduled: BoardPost = {
     ...draft,
     status: "scheduled",
     publishAt: "2035-06-01T04:30:00Z",
     postRevision: 3,
   };
-  const html = markup({
-    ...baseView,
-    drafts: [scheduled],
-    selected: scheduled,
-    form: {
-      pinned: false,
-      expiresLocal: "",
-      title: scheduled.title,
-      body: scheduled.body,
-      links: [],
-    },
-    scheduleLocal: "2035-06-01T12:30",
-  });
-  expect(html).toContain("Reschedule publication");
-  expect(html).toContain("Cancel scheduled publication");
-  expect(html).toContain("Saving this draft cancels its scheduled publication");
-  expect(html).not.toContain("notification sent");
+  const html = markup({ ...baseView, selected: scheduled }, true);
+  // The time is the device's, like the Publish at field.
+  expect(html).toMatch(/Publishes Fri, Jun 1, \d{1,2}:30 [AP]M/);
+  expect(html).toContain("Reschedule");
+  expect(html).toContain("Cancel schedule");
 });
 
-test("unsaved content or a revision conflict blocks schedule mutations", () => {
-  const dirty = markup({ ...baseView, dirty: true });
-  expect(dirty).toMatch(/disabled=""[^>]*>Schedule publication/);
-
-  const conflict = markup({ ...baseView, conflict: true });
-  expect(conflict).toMatch(/disabled=""[^>]*>Schedule publication/);
-});
-
-test("schedule validation explains invalid local clock times accessibly", () => {
-  const html = markup({
-    ...baseView,
-    scheduleError:
-      "This local time does not exist because of a clock change. Choose another time.",
-  });
-  expect(html).toContain(
-    "This local time does not exist because of a clock change",
+test("schedule validation is linked to its field", () => {
+  const html = markup(
+    { ...baseView, scheduleError: "Choose a publication time in the future." },
+    true,
   );
+  expect(html).toContain("Choose a publication time in the future.");
   expect(html).toContain(
-    'aria-describedby="board-post-schedule-help board-post-schedule-error"',
+    'aria-describedby="board-post-schedule-zone board-post-schedule-error"',
   );
 });
 
-test("denial and archived Board render no private draft or action", () => {
+test("denial and an archived Board render no private draft or action", () => {
   for (const view of [
     { ...baseView, status: "denied" as const, canEdit: false },
     { ...baseView, active: false },
@@ -181,25 +160,25 @@ test("denial and archived Board render no private draft or action", () => {
     const html = markup(view);
     expect(html).not.toContain("Private change");
     expect(html).not.toContain("Keep this draft private.");
-    expect(html).not.toContain("Publish now");
-    expect(html).not.toContain("Schedule publication");
-    expect(html).not.toContain("Cancel scheduled publication");
+    expect(html).not.toContain(">Publish<");
+    expect(html).not.toContain("Schedule…");
   }
 });
 
-test("initial load and retriable failure explain status without exposing drafts", () => {
+test("a first load and a retriable failure show status without drafts", () => {
   const loading = markup({
     ...baseView,
     status: "loading",
     canEdit: false,
+    form: null,
   });
-  expect(loading).toContain("Loading editable posts");
+  expect(loading).toContain("Opening the post");
   expect(loading).not.toContain("Private change");
-
   const failed = markup({
     ...baseView,
     status: "error",
     canEdit: false,
+    form: null,
     error: "Draft posts are unavailable.",
   });
   expect(failed).toContain("Draft posts are unavailable.");
@@ -207,118 +186,61 @@ test("initial load and retriable failure explain status without exposing drafts"
   expect(failed).not.toContain("Private change");
 });
 
-test("unsaved text cannot be displaced by switching drafts without an explicit discard", () => {
-  const html = markup({
-    ...baseView,
-    dirty: true,
-    form: {
-      pinned: false,
-      expiresLocal: "",
-      title: "Unsaved change",
-      body: draft.body,
-      links: [],
-    },
-  });
-  expect(html).toContain("Unsaved change");
-  expect(html).toContain("Refresh posts");
-  expect(html).toContain("Discard changes");
-  expect(html).toContain(
-    "Save changes before publishing or choosing another draft.",
-  );
-  expect(html).toMatch(/disabled=""[^>]*>New post/);
-  expect(html).toMatch(/disabled=""[^>]*>Publish now/);
-});
-
-test("revision conflict keeps text visible but blocks an unreviewed overwrite", () => {
-  const html = markup({
+test("a revision conflict keeps the text and blocks an unreviewed overwrite", () => {
+  const view = {
     ...baseView,
     dirty: true,
     conflict: true,
-    form: {
-      pinned: false,
-      expiresLocal: "",
-      title: "My competing edit",
-      body: draft.body,
-      links: [],
-    },
-  });
+    form: { ...baseView.form!, title: "My competing edit" },
+  };
+  const html = markup(view);
   expect(html).toContain("My competing edit");
-  expect(html).toContain("Changed by someone else — review latest");
-  expect(html).toContain("Discard changes");
+  expect(html).toContain("Someone changed this post first.");
   expect(html).toMatch(/disabled=""[^>]*>Save draft/);
+  expect(publishBlockedReason(view)).toBe("Review the latest version first.");
 });
 
-test("published confirmation renders only immutable displayed content", () => {
-  const published: BoardPost = {
-    ...draft,
-    title: "Published revision",
-    body: "Immutable display text.",
-    status: "published",
-    publishAt: now,
-    postRevision: null,
-    publicationNumber: 1,
-    publishedAt: now,
-  };
+test("Publish says why it cannot act yet", () => {
+  for (const [form, expected] of [
+    [{ title: "", body: "Text" }, "Add a title and a message."],
+    [{ title: "Title", body: "   " }, "Add a title and a message."],
+    [
+      { title: "x".repeat(101), body: "Text" },
+      "Shorten the title or the message.",
+    ],
+    [{ title: "Title", body: "Text" }, null],
+  ] as const)
+    expect(
+      publishBlockedReason({
+        ...baseView,
+        form: { ...baseView.form!, ...form },
+      }),
+    ).toBe(expected);
+  expect(
+    publishBlockedReason({
+      ...baseView,
+      form: { ...baseView.form!, links: [{ label: "", url: "ftp://x" }] },
+    }),
+  ).toBe("Fix the link labels and URLs.");
+});
+
+test("links are edited as label and URL pairs", () => {
+  const linked = [{ label: "Guide", url: "https://example.test/guide" }];
   const html = markup({
     ...baseView,
-    drafts: [],
-    selected: null,
-    form: null,
-    displayed: published,
-    notice: "Published successfully.",
+    selected: { ...draft, links: linked },
+    form: { ...baseView.form!, links: linked },
   });
-  expect(html).toContain("Published revision");
-  expect(html).toContain("Immutable display text.");
-  expect(html).not.toContain("Keep this draft private.");
-
-  const excluded = markup({
-    ...baseView,
-    drafts: [],
-    selected: null,
-    form: null,
-    displayed: null,
-    notice:
-      "Published, but the displayed revision is unavailable to your account.",
-  });
-  expect(excluded).toContain("unavailable to your account");
-  expect(excluded).not.toContain("Keep this draft private.");
+  expect(html).toContain("Add link");
+  expect(html).toContain('aria-label="Remove link 1"');
+  expect(html).toContain("Link 1 label");
+  expect(html).toContain("Link 1 URL");
+  expect(html).toContain("https://example.test/guide");
 });
 
-test("draft editor exposes bounded external-link editing and published links", () => {
-  const linked = [{ label: "Guide", url: "https://example.test/guide" }];
-  const draftHtml = markup({
-    ...baseView,
-    selected: { ...draft, links: linked },
-    form: {
-      pinned: false,
-      expiresLocal: "",
-      title: draft.title,
-      body: draft.body,
-      links: linked,
-    },
-  });
-  expect(draftHtml).toContain("Add link");
-  expect(draftHtml).toContain("Remove link 1");
-  expect(draftHtml).toContain("External link 1 label");
-  expect(draftHtml).toContain("External link 1 URL");
-  expect(draftHtml).toContain("https://example.test/guide");
-  expect(draftHtml).not.toContain("link editing is unavailable");
-
-  const publishedHtml = markup({
-    ...baseView,
-    drafts: [],
-    selected: null,
-    form: null,
-    displayed: {
-      ...draft,
-      links: linked,
-      status: "published",
-      publishAt: now,
-      postRevision: null,
-      publicationNumber: 1,
-      publishedAt: now,
-    },
-  });
-  expect(publishedHtml).toContain("https://example.test/guide");
-  expect(publishedHtml).toContain("Guide");
+test("only a board manager can pin; a writer sees why", () => {
+  expect(markup(baseView)).toContain("Only board managers pin posts.");
+  expect(markup({ ...baseView, canManage: true })).not.toContain(
+    "Only board managers pin posts.",
+  );
 });

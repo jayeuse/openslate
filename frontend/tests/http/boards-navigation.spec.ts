@@ -110,9 +110,7 @@ test("Board content sections stay on the authorized UUID and fail closed when co
       url.searchParams.get("section") === "posts",
   );
   await expect(
-    page.getByText(
-      "No post content is shown. Retry or ask a Board manager to check your access.",
-    ),
+    page.getByText("Posts unavailable. Check your access or try again."),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Manager-visible post" }),
@@ -189,9 +187,7 @@ test("a slow Board list shows its skeleton only after 300ms, and for at least 30
     .toBe(1);
   // The region now holds the Board's posts (here, its fail-closed notice).
   await expect(
-    region.getByText(
-      "No post content is shown. Retry or ask a Board manager to check your access.",
-    ),
+    region.getByText("Posts unavailable. Check your access or try again."),
   ).toBeVisible();
   await expect(label).toHaveCount(0);
 });
@@ -236,7 +232,9 @@ test("a department's Announcements row opens its board by department, and a Boar
       url.searchParams.get("keep") === "chosen",
   );
   // The post link still opens its post; this one is not on the board.
-  await page.getByRole("button", { name: "Close post", exact: true }).click();
+  await expect(
+    page.getByRole("article", { name: "This post is not available." }),
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { level: 1, name: "Sales announcements" }),
   ).toBeVisible();
@@ -346,7 +344,7 @@ test("a Board page has one header: the title, the level, one meta line, tabs and
     "page",
   );
   await expect(
-    page.getByRole("button", { name: "New post", exact: true }),
+    page.getByRole("button", { name: "New post", exact: true }).first(),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Board settings", exact: true }),
@@ -510,7 +508,7 @@ test("a cold /boards reads the board list and the open board once each, within 3
     page.getByRole("heading", { level: 1, name: "Company announcements" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "New post", exact: true }),
+    page.getByRole("button", { name: "New post", exact: true }).first(),
   ).toBeVisible();
   // Count once the page stops reading: two polls in a row see no new request.
   let previous = -1;

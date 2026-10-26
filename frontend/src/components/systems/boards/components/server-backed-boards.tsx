@@ -32,12 +32,15 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { linkTabsListClass } from "@/components/ui/link-tabs";
+import { cn } from "@/lib/utils";
 import type { BoardManagementBoard } from "../adapters/board-management-api";
 import { ServerBackedBoardActivity } from "./server-backed-board-activity";
 import { ServerBackedBoardAccessPreview } from "./server-backed-board-access-preview";
-import { ServerBackedBoardPostEditor } from "./server-backed-board-post-editor";
-import { ServerBackedBoardPostLifecycle } from "./server-backed-board-post-lifecycle";
-import { ServerBackedBoardPosts } from "./server-backed-board-posts";
+import {
+  ServerBackedBoardPosts,
+  type PostParams,
+} from "./server-backed-board-posts";
 import { ServerBackedBoardCalendar } from "./server-backed-board-calendar";
 import { ServerBackedBoardManagement } from "./server-backed-board-management";
 import { BoardDirectory } from "./board-directory";
@@ -69,29 +72,32 @@ export function isSelectedBoardActivityOpen(
   );
 }
 
-export function isSelectedBoardPostManagerOpen(
-  selectedBoardId: string | null,
-  currentBoardId: string | null,
-  section: BoardSection,
-): boolean {
-  return (
-    section === "posts" &&
-    selectedBoardId !== null &&
-    selectedBoardId === currentBoardId
-  );
-}
-
 // From 1280px the page is still: the region fills the height under the
 // header, and its content is the one panel that scrolls (BR8).
 const boardsRegionClass =
   "flex min-w-0 flex-col xl:min-h-0 xl:flex-1 *:relative *:flex *:min-w-0 *:flex-col *:gap-5 xl:*:min-h-0 xl:*:flex-1 xl:*:overflow-y-auto xl:*:overscroll-contain";
-const pageClass = "flex min-w-0 flex-col xl:min-h-0 xl:flex-1";
+const pageClass = "boards-ui flex min-w-0 flex-col xl:min-h-0 xl:flex-1";
 
-/** The page frame while a Board loads: its title, then the region. */
+/**
+ * The page frame while a Board loads: its title, a meta line, and the tab
+ * row, held at the loaded header's height so nothing shifts when it lands.
+ */
 function BoardsLoadingHeader() {
   return (
     <div className="slim-ui shrink-0">
-      <PageHeader className="mb-3" title="Boards" />
+      <PageHeader
+        className="mb-3"
+        title="Boards"
+        description={
+          <span
+            aria-hidden="true"
+            className="bg-foreground/10 inline-block h-4 w-48 animate-pulse rounded-[var(--radius)] align-middle motion-reduce:animate-none"
+          />
+        }
+      />
+      <div aria-hidden="true" className={cn(linkTabsListClass, "mb-3")}>
+        <span className="min-h-11 w-40 xl:min-h-7" />
+      </div>
     </div>
   );
 }
@@ -143,9 +149,6 @@ function ServerBackedBoardsContent() {
     useState<BoardActivitySelection | null>(null);
   const [previewSelection, setPreviewSelection] =
     useState<BoardActivitySelection | null>(null);
-  const [postManagerSelection, setPostManagerSelection] = useState<
-    string | null
-  >(null);
   const [primarySlot, setPrimarySlot] = useState<HTMLElement | null>(null);
   const [draftState, setDraftState] = useState<{
     boardId: string;
@@ -203,14 +206,8 @@ function ServerBackedBoardsContent() {
     board?.id ?? null,
     resource.detail.sequence,
   );
-  const postManagerOpen = isSelectedBoardPostManagerOpen(
-    postManagerSelection,
-    board?.id ?? null,
-    resolveBoardSection(route),
-  );
   const closeActivity = useCallback(() => setActivitySelection(null), []);
   const closePreview = useCallback(() => setPreviewSelection(null), []);
-  const closePostManager = useCallback(() => setPostManagerSelection(null), []);
   const section = resolveBoardSection(route);
   const regionActive = board !== null;
   const workspaceCalendar = useQuery({
@@ -262,17 +259,29 @@ function ServerBackedBoardsContent() {
     [currentDraftState],
   );
   useWorkspaceNavigationGuard(guardWorkspaceNavigation);
-  function selectBoardContent(
+  const updateBoardParams = useCallback(
+    (changes: Record<string, string | null | undefined>) => {
+      const next = new URLSearchParams(search);
+      for (const [name, value] of Object.entries(changes)) {
+        if (value === undefined) continue;
+        if (value === null) next.delete(name);
+        else next.set(name, value);
+      }
+      const href = `/boards?${next.toString()}` as Route;
+      if (href === `/boards?${search}`) return;
+      const resume = () => router.replace(href, { scroll: false });
+      if (requestNavigation(href, resume)) resume();
+    },
+    [requestNavigation, router, search],
+  );
+  const selectBoardContent = (
     kind: "post" | "event",
     contentId: string | null,
-  ) {
-    const next = new URLSearchParams(search);
-    if (contentId === null) next.delete(kind);
-    else next.set(kind, contentId);
-    const href = `/boards?${next.toString()}` as Route;
-    const resume = () => router.replace(href, { scroll: false });
-    if (requestNavigation(href, resume)) resume();
-  }
+  ) => updateBoardParams({ [kind]: contentId });
+  const updatePostParams = useCallback(
+    (params: PostParams) => updateBoardParams(params),
+    [updateBoardParams],
+  );
   const updateDraftState = useCallback(
     (
       boardId: string,
@@ -335,10 +344,6 @@ function ServerBackedBoardsContent() {
     if (previewSelection && !previewOpen) closePreview();
   }, [previewSelection, previewOpen, closePreview]);
 
-  useEffect(() => {
-    if (postManagerSelection && !postManagerOpen) closePostManager();
-  }, [postManagerSelection, postManagerOpen, closePostManager]);
-
   const listPending =
     resource.list.data === null &&
     (resource.list.status === "idle" || resource.list.status === "loading");
@@ -372,7 +377,6 @@ function ServerBackedBoardsContent() {
     const resume = () => {
       closeActivity();
       closePreview();
-      closePostManager();
       setManagementMode(null);
       router.push(href, { scroll: false });
     };
@@ -384,22 +388,30 @@ function ServerBackedBoardsContent() {
   const refreshError = board
     ? (resource.detail.error ?? resource.list.error)
     : null;
-  const refreshStatus = refreshError ? (
-    <span role="status" className="inline-flex items-center gap-2">
-      <span className="text-danger-text">{refreshError}</span>
-      <Button
-        type="button"
-        variant="ghost"
-        className="min-h-11 px-2 xl:min-h-6"
-        onClick={refreshBoard}
-      >
-        Retry
-      </Button>
-    </span>
-  ) : (
-    <span role="status">
-      {board && resource.detail.status === "loading" ? "Refreshing…" : ""}
-    </span>
+  // Both live regions stay mounted, so a screen reader hears each change.
+  const refreshStatus = (
+    <>
+      <span role="status">
+        {board && !refreshError && resource.detail.status === "loading"
+          ? "Refreshing…"
+          : ""}
+      </span>
+      <span role="alert" className="inline-flex items-center gap-2">
+        {refreshError ? (
+          <>
+            <span className="text-danger-text">{refreshError}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 px-2 xl:min-h-8"
+              onClick={refreshBoard}
+            >
+              Retry
+            </Button>
+          </>
+        ) : null}
+      </span>
+    </>
   );
 
   const createSheet = (
@@ -450,21 +462,7 @@ function ServerBackedBoardsContent() {
                 }
               : null
           }
-          primary={
-            section === "posts" ? (
-              <ServerBackedBoardPostEditor
-                key={`editor:${board.id}`}
-                boardId={board.id}
-                boardRevision={board.revision}
-                boardStatus={board.status}
-                refreshKey={postsLiveKey + manualLiveKey}
-                onPublished={() => refreshBoard()}
-                onDraftStateChange={onPostDraftStateChange}
-              />
-            ) : (
-              <div ref={setPrimarySlot} className="contents" />
-            )
-          }
+          primary={<div ref={setPrimarySlot} className="contents" />}
         />
       ) : (
         <BoardsLoadingHeader />
@@ -484,7 +482,6 @@ function ServerBackedBoardsContent() {
           onAccessDenied={() => {
             closeActivity();
             closePreview();
-            closePostManager();
             resource.revokeAccess();
           }}
           onPurged={() => {
@@ -492,7 +489,6 @@ function ServerBackedBoardsContent() {
             const resume = () => {
               closeActivity();
               closePreview();
-              closePostManager();
               router.push(href, { scroll: false });
               refreshBoard();
             };
@@ -594,63 +590,24 @@ function ServerBackedBoardsContent() {
                 onCloseSelectedEvent={() => selectBoardContent("event", null)}
               />
             ) : (
-              <div className="flex min-w-0 flex-col gap-6">
-                {/* Manage posts keeps its place until the Posts pass (P2). */}
-                {board.status === "active" && canManage && (
-                  <div className="flex justify-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      onClick={() => setPostManagerSelection(board.id)}
-                    >
-                      Manage posts
-                    </Button>
-                  </div>
-                )}
-                <ServerBackedBoardPosts
-                  key={board.id}
-                  region={displayRegion}
-                  boardId={board.id}
-                  refreshKey={postsLiveKey + manualLiveKey}
-                  selectedPostId={searchParams.get("post")}
-                  onSelectPost={(postId) => selectBoardContent("post", postId)}
-                />
-
-                <Sheet
-                  open={postManagerOpen}
-                  onOpenChange={(open) => {
-                    if (!open) closePostManager();
-                  }}
-                >
-                  <SheetContent
-                    side="right"
-                    className="w-full overflow-y-auto sm:max-w-2xl"
-                  >
-                    <SheetHeader>
-                      <SheetTitle>Manage posts</SheetTitle>
-                      <SheetDescription>
-                        Archive and restore posts, or delete drafts that were
-                        never published.
-                      </SheetDescription>
-                    </SheetHeader>
-                    {postManagerOpen && (
-                      <ServerBackedBoardPostLifecycle
-                        key={`lifecycle:${board.id}`}
-                        boardId={board.id}
-                        boardStatus={board.status}
-                        refreshKey={postsLiveKey + manualLiveKey}
-                        onChanged={() => refreshBoard()}
-                        onAccessDenied={(boardId) => {
-                          if (board.id !== boardId) return;
-                          closePostManager();
-                          resource.revokeAccess();
-                        }}
-                      />
-                    )}
-                  </SheetContent>
-                </Sheet>
-              </div>
+              <ServerBackedBoardPosts
+                board={board}
+                region={displayRegion}
+                refreshKey={postsLiveKey + manualLiveKey}
+                selectedPostId={searchParams.get("post")}
+                show={searchParams.get("show")}
+                onParams={updatePostParams}
+                primarySlot={primarySlot}
+                guest={identity.data?.role === "guest"}
+                onChanged={refreshBoard}
+                onAccessDenied={(deniedId) => {
+                  if (board.id !== deniedId) return;
+                  closeActivity();
+                  closePreview();
+                  resource.revokeAccess();
+                }}
+                onDraftStateChange={onPostDraftStateChange}
+              />
             )}
             <Sheet
               open={activityOpen}

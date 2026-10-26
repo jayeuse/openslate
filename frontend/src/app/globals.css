@@ -1155,7 +1155,7 @@ html[data-density="spacious"]
    header's role) take the hover fill, as in the Sandbox. Read stays the
    outline chip and Manage the tinted one, so strength rises Read, Write,
    Manage. */
-:root:not([data-theme]) .access-ui {
+:root:not([data-theme]) :is(.access-ui, .boards-ui) {
   --secondary: var(--surface-hover);
 }
 .slim-ui [data-slim-well="surface"] {

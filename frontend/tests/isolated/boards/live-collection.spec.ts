@@ -11,7 +11,6 @@ import {
   transitionResource,
   type ResourceState,
 } from "../../../src/components/systems/boards/hooks/use-server-boards";
-import { isSelectedBoardPostManagerOpen } from "../../../src/components/systems/boards/components/server-backed-boards";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const homeId = "00000000-0000-4000-8000-000000000002";
@@ -39,17 +38,6 @@ test("an archived Board alone is not opened by default", () => {
     },
   ];
   expect(chooseBoardCandidate(route, matches)).toBeNull();
-});
-
-test("post manager stays open across same-Board refresh but closes outside that section", () => {
-  expect(isSelectedBoardPostManagerOpen(boardId, boardId, "posts")).toBe(true);
-  expect(isSelectedBoardPostManagerOpen(boardId, archivedId, "posts")).toBe(
-    false,
-  );
-  expect(isSelectedBoardPostManagerOpen(boardId, boardId, "calendar")).toBe(
-    false,
-  );
-  expect(isSelectedBoardPostManagerOpen(boardId, null, "posts")).toBe(false);
 });
 
 test("explicit Board URL retains its UUID outside the page and fails closed on invalid IDs", () => {

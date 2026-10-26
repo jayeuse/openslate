@@ -27,7 +27,15 @@ import {
 } from "../adapters/board-record-links-api";
 
 type Props =
-  | { access: "read"; target: BoardRecordLinkTarget }
+  | {
+      access: "read";
+      target: BoardRecordLinkTarget;
+      /**
+       * The reading pane's form: a "Linked records" section that shows only
+       * when the content has links (BR12).
+       */
+      hideWhenEmpty?: boolean;
+    }
   | {
       access: "edit";
       target: BoardEditableRecordLinkTarget;
@@ -277,9 +285,24 @@ export function ServerBoardRecordLinks(props: Props) {
   }
 
   const selectedRecord = records.find((record) => record.id === recordId);
+  const paneSection = props.access === "read" && props.hideWhenEmpty === true;
+  if (
+    paneSection &&
+    (listStatus === "loading" || (listStatus === "ready" && items.length === 0))
+  )
+    return null;
   return (
-    <section aria-label="Record links" className="space-y-3">
-      <h4 className="text-sm font-semibold">Record links</h4>
+    <section
+      aria-label={paneSection ? "Linked records" : "Record links"}
+      className="space-y-3"
+    >
+      {paneSection ? (
+        <h3 data-slot="section-title" className="text-sm font-medium">
+          Linked records
+        </h3>
+      ) : (
+        <h4 className="text-sm font-semibold">Record links</h4>
+      )}
       {listStatus === "loading" && <p role="status">Loading linked Records…</p>}
       {listStatus === "error" && (
         <Alert variant="destructive">

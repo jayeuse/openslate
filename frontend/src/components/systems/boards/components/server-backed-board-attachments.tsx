@@ -39,6 +39,11 @@ type EditableTarget =
 type ReadOnlyProps = {
   access: "read";
   target: ReadOnlyTarget;
+  /**
+   * The reading pane's form: a "Files" section, open at once, that shows
+   * only when the content has files (BR12).
+   */
+  hideWhenEmpty?: boolean;
 };
 type EditableProps = {
   access: "edit";
@@ -95,7 +100,10 @@ function uploadFailure(file: BoardAttachmentFile): Error | null {
 }
 
 export function ServerBoardAttachments(props: Props) {
-  const [expanded, setExpanded] = useState(props.access === "edit");
+  const paneSection = props.access === "read" && props.hideWhenEmpty === true;
+  const [expanded, setExpanded] = useState(
+    props.access === "edit" || paneSection,
+  );
   const [listStatus, setListStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
@@ -394,9 +402,23 @@ export function ServerBoardAttachments(props: Props) {
     </>
   );
 
+  if (
+    paneSection &&
+    (listStatus === "idle" ||
+      listStatus === "loading" ||
+      (listStatus === "ready" && items.length === 0))
+  )
+    return null;
   return (
-    <section aria-label={title} className="mt-3 min-w-0">
-      {props.access === "read" ? (
+    <section
+      aria-label={paneSection ? "Files" : title}
+      className={paneSection ? "min-w-0" : "mt-3 min-w-0"}
+    >
+      {paneSection ? (
+        <h3 data-slot="section-title" className="text-sm font-medium">
+          Files
+        </h3>
+      ) : props.access === "read" ? (
         <Button
           type="button"
           variant="ghost"

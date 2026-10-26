@@ -1,4 +1,4 @@
-import { authMeBody, expect, test } from "./helpers/test";
+import { authMeBody, expect, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -176,7 +176,7 @@ test("read-only Boards viewers cannot open the post editor", async ({
   await page.goto(`/boards?board=${boardId}&section=posts`);
   await access;
   await expect(
-    page.getByRole("heading", { name: "Published posts", exact: true }),
+    page.getByRole("region", { name: "Posts", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "New post", exact: true }),
@@ -594,9 +594,12 @@ test("post editor retains a canceled close and discards only on confirmation", a
 }) => {
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "New post", exact: true }).click();
+  await page
+    .getByRole("button", { name: "New post", exact: true })
+    .first()
+    .click();
   const editor = page.getByRole("dialog", {
-    name: "Post editor",
+    name: "New post",
     exact: true,
   });
   await editor.getByLabel("Title", { exact: true }).fill("Draft to keep");
@@ -629,9 +632,12 @@ test("a live refresh keeps an open post draft mounted and editable", async ({
   await installOpenViewEventSource(page);
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "New post", exact: true }).click();
+  await page
+    .getByRole("button", { name: "New post", exact: true })
+    .first()
+    .click();
   const editor = page.getByRole("dialog", {
-    name: "Post editor",
+    name: "New post",
     exact: true,
   });
   const title = editor.getByLabel("Title", { exact: true });
@@ -661,15 +667,15 @@ test("a live refresh keeps an open post draft mounted and editable", async ({
   release();
   await expect(title).toHaveValue("Draft to keep");
   await expect(
-    editor.getByText("Loading editable posts…", { exact: true }),
+    editor.getByText("Opening the post…", { exact: true }),
   ).toHaveCount(0);
 });
 
 test("the post editor has no audience choice", async ({ page }) => {
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "New post" }).click();
-  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
+  await page.getByRole("button", { name: "New post" }).first().click();
+  const editor = page.getByRole("dialog", { name: "New post", exact: true });
   await expect(editor.getByLabel("Title", { exact: true })).toBeVisible();
   await expect(editor.getByRole("combobox", { name: "Audience" })).toHaveCount(
     0,
@@ -1096,10 +1102,8 @@ test("Board Record link labels refresh after linked module invalidations", async
   ).toHaveCount(0);
 });
 
-test("an author can archive their own editable post with current revisions", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
+/** An author's published post, another author's, and their revisions. */
+async function installAuthorPosts(page: Page, archiveStatus: 200 | 409) {
   await installBoardApi(page, () => true, authorAccess);
   const postId = "00000000-0000-4000-8000-000000000041";
   const otherPostId = "00000000-0000-4000-8000-000000000042";
@@ -1116,18 +1120,17 @@ test("an author can archive their own editable post with current revisions", asy
     publish_at: now,
     expires_at: null,
     pinned: false,
-    post_revision: 3,
+    post_revision: null,
     board_revision: 1,
-    publication_number: null,
-    published_at: null,
+    publication_number: 1,
+    published_at: now,
     edited: false,
     created_at: now,
     updated_at: now,
   });
   const ownPost = post(postId, userId, "My editable notice");
   const otherPost = post(otherPostId, otherAuthorId, "Another author's notice");
-  let archived = false;
-  let archiveBody: unknown = null;
+  const state = { archived: false, archiveBody: null as unknown };
   await page.route(`**/api/boards/${boardId}/posts**`, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -1139,162 +1142,110 @@ test("an author can archive their own editable post with current revisions", asy
         body: JSON.stringify(body),
       });
     if (path === `/api/boards/${boardId}/posts` && request.method() === "GET") {
-      const view = url.searchParams.get("view");
       const items =
-        view === "editable"
-          ? archived
+        url.searchParams.get("view") === "published"
+          ? state.archived
             ? [otherPost]
             : [ownPost, otherPost]
           : [];
       return reply(200, { ...pageOf(items, { limit: 25 }), board_revision: 1 });
     }
-    if (
-      path === `/api/boards/${boardId}/posts/${postId}` &&
-      request.method() === "GET"
-    )
-      return archived
-        ? reply(404, { detail: "Post not found" })
-        : reply(200, ownPost);
+    for (const item of [ownPost, otherPost])
+      if (path === `/api/boards/${boardId}/posts/${item.id}`)
+        return state.archived && item === ownPost
+          ? reply(404, { detail: "Post not found" })
+          : reply(200, item);
+    if (path === `/api/boards/${boardId}/posts/${postId}/manage-state`)
+      return reply(200, {
+        id: postId,
+        status: "published",
+        board_revision: 1,
+        post_revision: 3,
+        published_before: true,
+      });
     if (
       path === `/api/boards/${boardId}/posts/${postId}/archive` &&
       request.method() === "POST"
     ) {
-      archiveBody = request.postDataJSON();
-      archived = true;
-      return reply(200, {
-        id: postId,
-        post_revision: 4,
-        board_revision: 2,
-      });
+      state.archiveBody = request.postDataJSON();
+      if (archiveStatus === 409)
+        return reply(409, {
+          detail: {
+            code: "stale_post_revision",
+            message: "Post changed; reload before saving",
+          },
+        });
+      state.archived = true;
+      return reply(200, { id: postId, post_revision: 4, board_revision: 2 });
     }
+    if (path.endsWith("/attachments") || path.endsWith("/record-links"))
+      return reply(200, { items: [], limit: 25, offset: 0, has_more: false });
     return reply(404, { detail: "Unmocked author post route" });
   });
+  return { postId, otherPostId, state };
+}
 
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "More post actions" }).click();
-  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
-  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
-  const ownPostChoice = editor.getByRole("button", {
-    name: "My editable notice · Published",
-  });
-  await expect(ownPostChoice).toBeVisible();
-  await expect(
-    editor.getByRole("button", { name: /Another author's notice/ }),
-  ).toHaveCount(0);
-  await ownPostChoice.click();
-  const archiveButton = editor.getByRole("button", {
-    name: "Archive post",
-    exact: true,
-  });
-  await expect(archiveButton).toBeVisible();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(archiveButton).toBeVisible();
-  await archiveButton.scrollIntoViewIfNeeded();
-  const confirmation = page.getByRole("alertdialog", {
-    name: "Archive post?",
-  });
-  await archiveButton.click();
-  await expect(confirmation).toBeVisible();
-  const archivedResponse = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname ===
-        `/api/boards/${boardId}/posts/${postId}/archive` &&
-      response.request().method() === "POST",
-  );
-  await confirmation
-    .getByRole("button", { name: "Archive post", exact: true })
-    .click();
-  const response = await archivedResponse;
-  expect(response.status()).toBe(200);
-  await expect(editor.getByText("Post archived.")).toBeVisible();
-  await expect(ownPostChoice).toHaveCount(0);
-  expect(archiveBody).toEqual({ board_revision: 1, post_revision: 3 });
-});
-
-test("a stale author post archive preserves the selected post and local form", async ({
+test("an author archives their own post from the reading pane with current revisions", async ({
   page,
 }) => {
-  await installBoardApi(page, () => true, authorAccess);
-  const postId = "00000000-0000-4000-8000-000000000051";
-  const now = "2026-09-25T00:00:00Z";
-  const ownPost = {
-    id: postId,
-    board_id: boardId,
-    author_id: userId,
-    title: "My notice",
-    body: "Keep this saved text.",
-    links: [],
-    status: "published",
-    publish_at: now,
-    expires_at: null,
-    pinned: false,
-    post_revision: 3,
-    board_revision: 1,
-    publication_number: null,
-    published_at: null,
-    edited: false,
-    created_at: now,
-    updated_at: now,
-  };
-  await page.route(`**/api/boards/${boardId}/posts**`, async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    const path = url.pathname;
-    const reply = (status: number, body: unknown) =>
-      route.fulfill({
-        status,
-        contentType: "application/json",
-        body: JSON.stringify(body),
-      });
-    if (path === `/api/boards/${boardId}/posts` && request.method() === "GET") {
-      const items =
-        url.searchParams.get("view") === "editable" ? [ownPost] : [];
-      return reply(200, { ...pageOf(items, { limit: 25 }), board_revision: 1 });
-    }
-    if (
-      path === `/api/boards/${boardId}/posts/${postId}` &&
-      request.method() === "GET"
-    )
-      return reply(200, ownPost);
-    if (
-      path === `/api/boards/${boardId}/posts/${postId}/archive` &&
-      request.method() === "POST"
-    )
-      return reply(409, {
-        detail: {
-          code: "stale_post_revision",
-          message: "Post changed; reload before saving",
-        },
-      });
-    return reply(404, { detail: "Unmocked author post route" });
-  });
+  const api = await installAuthorPosts(page, 200);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(
+    `/boards?board=${boardId}&section=posts&post=${api.otherPostId}`,
+  );
+  const other = page.getByRole("article", { name: "Another author's notice" });
+  await other.getByRole("button", { name: "More post actions" }).click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Copy link"]);
+  await page.keyboard.press("Escape");
+  await expect(other.getByRole("button", { name: "Edit" })).toHaveCount(0);
 
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "More post actions" }).click();
-  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
-  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
-  await editor.getByRole("button", { name: "My notice · Published" }).click();
-  const title = editor.getByLabel("Title", { exact: true });
-  const archiveButton = editor.getByRole("button", {
-    name: "Archive post",
-    exact: true,
-  });
-  await expect(archiveButton).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/boards?board=${boardId}&section=posts&post=${api.postId}`);
+  const own = page.getByRole("article", { name: "My editable notice" });
+  await own.getByRole("button", { name: "More post actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
   const confirmation = page.getByRole("alertdialog", {
     name: "Archive post?",
   });
-  await archiveButton.click();
+  await expect(confirmation).toBeVisible();
   await confirmation
     .getByRole("button", { name: "Archive post", exact: true })
     .click();
+  await expect(page.getByText("Post archived", { exact: true })).toBeVisible();
+  expect(api.state.archiveBody).toEqual({
+    board_revision: 1,
+    post_revision: 3,
+  });
+  await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
   await expect(
-    editor.getByText(/Post changed; reload before saving/),
-  ).toBeVisible();
-  await expect(title).toHaveValue("My notice");
+    page
+      .getByRole("region", { name: "Posts", exact: true })
+      .getByText("My editable notice"),
+  ).toHaveCount(0);
+});
+
+test("a stale archive keeps the post open and says it changed elsewhere", async ({
+  page,
+}) => {
+  const api = await installAuthorPosts(page, 409);
+  await page.goto(`/boards?board=${boardId}&section=posts&post=${api.postId}`);
+  const own = page.getByRole("article", { name: "My editable notice" });
+  await own.getByRole("button", { name: "More post actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
+  await page
+    .getByRole("alertdialog", { name: "Archive post?" })
+    .getByRole("button", { name: "Archive post", exact: true })
+    .click();
   await expect(
-    editor.getByRole("button", { name: "My notice · Published" }),
+    page
+      .getByText(
+        "This post changed elsewhere. Refresh posts before trying again.",
+        { exact: true },
+      )
+      .first(),
   ).toBeVisible();
-  await expect(archiveButton).toBeDisabled();
+  await expect(page.getByText("Post archived", { exact: true })).toHaveCount(0);
+  await expect(own).toBeVisible();
 });
 
 test("an author links a Record using its off-page title field without crawling the catalog", async ({
@@ -1474,11 +1425,12 @@ test("an author links a Record using its off-page title field without crawling t
     });
   });
 
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "More post actions" }).click();
-  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
-  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
-  await editor.getByRole("button", { name: "Request handoff" }).click();
+  await page.goto(`/boards?board=${boardId}&section=posts&show=drafts`);
+  await page
+    .getByRole("article", { name: "Request handoff", exact: true })
+    .getByRole("button", { name: "Edit", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", { name: "Edit post", exact: true });
   const links = editor.getByRole("region", { name: "Record links" });
   await expect(links).toContainText("Record links could not be loaded.");
   await expect

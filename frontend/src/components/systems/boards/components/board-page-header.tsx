@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { DepartmentMark } from "@/components/sandbox/department-mark";
+import { LevelBadge } from "@/components/systems/comms/components/member-level";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,12 +49,6 @@ const BOARD_TABS: readonly {
   { id: "calendar", label: "Calendar", icon: CalendarDays },
 ];
 
-const LEVEL_LABELS: Record<BoardAccessLevel, string> = {
-  read: "Read",
-  write: "Post",
-  manage: "Manager",
-};
-
 /** "Sales announcements", "Company announcements" (BR47). */
 export function boardPageTitle(board: {
   scope: BoardManagementBoard["scope"];
@@ -76,17 +71,7 @@ export function boardAudience(board: {
 
 /** The viewer's level on a board: only Manager is tinted (BR6). */
 export function BoardLevelChip({ level }: { level: BoardAccessLevel }) {
-  return (
-    <Badge
-      variant={level === "manage" ? "default" : "outline"}
-      className={cn(
-        "h-[22px] shrink-0",
-        level === "manage" && "bg-action-tint text-action-text",
-      )}
-    >
-      {LEVEL_LABELS[level]}
-    </Badge>
-  );
+  return <LevelBadge level={level === "write" ? "post" : level} />;
 }
 
 const quietControl = "min-h-11 xl:min-h-8";
@@ -135,7 +120,7 @@ export function BoardPageHeader({
           <>
             <BoardLevelChip level={board.level} />
             {board.status === "archived" ? (
-              <Badge variant="outline" className="h-[22px] shrink-0">
+              <Badge variant="outline" className="shrink-0">
                 Archived
               </Badge>
             ) : null}
@@ -158,7 +143,7 @@ export function BoardPageHeader({
                   render={
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="outline"
                       className={cn(
                         quietControl,
                         "max-sm:min-w-11 max-sm:px-0",

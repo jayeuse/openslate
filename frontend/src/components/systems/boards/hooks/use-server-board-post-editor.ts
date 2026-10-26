@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
-  archiveBoardPost,
   createBoardPost,
   listBoardPosts,
   publishBoardPost,
@@ -69,7 +68,6 @@ export function useServerBoardPostEditor({
   const [state, setState] = useState<PostEditorState>(() =>
     emptyState(key, boardRevision),
   );
-  const [offset, setOffset] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
   const [deviceTimeZone, setDeviceTimeZone] = useState(
     "your device's local time zone",
@@ -142,7 +140,6 @@ export function useServerBoardPostEditor({
       operationPendingRef.current = false;
       attachmentPendingRef.current = false;
       recordLinkPendingRef.current = false;
-      setOffset(0);
     }
     if (boardStatus !== "active") {
       setState({ ...emptyState(key, boardRevision), status: "ready" });
@@ -166,10 +163,11 @@ export function useServerBoardPostEditor({
           });
           return;
         }
+        // One row is enough: the read carries the board's current revision.
         const page = await listBoardPosts(boardId, {
           view: "editable",
-          limit: 25,
-          offset,
+          limit: 1,
+          offset: 0,
           sortBy: "updated_at",
           sortOrder: "desc",
         });
@@ -215,16 +213,7 @@ export function useServerBoardPostEditor({
     return () => {
       loadSequence.current += 1;
     };
-  }, [
-    actorId,
-    boardId,
-    boardRevision,
-    boardStatus,
-    key,
-    offset,
-    refreshKey,
-    retryKey,
-  ]);
+  }, [actorId, boardId, boardRevision, boardStatus, key, refreshKey, retryKey]);
 
   const access = current.access;
   // A background re-check keeps this Board's last confirmed access, so open menus
@@ -234,29 +223,13 @@ export function useServerBoardPostEditor({
     (current.status === "ready" || current.status === "loading") &&
     access?.edit === true;
   const canManage = access?.manage === true;
-  const canArchiveSelected =
-    canEdit &&
-    current.selected !== null &&
-    current.selected.authorId === actorId &&
-    current.selected.boardId === boardId &&
-    current.selected.status !== "archived" &&
-    current.selected.postRevision !== null;
   const scheduleDirty =
     current.scheduleLocal !== postLocalScheduleValue(current.selected);
-  const drafts = canEdit
-    ? (current.page?.items.filter(
-        (item) => canManage || item.authorId === actorId,
-      ) ?? [])
-    : [];
   const view: PostEditorView = {
     status: current.status,
     active: boardStatus === "active",
     canEdit,
     canManage,
-    drafts,
-    offset,
-    total: canEdit ? (current.page?.pagination.total ?? 0) : 0,
-    hasMore: canEdit ? (current.page?.pagination.hasMore ?? false) : false,
     selected: canEdit ? current.selected : null,
     form: canEdit ? current.form : null,
     dirty: dirty(current.form, current.selected),
@@ -270,7 +243,6 @@ export function useServerBoardPostEditor({
     conflict: current.conflict,
     error: current.error,
     notice: canEdit ? current.notice : null,
-    displayed: canEdit ? current.displayed : null,
   };
 
   function newDraft() {
@@ -291,35 +263,7 @@ export function useServerBoardPostEditor({
       form: { title: "", body: "", links: [], pinned: false, expiresLocal: "" },
       scheduleLocal: "",
       scheduleError: null,
-      displayed: null,
-      conflict: false,
-      error: null,
-      notice: null,
-    }));
-  }
-
-  function selectDraft(item: BoardPost) {
-    if (
-      !canEdit ||
-      current.pending ||
-      attachmentPendingRef.current ||
-      recordLinkPendingRef.current ||
-      dirty(current.form, current.selected) ||
-      scheduleDirty ||
-      item.boardId !== boardId
-    )
-      return;
-    if (item.authorId !== actorId && !canManage) return;
-    selectedRef.current = item;
-    publishKeyRef.current = null;
-    setState((previous) => ({
-      ...previous,
-      selected: item,
-      form: formFor(item),
       expiryError: null,
-      scheduleLocal: postLocalScheduleValue(item),
-      scheduleError: null,
-      displayed: null,
       conflict: false,
       error: null,
       notice: null,
@@ -352,22 +296,19 @@ export function useServerBoardPostEditor({
     );
   }
 
-  async function save() {
-    if (
-      !canEdit ||
-      current.pending ||
-      attachmentPendingRef.current ||
-      recordLinkPendingRef.current ||
-      current.conflict ||
-      operationPendingRef.current ||
-      !valid(current.form)
-    )
-      return;
-    const form = current.form;
-    const selected = current.selected;
-    let expiresAt: string | null;
+  const busy = () =>
+    !canEdit ||
+    current.pending ||
+    attachmentPendingRef.current ||
+    recordLinkPendingRef.current ||
+    current.conflict ||
+    operationPendingRef.current;
+
+  /** Marks an invalid local expiry; true when the form cannot be saved. */
+  function rejectExpiry(form: PostEditorForm): boolean {
     try {
-      expiresAt = postExpiryTimeToUtc(form.expiresLocal);
+      postExpiryTimeToUtc(form.expiresLocal);
+      return false;
     } catch {
       setState((previous) =>
         previous.key === key
@@ -378,105 +319,80 @@ export function useServerBoardPostEditor({
             }
           : previous,
       );
-      return;
-    }
-    if (selected && !dirty(form, selected)) return;
-    if (selected && selected.authorId !== actorId && !canManage) return;
-    const operation = ++mutationSequence.current;
-    operationPendingRef.current = true;
-    setState((previous) =>
-      previous.key === key
-        ? { ...previous, pending: true, error: null, notice: null }
-        : previous,
-    );
-    try {
-      const result = selected
-        ? await updateBoardPost(
-            boardId,
-            selected.id,
-            postPatchForForm(selected, form, current.boardRevision, canManage),
-          )
-        : await createBoardPost(boardId, {
-            boardRevision: current.boardRevision,
-            title: form.title,
-            body: form.body,
-            links: form.links,
-            expiresAt,
-            ...(canManage ? { pinned: form.pinned } : {}),
-          });
-      const saved = await readBoardPost(boardId, result.id, "draft");
-      if (operation !== mutationSequence.current) return;
-      selectedRef.current = saved;
-      publishKeyRef.current = null;
-      setState((previous) =>
-        previous.key === key
-          ? {
-              ...previous,
-              selected: saved,
-              form: formFor(saved),
-              expiryError: null,
-              scheduleLocal: postLocalScheduleValue(saved),
-              scheduleError: null,
-              boardRevision: result.boardRevision,
-              pending: false,
-              conflict: false,
-              error: null,
-              notice: "Draft saved.",
-            }
-          : previous,
-      );
-      if (mountedRef.current && activeKeyRef.current === key)
-        onPublished?.(boardId);
-      setRetryKey((value) => value + 1);
-    } catch (error) {
-      if (operation !== mutationSequence.current) return;
-      if (isDenial(error)) selectedRef.current = null;
-      setState((previous) =>
-        previous.key === key ? editorFailure(previous, error) : previous,
-      );
-    } finally {
-      if (operation === mutationSequence.current) {
-        operationPendingRef.current = false;
-        flushDeferredReload();
-      }
+      return true;
     }
   }
 
-  async function schedule() {
-    const selected = current.selected;
-    const form = current.form;
-    if (
-      !canEdit ||
-      current.pending ||
-      attachmentPendingRef.current ||
-      recordLinkPendingRef.current ||
-      current.conflict ||
-      operationPendingRef.current ||
-      !selected ||
-      selected.postRevision === null ||
-      !form ||
-      dirty(form, selected) ||
-      (selected.authorId !== actorId && !canManage)
-    )
-      return;
-    const converted = postScheduleTimeToUtc(
-      current.scheduleLocal,
-      Date.now(),
-      selected.expiresAt,
+  /** Creates or updates the draft, then reads it back as the server keeps it. */
+  async function persist(
+    form: PostEditorForm,
+    selected: BoardPost | null,
+    revision: number,
+  ): Promise<{ saved: BoardPost; boardRevision: number }> {
+    const result = selected
+      ? await updateBoardPost(
+          boardId,
+          selected.id,
+          postPatchForForm(selected, form, revision, canManage),
+        )
+      : await createBoardPost(boardId, {
+          boardRevision: revision,
+          title: form.title,
+          body: form.body,
+          links: form.links,
+          expiresAt: postExpiryTimeToUtc(form.expiresLocal),
+          ...(canManage ? { pinned: form.pinned } : {}),
+        });
+    const saved = await readBoardPost(boardId, result.id, "draft");
+    return { saved, boardRevision: result.boardRevision };
+  }
+
+  /** The editor now holds the saved draft; `pending` stays for a next step. */
+  function adopt(
+    saved: BoardPost,
+    revision: number,
+    pending: boolean,
+    notice: string | null,
+  ) {
+    selectedRef.current = saved;
+    publishKeyRef.current = null;
+    setState((previous) =>
+      previous.key === key
+        ? {
+            ...previous,
+            selected: saved,
+            form: formFor(saved),
+            expiryError: null,
+            scheduleLocal: pending
+              ? previous.scheduleLocal
+              : postLocalScheduleValue(saved),
+            scheduleError: null,
+            boardRevision: revision,
+            pending,
+            conflict: false,
+            error: null,
+            notice,
+          }
+        : previous,
     );
-    if (!converted.ok) {
-      setState((previous) =>
-        previous.key === key
-          ? { ...previous, scheduleError: scheduleTimeError(converted.reason) }
-          : previous,
-      );
-      return;
+  }
+
+  function failed(operation: number, error: unknown) {
+    if (operation !== mutationSequence.current) return;
+    if (isDenial(error)) selectedRef.current = null;
+    setState((previous) =>
+      previous.key === key ? editorFailure(previous, error) : previous,
+    );
+  }
+
+  function settle(operation: number) {
+    if (operation === mutationSequence.current) {
+      operationPendingRef.current = false;
+      flushDeferredReload();
     }
-    if (
-      selected.status === "scheduled" &&
-      converted.publishAt === selected.publishAt
-    )
-      return;
+  }
+
+  function begin(): number {
     const operation = ++mutationSequence.current;
     operationPendingRef.current = true;
     setState((previous) =>
@@ -490,10 +406,84 @@ export function useServerBoardPostEditor({
           }
         : previous,
     );
+    return operation;
+  }
+
+  function owns(selected: BoardPost | null): boolean {
+    return !selected || selected.authorId === actorId || canManage;
+  }
+
+  async function save() {
+    const form = current.form;
+    const selected = current.selected;
+    if (busy() || !valid(form) || !owns(selected)) return;
+    // A published post saves as a draft even unchanged, so its files and
+    // record links can be edited before it is published again.
+    if (selected && !dirty(form, selected) && selected.status !== "published")
+      return;
+    if (rejectExpiry(form)) return;
+    const operation = begin();
     try {
-      const result = await scheduleBoardPost(boardId, selected.id, {
-        boardRevision: current.boardRevision,
-        postRevision: selected.postRevision,
+      const { saved, boardRevision: revision } = await persist(
+        form,
+        selected,
+        current.boardRevision,
+      );
+      if (operation !== mutationSequence.current) return;
+      adopt(saved, revision, false, "Draft saved.");
+      if (mountedRef.current && activeKeyRef.current === key)
+        onPublished?.(boardId);
+      setRetryKey((value) => value + 1);
+    } catch (error) {
+      failed(operation, error);
+    } finally {
+      settle(operation);
+    }
+  }
+
+  /**
+   * Schedules the post for the chosen local time. Unsaved text is saved as
+   * the draft first, in the same step. Resolves true once it is scheduled.
+   */
+  async function schedule(): Promise<boolean> {
+    const form = current.form;
+    const selected = current.selected;
+    if (busy() || !valid(form) || !owns(selected)) return false;
+    if (rejectExpiry(form)) return false;
+    const converted = postScheduleTimeToUtc(
+      current.scheduleLocal,
+      Date.now(),
+      postExpiryTimeToUtc(form.expiresLocal),
+    );
+    if (!converted.ok) {
+      setState((previous) =>
+        previous.key === key
+          ? { ...previous, scheduleError: scheduleTimeError(converted.reason) }
+          : previous,
+      );
+      return false;
+    }
+    if (
+      selected?.status === "scheduled" &&
+      !dirty(form, selected) &&
+      converted.publishAt === selected.publishAt
+    )
+      return false;
+    const operation = begin();
+    try {
+      let target = selected;
+      let revision = current.boardRevision;
+      if (!target || dirty(form, target)) {
+        const result = await persist(form, target, revision);
+        if (operation !== mutationSequence.current) return false;
+        adopt(result.saved, result.boardRevision, true, null);
+        target = result.saved;
+        revision = result.boardRevision;
+      }
+      if (target.postRevision === null) throw new ApiContractError();
+      const result = await scheduleBoardPost(boardId, target.id, {
+        boardRevision: revision,
+        postRevision: target.postRevision,
         publishAt: converted.publishAt,
       });
       const saved = await readBoardPost(boardId, result.id, "draft");
@@ -503,37 +493,20 @@ export function useServerBoardPostEditor({
         Date.parse(saved.publishAt) !== Date.parse(converted.publishAt)
       )
         throw new ApiContractError();
-      if (operation !== mutationSequence.current) return;
-      selectedRef.current = saved;
-      publishKeyRef.current = null;
-      setState((previous) =>
-        previous.key === key
-          ? {
-              ...previous,
-              selected: saved,
-              form: formFor(saved),
-              expiryError: null,
-              scheduleLocal: postLocalScheduleValue(saved),
-              scheduleError: null,
-              boardRevision: result.boardRevision,
-              pending: false,
-              conflict: false,
-              error: null,
-              notice: "Publication scheduled.",
-            }
-          : previous,
-      );
+      if (operation !== mutationSequence.current) return false;
+      adopt(saved, result.boardRevision, false, "Publication scheduled.");
       if (mountedRef.current && activeKeyRef.current === key)
         onPublished?.(boardId);
       setRetryKey((value) => value + 1);
+      return true;
     } catch (error) {
-      if (operation !== mutationSequence.current) return;
+      if (operation !== mutationSequence.current) return false;
       if (isDenial(error)) selectedRef.current = null;
       setState((previous) => {
         if (previous.key !== key) return previous;
-        const failed = editorFailure(previous, error);
+        const failure = editorFailure(previous, error);
         return {
-          ...failed,
+          ...failure,
           scheduleError:
             error instanceof ApiError &&
             error.status === 422 &&
@@ -542,11 +515,9 @@ export function useServerBoardPostEditor({
               : previous.scheduleError,
         };
       });
+      return false;
     } finally {
-      if (operation === mutationSequence.current) {
-        operationPendingRef.current = false;
-        flushDeferredReload();
-      }
+      settle(operation);
     }
   }
 
@@ -623,162 +594,114 @@ export function useServerBoardPostEditor({
     }
   }
 
-  async function publish() {
+  /**
+   * Publishes the post now. Unsaved text is saved as the draft first, in the
+   * same step; when publishing then fails, the saved draft stays open with the
+   * error. Resolves with the post's id once it is published.
+   */
+  async function publish(): Promise<string | null> {
+    const form = current.form;
     const selected = current.selected;
+    if (busy() || !valid(form) || !owns(selected)) return null;
+    if (rejectExpiry(form)) return null;
+    const operation = begin();
+    try {
+      let target = selected;
+      let revision = current.boardRevision;
+      if (!target || dirty(form, target)) {
+        const result = await persist(form, target, revision);
+        if (operation !== mutationSequence.current) return null;
+        adopt(result.saved, result.boardRevision, true, null);
+        target = result.saved;
+        revision = result.boardRevision;
+      }
+      if (target.postRevision === null) throw new ApiContractError();
+      const sameKey = publishKeyRef.current;
+      const publicationKey =
+        sameKey?.id === target.id && sameKey.revision === target.postRevision
+          ? sameKey.key
+          : crypto.randomUUID();
+      publishKeyRef.current = {
+        id: target.id,
+        revision: target.postRevision,
+        key: publicationKey,
+      };
+      await publishBoardPost(boardId, target.id, {
+        boardRevision: revision,
+        postRevision: target.postRevision,
+        publicationKey,
+      });
+      if (operation !== mutationSequence.current) return null;
+      selectedRef.current = null;
+      publishKeyRef.current = null;
+      setState((previous) =>
+        previous.key === key
+          ? {
+              ...previous,
+              selected: null,
+              form: null,
+              scheduleLocal: "",
+              scheduleError: null,
+              pending: false,
+              conflict: false,
+              error: null,
+              notice: null,
+            }
+          : previous,
+      );
+      if (mountedRef.current && activeKeyRef.current === key)
+        onPublished?.(boardId);
+      setRetryKey((value) => value + 1);
+      return target.id;
+    } catch (error) {
+      failed(operation, error);
+      return null;
+    } finally {
+      settle(operation);
+    }
+  }
+
+  /** Opens a post the viewer may change, read as its editable version. */
+  async function edit(postId: string): Promise<boolean> {
     if (
       !canEdit ||
       current.pending ||
       attachmentPendingRef.current ||
       recordLinkPendingRef.current ||
-      current.conflict ||
-      operationPendingRef.current ||
-      scheduleDirty ||
-      !selected ||
-      selected.postRevision === null ||
-      dirty(current.form, selected) ||
-      (selected.authorId !== actorId && !canManage)
+      dirty(current.form, current.selected) ||
+      scheduleDirty
     )
-      return;
+      return false;
     const operation = ++mutationSequence.current;
-    operationPendingRef.current = true;
-    const sameKey = publishKeyRef.current;
-    const publicationKey =
-      sameKey?.id === selected.id && sameKey.revision === selected.postRevision
-        ? sameKey.key
-        : crypto.randomUUID();
-    publishKeyRef.current = {
-      id: selected.id,
-      revision: selected.postRevision,
-      key: publicationKey,
-    };
-    setState((previous) =>
-      previous.key === key
-        ? { ...previous, pending: true, error: null, notice: null }
-        : previous,
-    );
     try {
-      const publication = await publishBoardPost(boardId, selected.id, {
-        boardRevision: current.boardRevision,
-        postRevision: selected.postRevision,
-        publicationKey,
-      });
-      if (operation !== mutationSequence.current) return;
-      selectedRef.current = null;
-      publishKeyRef.current = null;
-      let displayed: BoardPost | null = null;
-      let notice = "Published successfully.";
-      try {
-        const currentDisplay = await readBoardPost(
-          boardId,
-          selected.id,
-          "published",
-        );
-        if (currentDisplay.publicationNumber === publication.publicationNumber)
-          displayed = currentDisplay;
-        else
-          notice =
-            "Published, but a newer displayed revision is available. Refresh the feed.";
-      } catch (error) {
-        notice = isDenial(error)
-          ? "Published, but the displayed revision is unavailable to your account."
-          : "Published. The displayed revision could not be loaded; refresh the feed.";
-      }
-      if (operation !== mutationSequence.current) return;
-      setState((previous) =>
-        previous.key === key
-          ? {
-              ...previous,
-              selected: null,
-              form: null,
-              scheduleLocal: "",
-              scheduleError: null,
-              displayed,
-              pending: false,
-              conflict: false,
-              error: null,
-              notice,
-            }
-          : previous,
-      );
-      if (mountedRef.current && activeKeyRef.current === key)
-        onPublished?.(boardId);
-      setRetryKey((value) => value + 1);
-    } catch (error) {
-      if (operation !== mutationSequence.current) return;
-      if (isDenial(error)) selectedRef.current = null;
-      setState((previous) =>
-        previous.key === key ? editorFailure(previous, error) : previous,
-      );
-    } finally {
-      if (operation === mutationSequence.current) {
-        operationPendingRef.current = false;
-        flushDeferredReload();
-      }
-    }
-  }
-
-  async function archiveSelected() {
-    const selected = current.selected;
-    if (
-      !canArchiveSelected ||
-      current.pending ||
-      attachmentPendingRef.current ||
-      recordLinkPendingRef.current ||
-      current.conflict ||
-      operationPendingRef.current ||
-      dirty(current.form, selected) ||
-      scheduleDirty ||
-      !selected ||
-      selected.postRevision === null
-    )
-      return;
-    const operation = ++mutationSequence.current;
-    operationPendingRef.current = true;
-    setState((previous) =>
-      previous.key === key
-        ? { ...previous, pending: true, error: null, notice: null }
-        : previous,
-    );
-    try {
-      const result = await archiveBoardPost(
-        boardId,
-        selected.id,
-        current.boardRevision,
-        selected.postRevision,
-      );
-      if (operation !== mutationSequence.current) return;
-      selectedRef.current = null;
+      const item = await readBoardPost(boardId, postId, "editable");
+      if (
+        operation !== mutationSequence.current ||
+        activeKeyRef.current !== key
+      )
+        return false;
+      if (item.authorId !== actorId && !canManage) return false;
+      selectedRef.current = item;
       publishKeyRef.current = null;
       setState((previous) =>
         previous.key === key
           ? {
               ...previous,
-              selected: null,
-              form: null,
-              scheduleLocal: "",
+              selected: item,
+              form: formFor(item),
+              expiryError: null,
+              scheduleLocal: postLocalScheduleValue(item),
               scheduleError: null,
-              boardRevision: result.boardRevision,
-              pending: false,
               conflict: false,
               error: null,
-              notice: "Post archived.",
+              notice: null,
             }
           : previous,
       );
-      if (mountedRef.current && activeKeyRef.current === key)
-        onPublished?.(boardId);
-      setRetryKey((value) => value + 1);
+      return true;
     } catch (error) {
-      if (operation !== mutationSequence.current) return;
-      if (isDenial(error)) selectedRef.current = null;
-      setState((previous) =>
-        previous.key === key ? editorFailure(previous, error) : previous,
-      );
-    } finally {
-      if (operation === mutationSequence.current) {
-        operationPendingRef.current = false;
-        flushDeferredReload();
-      }
+      failed(operation, error);
+      return false;
     }
   }
 
@@ -902,13 +825,11 @@ export function useServerBoardPostEditor({
 
   return {
     view,
-    canArchiveSelected,
-    archiveSelected,
     newDraft,
-    selectDraft,
+    edit,
     changeForm,
     changeScheduleTime: (scheduleLocal: string) => {
-      if (!canEdit || current.pending || current.conflict || !current.selected)
+      if (!canEdit || current.pending || current.conflict || !current.form)
         return;
       setState((previous) =>
         previous.key === key
@@ -925,6 +846,5 @@ export function useServerBoardPostEditor({
     refreshAttachmentVersions,
     retry: () => setRetryKey((value) => value + 1),
     close,
-    page: (nextOffset: number) => setOffset(Math.max(0, nextOffset)),
   };
 }

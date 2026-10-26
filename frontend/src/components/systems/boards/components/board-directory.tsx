@@ -33,6 +33,8 @@ import {
   companyBoardHref,
   projectBoardHref,
 } from "@/components/boards-navigation-model";
+import { tintRowClassName } from "@/components/systems/access/components/row-open-button";
+import { cn } from "@/lib/utils";
 import { BoardLevelChip } from "./board-page-header";
 import { BoardEmpty } from "./ui";
 
@@ -57,7 +59,7 @@ export function boardDirectoryEmptyCopy(
   return status === "archived"
     ? {
         title: "No archived boards",
-        description: "Archived boards you can read appear here.",
+        description: "Admins archive a board when its work ends.",
       }
     : {
         title: "No boards yet",
@@ -173,9 +175,9 @@ export function BoardDirectory({
         label="Loading boards…"
         className="flex min-w-0 flex-col *:flex *:min-w-0 *:flex-col *:gap-3 xl:min-h-0 xl:flex-1 xl:*:min-h-0 xl:*:flex-1"
         skeleton={
-          <div className="flex flex-col gap-1 rounded-md border p-2">
+          <div className="flex flex-col gap-px rounded-md border">
             {[0, 1, 2, 3].map((row) => (
-              <Skeleton key={row} className="h-8" />
+              <Skeleton key={row} className="h-10" />
             ))}
           </div>
         }
@@ -211,7 +213,7 @@ export function BoardDirectory({
             ) : null}
           </BoardEmpty>
         ) : (
-          <div className="bg-card relative min-w-0 overflow-y-auto overscroll-contain rounded-md border xl:min-h-0 xl:flex-1">
+          <div className="bg-card relative min-w-0 overflow-y-auto overscroll-contain rounded-md border xl:min-h-0 xl:flex-initial">
             <ul aria-label="All boards" className="divide-y">
               {boards.map((board) => {
                 const index = board.departmentId
@@ -227,7 +229,10 @@ export function BoardDirectory({
                             ? announcementsHref(board.departmentId)
                             : projectBoardHref(board.id)) as Route
                       }
-                      className="hover:bg-muted focus-visible:outline-ring flex min-h-11 items-center gap-3 px-3 text-sm outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 xl:min-h-10"
+                      className={cn(
+                        tintRowClassName,
+                        "focus-visible:outline-ring flex min-h-11 items-center gap-3 px-3 text-sm outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 xl:min-h-10",
+                      )}
                     >
                       <span className="text-muted-foreground grid size-4 shrink-0 place-items-center">
                         {board.scope === "department" ? (
@@ -241,7 +246,7 @@ export function BoardDirectory({
                         )}
                       </span>
                       <span className="min-w-0 flex-1 truncate font-medium">
-                        {board.name}
+                        {board.scope === "company" ? "Company" : board.name}
                       </span>
                       <span className="text-muted-foreground shrink-0">
                         {KIND_WORDS[board.scope]}
@@ -254,7 +259,7 @@ export function BoardDirectory({
             </ul>
             {read.data?.pagination.hasMore ? (
               <p className="text-muted-foreground border-t px-3 py-2 text-sm">
-                Showing the first {boards.length} boards. Search to find others.
+                Showing the first {boards.length} boards.
               </p>
             ) : null}
           </div>

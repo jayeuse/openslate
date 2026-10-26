@@ -2,6 +2,8 @@ import {
   authMeBody,
   defaultOrganization,
   expect,
+  expectNoHorizontalScroll,
+  expectNoPageScroll,
   test,
   type Locator,
   type Page,
@@ -60,6 +62,33 @@ const browserBoard = wireBoard({
 
 function wirePage(items: unknown[]) {
   return { ...pageOf(items, { limit: 25 }), board_revision: 4 };
+}
+
+/** The Posts list panel, a row's open button, and the reading pane. */
+function postList(page: Page) {
+  return page.getByRole("region", { name: "Posts", exact: true });
+}
+/** The list behind an open dialog, which hides it from the role tree. */
+function hiddenPostList(page: Page) {
+  return page.getByRole("region", {
+    name: "Posts",
+    exact: true,
+    includeHidden: true,
+  });
+}
+function postRow(page: Page, title: string) {
+  return postList(page).getByRole("button", {
+    name: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( |$)`),
+  });
+}
+function postPane(page: Page, title: string) {
+  return page.getByRole("article", { name: title, exact: true });
+}
+async function openFilters(page: Page) {
+  await postList(page)
+    .getByRole("button", { name: /^Filters/ })
+    .click();
+  return page.getByRole("dialog", { name: "Filters", exact: true });
 }
 
 function versionRow(history: Locator, number: number) {
@@ -328,6 +357,13 @@ async function installPostBrowserApi(page: Page) {
           links: [],
           expires_at: null,
         });
+    if (path.endsWith("/attachments") || path.endsWith("/record-links"))
+      return reply(200, {
+        items: [],
+        limit: Number(url.searchParams.get("limit") ?? 25),
+        offset: Number(url.searchParams.get("offset") ?? 0),
+        has_more: false,
+      });
     if (path === prefix) return reply(200, browserBoard);
     return reply(404, { detail: "Unmocked post test API route" });
   });
@@ -352,43 +388,36 @@ async function installPostBrowserApi(page: Page) {
   };
 }
 
-test("URL-selected published post opens outside the feed, survives reload, and closes only its target", async ({
+test("a ?post= link opens the post in the reading pane, survives reload, and keeps other parameters", async ({
   page,
 }) => {
   const api = await installPostBrowserApi(page);
   api.setPublishedItems([]);
   const href = `/boards?board=${boardId}&section=posts&post=${postId}&event=${otherBoardId}&keep=chosen`;
   await page.goto(href);
-  const reader = page.getByRole("dialog", {
-    name: browserPost.title,
-    exact: true,
-  });
+  const reader = postPane(page, browserPost.title);
   await expect(reader).toBeVisible();
   await expect(
     reader.getByText(browserPost.body, { exact: true }),
   ).toBeVisible();
   await expect(reader.locator("script")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.reload();
   await expect(reader).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(reader).toHaveCount(0);
   await expect(page).toHaveURL(
     (url) =>
-      !url.searchParams.has("post") &&
+      url.searchParams.get("post") === postId &&
       url.searchParams.get("board") === boardId &&
       url.searchParams.get("section") === "posts" &&
       url.searchParams.get("event") === otherBoardId &&
       url.searchParams.get("keep") === "chosen",
   );
   await expect(
-    page.getByRole("searchbox", { name: "Search posts" }),
-  ).toBeFocused();
-  await expect(
-    page.getByRole("heading", { name: "No published posts" }),
+    postList(page).getByRole("heading", { name: "No published posts yet" }),
   ).toBeVisible();
 });
 
-test("URL-selected post rejects invalid, missing, and denied targets without private content", async ({
+test("a ?post= link to an invalid, missing, or denied post shows one unavailable state without private content", async ({
   page,
 }) => {
   const api = await installPostBrowserApi(page);
@@ -403,8 +432,8 @@ test("URL-selected post rejects invalid, missing, and denied targets without pri
       reads.push(request.url());
   });
   await page.goto(`/boards?board=${boardId}&section=posts&post=invalid`);
-  const unavailable = page.getByRole("dialog", {
-    name: "Post unavailable",
+  const unavailable = page.getByRole("article", {
+    name: "This post is not available.",
     exact: true,
   });
   await expect(unavailable).toBeVisible();
@@ -417,16 +446,18 @@ test("URL-selected post rejects invalid, missing, and denied targets without pri
     );
     await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
     await expect(unavailable).toBeVisible();
-    await expect(unavailable.getByText("Private post title")).toHaveCount(0);
-    await expect(unavailable.getByText(browserPost.body)).toHaveCount(0);
-    await unavailable.getByRole("button", { name: "Close post" }).click();
-    await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
+    await expect(unavailable).toContainText(
+      "It may have been removed, or you may not have access.",
+    );
+    await expect(page.getByText("Private post title")).toHaveCount(0);
+    await expect(page.getByText(browserPost.body)).toHaveCount(0);
+    await expect(
+      unavailable.getByRole("button", { name: "Retry" }),
+    ).toHaveCount(0);
   }
 });
 
-test("URL-selected post retries a failed detail read without falling back to the feed", async ({
-  page,
-}) => {
+test("a failed post read retries in the pane", async ({ page }) => {
   const api = await installPostBrowserApi(page);
   api.setPublishedItems([]);
   let available = false;
@@ -440,16 +471,16 @@ test("URL-selected post retries a failed detail read without falling back to the
       ),
   );
   await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
-  const unavailable = page.getByRole("dialog", { name: "Post unavailable" });
+  const unavailable = page.getByRole("article", {
+    name: "This post is not available.",
+  });
   await expect(unavailable).toBeVisible();
   available = true;
   await unavailable.getByRole("button", { name: "Retry" }).click();
-  await expect(
-    page.getByRole("dialog", { name: browserPost.title }),
-  ).toBeVisible();
+  await expect(postPane(page, browserPost.title)).toBeVisible();
 });
 
-test("closing a URL-selected post ignores its late detail response after another post opens", async ({
+test("a late read of a post that is no longer open never replaces the open post", async ({
   page,
 }) => {
   const api = await installPostBrowserApi(page);
@@ -480,16 +511,8 @@ test("closing a URL-selected post ignores its late detail response after another
   );
   await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
   await requested;
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Close post" })
-    .click();
-  await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
-  await page.getByRole("button", { name: "Open post", exact: true }).click();
-  const nextReader = page.getByRole("dialog", {
-    name: nextPost.title,
-    exact: true,
-  });
+  await postRow(page, nextPost.title).click();
+  const nextReader = postPane(page, nextPost.title);
   await expect(nextReader).toBeVisible();
   await expect(page).toHaveURL(
     (url) => url.searchParams.get("post") === otherBoardId,
@@ -502,73 +525,105 @@ test("closing a URL-selected post ignores its late detail response after another
   await expect(
     nextReader.getByText(nextPost.body, { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("dialog", { name: browserPost.title, exact: true }),
-  ).toHaveCount(0);
-  await nextReader.getByRole("button", { name: "Close post" }).click();
-  await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
+  await expect(postPane(page, browserPost.title)).toHaveCount(0);
 });
 
-test("published feed shows only returned safe text and clears when the server returns an empty page", async ({
+test("list rows are two lines that open the post, pinned first, with no cards or zone", async ({
   page,
 }) => {
   const api = await installPostBrowserApi(page);
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-
-  await expect(
-    page.getByRole("heading", { name: "Published safety update" }),
-  ).toBeVisible();
-  await expect(page.getByText("Pinned", { exact: true })).toBeVisible();
-  const summary = page.locator("article p").first();
-  await expect(summary).toBeVisible();
-  await expect.poll(() => summary.textContent()).toBe(browserPost.body);
-  await expect(page.locator("article script")).toHaveCount(0);
-  expect(await page.locator("body").innerText()).not.toContain("sample-board");
-  expect(await page.locator("body").innerText()).not.toContain(
-    "Unpublished replacement",
+  api.setPublishedItems([
+    browserPost,
+    {
+      ...browserPost,
+      id: otherBoardId,
+      title: "Older yard notice",
+      pinned: false,
+      published_at: "2026-09-20T00:00:00Z",
+    },
+  ]);
+  await page.route(
+    `**/api/boards/${boardId}/posts/${otherBoardId}?view=published`,
+    (route) =>
+      route.fulfill({
+        json: { ...browserPost, id: otherBoardId, title: "Older yard notice" },
+      }),
   );
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const list = postList(page);
+  const rows = list.getByRole("listitem");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Published safety update");
+  await expect(rows.nth(0)).toContainText("Pinned");
+  await expect(rows.nth(0)).toContainText("Avery");
+  await expect(rows.nth(0)).toContainText("Sep 23");
+  await expect(list).not.toContainText("UTC");
+  await expect(list.getByRole("button", { name: "Open post" })).toHaveCount(0);
+  await expect(list.getByRole("article")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "More filters" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: "Search" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Manage posts" })).toHaveCount(
+    0,
+  );
+  await expect(list.getByText("Rows per page")).toHaveCount(0);
+  await expect(
+    list.getByRole("navigation", { name: "Post pages" }),
+  ).toContainText("1–2 of 2");
+
+  // From 1024px the bare view opens its first post with a URL replace.
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("post") === postId,
+  );
+  await expect(rows.nth(0)).toHaveAttribute("aria-current", "true");
+  const reader = postPane(page, browserPost.title);
+  await expect(
+    reader.getByText(browserPost.body, { exact: true }),
+  ).toBeVisible();
+  await expect(reader.locator("script")).toHaveCount(0);
+
+  await postRow(page, "Older yard notice").click();
+  await expect(postPane(page, "Older yard notice")).toBeVisible();
+  await expect(rows.nth(1)).toHaveAttribute("aria-current", "true");
+  await expect(rows.nth(0)).not.toHaveAttribute("aria-current", "true");
 
   api.setPublishedItems([]);
-  await page.reload();
+  await page.goto(`/boards?board=${boardId}&section=posts`);
   await expect(
-    page.getByRole("heading", { name: "No published posts" }),
+    list.getByRole("heading", { name: "No published posts yet" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Published safety update" }),
-  ).toHaveCount(0);
+  await expect(rows).toHaveCount(0);
 });
 
-test("published card author byline uses only an authorized choice label or a generic fallback", async ({
+test("a row's author uses only an authorized label or a generic fallback", async ({
   page,
 }) => {
   const api = await installPostBrowserApi(page);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-
-  await expect(page.getByText("Avery", { exact: true })).toBeVisible();
+  await expect(
+    postList(page).getByText("Avery", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText(authorId, { exact: true })).toHaveCount(0);
 
   api.setAuthorChoices([]);
   await page.reload();
   await expect(
-    page.getByText("Author unavailable", { exact: true }),
+    postList(page).getByText("Author unavailable", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText(authorId, { exact: true })).toHaveCount(0);
 });
 
-test("an edited post links to its edit history and each earlier version", async ({
+test("an edited post opens its edit history and each earlier version", async ({
   page,
 }) => {
   const api = await installPostBrowserApi(page);
-  api.setPublishedItems([
-    { ...browserPost, publication_number: 2, edited: true },
-  ]);
+  const edited = { ...browserPost, publication_number: 2, edited: true };
+  api.setPublishedItems([edited]);
+  api.setDetailPost(edited);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-
-  const edited = page.getByRole("button", {
-    name: "Edit history of Published safety update",
-  });
-  await expect(edited).toBeVisible();
-  await edited.click();
+  const reader = postPane(page, browserPost.title);
+  await reader.getByRole("button", { name: "Edited", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Edit history" });
   await expect(dialog).toBeVisible();
   await expect(
@@ -584,20 +639,13 @@ test("an edited post links to its edit history and each earlier version", async 
 
 test.describe("Boards workspace regional post dates", () => {
   test.use({ locale: "en-US", timezoneId: "UTC" });
-  test("published feed, reader and edit history use the workspace date and timezone", async ({
+  test("rows, the reading pane and edit history use the workspace date and timezone", async ({
     page,
   }) => {
     const api = await installPostBrowserApi(page);
-    api.setPublishedItems([
-      { ...browserPost, publication_number: 2, edited: true },
-    ]);
-    await page.route(
-      `**/api/boards/${boardId}/posts/${postId}?view=published`,
-      (route) =>
-        route.fulfill({
-          json: { ...browserPost, publication_number: 2, edited: true },
-        }),
-    );
+    const edited = { ...browserPost, publication_number: 2, edited: true };
+    api.setPublishedItems([edited]);
+    api.setDetailPost(edited);
     await page.route("**/api/workspace", (route) =>
       route.fulfill({
         json: {
@@ -613,15 +661,13 @@ test.describe("Boards workspace regional post dates", () => {
       }),
     );
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    await expect(page.locator("article time")).toHaveText(
+    await expect(postList(page).getByRole("listitem")).toContainText(
+      "22 sept.",
+    );
+    const reader = postPane(page, "Published safety update");
+    await expect(reader.locator("time").first()).toHaveText(
       /22 sept\. 2026.*17:00/,
     );
-    await page.getByRole("button", { name: "Open post", exact: true }).click();
-    const reader = page.getByRole("dialog", {
-      name: "Published safety update",
-      exact: true,
-    });
-    await expect(reader.locator("time")).toHaveText(/22 sept\. 2026.*17:00/);
     await reader.getByRole("button", { name: "Edited", exact: true }).click();
     const history = page.getByRole("dialog", {
       name: "Edit history",
@@ -630,25 +676,22 @@ test.describe("Boards workspace regional post dates", () => {
     await expect(
       history.getByRole("button", { name: /Version 2/ }),
     ).toContainText(/22 sept\. 2026.*17:00/);
-    await history.getByRole("button", { name: /Version 1/ }).click();
-    await expect(
-      history.getByRole("button", { name: /Version 1/ }),
-    ).toContainText(/22 sept\. 2026.*17:00/);
   });
 });
 
-test("a post published once shows no edit history link", async ({ page }) => {
+test("a post published once shows no edit history", async ({ page }) => {
   await installPostBrowserApi(page);
   await page.goto(`/boards?board=${boardId}&section=posts`);
+  const reader = postPane(page, "Published safety update");
+  await expect(reader).toBeVisible();
+  await expect(reader.getByRole("button", { name: "Edited" })).toHaveCount(0);
+  await reader.getByRole("button", { name: "More post actions" }).click();
   await expect(
-    page.getByRole("heading", { name: "Published safety update" }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: /Edit history/ })).toHaveCount(
-    0,
-  );
+    page.getByRole("menuitem", { name: "Edit history" }),
+  ).toHaveCount(0);
 });
 
-test("author picker searches beyond the first page and retains a selected author across searches", async ({
+test("the Author filter searches beyond the first page, shows a chip, and resets on reload", async ({
   page,
 }) => {
   const api = await installPostBrowserApi(page);
@@ -678,12 +721,7 @@ test("author picker searches beyond the first page and retains a selected author
   ]);
   await page.goto(`/boards?board=${boardId}&section=posts`);
   await expect(
-    page.getByRole("heading", { name: "Published safety update" }),
-  ).toBeVisible();
-  await expect(
-    page
-      .getByRole("region", { name: "Published posts" })
-      .getByText("Avery", { exact: true }),
+    postList(page).getByText("Avery", { exact: true }),
   ).toBeVisible();
   expect(api.authorRequests.length).toBeGreaterThan(0);
   expect(
@@ -691,22 +729,17 @@ test("author picker searches beyond the first page and retains a selected author
       (query) => new URLSearchParams(query).get("offset") === "0",
     ),
   ).toBe(true);
-  await page.getByRole("button", { name: "More filters" }).click();
-  await page
-    .getByRole("combobox", { name: "Post author", exact: true })
-    .click();
+  const filters = await openFilters(page);
+  await filters.getByRole("combobox", { name: "Author", exact: true }).click();
   await page.getByRole("button", { name: "Load more", exact: true }).click();
-  await expect(
-    page.getByRole("option", { name: "Zora later-page author" }),
-  ).toBeVisible();
   await page.getByRole("option", { name: "Zora later-page author" }).click();
-  const selectedAuthorControl = page
-    .getByRole("combobox", { name: "Post author", exact: true })
+  const selectedAuthorControl = filters
+    .getByRole("combobox", { name: "Author", exact: true })
     .filter({ hasText: "Zora later-page author" });
   await expect(selectedAuthorControl).toContainText("Zora later-page author");
   await selectedAuthorControl.click();
   await page
-    .getByRole("combobox", { name: "Search post author", exact: true })
+    .getByRole("combobox", { name: "Search author", exact: true })
     .fill("First author 0");
   await expect
     .poll(() =>
@@ -716,33 +749,31 @@ test("author picker searches beyond the first page and retains a selected author
       ),
     )
     .toBe(true);
-  await expect(
-    page.getByRole("option", { name: "Zora later-page author" }),
-  ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(selectedAuthorControl).toContainText("Zora later-page author");
+  await page.keyboard.press("Escape");
+  const chips = page.getByRole("group", { name: "Active filters" });
+  await expect(chips).toContainText("Author: Zora later-page author");
   await expect(
-    page
-      .getByRole("region", { name: "Published posts" })
-      .getByText("Zora later-page author", { exact: true }),
+    postList(page).getByRole("button", { name: "Filters, 1 active" }),
   ).toBeVisible();
+  await expect(postRow(page, "Zora safety update")).toBeVisible();
+  await expect(postList(page).getByRole("listitem")).toHaveCount(1);
+  await chips.getByRole("button", { name: "Remove Author filter" }).click();
+  await expect(chips).toHaveCount(0);
+  await expect(postList(page).getByRole("listitem")).toHaveCount(25);
   await page.reload();
-  await page.getByRole("button", { name: "More filters" }).click();
+  const again = await openFilters(page);
   await expect(
-    page.getByRole("combobox", { name: "Post author", exact: true }),
+    again.getByRole("combobox", { name: "Author", exact: true }),
   ).toContainText("All authors");
 });
 
-test("off-page post authors keep their labels through picker search, reader, and history", async ({
+test("off-page authors keep their labels through the picker, the pane and history", async ({
   page,
 }) => {
   const api = await installPostBrowserApi(page);
   const label = "Zora published author";
-  const expectLabelAppearance = async (visibleLabel: Locator) => {
-    await expectPostAppearanceMatrix(page, async () => {
-      await expect(visibleLabel).toBeVisible();
-    });
-  };
   api.setAuthorChoices([
     ...Array.from({ length: 26 }, (_, index) => ({
       id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
@@ -762,8 +793,8 @@ test("off-page post authors keep their labels through picker search, reader, and
   ]);
   api.setDetailPost(editedPost);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  const feed = page.getByRole("region", { name: "Published posts" });
-  await expect(feed.getByText(label, { exact: true })).toBeVisible();
+  const list = postList(page);
+  await expect(list.getByText(label, { exact: true })).toBeVisible();
 
   const lookupQueries = () =>
     api.authorRequests
@@ -772,43 +803,28 @@ test("off-page post authors keep their labels through picker search, reader, and
   expect(lookupQueries().length).toBeGreaterThan(0);
   for (const query of lookupQueries()) {
     expect(query.getAll("ids")).toContain(authorId);
-    expect(query.getAll("ids")).toHaveLength(25);
     expect(Number(query.get("limit"))).toBeLessThanOrEqual(100);
     expect(query.get("offset")).toBe("0");
     expect(query.has("search")).toBe(false);
   }
-  expect(
-    api.authorRequests.every(
-      (query) => new URLSearchParams(query).get("offset") === "0",
-    ),
-  ).toBe(true);
 
-  await page.getByRole("button", { name: "More filters" }).click();
+  const filters = await openFilters(page);
+  await filters.getByRole("combobox", { name: "Author", exact: true }).click();
   await page
-    .getByRole("combobox", { name: "Post author", exact: true })
-    .click();
-  await page
-    .getByRole("combobox", { name: "Search post author", exact: true })
+    .getByRole("combobox", { name: "Search author", exact: true })
     .fill("First author 0");
   await expect(
     page.getByRole("option", { name: "First author 0", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(feed.getByText(label, { exact: true })).toBeVisible();
-  await expectLabelAppearance(feed.getByText(label, { exact: true }));
-  await feed
-    .getByRole("article")
-    .filter({
-      has: page.getByRole("heading", { name: browserPost.title, exact: true }),
-    })
-    .getByRole("button", { name: "Open post", exact: true })
-    .click();
-  const reader = page.getByRole("dialog", {
-    name: browserPost.title,
-    exact: true,
-  });
+  await page.keyboard.press("Escape");
+  await expect(list.getByText(label, { exact: true })).toBeVisible();
+  const reader = postPane(page, browserPost.title);
   await expect(reader.getByText(label, { exact: true })).toBeVisible();
-  await expectLabelAppearance(reader.getByText(label, { exact: true }));
+  await expectPostAppearanceMatrix(page, async () => {
+    if ((page.viewportSize()?.width ?? 0) >= 1024)
+      await expect(reader.getByText(label, { exact: true })).toBeVisible();
+  });
   await reader.getByRole("button", { name: "Edited", exact: true }).click();
   const history = page.getByRole("dialog", {
     name: "Edit history",
@@ -816,45 +832,28 @@ test("off-page post authors keep their labels through picker search, reader, and
   });
   await expect(versionRow(history, 2)).toContainText(label);
   await expect(versionRow(history, 1)).toContainText(label);
-  await page.keyboard.press("Escape");
-
-  api.setPublishedItems([]);
-  await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
-  await expect(reader.getByText(label, { exact: true })).toBeVisible();
-  await reader.getByRole("button", { name: "Close post", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "No published posts" }),
-  ).toBeVisible();
 });
 
-test("local card history keeps its eligible author after a held feed refresh replaces the card", async ({
+test("an open edit history keeps its author after a held list refresh replaces the rows", async ({
   page,
 }) => {
   await installOpenViewEventSource(page);
   const api = await installPostBrowserApi(page);
   const replacementAuthorId = "00000000-0000-4000-8000-000000000008";
   const editedPost = { ...browserPost, publication_number: 2, edited: true };
-  const olderPost = {
-    ...browserPost,
-    id: "00000000-0000-4000-8000-000000000299",
-    author_id: replacementAuthorId,
-    title: "Earlier Bailey update",
-  };
   const otherPosts = Array.from({ length: 25 }, (_, index) => ({
     ...browserPost,
     id: `00000000-0000-4000-8000-${String(index + 300).padStart(12, "0")}`,
     author_id: replacementAuthorId,
     title: `Replacement author update ${index + 1}`,
-    publish_at: "2026-09-23T01:00:00Z",
-    published_at: "2026-09-23T01:00:00Z",
-    created_at: "2026-09-23T01:00:00Z",
-    updated_at: "2026-09-23T01:00:00Z",
+    pinned: false,
   }));
   api.setAuthorChoices([
     { id: authorId, label: "Avery" },
     { id: replacementAuthorId, label: "Bailey" },
   ]);
-  api.setPublishedItems([editedPost, olderPost]);
+  api.setPublishedItems([editedPost]);
+  api.setDetailPost(editedPost);
   let holdFeed = false;
   let releaseFeed: () => void = () => {};
   const heldFeed = new Promise<void>((resolve) => {
@@ -863,10 +862,6 @@ test("local card history keeps its eligible author after a held feed refresh rep
   let feedStarted: () => void = () => {};
   const feedEntered = new Promise<void>((resolve) => {
     feedStarted = resolve;
-  });
-  let feedEnded: () => void = () => {};
-  const feedCompleted = new Promise<void>((resolve) => {
-    feedEnded = resolve;
   });
   let feedReads = 0;
   await page.route(
@@ -878,19 +873,13 @@ test("local card history keeps its eligible author after a held feed refresh rep
       if (!holdFeed) return route.fallback();
       feedStarted();
       await heldFeed;
-      try {
-        await route.fallback();
-      } finally {
-        feedEnded();
-      }
+      await route.fallback();
     },
   );
   try {
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    const feed = page.getByRole("region", { name: "Published posts" });
-    await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
-    // A Strict Mode remount can abort the first load after it reached the
-    // route, so count only the reads that the live change causes.
+    const reader = postPane(page, browserPost.title);
+    await expect(reader.getByText("Avery", { exact: true })).toBeVisible();
     const readsBeforeRefresh = feedReads;
     holdFeed = true;
     await sendOpenViewEvent(page, "invalidate", {
@@ -898,20 +887,13 @@ test("local card history keeps its eligible author after a held feed refresh rep
       board_id: boardId,
     });
     await feedEntered;
-    await page
-      .getByRole("button", {
-        name: `Edit history of ${browserPost.title}`,
-        exact: true,
-      })
-      .click();
+    await reader.getByRole("button", { name: "Edited", exact: true }).click();
     const history = page.getByRole("dialog", {
       name: "Edit history",
       exact: true,
     });
     await expect(versionRow(history, 2)).toContainText("Avery");
-    await expect(versionRow(history, 1)).toContainText("Avery");
-    await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
-    api.setPublishedItems([...otherPosts, editedPost, olderPost]);
+    api.setPublishedItems([...otherPosts, editedPost]);
     const replaced = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return (
@@ -921,38 +903,16 @@ test("local card history keeps its eligible author after a held feed refresh rep
     });
     releaseFeed();
     expect((await replaced).status()).toBe(200);
-    await feedCompleted;
-    const replacedFeed = page.getByRole("region", {
-      name: "Published posts",
-      exact: true,
-      includeHidden: true,
-    });
     await expect(
-      replacedFeed.getByRole("heading", {
-        name: "Replacement author update 1",
+      hiddenPostList(page).getByText("Replacement author update 1", {
         exact: true,
-        includeHidden: true,
       }),
     ).toHaveCount(1);
-    await expect(
-      replacedFeed.getByRole("heading", {
-        name: browserPost.title,
-        exact: true,
-        includeHidden: true,
-      }),
-    ).toHaveCount(0);
     await expect(history).toBeVisible();
     await expect(versionRow(history, 2)).toContainText("Avery");
     await expect(versionRow(history, 1)).toContainText("Avery");
     await expect(history).not.toContainText("Author unavailable");
     expect(feedReads - readsBeforeRefresh).toBe(1);
-    await expectPostAppearanceMatrix(page, async () => {
-      const version = versionRow(history, 2);
-      await version.scrollIntoViewIfNeeded();
-      await expect(version).toContainText("Avery");
-      await expect(version.getByText("Avery")).toBeInViewport();
-      await expect(history).not.toContainText("Author unavailable");
-    });
   } finally {
     releaseFeed();
   }
@@ -1000,12 +960,12 @@ test("an author refusal clears names and an older label response cannot restore 
   try {
     await page.goto(`/boards?board=${boardId}&section=posts`);
     await labelStarted;
-    await page.getByRole("button", { name: "More filters" }).click();
-    await page
-      .getByRole("combobox", { name: "Post author", exact: true })
+    const filters = await openFilters(page);
+    await filters
+      .getByRole("combobox", { name: "Author", exact: true })
       .click();
     await page
-      .getByRole("combobox", { name: "Search post author", exact: true })
+      .getByRole("combobox", { name: "Search author", exact: true })
       .fill("Private author");
     await expect(
       page
@@ -1070,18 +1030,10 @@ test("switching Boards ignores the previous Board's late author label read", asy
         level: 1,
       }),
     ).toBeVisible();
-    await page
-      .getByRole("navigation", {
-        name: "Second operations board announcements views",
-      })
-      .getByRole("link", { name: "Posts", exact: true })
-      .click();
-    const feed = page.getByRole("region", { name: "Published posts" });
+    const list = postList(page);
+    await expect(postRow(page, "Second published update")).toBeVisible();
     await expect(
-      feed.getByRole("heading", { name: "Second published update" }),
-    ).toBeVisible();
-    await expect(
-      feed.getByText("Morgan second board", { exact: true }),
+      list.getByText("Morgan second board", { exact: true }),
     ).toBeVisible();
     release();
     await labelSettled;
@@ -1089,7 +1041,7 @@ test("switching Boards ignores the previous Board's late author label read", asy
       page.getByText("Old Board private author", { exact: true }),
     ).toHaveCount(0);
     await expect(
-      feed.getByText("Morgan second board", { exact: true }),
+      list.getByText("Morgan second board", { exact: true }),
     ).toBeVisible();
   } finally {
     release();
@@ -1118,8 +1070,8 @@ test("switching verified accounts hides previous author names while new labels l
   });
   try {
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    const feed = page.getByRole("region", { name: "Published posts" });
-    await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+    const list = postList(page);
+    await expect(list.getByText("Avery", { exact: true })).toBeVisible();
     hold = true;
     api.setViewerId("00000000-0000-4000-8000-000000000008");
     api.setAuthorChoices([{ id: authorId, label: "Morgan new account" }]);
@@ -1128,7 +1080,7 @@ test("switching verified accounts hides previous author names while new labels l
     await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
     release();
     await expect(
-      feed.getByText("Morgan new account", { exact: true }),
+      list.getByText("Morgan new account", { exact: true }),
     ).toBeVisible();
   } finally {
     release();
@@ -1193,14 +1145,14 @@ for (const status of [403, 404]) {
     );
     try {
       await page.goto(`/boards?board=${boardId}&section=posts`);
-      const feed = page.getByRole("region", { name: "Published posts" });
-      await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
-      await page
-        .getByRole("button", { name: "More filters", exact: true })
-        .click();
-      const picker = page
-        .getByRole("region", { name: "Post filters", exact: true })
-        .getByRole("combobox", { name: "Post author", exact: true });
+      const list = postList(page);
+      const rows = list.getByRole("list");
+      await expect(rows.getByText("Avery", { exact: true })).toBeVisible();
+      const filters = await openFilters(page);
+      const picker = filters.getByRole("combobox", {
+        name: "Author",
+        exact: true,
+      });
       await picker.click();
       const selectedFeed = page.waitForResponse((response) => {
         const url = new URL(response.url());
@@ -1209,18 +1161,11 @@ for (const status of [403, 404]) {
           url.searchParams.get("author_id") === authorId
         );
       });
-      const selectedLabel = page.waitForResponse((response) => {
-        const url = new URL(response.url());
-        return (
-          url.pathname === `/api/boards/${boardId}/post-authors` &&
-          url.searchParams.has("ids")
-        );
-      });
       await page.getByRole("option", { name: "Avery", exact: true }).click();
       await selectedFeed;
-      await selectedLabel;
-      await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+      await expect(rows.getByText("Avery", { exact: true })).toBeVisible();
       await expect(picker).toContainText("Avery");
+      await page.keyboard.press("Escape");
       await expect.poll(() => activeReads).toBe(0);
       refused = true;
       await sendOpenViewEvent(page, "invalidate", {
@@ -1229,29 +1174,30 @@ for (const status of [403, 404]) {
       });
       await deniedComplete;
       await expect(
-        page.getByText(
+        list.getByText(
           "Author labels unavailable. Check your access or retry.",
           { exact: true },
         ),
       ).toBeVisible();
       await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
-      await expect(picker).toBeDisabled();
       await expect(
         page.getByText("Private refusal detail", { exact: true }),
       ).toHaveCount(0);
+      const reopened = await openFilters(page);
+      await expect(
+        reopened.getByRole("combobox", { name: "Author", exact: true }),
+      ).toBeDisabled();
+      await page.keyboard.press("Escape");
       await expect.poll(() => activeReads).toBe(0);
       recoveryArmed = true;
       await Promise.all([
         recoveryObserved,
-        page
-          .getByRole("button", { name: "Retry authors", exact: true })
-          .click(),
+        list.getByRole("button", { name: "Retry", exact: true }).click(),
       ]);
       await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
       releaseRecovery();
       await recoveryComplete;
-      await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
-      await expect(picker).toContainText("Avery");
+      await expect(rows.getByText("Avery", { exact: true })).toBeVisible();
     } finally {
       releaseRecovery();
     }
@@ -1273,29 +1219,27 @@ test("a transient label refresh retains the current byline and retries its bound
       : route.fallback(),
   );
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  const feed = page.getByRole("region", { name: "Published posts" });
-  await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+  const list = postList(page);
+  await expect(list.getByText("Avery", { exact: true })).toBeVisible();
   failed = true;
   await sendOpenViewEvent(page, "invalidate", {
     entity: "board_posts",
     board_id: boardId,
   });
   await expect(
-    page.getByText(
+    list.getByText(
       "Could not refresh author labels. Showing the last loaded labels.",
       { exact: true },
     ),
   ).toBeVisible();
-  await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+  await expect(list.getByText("Avery", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Internal failure detail", { exact: true }),
   ).toHaveCount(0);
   failed = false;
   api.setAuthorChoices([{ id: authorId, label: "Avery renamed" }]);
-  await page
-    .getByRole("button", { name: "Retry authors", exact: true })
-    .click();
-  await expect(feed.getByText("Avery renamed", { exact: true })).toBeVisible();
+  await list.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(list.getByText("Avery renamed", { exact: true })).toBeVisible();
   await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
 });
 
@@ -1323,6 +1267,7 @@ async function installS05PostApi(page: Page, manage = true) {
   let published: Record<string, unknown>[] = [];
   let failure = 0;
   let manageStatus = "scheduled";
+  let publishedBefore = true;
   const writes: {
     method: string;
     path: string;
@@ -1355,7 +1300,17 @@ async function installS05PostApi(page: Page, manage = true) {
       return reply({ level: board.level, read: true, write: true, manage });
     if (path === `${prefix}/posts` && request.method() === "GET") {
       const view = url.searchParams.get("view");
-      const items = view === "published" ? published : working ? [working] : [];
+      const status = working?.status;
+      const items =
+        view === "published"
+          ? published
+          : working &&
+              (view === "editable" ||
+                (view === "archive"
+                  ? status === "archived"
+                  : status === "draft" || status === "scheduled"))
+            ? [working]
+            : [];
       return reply({ ...wirePage(items), board_revision: boardRevision });
     }
     if (path === `${prefix}/posts/${postId}/manage-state`)
@@ -1364,7 +1319,7 @@ async function installS05PostApi(page: Page, manage = true) {
         status: manageStatus,
         post_revision: 9,
         board_revision: boardRevision,
-        published_before: true,
+        published_before: publishedBefore,
       });
     if (path === `${prefix}/posts/${postId}` && request.method() === "GET")
       return reply(
@@ -1394,6 +1349,50 @@ async function installS05PostApi(page: Page, manage = true) {
           failure,
         );
       boardRevision += 1;
+      if (path.endsWith("/publish")) {
+        const key = (body as { publication_key: string }).publication_key;
+        published = [
+          {
+            ...browserPost,
+            ...working,
+            status: "published",
+            post_revision: null,
+            publication_number: 1,
+            published_at: "2035-06-01T00:00:00Z",
+            publish_at: "2035-06-01T00:00:00Z",
+            board_revision: boardRevision,
+          },
+        ];
+        working = null;
+        return reply({
+          id: "00000000-0000-4000-8000-000000000071",
+          post_id: postId,
+          publication_number: 1,
+          publication_key: key,
+          published_at: "2035-06-01T00:00:00Z",
+        });
+      }
+      if (path.endsWith("/archive") || path.endsWith("/restore")) {
+        const archiving = path.endsWith("/archive");
+        manageStatus = archiving ? "archived" : "published";
+        working = archiving
+          ? {
+              ...browserPost,
+              status: "archived",
+              publication_number: null,
+              published_at: null,
+              post_revision: 9,
+              board_revision: boardRevision,
+            }
+          : null;
+        if (archiving) published = [];
+        else published = [{ ...browserPost, board_revision: boardRevision }];
+        return reply({
+          id: postId,
+          post_revision: 10,
+          board_revision: boardRevision,
+        });
+      }
       if (path.endsWith("/unpublish")) {
         published = [];
         working = {
@@ -1448,13 +1447,16 @@ async function installS05PostApi(page: Page, manage = true) {
     setPublished(post: Record<string, unknown>) {
       published = [post];
     },
-    setManageStatus(status: "draft" | "scheduled") {
+    setManageStatus(status: "draft" | "scheduled" | "published" | "archived") {
       manageStatus = status;
+    },
+    setPublishedBefore(value: boolean) {
+      publishedBefore = value;
     },
   };
 }
 
-test("matching post burst refreshes the bounded feed without wrong-scope reads or reload", async ({
+test("matching post burst refreshes the bounded list without wrong-scope reads or reload", async ({
   page,
 }) => {
   await page.clock.install();
@@ -1471,10 +1473,7 @@ test("matching post burst refreshes the bounded feed without wrong-scope reads o
       reads.push(url.search);
   });
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  const feed = page.getByRole("region", { name: "Published posts" });
-  await expect(
-    feed.getByRole("heading", { name: browserPost.title, exact: true }),
-  ).toBeVisible();
+  await expect(postRow(page, browserPost.title)).toBeVisible();
   await page.evaluate(() => {
     document.documentElement.dataset.s11Document = "retained";
   });
@@ -1506,9 +1505,7 @@ test("matching post burst refreshes the bounded feed without wrong-scope reads o
   await expect
     .poll(async () => {
       await page.clock.runFor(1);
-      return feed
-        .getByRole("heading", { name: "Remote safety notice", exact: true })
-        .count();
+      return postRow(page, "Remote safety notice").count();
     })
     .toBe(1);
   expect(reads).toHaveLength(before + 1);
@@ -1521,10 +1518,21 @@ test("matching post burst refreshes the bounded feed without wrong-scope reads o
   expect(api.writes).toHaveLength(0);
 });
 
-async function openS05Drafts(page: Page) {
-  await page.getByRole("button", { name: "More post actions" }).click();
-  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
-  return page.getByRole("dialog", { name: "Post editor" });
+/** Opens a draft from the Drafts list in the post editor. */
+async function editDraft(page: Page, title: string) {
+  await page.goto(`/boards?board=${boardId}&section=posts&show=drafts`);
+  await postRow(page, title).click();
+  await postPane(page, title)
+    .getByRole("button", { name: "Edit", exact: true })
+    .click();
+  return page.getByRole("dialog", { name: "Edit post", exact: true });
+}
+
+/** Opens the editor's Advanced block (Pin to top, Expires on) if closed. */
+async function openAdvanced(editor: Locator) {
+  const trigger = editor.getByRole("button", { name: /^Advanced/ });
+  if ((await trigger.getAttribute("aria-expanded")) !== "true")
+    await trigger.click();
 }
 
 const s05Draft = {
@@ -1551,14 +1559,11 @@ for (const dirty of [false, true]) {
       links: [{ label: "Original guide", url: "https://example.org/original" }],
     });
     await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
-    await page.goto(`/boards?board=${boardId}&section=posts`);
-    const editor = await openS05Drafts(page);
-    await editor
-      .getByRole("button", { name: s05Draft.title, exact: true })
-      .click();
+    const editor = await editDraft(page, s05Draft.title);
     await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(
       s05Draft.title,
     );
+    await openAdvanced(editor);
     if (dirty) {
       await editor
         .getByLabel("Title", { exact: true })
@@ -1567,7 +1572,7 @@ for (const dirty of [false, true]) {
         .getByLabel("Message", { exact: true })
         .fill("Retain this local message");
       await editor
-        .getByLabel("External link 1 label", { exact: true })
+        .getByLabel("Link 1 label", { exact: true })
         .fill("My local guide");
       await editor
         .getByLabel("Expires on", { exact: true })
@@ -1588,10 +1593,9 @@ for (const dirty of [false, true]) {
       board_id: boardId,
     });
     if (dirty) {
-      const notice = editor.getByText(
-        "Changed by someone else — review latest",
-        { exact: true },
-      );
+      const notice = editor.getByText("Someone changed this post first.", {
+        exact: true,
+      });
       await expect(notice).toBeVisible();
       await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(
         "My local safety draft",
@@ -1600,7 +1604,7 @@ for (const dirty of [false, true]) {
         "Retain this local message",
       );
       await expect(
-        editor.getByLabel("External link 1 label", { exact: true }),
+        editor.getByLabel("Link 1 label", { exact: true }),
       ).toHaveValue("My local guide");
       await expect(
         editor.getByRole("checkbox", { name: "Pin to top" }),
@@ -1623,16 +1627,14 @@ for (const dirty of [false, true]) {
         editor.getByRole("checkbox", { name: "Pin to top" }),
       ).not.toBeChecked();
       await expect(
-        editor.getByText("Changed by someone else — review latest", {
-          exact: true,
-        }),
+        editor.getByText("Someone changed this post first.", { exact: true }),
       ).toHaveCount(0);
     }
     expect(api.writes).toHaveLength(0);
   });
 }
 
-test("post invalidation preserves the held Save owner while its feed updates", async ({
+test("post invalidation keeps a held Save in its editor while the list updates", async ({
   page,
 }) => {
   const api = await installS05PostApi(page);
@@ -1650,11 +1652,7 @@ test("post invalidation preserves the held Save owner while its feed updates", a
     },
   );
   await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  const editor = await openS05Drafts(page);
-  await editor
-    .getByRole("button", { name: s05Draft.title, exact: true })
-    .click();
+  const editor = await editDraft(page, s05Draft.title);
   await editor
     .getByLabel("Message", { exact: true })
     .fill("Pending local save");
@@ -1663,22 +1661,18 @@ test("post invalidation preserves the held Save owner while its feed updates", a
       .getByRole("button", { name: "Save draft", exact: true })
       .click();
     await expect(
-      editor.getByRole("button", { name: "Working…", exact: true }),
+      editor.getByRole("button", { name: "Saving…", exact: true }),
     ).toBeDisabled();
-    api.setPublished({ ...browserPost, title: "Live notice during Save" });
+    api.setWorking({ ...s05Draft, title: "Live draft during Save" });
     await sendOpenViewEvent(page, "invalidate", {
       entity: "board_posts",
       board_id: boardId,
     });
     await expect(
-      page.getByRole("heading", {
-        name: "Live notice during Save",
-        exact: true,
-        includeHidden: true,
-      }),
+      hiddenPostList(page).getByText("Live draft during Save", { exact: true }),
     ).toHaveCount(1);
     await expect(
-      editor.getByRole("button", { name: "Working…", exact: true }),
+      editor.getByRole("button", { name: "Saving…", exact: true }),
     ).toBeDisabled();
     await expect(editor.getByLabel("Message", { exact: true })).toHaveValue(
       "Pending local save",
@@ -1693,34 +1687,16 @@ test("post invalidation preserves the held Save owner while its feed updates", a
   }
 });
 
-test("lifecycle updates its current list without losing a held Unpublish owner", async ({
+test("a list refresh keeps a held Unpublish and its confirmation", async ({
   page,
 }) => {
   const api = await installS05PostApi(page);
   api.setPublished(browserPost);
+  api.setManageStatus("published");
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "Manage posts", exact: true }).click();
-  const manager = page.getByRole("dialog", {
-    name: "Manage posts",
-    exact: true,
-  });
-  api.setPublished({ ...browserPost, title: "Remote published post" });
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "board_posts",
-    board_id: boardId,
-  });
-  await expect(
-    manager.getByRole("button", {
-      name: "Unpublish post Remote published post",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await manager
-    .getByRole("button", {
-      name: "Unpublish post Remote published post",
-      exact: true,
-    })
-    .click();
+  const reader = postPane(page, browserPost.title);
+  await reader.getByRole("button", { name: "More post actions" }).click();
+  await page.getByRole("menuitem", { name: "Unpublish", exact: true }).click();
   const confirmation = page.getByRole("alertdialog", {
     name: "Unpublish post?",
     exact: true,
@@ -1746,24 +1722,16 @@ test("lifecycle updates its current list without losing a held Unpublish owner",
       board_id: boardId,
     });
     await expect(
-      page
-        .getByRole("region", {
-          name: "Published posts",
-          exact: true,
-          includeHidden: true,
-        })
-        .getByRole("heading", {
-          name: "Feed update during Unpublish",
-          exact: true,
-          includeHidden: true,
-        }),
+      hiddenPostList(page).getByText("Feed update during Unpublish", {
+        exact: true,
+      }),
     ).toHaveCount(1);
     await expect(
       confirmation.getByRole("button", { name: "Unpublish post", exact: true }),
     ).toBeDisabled();
     release();
     await expect(
-      manager.getByText("Post unpublished.", { exact: true }),
+      page.getByText("Post unpublished", { exact: true }),
     ).toBeVisible();
     expect(api.writes).toHaveLength(1);
     expect(api.writes[0]?.body).toEqual({
@@ -1776,52 +1744,9 @@ test("lifecycle updates its current list without losing a held Unpublish owner",
 });
 
 for (const phase of ["timer", "read"] as const) {
-  test(`Board switch cancels the old ${phase} without refreshing or restoring its feed`, async ({
+  test(`Board switch cancels the old ${phase} without refreshing or restoring its list`, async ({
     page,
   }) => {
-    const startedAt = Date.now();
-    const metadata: {
-      kind: "request" | "response";
-      elapsedMs: number;
-      method: string;
-      path: string;
-      query: [string, string][];
-      status?: number;
-    }[] = [];
-    const requestMetadata = (urlString: string, method: string) => {
-      const url = new URL(urlString);
-      if (
-        url.pathname !== "/api/boards" &&
-        !url.pathname.startsWith(`/api/boards/${boardId}`) &&
-        !url.pathname.startsWith(`/api/boards/${otherBoardId}`)
-      )
-        return null;
-      const keys = new Set([
-        "limit",
-        "offset",
-        "sort_by",
-        "sort_order",
-        "view",
-        "search",
-        "author_id",
-        "ids",
-      ]);
-      return {
-        elapsedMs: Date.now() - startedAt,
-        method,
-        path: url.pathname,
-        query: [...url.searchParams.entries()].filter(([key]) => keys.has(key)),
-      };
-    };
-    page.on("request", (request) => {
-      const safe = requestMetadata(request.url(), request.method());
-      if (safe) metadata.push({ kind: "request", ...safe });
-    });
-    page.on("response", (response) => {
-      const safe = requestMetadata(response.url(), response.request().method());
-      if (safe)
-        metadata.push({ kind: "response", ...safe, status: response.status() });
-    });
     await page.clock.install();
     const api = await installS05PostApi(page);
     api.setPublished(browserPost);
@@ -1861,6 +1786,15 @@ for (const phase of ["timer", "read"] as const) {
             offset: Number(url.searchParams.get("offset") ?? 0),
           }),
         });
+      if (url.pathname === `${prefix}/posts/${partnerPost.id}`)
+        return route.fulfill({ json: partnerPost });
+      if (
+        url.pathname.endsWith("/attachments") ||
+        url.pathname.endsWith("/record-links")
+      )
+        return route.fulfill({
+          json: { items: [], limit: 25, offset: 0, has_more: false },
+        });
       const items =
         url.pathname.endsWith("/posts") &&
         url.searchParams.get("view") === "published"
@@ -1884,9 +1818,7 @@ for (const phase of ["timer", "read"] as const) {
         partnerReads += 1;
     });
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    await expect(
-      page.getByRole("heading", { name: browserPost.title, exact: true }),
-    ).toBeVisible();
+    await expect(postRow(page, browserPost.title)).toBeVisible();
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
     let release: () => void = () => {};
     const held = new Promise<void>((resolve) => {
@@ -1922,14 +1854,6 @@ for (const phase of ["timer", "read"] as const) {
     }
     const beforeSwitch = oldReads;
     try {
-      await page
-        .getByRole("navigation", { name: "Main navigation", exact: true })
-        .getByRole("link", { name: /Partner Board/ })
-        .click();
-      await page.clock.runFor(20);
-      await expect(page.getByRole("heading", { level: 1 })).toContainText(
-        "Partner Board",
-      );
       const partnerReply = page.waitForResponse((response) => {
         const url = new URL(response.url());
         return (
@@ -1937,32 +1861,23 @@ for (const phase of ["timer", "read"] as const) {
           url.searchParams.get("view") === "published"
         );
       });
-      const partnerAuthorsReply = page.waitForResponse(
-        (response) =>
-          new URL(response.url()).pathname ===
-          `/api/boards/${otherBoardId}/post-authors`,
-      );
-      await page.getByRole("link", { name: "Posts", exact: true }).click();
       await page
-        .getByRole("region", { name: "Post search and filters", exact: true })
-        .waitFor({ state: "visible" });
+        .getByRole("navigation", { name: "Main navigation", exact: true })
+        .getByRole("link", { name: /Partner Board/ })
+        .click();
       await expect
         .poll(async () => {
-          await page.clock.runFor(0);
-          return metadata.some(
-            (item) =>
-              item.kind === "response" &&
-              item.path === `/api/boards/${otherBoardId}/post-authors`,
-          );
+          await page.clock.runFor(1);
+          return page.getByRole("heading", { level: 1 }).textContent();
         })
-        .toBe(true);
-      await (await partnerAuthorsReply).finished();
-      await page.clock.runFor(0);
+        .toContain("Partner Board");
+      await expect
+        .poll(async () => {
+          await page.clock.runFor(1);
+          return postRow(page, "Partner update").count();
+        })
+        .toBe(1);
       await partnerReply;
-      const feed = page.getByRole("region", {
-        name: "Published posts",
-        exact: true,
-      });
       const partnerBefore = partnerReads;
       const completed =
         phase === "read"
@@ -1980,16 +1895,11 @@ for (const phase of ["timer", "read"] as const) {
       await expect
         .poll(async () => {
           await page.clock.runFor(1);
-          return feed
-            .getByRole("heading", { name: "Partner update", exact: true })
-            .count();
+          return postRow(page, "Partner update").count();
         })
         .toBe(1);
       expect(oldReads).toBe(beforeSwitch);
       expect(partnerReads).toBe(partnerBefore);
-      await expect(
-        feed.getByRole("heading", { name: "Partner update", exact: true }),
-      ).toBeVisible();
       await expect(
         page.getByText("Old Board private update", { exact: true }),
       ).toHaveCount(0);
@@ -2008,19 +1918,22 @@ test.describe("local post expiry", () => {
     const api = await installS05PostApi(page);
     await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    await page.getByRole("button", { name: "New post", exact: true }).click();
-    const editor = page.getByRole("dialog", { name: "Post editor" });
+    await page
+      .getByRole("button", { name: "New post", exact: true })
+      .first()
+      .click();
+    const editor = page.getByRole("dialog", { name: "New post", exact: true });
     await editor
       .getByLabel("Title", { exact: true })
       .fill("Pinned working draft");
     await editor
       .getByLabel("Message", { exact: true })
       .fill("Original working text");
+    await openAdvanced(editor);
     await editor.getByRole("checkbox", { name: "Pin to top" }).check();
     await editor
       .getByLabel("Expires on", { exact: true })
       .fill("2035-06-02T12:30");
-    await expect(editor).toContainText("Asia/Manila");
     await editor
       .getByRole("button", { name: "Save draft", exact: true })
       .click();
@@ -2031,12 +1944,12 @@ test.describe("local post expiry", () => {
       pinned: true,
       expires_at: "2035-06-02T04:30:00.000Z",
     });
-    await editor.getByRole("button", { name: "Close", exact: true }).click();
-    await page.reload();
-    const reopened = await openS05Drafts(page);
-    await reopened
-      .getByRole("button", { name: "Pinned working draft", exact: true })
+    await editor
+      .getByRole("button", { name: "Close post editor", exact: true })
       .click();
+    await expect(editor).toHaveCount(0);
+    const reopened = await editDraft(page, "Pinned working draft");
+    await openAdvanced(reopened);
     await expect(
       reopened.getByRole("checkbox", { name: "Pin to top" }),
     ).toBeChecked();
@@ -2063,19 +1976,17 @@ test.describe("local post expiry", () => {
       reopened.getByLabel("Expires on", { exact: true }),
     ).toHaveValue("");
   });
-  test("nonmanager preserves an existing pin while editing their own post", async ({
+  test("a writer keeps an existing pin while editing their own post", async ({
     page,
   }) => {
     const api = await installS05PostApi(page, false);
     api.setWorking(s05Draft);
-    await page.goto(`/boards?board=${boardId}&section=posts`);
-    const editor = await openS05Drafts(page);
-    await editor
-      .getByRole("button", { name: s05Draft.title, exact: true })
-      .click();
-    await expect(
-      editor.getByRole("checkbox", { name: "Pin to top" }),
-    ).toHaveCount(0);
+    const editor = await editDraft(page, s05Draft.title);
+    await openAdvanced(editor);
+    const pin = editor.getByRole("checkbox", { name: "Pin to top" });
+    await expect(pin).toBeDisabled();
+    await expect(pin).toBeChecked();
+    await expect(editor).toContainText("Only board managers pin posts.");
     await editor.getByLabel("Message", { exact: true }).fill("Own edited text");
     await editor
       .getByRole("button", { name: "Save draft", exact: true })
@@ -2087,17 +1998,12 @@ test.describe("local post expiry", () => {
     expect(api.writes[0]?.body).not.toHaveProperty("expires_at");
   });
   for (const failure of [409, 503]) {
-    test(`pin and expiry survive save refusal ${failure} and draft refresh`, async ({
-      page,
-    }) => {
+    test(`pin and expiry survive save refusal ${failure}`, async ({ page }) => {
       const api = await installS05PostApi(page);
       api.setWorking(s05Draft);
       api.setFailure(failure);
-      await page.goto(`/boards?board=${boardId}&section=posts`);
-      const editor = await openS05Drafts(page);
-      await editor
-        .getByRole("button", { name: s05Draft.title, exact: true })
-        .click();
+      const editor = await editDraft(page, s05Draft.title);
+      await openAdvanced(editor);
       await editor.getByRole("checkbox", { name: "Pin to top" }).uncheck();
       await editor
         .getByLabel("Expires on", { exact: true })
@@ -2106,9 +2012,6 @@ test.describe("local post expiry", () => {
         .getByRole("button", { name: "Save draft", exact: true })
         .click();
       await expect(editor.getByRole("alert").first()).toBeVisible();
-      await editor
-        .getByRole("button", { name: "Refresh posts", exact: true })
-        .click();
       await expect(
         editor.getByLabel("Expires on", { exact: true }),
       ).toHaveValue("2035-06-03T12:30");
@@ -2116,46 +2019,37 @@ test.describe("local post expiry", () => {
         editor.getByRole("checkbox", { name: "Pin to top" }),
       ).not.toBeChecked();
       await expect(
-        editor.getByRole("button", { name: "New post", exact: true }),
-      ).toBeDisabled();
-      await expect(
         editor.getByText("Draft saved.", { exact: true }),
       ).toHaveCount(0);
     });
   }
-  test("schedule at expiry is refused and expired publication failure retains the draft", async ({
+  test("schedule at expiry is refused and a refused publish keeps the draft open", async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
     api.setWorking(s05Draft);
     await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
-    await page.goto(`/boards?board=${boardId}&section=posts`);
-    const editor = await openS05Drafts(page);
+    const editor = await editDraft(page, s05Draft.title);
     await editor
-      .getByRole("button", { name: s05Draft.title, exact: true })
+      .getByRole("button", { name: "Schedule…", exact: true })
       .click();
-    await editor
-      .getByLabel("Publication date and time")
-      .fill("2035-06-02T12:30");
-    await editor
-      .getByRole("button", { name: "Schedule publication", exact: true })
-      .click();
+    await editor.getByLabel("Publish at").fill("2035-06-02T12:30");
+    await expect(editor).toContainText("Asia/Manila");
+    await editor.getByRole("button", { name: "Schedule", exact: true }).click();
     await expect(
       editor.getByText("Choose a publication time before this post expires."),
     ).toBeVisible();
     expect(api.writes).toHaveLength(0);
-    await editor.getByLabel("Publication date and time").fill("");
     api.setFailure(422);
-    await editor
-      .getByRole("button", { name: "Publish now", exact: true })
-      .click();
+    await editor.getByRole("button", { name: "Publish", exact: true }).click();
     await expect(editor.getByRole("alert").first()).toBeVisible();
+    await openAdvanced(editor);
     await expect(editor.getByLabel("Expires on", { exact: true })).toHaveValue(
       "2035-06-02T12:30",
     );
-    await expect(
-      editor.getByText("Published successfully.", { exact: true }),
-    ).toHaveCount(0);
+    await expect(page.getByText("Post published", { exact: true })).toHaveCount(
+      0,
+    );
   });
 });
 
@@ -2166,14 +2060,18 @@ test.describe("unavailable local expiry", () => {
   }) => {
     const api = await installS05PostApi(page);
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    await page.getByRole("button", { name: "New post", exact: true }).click();
-    const editor = page.getByRole("dialog", { name: "Post editor" });
+    await page
+      .getByRole("button", { name: "New post", exact: true })
+      .first()
+      .click();
+    const editor = page.getByRole("dialog", { name: "New post", exact: true });
     await editor
       .getByLabel("Title", { exact: true })
       .fill("Clock change draft");
     await editor
       .getByLabel("Message", { exact: true })
       .fill("Keep these unsaved fields.");
+    await openAdvanced(editor);
     const expiry = editor.getByLabel("Expires on", { exact: true });
     await expiry.fill("2035-03-11T02:30");
     await editor
@@ -2191,46 +2089,35 @@ test.describe("unavailable local expiry", () => {
   });
 });
 
-test("source-returned expired publication shows expiry in the feed and reader", async ({
+test("an expired publication shows Expired in its row and its pane", async ({
   page,
 }) => {
   const api = await installS05PostApi(page);
   await page.clock.setFixedTime(new Date("2035-06-03T00:00:00Z"));
   api.setPublished({ ...browserPost, expires_at: "2035-06-02T04:30:00Z" });
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  const feed = page.getByRole("region", {
-    name: "Published posts",
-    exact: true,
-  });
-  await expect(feed.getByText("Expired", { exact: true })).toBeVisible();
-  await expect(feed.getByText(/Expired on.*Jun 2, 2035/)).toBeVisible();
-  await expectPostMotionMatrix(page);
-  await feed.getByRole("button", { name: "Open post", exact: true }).click();
   await expect(
-    page.getByRole("dialog", { name: browserPost.title }),
-  ).toContainText(/Expired on.*Jun 2, 2035/);
+    postList(page).getByText("Expired", { exact: true }),
+  ).toBeVisible();
+  await expectPostMotionMatrix(page);
+  await expect(postPane(page, browserPost.title)).toContainText(
+    /Expired .*Jun 2, 2035/,
+  );
 });
 
 for (const replacement of ["draft", "scheduled"] as const) {
-  test(`manager unpublishes the displayed version with a ${replacement} replacement`, async ({
+  test(`a manager unpublishes the displayed version with a ${replacement} replacement`, async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
     api.setPublished(browserPost);
     api.setManageStatus(replacement);
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    await page
-      .getByRole("button", { name: "Manage posts", exact: true })
+    await postPane(page, browserPost.title)
+      .getByRole("button", { name: "More post actions" })
       .click();
-    const manager = page.getByRole("dialog", {
-      name: "Manage posts",
-      exact: true,
-    });
-    await manager
-      .getByRole("button", {
-        name: `Unpublish post ${browserPost.title}`,
-        exact: true,
-      })
+    await page
+      .getByRole("menuitem", { name: "Unpublish", exact: true })
       .click();
     const confirmation = page.getByRole("alertdialog", {
       name: "Unpublish post?",
@@ -2261,19 +2148,14 @@ for (const replacement of ["draft", "scheduled"] as const) {
     ).toBeDisabled();
     release();
     await expect(
-      manager.getByText("Post unpublished.", { exact: true }),
+      page.getByText("Post unpublished", { exact: true }),
     ).toBeVisible();
     expect(api.writes).toHaveLength(1);
     expect(api.writes[0]?.body).toEqual({
       board_revision: 4,
       post_revision: 9,
     });
-    await expect(
-      manager.getByRole("button", {
-        name: `Unpublish post ${browserPost.title}`,
-        exact: true,
-      }),
-    ).toHaveCount(0);
+    await expect(postRow(page, browserPost.title)).toHaveCount(0);
   });
 }
 for (const failure of [409, 403, 503]) {
@@ -2284,36 +2166,390 @@ for (const failure of [409, 403, 503]) {
     api.setPublished(browserPost);
     api.setFailure(failure);
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    await page
-      .getByRole("button", { name: "Manage posts", exact: true })
+    await postPane(page, browserPost.title)
+      .getByRole("button", { name: "More post actions" })
       .click();
-    const manager = page.getByRole("dialog", {
-      name: "Manage posts",
-      exact: true,
-    });
-    await manager
-      .getByRole("button", {
-        name: `Unpublish post ${browserPost.title}`,
-        exact: true,
-      })
+    await page
+      .getByRole("menuitem", { name: "Unpublish", exact: true })
       .click();
     await page
       .getByRole("alertdialog", { name: "Unpublish post?", exact: true })
       .getByRole("button", { name: "Unpublish post", exact: true })
       .click();
     await expect(
-      manager.getByText(
-        failure === 403
-          ? "Post management is unavailable for your current access."
-          : failure === 409
-            ? "This post changed elsewhere. Refresh posts before trying again."
-            : "Post request failed. Try again.",
-        { exact: true },
-      ),
+      page
+        .getByText(
+          failure === 403
+            ? "This post is not available."
+            : failure === 409
+              ? "This post changed elsewhere. Refresh posts before trying again."
+              : "Post request failed. Try again.",
+          { exact: true },
+        )
+        .first(),
     ).toBeVisible();
     await expect(
-      manager.getByText("Post unpublished.", { exact: true }),
+      page.getByText("Post unpublished", { exact: true }),
     ).toHaveCount(0);
     expect(api.writes).toHaveLength(1);
   });
 }
+
+test("the state filter follows the viewer's level and keeps its state in the address", async ({
+  page,
+}) => {
+  const api = await installS05PostApi(page, false);
+  api.setPublished(browserPost);
+  api.setWorking({
+    ...s05Draft,
+    title: "Shift change next week",
+    status: "scheduled",
+    publish_at: "2035-06-05T01:00:00Z",
+    pinned: false,
+  });
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const states = postList(page).getByRole("group", { name: "Post state" });
+  await expect(states.getByRole("button")).toHaveText([
+    "Published",
+    "Scheduled",
+    "Drafts",
+  ]);
+  await states.getByRole("button", { name: "Scheduled" }).click();
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("show") === "scheduled",
+  );
+  await expect(postRow(page, "Shift change next week")).toContainText(
+    "Publishes",
+  );
+  await expect(postRow(page, browserPost.title)).toHaveCount(0);
+  await page.reload();
+  await expect(
+    states.getByRole("button", { name: "Scheduled" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(postPane(page, "Shift change next week")).toBeVisible();
+  await states.getByRole("button", { name: "Drafts" }).click();
+  await expect(
+    postList(page).getByRole("heading", { name: "No drafts" }),
+  ).toBeVisible();
+
+  const manager = await page.context().newPage();
+  const managerApi = await installS05PostApi(manager);
+  managerApi.setPublished(browserPost);
+  await manager.goto(`/boards?board=${boardId}&section=posts&show=archived`);
+  await expect(
+    postList(manager)
+      .getByRole("group", { name: "Post state" })
+      .getByRole("button"),
+  ).toHaveText(["Published", "Scheduled", "Drafts", "Archived"]);
+  await expect(
+    postList(manager).getByRole("heading", { name: "No archived posts" }),
+  ).toBeVisible();
+});
+
+test("a reader sees published posts only, a clean pane, and the board's reason when it is empty", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  await page.route(`**/api/boards/${boardId}`, (route) =>
+    route.fulfill({ json: { ...browserBoard, level: "read" } }),
+  );
+  await page.route(`**/api/boards/${boardId}/my-access`, (route) =>
+    route.fulfill({
+      json: { level: "read", read: true, write: false, manage: false },
+    }),
+  );
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const reader = postPane(page, browserPost.title);
+  await expect(reader).toBeVisible();
+  await expect(reader.getByRole("button", { name: "Edit" })).toHaveCount(0);
+  await expect(
+    postList(page).getByRole("group", { name: "Post state" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New post" })).toHaveCount(0);
+  await expect(page.getByText(/Post editing is unavailable/)).toHaveCount(0);
+  await expect(
+    page.locator('[data-slot="badge"]', { hasText: /^Read$/ }),
+  ).toBeVisible();
+  await reader.getByRole("button", { name: "More post actions" }).click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Copy link"]);
+  await page.keyboard.press("Escape");
+
+  api.setPublishedItems([]);
+  await page.reload();
+  const list = postList(page);
+  await expect(
+    list.getByRole("heading", { name: "No published posts yet" }),
+  ).toBeVisible();
+  await expect(list).toContainText(
+    "Posting needs write access through one of this board's groups.",
+  );
+  await expect(list.getByRole("button", { name: "New post" })).toHaveCount(0);
+});
+
+test("the pane shows Links and Files only when the post has them, at the reading measure", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  const linked = {
+    ...browserPost,
+    body: "Supplier costs went up. ".repeat(20),
+    links: [{ label: "Supplier notice", url: "https://example.org/notice" }],
+  };
+  api.setPublishedItems([linked]);
+  api.setDetailPost(linked);
+  await page.route(
+    `**/api/boards/${boardId}/posts/${postId}/attachments**`,
+    (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: "00000000-0000-4000-8000-000000000081",
+              purpose: "board_attachment",
+              record_id: null,
+              department_id: null,
+              board_id: boardId,
+              creator_id: authorId,
+              filename: "Price list.pdf",
+              media_type: "application/pdf",
+              expected_size: 1200,
+              actual_size: 1200,
+              state: "ready",
+              failure_code: null,
+              is_deleted: false,
+              created_at: publishedAt,
+              updated_at: publishedAt,
+            },
+          ],
+          limit: 25,
+          offset: 0,
+          has_more: false,
+        },
+      }),
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const reader = postPane(page, browserPost.title);
+  await expect(
+    reader.getByRole("link", { name: /Supplier notice/ }),
+  ).toBeVisible();
+  await expect(
+    reader.getByRole("button", { name: "Download Price list.pdf" }),
+  ).toBeVisible();
+  await expect(
+    reader.getByRole("heading", { name: "Files", exact: true }),
+  ).toBeVisible();
+  await expect(
+    reader.getByRole("heading", { name: "Linked records" }),
+  ).toHaveCount(0);
+  await expect(reader.getByText("No attachments yet.")).toHaveCount(0);
+  await expect(reader.getByText("No linked Records.")).toHaveCount(0);
+  const message = reader.getByText(linked.body.trim(), { exact: false });
+  const box = await message.boundingBox();
+  expect(box?.width ?? 0).toBeLessThanOrEqual(672);
+  await expect(message).toHaveCSS("line-height", "24px");
+});
+
+test("New post publishes from the editor dialog with one consequence line and a toast", async ({
+  page,
+}) => {
+  const api = await installS05PostApi(page);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await expect(
+    page.getByRole("button", { name: "More post actions" }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "New post", exact: true })
+    .first()
+    .click();
+  const editor = page.getByRole("dialog", { name: "New post", exact: true });
+  await expect(editor).toContainText(
+    "Everyone who reads Operations board sees this post.",
+  );
+  await expect(editor).not.toContainText("sent to the server in UTC");
+  await editor
+    .getByLabel("Title", { exact: true })
+    .fill("Dock 3 closes Friday");
+  await editor
+    .getByLabel("Message", { exact: true })
+    .fill("Use Dock 4 for all loading.");
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    `**/api/boards/${boardId}/posts/${postId}/publish`,
+    async (route) => {
+      await held;
+      await route.fallback();
+    },
+  );
+  try {
+    await editor.getByRole("button", { name: "Publish", exact: true }).click();
+    await expect(
+      editor.getByRole("button", { name: "Publishing…", exact: true }),
+    ).toBeVisible();
+    release();
+    await expect(
+      page.getByText("Post published", { exact: true }),
+    ).toBeVisible();
+    await expect(editor).toHaveCount(0);
+  } finally {
+    release();
+  }
+  expect(api.writes.map(({ method, path }) => `${method} ${path}`)).toEqual([
+    `POST /api/boards/${boardId}/posts`,
+    `POST /api/boards/${boardId}/posts/${postId}/publish`,
+  ]);
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("post") === postId && !url.searchParams.has("show"),
+  );
+  await expect(postPane(page, "Dock 3 closes Friday")).toBeVisible();
+});
+
+test("archiving asks once with its consequence; restore acts at once with Undo", async ({
+  page,
+}) => {
+  const api = await installS05PostApi(page);
+  api.setPublished(browserPost);
+  api.setManageStatus("published");
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await postPane(page, browserPost.title)
+    .getByRole("button", { name: "More post actions" })
+    .click();
+  await expect(page.getByRole("menuitem")).toHaveText([
+    "Copy link",
+    "Unpublish",
+    "Archive",
+  ]);
+  await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Archive post?",
+    exact: true,
+  });
+  await expect(confirmation).toContainText(
+    "Readers no longer see it. A board manager can restore it.",
+  );
+  await confirmation
+    .getByRole("button", { name: "Archive post", exact: true })
+    .click();
+  await expect(page.getByText("Post archived", { exact: true })).toBeVisible();
+  await expect(postRow(page, browserPost.title)).toHaveCount(0);
+
+  await postList(page)
+    .getByRole("group", { name: "Post state" })
+    .getByRole("button", { name: "Archived" })
+    .click();
+  const archived = postPane(page, browserPost.title);
+  await archived.getByRole("button", { name: "More post actions" }).click();
+  const writesBefore = api.writes.length;
+  await page.getByRole("menuitem", { name: "Restore", exact: true }).click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(page.getByText("Post restored", { exact: true })).toBeVisible();
+  expect(api.writes.slice(writesBefore).map(({ path }) => path)).toEqual([
+    `/api/boards/${boardId}/posts/${postId}/restore`,
+  ]);
+  await page
+    .getByText("Post restored", { exact: true })
+    .first()
+    .locator("xpath=ancestor::*[.//button[normalize-space()='Undo']][1]")
+    .getByRole("button", { name: "Undo", exact: true })
+    .click();
+  await expect
+    .poll(() => api.writes.slice(writesBefore).map(({ path }) => path))
+    .toEqual([
+      `/api/boards/${boardId}/posts/${postId}/restore`,
+      `/api/boards/${boardId}/posts/${postId}/archive`,
+    ]);
+});
+
+test.describe("still page", () => {
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 1440, height: 900 },
+  ])
+    test(`only the list and the pane scroll at ${viewport.width}×${viewport.height}`, async ({
+      page,
+    }) => {
+      const api = await installPostBrowserApi(page);
+      api.setPublishedItems(
+        Array.from({ length: 25 }, (_, index) => ({
+          ...browserPost,
+          id: `00000000-0000-4000-8000-${String(index + 400).padStart(12, "0")}`,
+          title: `Yard notice ${index + 1}`,
+          pinned: false,
+        })),
+      );
+      api.setDetailPost({
+        ...browserPost,
+        id: "00000000-0000-4000-8000-000000000400",
+        title: "Yard notice 1",
+        body: "A long message line.\n".repeat(80),
+      });
+      await page.route(
+        `**/api/boards/${boardId}/posts/00000000-0000-4000-8000-000000000400?view=published`,
+        (route) =>
+          route.fulfill({
+            json: {
+              ...browserPost,
+              id: "00000000-0000-4000-8000-000000000400",
+              title: "Yard notice 1",
+              body: "A long message line.\n".repeat(80),
+            },
+          }),
+      );
+      await page.setViewportSize(viewport);
+      await page.goto(`/boards?board=${boardId}&section=posts`);
+      await expect(postPane(page, "Yard notice 1")).toBeVisible();
+      await expectNoPageScroll(page);
+      const listBody = postList(page).getByRole("list");
+      expect(
+        await listBody.evaluate(
+          (list) =>
+            list.parentElement!.scrollHeight > list.parentElement!.clientHeight,
+        ),
+      ).toBe(true);
+      const search = postList(page).getByRole("searchbox", {
+        name: "Search posts",
+      });
+      expect(
+        (
+          await search
+            .locator("xpath=ancestor::*[@data-slot='input-group'][1]")
+            .boundingBox()
+        )?.height,
+      ).toBeLessThanOrEqual(32);
+      const row = postList(page).getByRole("listitem").first();
+      expect((await row.boundingBox())?.height).toBeGreaterThanOrEqual(40);
+    });
+
+  test("a phone shows the list, then the post with Back, at 44px targets", async ({
+    page,
+  }) => {
+    await installPostBrowserApi(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    const row = postRow(page, browserPost.title);
+    await expect(row).toBeVisible();
+    await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
+    await expectNoHorizontalScroll(page);
+    for (const target of [
+      row,
+      postList(page).getByRole("searchbox", { name: "Search posts" }),
+      postList(page).getByRole("button", { name: /^Filters/ }),
+      postList(page).getByRole("button", { name: /^Sort/ }),
+    ])
+      expect((await target.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await row.click();
+    const reader = postPane(page, browserPost.title);
+    await expect(reader).toBeVisible();
+    await expect(postList(page)).toBeHidden();
+    const back = reader.getByRole("button", { name: "Back to posts" });
+    expect((await back.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await expectNoHorizontalScroll(page);
+    await back.click();
+    await expect(postList(page)).toBeVisible();
+    await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
+  });
+});

@@ -1,65 +1,32 @@
 import { expect, test } from "@playwright/test";
 import { ApiError } from "../../../src/lib/api";
 import {
-  postLifecycleFailure,
+  postActionFailure,
   notifyIfBoardViewLost,
 } from "../../../src/components/systems/boards/hooks/use-server-board-post-lifecycle";
-import type { PostLifecycleView } from "../../../src/components/systems/boards/components/server-backed-board-post-lifecycle";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
-const itemId = "00000000-0000-4000-8000-000000000002";
-const page = {
-  items: [],
-  boardRevision: 7,
-  pagination: { limit: 25, offset: 0, count: 0, total: 0, hasMore: false },
-};
-const ready: PostLifecycleView = {
-  status: "ready",
-  active: true,
-  canManage: true,
-  view: "published",
-  page,
-  pending: true,
-  conflict: false,
-  error: null,
-  notice: null,
-  confirmation: {
-    kind: "archive",
-    boardId,
-    postId: itemId,
-    title: "Private title",
-    boardRevision: 7,
-    postRevision: 2,
-  },
-};
 
-test("a conflict discards stale private list and confirmation before retry", () => {
-  const failed = postLifecycleFailure(
-    ready,
-    new ApiError(409, "stale revision"),
-  );
-  expect(failed).toMatchObject({
-    status: "error",
-    canManage: false,
-    page: null,
-    pending: false,
-    confirmation: null,
+test("a conflicting post action asks for a refresh instead of claiming success", () => {
+  expect(postActionFailure(new ApiError(409, "stale revision"))).toEqual({
+    message: "This post changed elsewhere. Refresh posts before trying again.",
+    denied: false,
     conflict: true,
   });
-  expect(failed.error).toContain("changed elsewhere");
+  expect(postActionFailure(new Error("network"))).toEqual({
+    message: "Post request failed. Try again.",
+    denied: false,
+    conflict: false,
+  });
 });
 
-test("a content denial clears content without assuming Board VIEW was lost", () => {
-  for (const status of [401, 403, 404]) {
-    const failed = postLifecycleFailure(ready, new ApiError(status, "hidden"));
-    expect(failed).toMatchObject({
-      status: "denied",
-      canManage: false,
-      page: null,
-      pending: false,
-      confirmation: null,
+test("a content denial hides the post without assuming Board VIEW was lost", () => {
+  for (const status of [401, 403, 404])
+    expect(postActionFailure(new ApiError(status, "hidden"))).toEqual({
+      message: "This post is not available.",
+      denied: true,
+      conflict: false,
     });
-  }
 });
 
 test("Board-wide revoke callback runs only after the independent VIEW probe is denied", async () => {

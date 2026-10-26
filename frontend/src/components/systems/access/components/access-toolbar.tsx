@@ -215,7 +215,7 @@ export function FilterSelect<V extends string>({
  * Active filters above the table: "Showing", one removable chip per filter,
  * and Clear all. Absent when nothing is active, so it takes no space.
  */
-function FilterChips({
+export function FilterChips({
   chips,
   onClearFilters,
   triggerRef,

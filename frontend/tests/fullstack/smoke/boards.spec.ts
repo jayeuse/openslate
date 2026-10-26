@@ -21,14 +21,17 @@ test("A department Board post is written and published @boards", async ({
     .getByRole("navigation", { name: "Sales announcements views" })
     .getByRole("link", { name: "Posts" })
     .click();
-  await page.getByRole("button", { name: /New post/ }).click();
-  const editor = page.getByRole("dialog");
+  await page
+    .getByRole("button", { name: /New post/ })
+    .first()
+    .click();
+  const editor = page.getByRole("dialog", { name: "New post" });
   await editor.getByLabel("Title").fill(title);
   await editor
     .getByRole("textbox", { name: "Message" })
     .fill("Targets are posted on the shared drive.");
   await editor.getByRole("button", { name: "Save draft" }).click();
-  await editor.getByRole("button", { name: /^Publish/ }).click();
+  await editor.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
 });
 
