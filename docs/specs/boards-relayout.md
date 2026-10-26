@@ -481,7 +481,7 @@ Each phase ends with tests that fail first, one code review, targeted screenshot
 - **A new feature inside a relayout.** BE7 is the largest backend change here. Solution: it lands in P0 behind its own go-ahead and gates P4; P1–P3 do not depend on it, except "Cards · Due" in P3.
 - **Record cards and access.** A record card on a board that many people read could leak a record. Solution: summaries are computed per viewer at read time, never cached across viewers, and a locked card shows no name.
 - **Color repeats.** Four department hues cycle, so in Harbor Sales and Purchasing are both violet in My calendar. Solution: the calendar list, the tooltip, the accessible name, and Week blocks name the calendar; the checkboxes hide one of them.
-- **The Name Beside Color exception** (BR53) needs a DESIGN.md amendment by impeccable before P3 lands.
+- **The Name Beside Color exception** (BR53) is recorded in DESIGN.md (2026-10-26) as the rule's second exception, for calendar month cells.
 - **Test churn.** About 122 tests go with widgets and portability, and 29 with the OpenView layouts; about 20 OpenView tests and the 87 remaining Boards HTTP tests change. Solution: every removed assertion gets a ledger row; P0 and P4 delete, the other phases update.
 - **The large OpenView file.** Removing the layouts and record moves touches `server-backed-views-workspace.tsx` (4,060 lines). Solution: removal only, no refactor (OD15).
 - **My calendar volume.** Twelve boards, weekly series, card due dates, and up to 5 sources. Solution: per-board limits (BE2), one cross-board card read, and one window read per visible source and month.
