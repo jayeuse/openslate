@@ -73,10 +73,17 @@ test("legacy sample Board URL cannot reveal browser-local Board content", async 
   await page.goto("/boards?board=sample-board-organization&section=posts");
 
   await expect(
-    page.getByText(
-      /This Board may have been removed or your account may not have access/,
-    ),
+    page.getByText("It may have been removed, or you may not have access."),
   ).toBeVisible();
+  // The refusal leads somewhere: All boards, or Retry. No loading
+  // placeholder stays behind once there is no Board to wait for.
+  const main = page.locator("#main-content");
+  await expect(main.getByRole("link", { name: "All boards" })).toHaveAttribute(
+    "href",
+    "/boards?section=all",
+  );
+  await expect(main.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(main.locator(".animate-pulse")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "Organization board" }),
   ).toHaveCount(0);

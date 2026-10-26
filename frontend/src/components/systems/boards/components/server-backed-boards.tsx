@@ -3,6 +3,7 @@ import { useDisplayRegion } from "@/components/use-display-region";
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import type { Route } from "next";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useWorkspaceNavigationGuard,
@@ -14,6 +15,7 @@ import { LayoutDashboard, RefreshCw, X } from "lucide-react";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { departmentNavigationOptions } from "@/components/department-navigation";
 import { isRefusal } from "@/components/department-navigation-model";
+import { allBoardsHref } from "@/components/boards-navigation-model";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -81,23 +83,35 @@ const pageClass = "boards-ui flex min-w-0 flex-col xl:min-h-0 xl:flex-1";
 /**
  * The page frame while a Board loads: its title, a meta line, and the tab
  * row, held at the loaded header's height so nothing shifts when it lands.
+ * Without a Board to wait for (refused, missing, none), only the title stays.
  */
-function BoardsLoadingHeader() {
+const BOARD_UNAVAILABLE =
+  "It may have been removed, or you may not have access.";
+
+function BoardsLoadingHeader({
+  placeholders = true,
+}: {
+  placeholders?: boolean;
+}) {
   return (
     <div className="slim-ui shrink-0">
       <PageHeader
         className="mb-3"
         title="Boards"
         description={
-          <span
-            aria-hidden="true"
-            className="bg-foreground/10 inline-block h-4 w-48 animate-pulse rounded-[var(--radius)] align-middle motion-reduce:animate-none"
-          />
+          placeholders ? (
+            <span
+              aria-hidden="true"
+              className="bg-foreground/10 inline-block h-4 w-48 animate-pulse rounded-[var(--radius)] align-middle motion-reduce:animate-none"
+            />
+          ) : undefined
         }
       />
-      <div aria-hidden="true" className={cn(linkTabsListClass, "mb-3")}>
-        <span className="min-h-11 w-40 xl:min-h-7" />
-      </div>
+      {placeholders ? (
+        <div aria-hidden="true" className={cn(linkTabsListClass, "mb-3")}>
+          <span className="min-h-11 w-40 xl:min-h-7" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -465,7 +479,7 @@ function ServerBackedBoardsContent() {
           primary={<div ref={setPrimarySlot} className="contents" />}
         />
       ) : (
-        <BoardsLoadingHeader />
+        <BoardsLoadingHeader placeholders={loading} />
       )}
       {createSheet}
       {board && (
@@ -520,24 +534,30 @@ function ServerBackedBoardsContent() {
             }
             description={
               unavailable
-                ? resource.detail.error ||
-                  "This Board may have been removed or your account may not have access. Choose another Board or retry."
+                ? resource.detail.error || BOARD_UNAVAILABLE
                 : resource.list.error
                   ? "The Board list could not be loaded. Retry to see your Boards."
                   : noBoards
                     ? "Your account cannot open any active Board. Ask an administrator for access."
-                    : "This Board may have been removed or your account may not have access. Choose another Board or retry."
+                    : BOARD_UNAVAILABLE
             }
             icon={<LayoutDashboard aria-hidden="true" />}
           >
             {unavailable || resource.list.error ? (
-              <Button
-                variant="outline"
-                className="min-h-11"
-                onClick={refreshBoard}
-              >
-                <RefreshCw data-icon="inline-start" /> Retry Board
-              </Button>
+              <div className="flex flex-wrap justify-center gap-2">
+                {unavailable ? (
+                  <Button asChild variant="outline" className="min-h-11">
+                    <Link href={allBoardsHref as Route}>All boards</Link>
+                  </Button>
+                ) : null}
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={refreshBoard}
+                >
+                  <RefreshCw data-icon="inline-start" /> Retry
+                </Button>
+              </div>
             ) : null}
             {/* An empty workspace has its first step in view. The server
                 still decides who may create. */}

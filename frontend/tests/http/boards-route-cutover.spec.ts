@@ -224,7 +224,7 @@ test("visible Boards route clears the last Board when access is revoked", async 
     board_id: boardId,
   });
   await expect(
-    page.getByText("Board unavailable. Choose another Board or retry."),
+    page.getByText("It may have been removed, or you may not have access."),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: board.name })).toHaveCount(0);
   await expect(page.getByText(board.description)).toHaveCount(0);

@@ -5218,9 +5218,7 @@ test("a legacy sample Board URL cannot create a local OpenView record link", asy
 
   await page.goto("/boards?board=sample-board-organization&section=overview");
   await expect(
-    page.getByText(
-      /This Board may have been removed or your account may not have access/,
-    ),
+    page.getByText("It may have been removed, or you may not have access."),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Organization board" }),

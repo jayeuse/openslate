@@ -227,7 +227,7 @@ function invalidateBoardResourceAccess<L, D>(
     sequence: detailSequence,
     data: null,
     status: "error",
-    error: "Board unavailable. Choose another Board or retry.",
+    error: "It may have been removed, or you may not have access.",
   }));
 }
 
@@ -327,7 +327,7 @@ export function useServerBoardsResource(route: BoardRoute) {
                   sequence: detailRequest,
                   data: null,
                   status: "error",
-                  error: "Board unavailable. Choose another Board or retry.",
+                  error: "It may have been removed, or you may not have access.",
                 }
               : current,
           );
@@ -427,7 +427,7 @@ export function useServerBoardsResource(route: BoardRoute) {
             key: candidateId,
             sequence,
             error: accessDenied(error)
-              ? "Board unavailable. Choose another Board or retry."
+              ? "It may have been removed, or you may not have access."
               : "Could not refresh this Board. Try again.",
             denied: accessDenied(error),
           }),
