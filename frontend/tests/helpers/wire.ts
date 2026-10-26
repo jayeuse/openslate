@@ -37,7 +37,7 @@ export function wireBoard<Description extends string | null>({
   updated_at,
 }: {
   id: string;
-  scope?: "project" | "department";
+  scope?: "company" | "project" | "department";
   department_id?: string | null;
   name: string;
   description: Description;

@@ -1,14 +1,7 @@
 "use client";
 import { useDisplayRegion } from "@/components/use-display-region";
 
-import {
-  Suspense,
-  useCallback,
-  useEffect,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -17,38 +10,14 @@ import {
   type WorkspaceNavigationGuard,
 } from "@/components/workspace-navigation-guard";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ChevronDown,
-  Eye,
-  History,
-  LayoutDashboard,
-  RefreshCw,
-  Settings2,
-  X,
-} from "lucide-react";
+import { LayoutDashboard, RefreshCw, X } from "lucide-react";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
+import { departmentNavigationOptions } from "@/components/department-navigation";
+import { isRefusal } from "@/components/department-navigation-model";
+import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { LoadingRegion } from "@/components/ui/loading-region";
-import {
-  Popover,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { SearchSelect } from "@/components/ui/search-select";
 import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
 import {
   subscribeWorkspaceInvalidations,
@@ -63,10 +32,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import type {
-  BoardManagementBoard,
-  BoardScope,
-} from "../adapters/board-management-api";
+import type { BoardManagementBoard } from "../adapters/board-management-api";
 import { ServerBackedBoardActivity } from "./server-backed-board-activity";
 import { ServerBackedBoardAccessPreview } from "./server-backed-board-access-preview";
 import { ServerBackedBoardPostEditor } from "./server-backed-board-post-editor";
@@ -74,35 +40,16 @@ import { ServerBackedBoardPostLifecycle } from "./server-backed-board-post-lifec
 import { ServerBackedBoardPosts } from "./server-backed-board-posts";
 import { ServerBackedBoardCalendar } from "./server-backed-board-calendar";
 import { ServerBackedBoardManagement } from "./server-backed-board-management";
+import { BoardDirectory } from "./board-directory";
+import { BoardPageHeader } from "./board-page-header";
 import { BoardEmpty, ConfirmAction } from "./ui";
 import {
-  boardListKey,
-  boardUrl,
+  canonicalBoardUrl,
   parseBoardRoute,
   resolveBoardSection,
   useServerBoardsResource,
-  type BoardListStatus,
   type BoardSection,
 } from "../hooks/use-server-boards";
-
-const PAGE_SIZE = 25;
-
-const SCOPE_LABELS: Record<BoardScope, string> = {
-  company: "Company",
-  department: "Department",
-  project: "Project",
-};
-
-/** The subtitle of a Board that has no description of its own. */
-export function boardScopeDescription(board: {
-  scope: BoardScope;
-  name: string;
-}): string {
-  if (board.scope === "company") return "Updates for everyone in the company.";
-  if (board.scope === "department")
-    return `Updates for the ${board.name} department.`;
-  return "Updates for the groups on this project.";
-}
 
 type BoardActivitySelection = {
   boardId: string;
@@ -134,134 +81,18 @@ export function isSelectedBoardPostManagerOpen(
   );
 }
 
-export function boardSearchEmptyCopy(
-  search: string | null,
-  pageCount: number,
-  totalCount: number,
-): { title: string; description: string } {
-  if (pageCount === 0 && totalCount > 0)
-    return {
-      title: "No Boards on this page",
-      description: search
-        ? "Matching Boards remain on earlier pages. Use Previous in the switcher."
-        : "Boards remain on earlier pages. Use Previous in the switcher.",
-    };
-  if (search && pageCount > 0)
-    return {
-      title: "Choose a matching Board",
-      description:
-        "Matching Boards are available in the switcher. Choose one to open it.",
-    };
-  return search
-    ? {
-        title: "No Boards match your search",
-        description:
-          "Try another search, clear the search, or choose an archived Board from the switcher.",
-      }
-    : {
-        title: "No active Boards",
-        description:
-          "Your account cannot open any active Board. Ask an administrator for access.",
-      };
-}
+// From 1280px the page is still: the region fills the height under the
+// header, and its content is the one panel that scrolls (BR8).
+const boardsRegionClass =
+  "flex min-w-0 flex-col xl:min-h-0 xl:flex-1 *:relative *:flex *:min-w-0 *:flex-col *:gap-5 xl:*:min-h-0 xl:*:flex-1 xl:*:overflow-y-auto xl:*:overscroll-contain";
+const pageClass = "flex min-w-0 flex-col xl:min-h-0 xl:flex-1";
 
-const boardsTitleButtonClass =
-  "-ml-3 min-h-11 max-w-full justify-start text-xl font-semibold";
-const boardsRegionClass = "min-w-0 *:flex *:min-w-0 *:flex-col *:gap-5";
-
-function BoardsHeader({
-  heading,
-  switcher,
-  archived = false,
-  description,
-  actions,
-}: {
-  heading: string;
-  switcher: ReactNode;
-  archived?: boolean;
-  description: string;
-  actions: ReactNode;
-}) {
-  return (
-    <header
-      className="border-border flex min-w-0 flex-wrap items-center justify-between gap-3 border-b pb-4"
-      aria-label="Current board"
-    >
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <div className="bg-muted border-border hidden size-11 shrink-0 items-center justify-center rounded-lg border sm:flex">
-          <LayoutDashboard className="size-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <h1
-              data-slot="page-title"
-              className="min-w-0 flex-1"
-              aria-label={heading}
-            >
-              {" "}
-              {switcher}
-            </h1>
-            {archived && <Badge variant="outline">Archived</Badge>}
-          </div>
-          {/* min-h-5 holds the line while the description is still unknown. */}
-          <p className="text-muted-foreground min-h-5 text-sm break-words">
-            {description}
-          </p>
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">{actions}</div>
-    </header>
-  );
-}
-
-/** The switcher and actions while Boards load: in place, but inert. */
+/** The page frame while a Board loads: its title, then the region. */
 function BoardsLoadingHeader() {
   return (
-    <BoardsHeader
-      heading="Boards"
-      switcher={
-        <Button
-          variant="ghost"
-          className={boardsTitleButtonClass}
-          aria-label="Switch board"
-          disabled
-        >
-          <span className="truncate">Boards</span>
-          <ChevronDown className="size-4 shrink-0" aria-hidden="true" />
-        </Button>
-      }
-      description=""
-      actions={
-        <>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-11"
-            aria-label="Refresh"
-            title="Refresh board"
-            disabled
-          >
-            <RefreshCw aria-hidden="true" />
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11 min-w-11"
-            aria-label="Board menu"
-            disabled
-          >
-            <Settings2 className="sm:hidden" aria-hidden="true" />
-            <span className="hidden sm:inline">Board menu</span>
-            <ChevronDown
-              className="hidden sm:inline"
-              data-icon="inline-end"
-              aria-hidden="true"
-            />
-          </Button>
-        </>
-      }
-    />
+    <div className="slim-ui shrink-0">
+      <PageHeader className="mb-3" title="Boards" />
+    </div>
   );
 }
 
@@ -272,13 +103,7 @@ function BoardsLoadingHeader() {
 function BoardsSkeleton({ section }: { section: BoardSection | null }) {
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="mt-1 h-5 w-72 max-w-full" />
-        </div>
-        <Skeleton className="h-11 w-36" />
-      </div>
+      <Skeleton className="h-11 w-48" />
       {section === "calendar" ? (
         <Skeleton className="h-[28rem] rounded-xl" />
       ) : (
@@ -293,7 +118,7 @@ function BoardsSkeleton({ section }: { section: BoardSection | null }) {
 
 function ServerBackedBoardsLoading() {
   return (
-    <div className="flex min-w-0 flex-col gap-5">
+    <div className={pageClass}>
       <BoardsLoadingHeader />
       <LoadingRegion
         loading
@@ -309,13 +134,8 @@ function ServerBackedBoardsContent() {
   const router = useRouter();
   const requestNavigation = useWorkspaceNavigationRequest();
   const searchParams = useSearchParams();
-  const route = parseBoardRoute(searchParams.toString());
-  const [statusFilter, setStatusFilter] = useState<BoardListStatus>("active");
-  const [scopeFilter, setScopeFilter] = useState<BoardScope | null>(null);
-  const [searchDraft, setSearchDraft] = useState("");
-  const [appliedSearch, setAppliedSearch] = useState<string | null>(null);
-  const [offset, setOffset] = useState(0);
-  const [browsing, setBrowsing] = useState(false);
+  const search = searchParams.toString();
+  const route = parseBoardRoute(search);
   const [managementMode, setManagementMode] = useState<
     "create" | "manage" | null
   >(null);
@@ -326,6 +146,7 @@ function ServerBackedBoardsContent() {
   const [postManagerSelection, setPostManagerSelection] = useState<
     string | null
   >(null);
+  const [primarySlot, setPrimarySlot] = useState<HTMLElement | null>(null);
   const [draftState, setDraftState] = useState<{
     boardId: string;
     section: BoardSection;
@@ -335,17 +156,21 @@ function ServerBackedBoardsContent() {
   const [pendingNavigation, setPendingNavigation] = useState<
     (() => void) | null
   >(null);
-  const resource = useServerBoardsResource(
-    route,
-    statusFilter,
-    offset,
-    appliedSearch,
-    scopeFilter,
-  );
+  const resource = useServerBoardsResource(route);
   const identity = useQuery(authMeOptions());
   const isAdmin = identity.data?.role === "admin";
+  const departments = useQuery({
+    ...departmentNavigationOptions(),
+    enabled: false,
+  });
   const board = resource.selectedBoard;
   const boardId = board?.id ?? null;
+  const departmentIndex =
+    board?.departmentId && !isRefusal(departments.error)
+      ? (departments.data?.items.findIndex(
+          (entry) => entry.id === board.departmentId,
+        ) ?? -1)
+      : -1;
   const invalidatesPosts = useCallback(
     (event: WorkspaceInvalidation) =>
       event.type === "invalidate" &&
@@ -441,7 +266,7 @@ function ServerBackedBoardsContent() {
     kind: "post" | "event",
     contentId: string | null,
   ) {
-    const next = new URLSearchParams(searchParams.toString());
+    const next = new URLSearchParams(search);
     if (contentId === null) next.delete(kind);
     else next.set(kind, contentId);
     const href = `/boards?${next.toString()}` as Route;
@@ -490,17 +315,17 @@ function ServerBackedBoardsContent() {
     window.addEventListener("beforeunload", preventUnload);
     return () => window.removeEventListener("beforeunload", preventUnload);
   }, [currentDraftState]);
-  const currentListPage =
-    resource.list.key ===
-    boardListKey(statusFilter, offset, appliedSearch, scopeFilter)
-      ? resource.list.data
-      : null;
 
+  // Each Board has one address (BR41): once it is read, an address that
+  // names it another way (a department's or Company's Board id, no section)
+  // is replaced in place, keeping the post, the event and the rest.
   useEffect(() => {
-    if (!board || route.kind === "invalid-board") return;
-    if (route.kind === "none" || route.section === null)
-      router.replace(boardUrl(board.id, section), { scroll: false });
-  }, [board, route.kind, route.section, router, section]);
+    if (!board || route.kind === "invalid-board" || route.kind === "all")
+      return;
+    const target = canonicalBoardUrl(board, section, search);
+    if (target !== `/boards?${search}`)
+      router.replace(target, { scroll: false });
+  }, [board, route.kind, router, section, search]);
 
   useEffect(() => {
     if (activitySelection && !activityOpen) closeActivity();
@@ -514,356 +339,137 @@ function ServerBackedBoardsContent() {
     if (postManagerSelection && !postManagerOpen) closePostManager();
   }, [postManagerSelection, postManagerOpen, closePostManager]);
 
-  const awaitingList =
-    route.kind === "none" &&
-    currentListPage === null &&
+  const listPending =
+    resource.list.data === null &&
     (resource.list.status === "idle" || resource.list.status === "loading");
+  const awaitingList =
+    (route.kind === "none" || route.kind === "department") &&
+    resource.candidate === null &&
+    !resource.departmentMissing &&
+    (listPending || route.kind === "department");
   const awaitingDetail =
     resource.candidate !== null &&
     board === null &&
     (resource.detail.status === "idle" || resource.detail.status === "loading");
-  const loading = awaitingList || awaitingDetail;
+  const loading =
+    route.kind !== "all" &&
+    !(route.kind === "department" && resource.list.status === "error") &&
+    (awaitingList || awaitingDetail);
 
-  const choices = currentListPage?.items ?? [];
-  const selectedOutsidePage =
-    board !== null && !choices.some((choice) => choice.id === board.id);
-  const options = [
-    ...choices,
-    ...(selectedOutsidePage && board ? [board] : []),
-  ].map((choice) => ({
-    value: choice.id,
-    label: choice.name,
-    description: `${SCOPE_LABELS[choice.scope]}${choice.status === "archived" ? " · Archived" : ""}`,
-  }));
   const unavailable =
     route.kind === "invalid-board" ||
+    resource.departmentMissing ||
     (resource.candidate !== null &&
       board === null &&
       resource.detail.status === "error");
   const noBoards =
-    !appliedSearch &&
     !resource.list.error &&
-    currentListPage !== null &&
-    currentListPage !== undefined &&
-    currentListPage.pagination.total === 0;
-  const emptyCopy = boardSearchEmptyCopy(
-    appliedSearch,
-    currentListPage?.pagination.count ?? 0,
-    currentListPage?.pagination.total ?? 0,
-  );
+    resource.list.data !== null &&
+    resource.list.data.pagination.total === 0;
 
   function navigateToBoard(target: BoardManagementBoard) {
-    const href = boardUrl(target.id, "posts");
+    const href = canonicalBoardUrl(target, "posts");
     const resume = () => {
       closeActivity();
       closePreview();
       closePostManager();
       setManagementMode(null);
-      setBrowsing(false);
       router.push(href, { scroll: false });
     };
     if (requestNavigation(href, resume)) resume();
   }
 
-  function changeStatus(value: string) {
-    if (value !== "active" && value !== "archived" && value !== "all") return;
-    setStatusFilter(value);
-    setOffset(0);
-  }
+  // A refresh in progress, or one that failed while the last Board stays on
+  // screen, shows in the meta line (BR7).
+  const refreshError = board
+    ? (resource.detail.error ?? resource.list.error)
+    : null;
+  const refreshStatus = refreshError ? (
+    <span role="status" className="inline-flex items-center gap-2">
+      <span className="text-danger-text">{refreshError}</span>
+      <Button
+        type="button"
+        variant="ghost"
+        className="min-h-11 px-2 xl:min-h-6"
+        onClick={refreshBoard}
+      >
+        Retry
+      </Button>
+    </span>
+  ) : (
+    <span role="status">
+      {board && resource.detail.status === "loading" ? "Refreshing…" : ""}
+    </span>
+  );
 
-  function resetBoardFilters() {
-    setStatusFilter("active");
-    setScopeFilter(null);
-    setSearchDraft("");
-    setAppliedSearch(null);
-    setOffset(0);
-  }
+  const createSheet = (
+    <ServerBackedBoardManagement
+      mode="create"
+      open={managementMode === "create"}
+      onOpenChange={(open) => setManagementMode(open ? "create" : null)}
+      onCreated={(created) => {
+        refreshBoard();
+        navigateToBoard(created);
+      }}
+    />
+  );
 
-  const hasBoardFilters =
-    statusFilter !== "active" || scopeFilter !== null || appliedSearch !== null;
+  if (route.kind === "all")
+    return (
+      <div className={pageClass}>
+        <BoardDirectory
+          isAdmin={isAdmin}
+          onCreate={() => setManagementMode("create")}
+        />
+        {createSheet}
+      </div>
+    );
 
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      {loading ? (
-        <BoardsLoadingHeader />
-      ) : (
-        <BoardsHeader
-          heading={board?.name ?? "Boards"}
-          switcher={
-            <Popover open={browsing} onOpenChange={setBrowsing}>
-              <PopoverTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    className={boardsTitleButtonClass}
-                    aria-label="Switch board"
-                  />
+    <div className={pageClass}>
+      {board && !loading ? (
+        <BoardPageHeader
+          board={board}
+          departmentIndex={departmentIndex >= 0 ? departmentIndex : null}
+          section={section}
+          status={refreshStatus}
+          settings={
+            canManage
+              ? {
+                  onDetails: () => setManagementMode("manage"),
+                  onAccess: () =>
+                    setPreviewSelection({
+                      boardId: board.id,
+                      detailSequence: resource.detail.sequence,
+                    }),
+                  onActivity: () =>
+                    setActivitySelection({
+                      boardId: board.id,
+                      detailSequence: resource.detail.sequence,
+                    }),
                 }
-              >
-                <span className="truncate">
-                  {board?.name ?? (noBoards ? "Boards" : "Choose a board")}
-                </span>
-                <ChevronDown className="size-4 shrink-0" aria-hidden="true" />
-              </PopoverTrigger>
-              <PopoverContent
-                align="start"
-                className="w-[min(26rem,calc(100vw-2rem))] gap-4 p-4"
-              >
-                <PopoverHeader>
-                  <PopoverTitle>Find a board</PopoverTitle>
-                  <PopoverDescription>
-                    Only Boards available to your account appear here.
-                  </PopoverDescription>
-                </PopoverHeader>
-                <form
-                  className="space-y-2"
-                  onSubmit={(event: FormEvent<HTMLFormElement>) => {
-                    event.preventDefault();
-                    setAppliedSearch(searchDraft.trim() || null);
-                    setOffset(0);
-                  }}
-                >
-                  <label
-                    htmlFor="board-switch-search"
-                    className="text-sm font-medium"
-                  >
-                    Search accessible Boards
-                  </label>
-                  <Input
-                    id="board-switch-search"
-                    type="search"
-                    maxLength={100}
-                    value={searchDraft}
-                    onChange={(event) =>
-                      setSearchDraft(event.currentTarget.value)
-                    }
-                    className="bg-background text-foreground min-h-11 rounded-md focus-visible:outline-offset-2"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="submit"
-                      variant="outline"
-                      className="min-h-11"
-                    >
-                      Search boards
-                    </Button>
-                    {appliedSearch && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="min-h-11"
-                        onClick={() => {
-                          setSearchDraft("");
-                          setAppliedSearch(null);
-                          setOffset(0);
-                        }}
-                      >
-                        Clear search
-                      </Button>
-                    )}
-                  </div>
-                </form>
-                <SearchSelect
-                  label="Board"
-                  value={board?.id ?? ""}
-                  placeholder="Choose a board"
-                  options={options}
-                  onValueChange={(id) => {
-                    const target = [...choices, ...(board ? [board] : [])].find(
-                      (choice) => choice.id === id,
-                    );
-                    if (target) navigateToBoard(target);
-                  }}
-                />
-                <SearchSelect
-                  label="Board status"
-                  value={statusFilter}
-                  options={[
-                    { value: "active", label: "Active" },
-                    { value: "archived", label: "Archived" },
-                    { value: "all", label: "All Boards" },
-                  ]}
-                  onValueChange={changeStatus}
-                />
-                <SearchSelect
-                  label="Board type"
-                  value={scopeFilter ?? ""}
-                  placeholder="All Board types"
-                  options={[
-                    { value: "", label: "All Board types" },
-                    { value: "company", label: "Company" },
-                    { value: "department", label: "Departments" },
-                    { value: "project", label: "Projects" },
-                  ]}
-                  onValueChange={(value) => {
-                    setScopeFilter(
-                      value === "company" ||
-                        value === "department" ||
-                        value === "project"
-                        ? value
-                        : null,
-                    );
-                    setOffset(0);
-                  }}
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="min-h-11"
-                    disabled={!hasBoardFilters}
-                    onClick={resetBoardFilters}
-                  >
-                    Reset filters
-                  </Button>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-muted-foreground text-sm">
-                    {currentListPage
-                      ? `${currentListPage.items.length} on this page · ${currentListPage.pagination.total} accessible${appliedSearch ? " matching search" : ""}`
-                      : "Board list unavailable"}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={
-                        offset === 0 || resource.list.status === "loading"
-                      }
-                      onClick={() =>
-                        setOffset((value) => Math.max(0, value - PAGE_SIZE))
-                      }
-                    >
-                      Previous
-                    </Button>
-                    <span className="text-muted-foreground text-sm">
-                      Page {Math.floor(offset / PAGE_SIZE) + 1}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      disabled={
-                        !currentListPage?.pagination.hasMore ||
-                        resource.list.status === "loading"
-                      }
-                      onClick={() => setOffset((value) => value + PAGE_SIZE)}
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              </PopoverContent>
-            </Popover>
+              : null
           }
-          archived={board?.status === "archived"}
-          description={
-            board?.description ||
-            (board
-              ? boardScopeDescription(board)
-              : noBoards
-                ? "No Board is open to your account yet."
-                : "Choose a Board to get started.")
-          }
-          actions={
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-11"
-                aria-label="Refresh"
-                title="Refresh board"
-                onClick={() => {
-                  refreshBoard();
-                  if (regionActive) refreshWorkspaceCalendar();
-                }}
-              >
-                <RefreshCw aria-hidden="true" />
-              </Button>
-              {((board && canManage) || isAdmin) && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        variant="outline"
-                        className="min-h-11 min-w-11"
-                        aria-label="Board menu"
-                      />
-                    }
-                  >
-                    <Settings2 className="sm:hidden" aria-hidden="true" />
-                    <span className="hidden sm:inline">Board menu</span>
-                    <ChevronDown
-                      className="hidden sm:inline"
-                      data-icon="inline-end"
-                      aria-hidden="true"
-                    />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="min-w-56">
-                    {board && canManage && (
-                      <>
-                        <DropdownMenuItem
-                          className="min-h-11"
-                          onClick={() => setManagementMode("manage")}
-                        >
-                          <Settings2 />
-                          {board.scope === "project"
-                            ? "Manage Board and groups"
-                            : "Manage Board"}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="min-h-11"
-                          onClick={() =>
-                            setPreviewSelection({
-                              boardId: board.id,
-                              detailSequence: resource.detail.sequence,
-                            })
-                          }
-                        >
-                          <Eye /> Preview access
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="min-h-11"
-                          onClick={() =>
-                            setActivitySelection({
-                              boardId: board.id,
-                              detailSequence: resource.detail.sequence,
-                            })
-                          }
-                        >
-                          <History /> View activity
-                        </DropdownMenuItem>
-                      </>
-                    )}
-                    {board && canManage && isAdmin && <DropdownMenuSeparator />}
-                    {isAdmin && (
-                      <DropdownMenuGroup>
-                        <DropdownMenuItem
-                          className="min-h-11"
-                          onClick={() => setManagementMode("create")}
-                        >
-                          New project Board
-                        </DropdownMenuItem>
-                      </DropdownMenuGroup>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </>
+          primary={
+            section === "posts" ? (
+              <ServerBackedBoardPostEditor
+                key={`editor:${board.id}`}
+                boardId={board.id}
+                boardRevision={board.revision}
+                boardStatus={board.status}
+                refreshKey={postsLiveKey + manualLiveKey}
+                onPublished={() => refreshBoard()}
+                onDraftStateChange={onPostDraftStateChange}
+              />
+            ) : (
+              <div ref={setPrimarySlot} className="contents" />
+            )
           }
         />
+      ) : (
+        <BoardsLoadingHeader />
       )}
-      <ServerBackedBoardManagement
-        mode="create"
-        open={managementMode === "create"}
-        onOpenChange={(open) => setManagementMode(open ? "create" : null)}
-        onCreated={(created) => {
-          refreshBoard();
-          navigateToBoard(created);
-        }}
-      />
+      {createSheet}
       {board && (
         <ServerBackedBoardManagement
           mode="manage"
@@ -887,7 +493,6 @@ function ServerBackedBoardsContent() {
               closeActivity();
               closePreview();
               closePostManager();
-              setBrowsing(false);
               router.push(href, { scroll: false });
               refreshBoard();
             };
@@ -899,43 +504,13 @@ function ServerBackedBoardsContent() {
       <LoadingRegion
         loading={loading}
         label="Loading Boards"
-        skeleton={<BoardsSkeleton section={route.section} />}
+        skeleton={
+          <BoardsSkeleton
+            section={route.kind === "invalid-board" ? null : route.section}
+          />
+        }
         className={boardsRegionClass}
       >
-        {resource.list.error && (
-          <Alert variant="destructive">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span>
-                {currentListPage ? "Showing the last loaded Board list. " : ""}
-                {resource.list.error}
-              </span>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                onClick={refreshBoard}
-              >
-                Retry
-              </Button>
-            </div>
-          </Alert>
-        )}
-        {board && resource.detail.error && (
-          <Alert variant="destructive">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span>
-                Showing the last loaded Board. {resource.detail.error}
-              </span>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                onClick={refreshBoard}
-              >
-                Retry
-              </Button>
-            </div>
-          </Alert>
-        )}
-
         {!board ? (
           <BoardEmpty
             title={
@@ -943,19 +518,23 @@ function ServerBackedBoardsContent() {
                 ? "Board unavailable"
                 : resource.list.error
                   ? "Boards could not be loaded"
-                  : emptyCopy.title
+                  : noBoards
+                    ? "No active Boards"
+                    : "Board unavailable"
             }
             description={
               unavailable
                 ? resource.detail.error ||
-                  "This Board may have been removed or your account may not have access. Choose another Board above or retry."
+                  "This Board may have been removed or your account may not have access. Choose another Board or retry."
                 : resource.list.error
                   ? "The Board list could not be loaded. Retry to see your Boards."
-                  : emptyCopy.description
+                  : noBoards
+                    ? "Your account cannot open any active Board. Ask an administrator for access."
+                    : "This Board may have been removed or your account may not have access. Choose another Board or retry."
             }
             icon={<LayoutDashboard aria-hidden="true" />}
           >
-            {unavailable && (
+            {unavailable || resource.list.error ? (
               <Button
                 variant="outline"
                 className="min-h-11"
@@ -963,21 +542,17 @@ function ServerBackedBoardsContent() {
               >
                 <RefreshCw data-icon="inline-start" /> Retry Board
               </Button>
+            ) : null}
+            {/* An empty workspace has its first step in view. The server
+                still decides who may create. */}
+            {!unavailable && !resource.list.error && noBoards && isAdmin && (
+              <Button
+                className="min-h-11"
+                onClick={() => setManagementMode("create")}
+              >
+                New project Board
+              </Button>
             )}
-            {/* The same action as the Board menu, so an empty workspace has a
-                first step in view. The server still decides who may create. */}
-            {!unavailable &&
-              !resource.list.error &&
-              !appliedSearch &&
-              noBoards &&
-              isAdmin && (
-                <Button
-                  className="min-h-11"
-                  onClick={() => setManagementMode("create")}
-                >
-                  New project Board
-                </Button>
-              )}
           </BoardEmpty>
         ) : (
           <>
@@ -1006,6 +581,7 @@ function ServerBackedBoardsContent() {
             {section === "calendar" ? (
               <ServerBackedBoardCalendar
                 key={board.id}
+                primarySlot={primarySlot}
                 workspaceCalendar={workspaceCalendar.data}
                 workspaceDateError={workspaceCalendar.isError}
                 onRetryWorkspaceDate={() => void workspaceCalendar.refetch()}
@@ -1019,40 +595,19 @@ function ServerBackedBoardsContent() {
               />
             ) : (
               <div className="flex min-w-0 flex-col gap-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2
-                      data-slot="section-title"
-                      className="text-2xl font-semibold tracking-tight"
+                {/* Manage posts keeps its place until the Posts pass (P2). */}
+                {board.status === "active" && canManage && (
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      onClick={() => setPostManagerSelection(board.id)}
                     >
-                      Posts
-                    </h2>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                      Everyone who can open this Board reads its posts.
-                    </p>
+                      Manage posts
+                    </Button>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {board.status === "active" && canManage && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        onClick={() => setPostManagerSelection(board.id)}
-                      >
-                        Manage posts
-                      </Button>
-                    )}
-                    <ServerBackedBoardPostEditor
-                      key={`editor:${board.id}`}
-                      boardId={board.id}
-                      boardRevision={board.revision}
-                      boardStatus={board.status}
-                      refreshKey={postsLiveKey + manualLiveKey}
-                      onPublished={() => refreshBoard()}
-                      onDraftStateChange={onPostDraftStateChange}
-                    />
-                  </div>
-                </div>
+                )}
                 <ServerBackedBoardPosts
                   key={board.id}
                   region={displayRegion}

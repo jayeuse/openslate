@@ -5,8 +5,6 @@ while it holds that lock; the second starts only then, and the first is released
 PostgreSQL shows the second blocked behind it (pg_locks + pg_blocking_pids).
 """
 
-import os
-import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -19,16 +17,10 @@ from sqlalchemy.orm import Session
 
 from app.systems.boards.kanban_models import BoardCard, BoardStage
 from app.systems.boards.models import Board, BoardScope
-from tests.race_support import WAIT, StatementPause, wait_until_blocked_by
+from tests.race_support import WAIT, StatementPause, join, start, wait_until_blocked_by
 from tests.relationships_integration.relationship_http_support import RelationshipHTTPFixture
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        os.getenv("TEST_DATABASE_URL") is None,
-        reason="Set TEST_DATABASE_URL to run PostgreSQL integration tests",
-    ),
-]
+pytestmark = pytest.mark.integration
 pytest_plugins = ("tests.relationships_integration.relationship_http_support",)
 
 
@@ -48,8 +40,11 @@ def world(relationship_http_fixture: RelationshipHTTPFixture) -> Iterator[_World
 
     fixture = relationship_http_fixture
     with Session(fixture.owner_engine) as database:
-        board = Board(org_id=fixture.org_id, scope=BoardScope.PROJECT.value,
-                      name=f"Kanban race {fixture.actor_id.hex[:12]}")
+        board = Board(
+            org_id=fixture.org_id,
+            scope=BoardScope.PROJECT.value,
+            name=f"Kanban race {fixture.actor_id.hex[:12]}",
+        )
         database.add(board)
         database.flush()
         todo = BoardStage(org_id=board.org_id, board_id=board.id, name="To do", position=0)
@@ -57,8 +52,14 @@ def world(relationship_http_fixture: RelationshipHTTPFixture) -> Iterator[_World
         database.add_all((todo, doing))
         database.flush()
         cards = [
-            BoardCard(org_id=board.org_id, board_id=board.id, stage_id=todo.id,
-                      kind="objective", title=title, rank=rank)
+            BoardCard(
+                org_id=board.org_id,
+                board_id=board.id,
+                stage_id=todo.id,
+                kind="objective",
+                title=title,
+                rank=rank,
+            )
             for title, rank in (("First", 1024), ("Second", 2048))
         ]
         database.add_all(cards)
@@ -80,34 +81,18 @@ def _race(
     first: Callable[[Any], httpx.Response],
     second: Callable[[Any], httpx.Response],
 ) -> tuple[httpx.Response, httpx.Response]:
-    clients = {"first": world.fixture.client(), "second": world.fixture.client()}
-    outcomes: dict[str, object] = {}
-
-    def run(name: str, call: Callable[[Any], httpx.Response]) -> None:
-        try:
-            outcomes[name] = call(clients[name])
-        except Exception as error:  # noqa: BLE001 - a server error is recorded for the assertion
-            outcomes[name] = error
-
-    threads = {
-        name: threading.Thread(target=run, args=(name, call))
-        for name, call in (("first", first), ("second", second))
-    }
+    first_client, second_client = world.fixture.client(), world.fixture.client()
     pause = StatementPause(world.fixture.runtime_engine, "UPDATE BOARD_CARDS")
     try:
-        threads["first"].start()
+        first_run = start(lambda: first(first_client))
         assert pause.paused.wait(WAIT), "the first move never reached its card update"
-        threads["second"].start()
+        second_run = start(lambda: second(second_client))
         wait_until_blocked_by(world.fixture.owner_engine, pause.holder_pid)
         pause.release.set()
+        first_response, second_response = join(*first_run), join(*second_run)
     finally:
         pause.release.set()
-        for thread in threads.values():
-            if thread.ident is not None:
-                thread.join(WAIT)
         pause.remove()
-    assert not any(thread.is_alive() for thread in threads.values()), "a request hung"
-    first_response, second_response = outcomes.get("first"), outcomes.get("second")
     assert isinstance(first_response, httpx.Response), f"first failed: {first_response!r}"
     assert isinstance(second_response, httpx.Response), f"second failed: {second_response!r}"
     return first_response, second_response
@@ -125,8 +110,10 @@ def _doing(world: _World) -> list[tuple[str, int]]:
         return [
             (row.title, row.rank)
             for row in connection.execute(
-                text("SELECT title, rank FROM public.board_cards WHERE stage_id = :id "
-                     "AND archived_at IS NULL ORDER BY rank"),
+                text(
+                    "SELECT title, rank FROM public.board_cards WHERE stage_id = :id "
+                    "AND archived_at IS NULL ORDER BY rank"
+                ),
                 {"id": world.doing_id},
             )
         ]
@@ -146,10 +133,14 @@ def test_two_cards_moved_to_the_same_place_at_once_get_distinct_ordered_ranks(
 def test_a_second_move_of_the_same_card_with_the_old_revision_is_refused(
     world: _World,
 ) -> None:
-    first, second = _race(world, _move(world, world.first_id), lambda client: client.patch(
-        f"/api/boards/{world.board_id}/cards/{world.first_id}",
-        json={"revision": 1, "stage_id": str(world.todo_id), "position": 1},
-    ))
+    first, second = _race(
+        world,
+        _move(world, world.first_id),
+        lambda client: client.patch(
+            f"/api/boards/{world.board_id}/cards/{world.first_id}",
+            json={"revision": 1, "stage_id": str(world.todo_id), "position": 1},
+        ),
+    )
 
     assert first.status_code == 200, first.text
     assert second.status_code == 409, second.text

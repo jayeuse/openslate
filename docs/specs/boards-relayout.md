@@ -7,7 +7,7 @@
 ## Owner answers (2026-10-26)
 
 - **Sidebar: variant A.** Each department group holds Dashboard, **Announcements**, then its modules. The Boards group holds My calendar, Company, the project boards, and All boards. The h1 board switcher goes.
-- **Budget: the cold Comms target rises by 1,000 bytes** (548,000 → 549,000) for the Boards group, with the full project-board list; the change gets a ledger row, as the Departments section's did.
+- **Budget: the cold Comms target rises by 1,000 bytes** (548,000 → 549,000) for the Boards group, with the full project-board list; the change gets a ledger row, as the Departments section's did. **Not needed (P1, 2026-10-26):** the widget removal freed about 2,400 bytes, so the target stays 548,000. Measured locally: 544,191 after P0, 544,945 with the Announcements row, crumbs, and static rows, and 544,994 with the project rows and their reader.
 - **BE3 approved:** the next-event field on the per-board calendar read.
 - **Round 2 and its addenda:** recorded under Direction and as BR47–BR83.
 
@@ -48,7 +48,7 @@
 
 Method: the changes were written as minified code into the built shell chunks (`frontend/out/_next/static/chunks/2rx8t0l6w1ibl.js`, `29a7z9qwnmtgs.js`, `1iisnp8jrjs32.js`) and compressed with zlib level 9, as `comms-js-budget.spec.ts` measures. It is an estimate, not a build.
 
-**Budget plan (P1).** The target becomes 549,000 (`comms-js-budget.spec.ts:33`, with a ledger row). Measure before the row lands, then after each step: (1) the number after P0, locally and in CI; (2) the Announcements row, the crumb, and the static rows; (3) the project rows and their reader. Each step records its bytes.
+**Budget plan (P1).** The target was to become 549,000; P1 measured it unneeded (see Owner answers), so it stays 548,000. Measure before the row lands, then after each step: (1) the number after P0, locally and in CI; (2) the Announcements row, the crumb, and the static rows; (3) the project rows and their reader. Each step records its bytes.
 
 **Pain point:** the department group grows by one row (Sales has 6 rows). **Solution:** only the current department opens (DA3).
 
@@ -442,7 +442,7 @@ Each phase ends with tests that fail first, one code review, targeted screenshot
 | Phase | Content | Proof (tests that own it) | Exit |
 | --- | --- | --- | --- |
 | **P0** Backend | BE1 with FN1 (and the frontend Overview removal); BE2; BE3; **BE7 and BE8** (they gate P4 and P5) | BE1: the migration test; `charts/test_usage.py`, `charts/test_widget_reference_races.py`, `lifecycle_integration/test_chart_*`, `boards/test_activity.py`, `test_lifecycle.py`, `test_permanent_delete.py`, `reset_application_data/test_reset_table_parity.py`; deleted widget and portability tests (51). BE2 and BE3: a new test file and `test_event_occurrences.py`, `test_event_occurrence_routes.py`. BE7: route, access (manager, writer, reader, guest, locked record card), purge, reset, and batch-dates tests. Frontend: `boards-route-cutover.spec.ts` (23) and `boards-navigation.spec.ts` (4); deleted specs (71); `test_openapi_snapshot.py` | FN1 for `ho-manager` and `ho-noaccess`; no request to a removed route; sample runs pass |
-| **P1** Sidebar and header | The budget plan; the sidebar rows (BR1–BR5, BR41, BR47); the header and tabs (BR6, BR7, BR50); BR9; BF-7; All boards | `isolated/workspace-navigation.spec.ts` (21), `isolated/department-navigation.spec.ts` (4), `http/department-navigation.spec.ts` (7), `http/workspace-orientation.spec.ts` (4), `comms-js-budget.spec.ts` at 549,000 | Cold Comms JavaScript under 549,000 locally and in CI; cold `/boards` at most 34 requests, the board list and the open board read once each |
+| **P1** Sidebar and header | The budget plan; the sidebar rows (BR1–BR5, BR41, BR47); the header and tabs (BR6, BR7, BR50); BR9; BF-7; All boards | `isolated/workspace-navigation.spec.ts` (21), `isolated/department-navigation.spec.ts` (4), `http/department-navigation.spec.ts` (7), `http/workspace-orientation.spec.ts` (4), `comms-js-budget.spec.ts` at 548,000 | Cold Comms JavaScript under 548,000 locally and in CI; cold `/boards` at most 34 requests, the board list and the open board read once each |
 | **P2** Posts | BR10–BR15, BR38 | `boards-live-posts.spec.ts` (30), `boards-live-attachments.spec.ts` (7), `isolated/boards/live-posts` (10), `live-post-editor` (12), `live-post-lifecycle` (3), `post-editor-state` (12), `board-posts-api` (10), `board-post-author-api` (6); `?post=` links | No document scroll at 1280×720 and 1440×900 |
 | **P3** Calendar and My calendar | BR16, BR19–BR22, BR35, BR43, BR44, BR51–BR59, FN2; record-date sources (BR57, BE8) and card due dates (BR58, after BE7) | `boards-live-calendar.spec.ts` (13), `isolated/boards/live-calendar` (27), `board-events-api` (13), `board-scope-rules` (4); `isolated/openview/window-api.spec.ts` for the source read; new journeys: My calendar with one refused board; a source the viewer cannot read stays hidden | Month titles legible at 1280×720 (no clipped time, two-line titles where the day has room); no document scroll at 1280×720 and 1440×900 |
 | **P4** Kanban and Gantt, and the OpenView removal | BR60–BR76, BR79–BR83 on the BE7 routes; **in the same phase** BE6 and BR77–BR78 (OpenView keeps three layouts; the saved-view migration), so no capability is missing between phases | New Kanban and Gantt HTTP journeys (stage CRUD as manager, card add and move as writer with Undo, read-only reader, locked record card, keyboard drag, WIP overrun, Gantt staged resize and Save changes, Unscheduled); isolated rank, grouping, and progress rules; the OpenView removals and trims in data safety B; `url-state.spec.ts` for old layout links | Every capability in the OpenView map has its home or its recorded removal; the Layout menu lists three; no saved view of the three layouts remains |
@@ -457,7 +457,7 @@ Each phase ends with tests that fail first, one code review, targeted screenshot
 | EXIT-2 | From 1280px, controls are 32px and rows 40px; at 390, every target is at least 44px and nothing scrolls the page sideways (the Gantt panel may). |
 | EXIT-3 | No request to a removed route from any page; FN1 holds for every role. |
 | EXIT-4 | Every capability in both maps has its home or its recorded removal, for each role that has it now; every URL in Preserved behavior opens the same thing. |
-| EXIT-5 | Cold Comms JavaScript stays under 549,000 gzip bytes locally and in CI. |
+| EXIT-5 | Cold Comms JavaScript stays under 548,000 gzip bytes locally and in CI. |
 | EXIT-6 | OpenView's Layout menu lists Table, Grid, Gallery; the migration test shows no saved view of the three layouts, no stripped key left, and an untouched Table view; `layout=kanban` opens Table. |
 | EXIT-7 | Readability: Month titles read at 1280; Kanban stage headers show name and count, cards carry no field labels, and the drop target shows; the Gantt shows a summary bar per group, a today line, and an Unscheduled list. |
 | EXIT-8 | A critique scores at least 28/40 with no P1. |

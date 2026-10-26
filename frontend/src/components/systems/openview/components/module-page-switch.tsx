@@ -3,16 +3,11 @@
 import Link from "next/link";
 import type { Route } from "next";
 
-// The Tabs skin hooks (`tabs-list`, `tabs-trigger` with `data-active`, and
-// `tabs-indicator`), so every look styles the switch as its tabs. The classes
-// are the Tabs primitive's; the primitive itself is not imported, because
-// these are links (each view has its own address), not a tab panel.
-const list =
-  "text-muted-foreground relative flex w-fit items-center gap-1 rounded-[var(--radius)] bg-[var(--surface-sunken)] p-1 shadow-[inset_0_0_0_1px_var(--rule)] max-sm:w-full";
-const trigger =
-  "focus-visible:outline-ring data-active:text-action-text relative isolate inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-sm px-3 text-sm font-medium whitespace-nowrap outline-none focus-visible:outline-2 data-active:font-semibold md:flex-none xl:min-h-7";
-const indicator =
-  "absolute inset-0 -z-10 rounded-[calc(var(--radius)*0.75)] bg-[var(--surface-raised)] shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]";
+import {
+  linkTabsIndicatorClass as indicator,
+  linkTabsListClass as list,
+  linkTabsTriggerClass as trigger,
+} from "@/components/ui/link-tabs";
 
 /**
  * The module page's two views, Records and Reports, with their counts

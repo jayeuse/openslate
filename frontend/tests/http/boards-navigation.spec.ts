@@ -1,6 +1,18 @@
-import { expect, signedInSession, test, type Page } from "./helpers/test";
+import {
+  authMeBody,
+  expect,
+  signedInSession,
+  test,
+  type Page,
+} from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
 import { wireBoard } from "../helpers/wire";
+import { installOpenViewEventSource } from "./helpers/openview-event-source";
+import {
+  directoryIds,
+  installBoardApi,
+  installBoardDirectory,
+} from "./helpers/boards-api";
 
 const boardId = "00000000-0000-4000-8000-000000000021";
 const userId = "00000000-0000-4000-8000-000000000022";
@@ -88,7 +100,7 @@ test("Board content sections stay on the authorized UUID and fail closed when co
   await expect(page.getByText("Manager-visible event")).toHaveCount(0);
 
   await page
-    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("navigation", { name: `${board.name} announcements views` })
     .getByRole("link", { name: "Posts", exact: true })
     .click();
   await expect(page).toHaveURL(
@@ -175,8 +187,11 @@ test("a slow Board list shows its skeleton only after 300ms, and for at least 30
       { intervals: [50] },
     )
     .toBe(1);
+  // The region now holds the Board's posts (here, its fail-closed notice).
   await expect(
-    region.getByRole("heading", { name: "Posts", exact: true }),
+    region.getByText(
+      "No post content is shown. Retry or ask a Board manager to check your access.",
+    ),
   ).toBeVisible();
   await expect(label).toHaveCount(0);
 });
@@ -191,4 +206,331 @@ test("a Board list that arrives within 300ms never shows the skeleton", async ({
   await expect(region).toHaveAttribute("aria-busy", "false");
   await page.clock.runFor(1_000);
   await expect(label).toHaveCount(0);
+});
+
+// docs/specs/boards-relayout.md P1: the sidebar rows, the breadcrumb, the
+// page header and All boards (BR1–BR9, BR41, BR47, BF-7).
+
+const sidebar = (page: Page) =>
+  page.getByRole("navigation", { name: "Main navigation" });
+const crumbs = (page: Page) =>
+  page.getByRole("navigation", { name: "breadcrumb" });
+
+test("a department's Announcements row opens its board by department, and a Board link to it is replaced in place", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  await installBoardDirectory(page);
+  const postId = "00000000-0000-4000-8000-000000000041";
+  await page.goto("/platform?section=search");
+  await page.goto(
+    `/boards?board=${directoryIds.sales}&section=posts&post=${postId}&keep=chosen`,
+  );
+  // The shell reads the address alone: the department, never the Board id.
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("department") === directoryIds.salesDepartment &&
+      !url.searchParams.has("board") &&
+      url.searchParams.get("section") === "posts" &&
+      url.searchParams.get("post") === postId &&
+      url.searchParams.get("keep") === "chosen",
+  );
+  // The post link still opens its post; this one is not on the board.
+  await page.getByRole("button", { name: "Close post", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Sales announcements" }),
+  ).toBeVisible();
+  const salesPages = sidebar(page).getByRole("list", { name: "Sales pages" });
+  await expect(salesPages.getByRole("link")).toHaveText([
+    "Dashboard",
+    "Announcements",
+    "Contacts",
+  ]);
+  const row = salesPages.getByRole("link", { name: "Announcements" });
+  await expect(row).toHaveAttribute(
+    "href",
+    `/boards?department=${directoryIds.salesDepartment}`,
+  );
+  await expect(row).toHaveAttribute("aria-current", "page");
+  await expect(crumbs(page)).toHaveText(/^Sales\s*Announcements$/);
+  // A department's board is not a Boards row, so that group stays closed.
+  await expect(
+    sidebar(page).getByRole("link", { name: "Company", exact: true }),
+  ).toHaveCount(0);
+  // The replace kept one history entry: Back leaves Boards.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/platform\?section=search$/);
+});
+
+test("the Boards group lists Company, the active project boards by name and All boards, read once", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  const directory = await installBoardDirectory(page);
+  await page.goto("/platform?section=search");
+  const nav = sidebar(page);
+  await expect(
+    nav.getByRole("button", { name: "Boards", exact: true }),
+  ).toBeVisible();
+  await nav.getByRole("button", { name: "Boards", exact: true }).click();
+  const rows = nav.getByRole("list", { name: "Boards" });
+  await expect(rows.getByRole("link")).toHaveText([
+    "Company",
+    "Customer Renewal",
+    "Fleet Reliability",
+    "All boards",
+  ]);
+  await expect(rows.getByRole("link", { name: "Company" })).toHaveAttribute(
+    "href",
+    "/boards",
+  );
+  await expect(
+    rows.getByRole("link", { name: "Fleet Reliability" }),
+  ).toHaveAttribute("href", `/boards?board=${directoryIds.fleet}`);
+  await expect(rows.getByRole("link", { name: "All boards" })).toHaveAttribute(
+    "href",
+    "/boards?section=all",
+  );
+  await rows.getByRole("link", { name: "Fleet Reliability" }).click();
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: "Fleet Reliability announcements",
+    }),
+  ).toBeVisible();
+  await expect(
+    rows.getByRole("link", { name: "Fleet Reliability" }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(crumbs(page)).toHaveText(/^Boards\s*Fleet Reliability$/);
+  // The page reads the list the sidebar already holds.
+  expect(directory.listQueries).toHaveLength(1);
+
+  await rows.getByRole("link", { name: "Company" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Company announcements" }),
+  ).toBeVisible();
+  await expect(rows.getByRole("link", { name: "Company" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(crumbs(page)).toHaveText(/^Boards\s*Company$/);
+
+  // The collapsed rail's Boards button opens the sidebar on the group.
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect(rows).toHaveCount(0);
+  await nav.getByRole("button", { name: "Boards", exact: true }).click();
+  await expect(rows.getByRole("link", { name: "Company" })).toBeVisible();
+});
+
+test("a Board page has one header: the title, the level, one meta line, tabs and the tab's primary", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  await installBoardDirectory(page);
+  await page.goto("/boards?section=overview");
+  // A retired Overview link opens Company's Posts.
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("section") === "posts" &&
+      !url.searchParams.has("board"),
+  );
+  const title = page.getByRole("heading", { level: 1 });
+  await expect(title).toHaveText("Company announcements");
+  await expect(page.getByText("Manager", { exact: true })).toBeVisible();
+  const tabs = page.getByRole("navigation", {
+    name: "Company announcements views",
+  });
+  await expect(tabs.getByRole("link")).toHaveText(["Posts", "Calendar"]);
+  await expect(tabs.getByRole("link", { name: "Posts" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(
+    page.getByRole("button", { name: "New post", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Board settings", exact: true }),
+  ).toBeVisible();
+  for (const gone of ["Board menu", "Refresh", "Switch board"])
+    await expect(
+      page.getByRole("button", { name: gone, exact: true }),
+    ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Posts", exact: true }),
+  ).toHaveCount(0);
+
+  await tabs.getByRole("link", { name: "Calendar" }).click();
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("section") === "calendar" &&
+      !url.searchParams.has("board"),
+  );
+  await expect(
+    page.getByRole("button", { name: "New event", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "New post", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("All boards lists every readable board with its kind and level, searches, and shows archived boards", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  const directory = await installBoardDirectory(page);
+  await page.goto("/boards?section=all");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "All boards" }),
+  ).toBeVisible();
+  await expect(crumbs(page)).toHaveText(/^Boards\s*All boards$/);
+  const list = page.getByRole("list", { name: "All boards", exact: true });
+  await expect(list.getByRole("link")).toHaveCount(4);
+  const sales = list.getByRole("link", { name: /^Sales/ });
+  await expect(sales).toHaveAttribute(
+    "href",
+    `/boards?department=${directoryIds.salesDepartment}`,
+  );
+  await expect(sales).toContainText("Department");
+  await expect(sales).toContainText("Manager");
+  await expect(
+    list.getByRole("link", { name: /^Fleet Reliability/ }),
+  ).toContainText("Project");
+  // No Board is open, so nothing reads one.
+  expect(directory.detailReads).toEqual([]);
+
+  await page.getByRole("searchbox", { name: "Search boards" }).fill("fleet");
+  await expect(list.getByRole("link")).toHaveCount(1);
+  await expect(list.getByRole("link")).toContainText("Fleet Reliability");
+  expect(
+    directory.listQueries.some(
+      (query) => new URLSearchParams(query).get("search") === "fleet",
+    ),
+  ).toBe(true);
+  await page.getByRole("searchbox", { name: "Search boards" }).fill("");
+  await page.getByRole("button", { name: "Archived", exact: true }).click();
+  await expect(list.getByRole("link")).toHaveCount(1);
+  await expect(list.getByRole("link")).toContainText("Spring Launch");
+
+  await page
+    .getByRole("button", { name: "New project board", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "New project Board" }),
+  ).toBeVisible();
+  for (const gone of ["Board type", "Board status"])
+    await expect(page.getByRole("combobox", { name: gone })).toHaveCount(0);
+});
+
+test("only administrators are offered a new project board on All boards", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  await installBoardDirectory(page, { level: "read" });
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: authMeBody({
+        id: "00000000-0000-4000-8000-000000000012",
+        role: "member",
+        access: [],
+        default_organization_blocked: null,
+      }),
+    }),
+  );
+  await page.goto("/boards?section=all");
+  const list = page.getByRole("list", { name: "All boards", exact: true });
+  await expect(list.getByRole("link", { name: /^Company/ })).toContainText(
+    "Read",
+  );
+  await expect(
+    page.getByRole("button", { name: "New project board", exact: true }),
+  ).toHaveCount(0);
+});
+
+for (const viewport of [
+  { width: 1280, height: 720 },
+  { width: 1440, height: 900 },
+]) {
+  test(`a Board page does not scroll the document at ${viewport.width}px; its panel scrolls`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await installBoardApi(page, () => true);
+    const published = "2026-09-24T00:00:00Z";
+    const posts = Array.from({ length: 12 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-0000000005${String(index).padStart(2, "0")}`,
+      board_id: directoryIds.company,
+      author_id: "00000000-0000-4000-8000-000000000012",
+      title: `Shift note ${index + 1}`,
+      body: "Shifts start at 7. Bring the dock keys and sign the rota.",
+      links: [],
+      status: "published",
+      publish_at: published,
+      expires_at: null,
+      pinned: false,
+      post_revision: null,
+      board_revision: 1,
+      publication_number: index + 1,
+      published_at: published,
+      edited: false,
+      created_at: published,
+      updated_at: published,
+    }));
+    await installBoardDirectory(page, {
+      posts: { [directoryIds.company]: posts },
+    });
+    await page.goto("/boards");
+    await expect(page.getByText("Shift note 12")).toBeAttached();
+    const scroll = await page.evaluate(() => ({
+      document: document.documentElement.scrollHeight - window.innerHeight,
+      panel: [...document.querySelectorAll("main *")].some(
+        (element) =>
+          element.scrollHeight > element.clientHeight + 1 &&
+          ["auto", "scroll"].includes(getComputedStyle(element).overflowY),
+      ),
+    }));
+    expect(scroll).toEqual({ document: 0, panel: true });
+  });
+}
+
+test("a cold /boards reads the board list and the open board once each, within 34 requests", async ({
+  page,
+}) => {
+  // A live stream, so its connection is part of the cold load.
+  await installOpenViewEventSource(page, { autoResync: true });
+  await installBoardApi(page, () => true);
+  const directory = await installBoardDirectory(page);
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/"))
+      requests.push(`${request.method()} ${url.pathname}${url.search}`);
+  });
+  await page.goto("/boards");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Company announcements" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "New post", exact: true }),
+  ).toBeVisible();
+  // Count once the page stops reading: two polls in a row see no new request.
+  let previous = -1;
+  await expect
+    .poll(
+      () => {
+        const settled = requests.length === previous;
+        previous = requests.length;
+        return settled;
+      },
+      { intervals: [500] },
+    )
+    .toBe(true);
+  expect(directory.listQueries, requests.join("\n")).toHaveLength(1);
+  expect(directory.detailReads, requests.join("\n")).toEqual([
+    directoryIds.company,
+  ]);
+  await test.info().attach("cold /boards API requests", {
+    body: `${requests.length}\n${requests.join("\n")}`,
+    contentType: "text/plain",
+  });
+  expect(requests.length, requests.join("\n")).toBeLessThanOrEqual(34);
 });

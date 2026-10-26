@@ -947,7 +947,7 @@ export function ServerBackedBoardPostEditor({
           <Button
             type="button"
             variant="default"
-            className="min-h-11 rounded-r-none"
+            className="min-h-11 rounded-r-none xl:min-h-8"
             disabled={view.pending || hasUnsavedChanges}
             onClick={() => {
               editor.newDraft();
@@ -964,7 +964,7 @@ export function ServerBackedBoardPostEditor({
                   type="button"
                   variant="default"
                   size="icon"
-                  className="border-primary-foreground/20 min-h-11 min-w-11 rounded-l-none border-l"
+                  className="border-primary-foreground/20 min-h-11 min-w-11 rounded-l-none border-l xl:min-h-8 xl:min-w-8"
                   aria-label="More post actions"
                   disabled={view.pending}
                 />

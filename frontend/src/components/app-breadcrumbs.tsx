@@ -30,6 +30,14 @@ import {
 import { profileSelfKey } from "@/components/profile/adapters/profile-queries";
 import type { ProfileSelf } from "@/components/profile/adapters/profile-api";
 import { personProfileKey } from "@/components/profile/adapters/profile-view-keys";
+import {
+  boardsDetailKey,
+  boardsLocation,
+  boardsNavigationKey,
+  boardsPlace,
+  type BoardsPlace,
+  type NavigationBoard,
+} from "@/components/boards-navigation-model";
 import type { PersonProfile } from "@/components/profile/adapters/profile-api";
 import {
   Breadcrumb,
@@ -105,6 +113,11 @@ export function AppBreadcrumbs() {
         dashboardDepartmentId={dashboardDepartmentId}
       />
     );
+  const boards = boardsPlace(
+    pathname,
+    new URLSearchParams(searchParams.toString()),
+  );
+  if (boards) return <BoardsCrumbs place={boards} />;
   return (
     <Breadcrumb
       className={cn("min-w-0", titledInPage.has(pathname) && "max-md:hidden")}
@@ -222,6 +235,53 @@ function ModuleCrumbs({
           <BreadcrumbPage className="block min-h-6 truncate leading-6">
             {place?.module.name ??
               (dashboardDepartmentId ? "Dashboard" : "Records")}
+          </BreadcrumbPage>
+        </BreadcrumbItem>
+      </BreadcrumbList>
+    </Breadcrumb>
+  );
+}
+
+/**
+ * "Sales › Announcements", "Boards › Company", "Boards › <project>" and
+ * "Boards › All boards" (BR4). Names come from the caches the sidebar and
+ * the Boards page fill, so the header adds no read.
+ */
+function BoardsCrumbs({ place }: { place: BoardsPlace }) {
+  const departments = useQuery({
+    ...departmentNavigationOptions(),
+    enabled: false,
+  });
+  const list = useQuery<{ items: NavigationBoard[] }>({
+    queryKey: boardsNavigationKey(),
+    queryFn: skipToken,
+  });
+  const open = useQuery<NavigationBoard>({
+    queryKey: boardsDetailKey(place.kind === "board" ? place.boardId : ""),
+    queryFn: skipToken,
+  });
+  const location = boardsLocation(
+    place,
+    [
+      ...(isRefusal(list.error) ? [] : (list.data?.items ?? [])),
+      ...(place.kind === "board" && open.data ? [open.data] : []),
+    ],
+    isRefusal(departments.error) ? [] : (departments.data?.items ?? []),
+  );
+  return (
+    <Breadcrumb className="min-w-0">
+      <BreadcrumbList className="flex-nowrap">
+        {location.parent ? (
+          <>
+            <BreadcrumbItem className="shrink-0 max-sm:hidden">
+              {location.parent}
+            </BreadcrumbItem>
+            <BreadcrumbSeparator className="max-sm:hidden" />
+          </>
+        ) : null}
+        <BreadcrumbItem className="min-w-0">
+          <BreadcrumbPage className="block min-h-6 truncate leading-6">
+            {location.current}
           </BreadcrumbPage>
         </BreadcrumbItem>
       </BreadcrumbList>

@@ -830,6 +830,7 @@ test("off-page post authors keep their labels through picker search, reader, and
 test("local card history keeps its eligible author after a held feed refresh replaces the card", async ({
   page,
 }) => {
+  await installOpenViewEventSource(page);
   const api = await installPostBrowserApi(page);
   const replacementAuthorId = "00000000-0000-4000-8000-000000000008";
   const editedPost = { ...browserPost, publication_number: 2, edited: true };
@@ -889,10 +890,13 @@ test("local card history keeps its eligible author after a held feed refresh rep
     const feed = page.getByRole("region", { name: "Published posts" });
     await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
     // A Strict Mode remount can abort the first load after it reached the
-    // route, so count only the reads that Refresh causes.
+    // route, so count only the reads that the live change causes.
     const readsBeforeRefresh = feedReads;
     holdFeed = true;
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await sendOpenViewEvent(page, "invalidate", {
+      entity: "board_posts",
+      board_id: boardId,
+    });
     await feedEntered;
     await page
       .getByRole("button", {
@@ -1057,17 +1061,19 @@ test("switching Boards ignores the previous Board's late author label read", asy
     await page.goto(`/boards?board=${boardId}&section=posts`);
     await labelStarted;
     await page
-      .getByRole("button", { name: "Switch board", exact: true })
-      .click();
-    await page.getByRole("combobox", { name: "Board", exact: true }).click();
-    await page
-      .getByRole("option", { name: /^Second operations board\b/ })
+      .getByRole("navigation", { name: "Main navigation", exact: true })
+      .getByRole("link", { name: "Second operations board", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "Second operations board", level: 1 }),
+      page.getByRole("heading", {
+        name: "Second operations board announcements",
+        level: 1,
+      }),
     ).toBeVisible();
     await page
-      .getByRole("navigation", { name: "Main navigation", exact: true })
+      .getByRole("navigation", {
+        name: "Second operations board announcements views",
+      })
       .getByRole("link", { name: "Posts", exact: true })
       .click();
     const feed = page.getByRole("region", { name: "Published posts" });
@@ -1133,6 +1139,7 @@ for (const status of [403, 404]) {
   test(`known-author label refusal ${status} hides stored names until an authorized retry`, async ({
     page,
   }) => {
+    await installOpenViewEventSource(page);
     await installPostBrowserApi(page);
     let refused = false;
     let recoveryArmed = false;
@@ -1216,7 +1223,10 @@ for (const status of [403, 404]) {
       await expect(picker).toContainText("Avery");
       await expect.poll(() => activeReads).toBe(0);
       refused = true;
-      await page.getByRole("button", { name: "Refresh", exact: true }).click();
+      await sendOpenViewEvent(page, "invalidate", {
+        entity: "board_posts",
+        board_id: boardId,
+      });
       await deniedComplete;
       await expect(
         page.getByText(
@@ -1251,6 +1261,7 @@ for (const status of [403, 404]) {
 test("a transient label refresh retains the current byline and retries its bounded lookup", async ({
   page,
 }) => {
+  await installOpenViewEventSource(page);
   const api = await installPostBrowserApi(page);
   let failed = false;
   await page.route(`**/api/boards/${boardId}/post-authors**`, (route) =>
@@ -1265,7 +1276,10 @@ test("a transient label refresh retains the current byline and retries its bound
   const feed = page.getByRole("region", { name: "Published posts" });
   await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
   failed = true;
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "board_posts",
+    board_id: boardId,
+  });
   await expect(
     page.getByText(
       "Could not refresh author labels. Showing the last loaded labels.",
@@ -1909,15 +1923,13 @@ for (const phase of ["timer", "read"] as const) {
     const beforeSwitch = oldReads;
     try {
       await page
-        .getByRole("button", { name: "Switch board", exact: true })
+        .getByRole("navigation", { name: "Main navigation", exact: true })
+        .getByRole("link", { name: /Partner Board/ })
         .click();
       await page.clock.runFor(20);
-      await page.getByRole("combobox", { name: "Board", exact: true }).click();
-      await page.clock.runFor(20);
-      await page.getByRole("option", { name: /Partner Board/ }).click();
-      await expect(
-        page.getByRole("button", { name: "Switch board", exact: true }),
-      ).toContainText("Partner Board");
+      await expect(page.getByRole("heading", { level: 1 })).toContainText(
+        "Partner Board",
+      );
       const partnerReply = page.waitForResponse((response) => {
         const url = new URL(response.url());
         return (

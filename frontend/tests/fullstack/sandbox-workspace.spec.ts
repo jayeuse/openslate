@@ -672,10 +672,9 @@ async function exerciseConnectedBoard(
     buffer: Buffer.from("This is a plain text note, not a PDF.\n", "utf8"),
   };
 
-  await page.goto("/boards");
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page.goto("/boards?section=all");
   await page
-    .getByRole("menuitem", { name: "New project Board", exact: true })
+    .getByRole("button", { name: "New project board", exact: true })
     .click();
   await page.getByLabel("Board name").fill(boardName);
   const [createdBoard] = await Promise.all([

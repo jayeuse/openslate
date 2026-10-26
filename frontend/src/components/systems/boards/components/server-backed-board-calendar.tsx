@@ -5,6 +5,7 @@ import {
 } from "@/components/use-display-region";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ChevronDown,
   ChevronLeft,
@@ -176,7 +177,10 @@ export function ServerBackedBoardCalendar({
   onDraftStateChange,
   selectedEventId = null,
   onCloseSelectedEvent,
+  primarySlot = null,
 }: {
+  /** The page header's place for the tab's one primary (BR6, BR50). */
+  primarySlot?: HTMLElement | null;
   boardId: string;
   refreshKey: number;
   liveKey: number;
@@ -1377,26 +1381,32 @@ export function ServerBackedBoardCalendar({
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            {view !== "archived" && canEdit && calendarPage && !activeDraft && (
-              <Button
-                type="button"
-                className="min-h-11"
-                onClick={() => {
-                  setEditorError(null);
+            {view !== "archived" &&
+              canEdit &&
+              calendarPage &&
+              !activeDraft &&
+              primarySlot &&
+              createPortal(
+                <Button
+                  type="button"
+                  className="min-h-11 xl:min-h-8"
+                  onClick={() => {
+                    setEditorError(null);
 
-                  setConflict(null);
-                  setDraft(
-                    newBoardEventDraft(
-                      boardId,
-                      calendarPage.boardRevision,
-                      selectedCalendarDate,
-                    ),
-                  );
-                }}
-              >
-                <Plus data-icon="inline-start" /> New event
-              </Button>
-            )}
+                    setConflict(null);
+                    setDraft(
+                      newBoardEventDraft(
+                        boardId,
+                        calendarPage.boardRevision,
+                        selectedCalendarDate,
+                      ),
+                    );
+                  }}
+                >
+                  <Plus data-icon="inline-start" /> New event
+                </Button>,
+                primarySlot,
+              )}
           </div>
         </div>
         {workspaceDateError && (

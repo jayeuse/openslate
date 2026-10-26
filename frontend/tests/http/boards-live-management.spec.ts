@@ -144,10 +144,10 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     api.workspace.purge_enabled = state === "unknown" ? undefined : false;
     api.failWorkspaceRead(state === "unavailable");
     await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
-    await page.getByRole("button", { name: "Board menu", exact: true }).click();
     await page
-      .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+      .getByRole("button", { name: "Board settings", exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "Details", exact: true }).click();
     const manage = page.getByRole("dialog", { name: "Manage Board" });
     await expect(
       manage.getByRole("button", { name: "Restore Board" }),
@@ -239,10 +239,10 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
     });
   });
   await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .getByRole("button", { name: "Board settings", exact: true })
     .click();
+  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
   const manage = page.getByRole("dialog", { name: "Manage Board" });
   const begin = manage.getByRole("button", {
     name: "Permanently delete Board",
@@ -336,10 +336,9 @@ test("Board creation closes its form and confirms the created Board", async ({
       json: { level: "manage", read: true, write: true, manage: true },
     }),
   );
-  await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page.goto("/boards?section=all");
   await page
-    .getByRole("menuitem", { name: "New project Board", exact: true })
+    .getByRole("button", { name: "New project board", exact: true })
     .click();
   const form = page.getByRole("dialog", { name: "New project Board" });
   await form.getByLabel("Board name").fill(created.name);
@@ -372,10 +371,10 @@ test("Board permanent deletion closes its review and confirms completion", async
         }),
   );
   await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .getByRole("button", { name: "Board settings", exact: true })
     .click();
+  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
   const form = page.getByRole("dialog", { name: "Manage Board" });
   await form
     .getByRole("button", { name: "Permanently delete Board", exact: true })
@@ -450,10 +449,10 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
     });
   });
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .getByRole("button", { name: "Board settings", exact: true })
     .click();
+  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
   const manage = page.getByRole("dialog", { name: "Manage Board" });
   await manage
     .getByRole("combobox", { name: "Add a group", exact: true })
@@ -644,7 +643,7 @@ async function installFileManagement(page: Page, startArchived = false) {
   };
 }
 
-test("another Board invalidation refreshes the current bounded selector search in place", async ({
+test("another Board invalidation refreshes the All boards search in place", async ({
   page,
 }) => {
   await installFileManagement(page);
@@ -673,12 +672,8 @@ test("another Board invalidation refreshes the current bounded selector search i
       });
     },
   );
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "Switch board", exact: true }).click();
-  await page.getByLabel("Search accessible Boards").fill("Dispatch");
-  await page
-    .getByRole("button", { name: "Search boards", exact: true })
-    .click();
+  await page.goto("/boards?section=all");
+  await page.getByRole("searchbox", { name: "Search boards" }).fill("Dispatch");
   await expect.poll(() => queries.at(-1)?.get("search")).toBe("Dispatch");
   const before = queries.length;
   name = "Remote dispatch partner";
@@ -688,17 +683,18 @@ test("another Board invalidation refreshes the current bounded selector search i
   });
   await expect.poll(() => queries.length).toBe(before + 1);
   expect(queries.at(-1)?.get("search")).toBe("Dispatch");
-  expect(queries.at(-1)?.get("limit")).toBe("25");
+  expect(queries.at(-1)?.get("limit")).toBe("100");
   expect(queries.at(-1)?.get("offset")).toBe("0");
   expect(queries.at(-1)?.get("status")).toBe("active");
-  await expect(page.getByLabel("Search accessible Boards")).toHaveValue(
-    "Dispatch",
-  );
-  await page.getByRole("combobox", { name: "Board", exact: true }).click();
   await expect(
-    page.getByRole("option", { name: /Remote dispatch partner/ }),
+    page.getByRole("searchbox", { name: "Search boards" }),
+  ).toHaveValue("Dispatch");
+  await expect(
+    page
+      .getByRole("list", { name: "All boards" })
+      .getByRole("link", { name: /Remote dispatch partner/ }),
   ).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`board=${boardId}`));
+  await expect(page).toHaveURL(/section=all/);
 });
 
 test("live unattached-file list and Board metadata retain the management draft", async ({
@@ -706,10 +702,10 @@ test("live unattached-file list and Board metadata retain the management draft",
 }) => {
   const api = await installFileManagement(page);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .getByRole("button", { name: "Board settings", exact: true })
     .click();
+  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
   const manage = page.getByRole("dialog", { name: "Manage Board" });
   await expect(
     manage.getByRole("button", {
@@ -763,10 +759,10 @@ for (const changed of [false, true]) {
         },
       );
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    await page.getByRole("button", { name: "Board menu", exact: true }).click();
     await page
-      .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+      .getByRole("button", { name: "Board settings", exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "Details", exact: true }).click();
     const manage = page.getByRole("dialog", { name: "Manage Board" });
     await manage.getByLabel("File status").selectOption("only");
     await manage
@@ -844,10 +840,10 @@ for (const startArchived of [false, true]) {
     await page.goto(
       `/boards?board=${boardId}&section=posts${startArchived ? "&status=archived" : ""}`,
     );
-    await page.getByRole("button", { name: "Board menu", exact: true }).click();
     await page
-      .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+      .getByRole("button", { name: "Board settings", exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "Details", exact: true }).click();
     const manage = page.getByRole("dialog", { name: "Manage Board" });
     if (startArchived) {
       await expect(
@@ -1027,15 +1023,21 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
   try {
     await page.goto(`/boards?board=${boardId}&section=posts`);
     await expect(
-      page.getByRole("heading", { name: board.name, exact: true }),
+      page.getByRole("heading", {
+        name: `${board.name} announcements`,
+        exact: true,
+      }),
     ).toBeVisible();
     holdNext = true;
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await sendOpenViewEvent(page, "invalidate", {
+      entity: "boards",
+      board_id: boardId,
+    });
     await expect.poll(() => detailHeld).toBe(true);
-    await page.getByRole("button", { name: "Board menu", exact: true }).click();
     await page
-      .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+      .getByRole("button", { name: "Board settings", exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "Details", exact: true }).click();
     const manage = page.getByRole("dialog", { name: "Manage Board" });
     await manage
       .getByRole("button", {

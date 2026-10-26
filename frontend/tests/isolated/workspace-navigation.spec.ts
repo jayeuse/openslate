@@ -10,6 +10,12 @@ import {
   currentNavigationKey,
   organizationLinkExit,
 } from "../../src/components/workspace-navigation";
+import {
+  boardsGroupRows,
+  boardsLocation,
+  boardsPlace,
+  type NavigationBoard,
+} from "../../src/components/boards-navigation-model";
 
 function item(
   pathname: string,
@@ -26,25 +32,25 @@ function item(
 }
 
 test("active section selection uses stable IDs when rendered copy changes", () => {
-  const boards = getWorkspaceNavigation(
-    "/boards",
-    new URLSearchParams("section=calendar"),
+  const platform = getWorkspaceNavigation(
+    "/platform",
+    new URLSearchParams("section=files"),
     "all",
-  ).find((entry) => entry.id === "boards");
-  const calendar = boards?.items.find((entry) => entry.id === "calendar");
+  ).find((entry) => entry.id === "platform");
+  const files = platform?.items.find((entry) => entry.id === "files");
 
-  expect(boards).toBeDefined();
-  expect(calendar).toBeDefined();
+  expect(platform).toBeDefined();
+  expect(files).toBeDefined();
 
-  const renamedGroup = { ...boards!, label: "Planning" };
-  const renamedItem = { ...calendar!, label: "Schedule" };
+  const renamedGroup = { ...platform!, label: "Planning" };
+  const renamedItem = { ...files!, label: "Schedule" };
 
   expect(
     isWorkspaceNavigationItemActive(
       renamedGroup.id,
       renamedItem.id,
-      "/boards",
-      new URLSearchParams("section=calendar"),
+      "/platform",
+      new URLSearchParams("section=files"),
     ),
   ).toBe(true);
 });
@@ -156,7 +162,7 @@ test("only administrators see the Sandbox in the navigation", () => {
   // Everyone else starts at their first workspace instead.
   expect(
     getWorkspaceNavigation("/sandbox", new URLSearchParams(), "none")[0]?.href,
-  ).toBe("/boards?section=posts");
+  ).toBe("/boards");
 });
 
 test("Manage shows each section only to an account whose requests the server admits", () => {
@@ -315,25 +321,6 @@ test("Sandbox uses the simplified sections while legacy links still open the mat
   ).toBe(true);
 });
 
-test("sidebar section links preserve the active board while changing its section", () => {
-  const calendar = item(
-    "/boards",
-    "board=operations&section=posts",
-    "boards",
-    "calendar",
-  );
-
-  expect(calendar?.href).toBe("/boards?section=calendar&board=operations");
-  expect(
-    isWorkspaceNavigationItemActive(
-      "boards",
-      "calendar",
-      "/boards",
-      new URLSearchParams("board=operations&section=calendar"),
-    ),
-  ).toBe(true);
-});
-
 test("sidebar section links retain only each screen's relevant deep-link context", () => {
   expect(
     item("/access", "view=people&user=ana", "access", "people")?.href,
@@ -365,7 +352,7 @@ test("active parsing recognizes defaults and invalid section values without mark
   expect(
     isWorkspaceNavigationItemActive(
       "boards",
-      "posts",
+      "company",
       "/boards",
       new URLSearchParams("section=unknown"),
     ),
@@ -552,4 +539,141 @@ test("a link leaves the organization only when it names another one", () => {
   expect(organizationLinkExit(other, current)).toBe("organization");
   // Without a current organization any named one is a switch.
   expect(organizationLinkExit(other, null)).toBe("organization");
+});
+
+const navigationBoards: NavigationBoard[] = [
+  {
+    id: "company",
+    scope: "company",
+    departmentId: null,
+    name: "Company",
+    status: "active",
+  },
+  {
+    id: "sales-board",
+    scope: "department",
+    departmentId: "sales",
+    name: "Sales",
+    status: "active",
+  },
+  {
+    id: "fleet",
+    scope: "project",
+    departmentId: null,
+    name: "Fleet Reliability",
+    status: "active",
+  },
+  {
+    id: "renewal",
+    scope: "project",
+    departmentId: null,
+    name: "Customer Renewal",
+    status: "active",
+  },
+  {
+    id: "launch",
+    scope: "project",
+    departmentId: null,
+    name: "Spring Launch",
+    status: "archived",
+  },
+];
+
+test("the Boards group lists Company, the active project boards by name, and All boards, and marks the open one", () => {
+  const rows = (search: string, boards = navigationBoards) =>
+    boardsGroupRows(
+      boardsPlace("/boards", new URLSearchParams(search)),
+      boards,
+    ).map((row) => [row.label, row.href, row.active]);
+  expect(rows("")).toEqual([
+    ["Company", "/boards", true],
+    ["Customer Renewal", "/boards?board=renewal", false],
+    ["Fleet Reliability", "/boards?board=fleet", false],
+    ["All boards", "/boards?section=all", false],
+  ]);
+  // Company's Board id in the address is still Company.
+  expect(rows("board=company&section=calendar")[0]).toEqual([
+    "Company",
+    "/boards",
+    true,
+  ]);
+  expect(rows("board=fleet&section=posts").map((row) => row[2])).toEqual([
+    false,
+    false,
+    true,
+    false,
+  ]);
+  expect(rows("section=all").map((row) => row[2])).toEqual([
+    false,
+    false,
+    false,
+    true,
+  ]);
+  // A department's board lives in its department group (BR1).
+  expect(rows("department=sales").map((row) => row[2])).toEqual([
+    false,
+    false,
+    false,
+    false,
+  ]);
+  // Before the list is read, Company and All boards are already there.
+  expect(
+    boardsGroupRows(
+      boardsPlace("/platform", new URLSearchParams()),
+      undefined,
+    ).map((row) => [row.label, row.active]),
+  ).toEqual([
+    ["Company", false],
+    ["All boards", false],
+  ]);
+});
+
+test("the Boards breadcrumb names Company, the project board, All boards, or the department's Announcements", () => {
+  const location = (search: string, boards = navigationBoards) => {
+    const place = boardsPlace("/boards", new URLSearchParams(search));
+    if (!place) throw new Error("/boards is always a Boards place");
+    return boardsLocation(place, boards, [{ id: "sales", name: "Sales" }]);
+  };
+  expect(location("")).toEqual({ parent: "Boards", current: "Company" });
+  expect(location("board=company")).toEqual({
+    parent: "Boards",
+    current: "Company",
+  });
+  expect(location("board=fleet&section=calendar")).toEqual({
+    parent: "Boards",
+    current: "Fleet Reliability",
+  });
+  expect(location("board=launch")).toEqual({
+    parent: "Boards",
+    current: "Spring Launch",
+  });
+  expect(location("section=all")).toEqual({
+    parent: "Boards",
+    current: "All boards",
+  });
+  expect(location("department=sales&section=posts")).toEqual({
+    parent: "Sales",
+    current: "Announcements",
+  });
+  // Unknown names never show an id.
+  expect(location("board=fleet", [])).toEqual({
+    parent: "Boards",
+    current: "Board",
+  });
+  expect(location("department=other")).toEqual({
+    parent: null,
+    current: "Announcements",
+  });
+  expect(
+    boardsPlace("/platform", new URLSearchParams("department=sales")),
+  ).toBeNull();
+});
+
+test("each Boards place has its own navigation key", () => {
+  const key = (search: string) =>
+    currentNavigationKey("/boards", new URLSearchParams(search));
+  expect(key("")).toBe("boards:company");
+  expect(key("section=calendar")).toBe("boards:company");
+  expect(key("board=fleet&section=posts")).toBe("boards:board:fleet");
+  expect(key("section=all")).toBe("boards:all");
 });

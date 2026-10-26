@@ -15,7 +15,7 @@ import {
 import { pageOf } from "../helpers/pagination";
 import { wireField, wireRecord } from "../helpers/wire";
 
-test("Board menu keeps administration reachable without crowding the section", async ({
+test("Board settings holds a board's details, access and activity, and All boards offers a new project board", async ({
   page,
 }) => {
   await installBoardApi(page, () => true);
@@ -29,10 +29,9 @@ test("Board menu keeps administration reachable without crowding the section", a
       json: pageOf([], { limit: 25 }),
     }),
   );
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page.goto("/boards?section=all");
   await page
-    .getByRole("menuitem", { name: "New project Board", exact: true })
+    .getByRole("button", { name: "New project board", exact: true })
     .click();
   await expect(
     page.getByRole("dialog", { name: "New project Board" }),
@@ -42,18 +41,18 @@ test("Board menu keeps administration reachable without crowding the section", a
     .getByRole("button", { name: "Close", exact: true })
     .first()
     .click();
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
-  // The exact list leaves no room for a retired item (access grants,
-  // templates, favorites, a home Board).
-  await expect(page.getByRole("menuitem")).toHaveText([
-    "Manage Board and groups",
-    "Preview access",
-    "View activity",
-    "New project Board",
-  ]);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
   await page
-    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .getByRole("button", { name: "Board settings", exact: true })
     .click();
+  // The exact list leaves no room for a retired item (access grants,
+  // templates, favorites, a home Board, a new Board).
+  await expect(page.getByRole("menuitem")).toHaveText([
+    "Details",
+    "Check access",
+    "Activity",
+  ]);
+  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
   const manage = page.getByRole("dialog", { name: "Manage Board" });
   await expect(manage).toBeVisible();
   await expect(
@@ -61,7 +60,7 @@ test("Board menu keeps administration reachable without crowding the section", a
   ).toBeVisible();
 });
 
-test("a member reading a Board sees no Board menu and no manager actions", async ({
+test("a member reading a Board sees no Board settings and no manager actions", async ({
   page,
 }) => {
   await installBoardApi(page, () => true);
@@ -85,7 +84,7 @@ test("a member reading a Board sees no Board menu and no manager actions", async
   await page.goto(`/boards?board=${boardId}&section=posts`);
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Board menu", exact: true }),
+    page.getByRole("button", { name: "Board settings", exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Manage posts", exact: true }),
@@ -154,8 +153,8 @@ test("a cold /boards opens Posts for a member reader without widget, record or f
       url.searchParams.get("section") === "posts",
   );
   await expect(
-    page.getByRole("heading", { name: "Posts", exact: true }),
-  ).toBeVisible();
+    page.getByRole("link", { name: "Posts", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText(post.title)).toBeVisible();
   expect(retired).toEqual([]);
 });
@@ -193,7 +192,10 @@ test("visible Boards route opens authorized server Board and keeps section URL",
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
   await expect(page.getByText(board.description)).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Switch board" }),
+    page.getByRole("heading", {
+      level: 1,
+      name: `${board.name} announcements`,
+    }),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Calendar", exact: true }).click();
@@ -210,34 +212,22 @@ test("visible Boards route clears the last Board when access is revoked", async 
   page,
 }) => {
   let allowed = true;
+  await installOpenViewEventSource(page);
   await installBoardApi(page, () => allowed);
   await page.goto(`/boards?board=${boardId}&section=posts`);
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
 
   allowed = false;
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  // A change to the Board arrives on the live stream (BR7).
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "boards",
+    board_id: boardId,
+  });
   await expect(
     page.getByText("Board unavailable. Choose another Board or retry."),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: board.name })).toHaveCount(0);
   await expect(page.getByText(board.description)).toHaveCount(0);
-});
-
-test("the Board type filter asks the server for that scope", async ({
-  page,
-}) => {
-  await installBoardApi(page, () => true);
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
-  await page.getByRole("button", { name: "Switch board" }).click();
-  const listed = page.waitForRequest(
-    (request) =>
-      new URL(request.url()).pathname === "/api/boards" &&
-      new URL(request.url()).searchParams.get("scope") === "department",
-  );
-  await page.getByRole("combobox", { name: "Board type" }).click();
-  await page.getByRole("option", { name: "Departments" }).click();
-  await listed;
 });
 
 test("unsaved Event draft asks before changing Board or section", async ({
@@ -256,9 +246,10 @@ test("unsaved Event draft asks before changing Board or section", async ({
 
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByRole("heading", { name: "New event" })).toBeVisible();
-  await page.getByRole("button", { name: "Switch board" }).click();
-  await page.getByRole("combobox", { name: "Board", exact: true }).click();
-  await page.getByRole("option", { name: /Second live board/ }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Second live board", exact: true })
+    .click();
   await expect(page).toHaveURL(`/boards?board=${boardId}&section=calendar`);
   await expect(
     page.getByRole("alertdialog", { name: "Discard unsaved Board changes?" }),
@@ -426,10 +417,10 @@ test.describe("Boards workspace regional activity", () => {
       }),
     );
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    await page.getByRole("button", { name: "Board menu", exact: true }).click();
     await page
-      .getByRole("menuitem", { name: "View activity", exact: true })
+      .getByRole("button", { name: "Board settings", exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "Activity", exact: true }).click();
     const activity = page.getByRole("dialog", {
       name: "Board activity",
       exact: true,
@@ -442,7 +433,7 @@ test.describe("Boards workspace regional activity", () => {
     );
   });
 
-  test("Calendar main Refresh replaces a held cold workspace read", async ({
+  test("a live workspace change replaces a held cold workspace read on Calendar", async ({
     page,
   }) => {
     await installOpenViewEventSource(page);
@@ -516,14 +507,14 @@ test.describe("Boards workspace regional activity", () => {
       await page.goto(`/boards?board=${boardId}&section=calendar`);
       await firstStarted;
       await expect(
-        page.getByRole("heading", { name: board.name, exact: true }),
+        page.getByRole("heading", {
+          name: `${board.name} announcements`,
+          exact: true,
+        }),
       ).toBeVisible();
-      const refresh = page.getByRole("button", {
-        name: "Refresh",
-        exact: true,
+      await sendOpenViewEvent(page, "invalidate", {
+        entity: "workspace_profiles",
       });
-      await expect(refresh).toBeEnabled();
-      await refresh.click();
       await expect.poll(() => workspaceReads).toBeGreaterThan(1);
       const latest = page.getByRole("button", { name: /View .*Sep 26/ });
       await expect(latest).toHaveAttribute("aria-current", "date");
@@ -539,10 +530,11 @@ test.describe("Boards workspace regional activity", () => {
     }
   });
 
-  test("Calendar manual Refresh and rollover keep the selected day and last-good settings", async ({
+  test("Calendar live workspace changes and rollover keep the selected day and last-good settings", async ({
     page,
   }) => {
     await page.clock.install({ time: new Date("2026-09-25T12:00:00Z") });
+    await installOpenViewEventSource(page);
     await installBoardApi(page, () => true);
     let today = "2026-09-25";
     let failRegionalRead = false;
@@ -566,15 +558,16 @@ test.describe("Boards workspace regional activity", () => {
     const chosen = page.getByRole("button", { name: /View .*Sep 27/ });
     await chosen.click();
     today = "2026-09-26";
-    const refresh = page.getByRole("button", { name: "Refresh", exact: true });
-    await refresh.click();
+    const refresh = () =>
+      sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" });
+    await refresh();
     await expect(
       page.getByRole("button", { name: /View .*Sep 26/ }),
     ).toHaveAttribute("aria-current", "date");
     await expect(chosen).toHaveAttribute("aria-pressed", "true");
     failRegionalRead = true;
     today = "2026-09-27";
-    await refresh.click();
+    await refresh();
     const retry = page.getByRole("button", {
       name: "Retry Workspace date",
       exact: true,
@@ -623,9 +616,10 @@ test("post editor retains a canceled close and discards only on confirmation", a
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(editor).toBeHidden();
-  await page.getByRole("button", { name: "Switch board" }).click();
-  await page.getByRole("combobox", { name: "Board", exact: true }).click();
-  await page.getByRole("option", { name: /Second live board/ }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Second live board", exact: true })
+    .click();
   await expect(page).toHaveURL(`/boards?board=${otherBoard.id}&section=posts`);
 });
 
