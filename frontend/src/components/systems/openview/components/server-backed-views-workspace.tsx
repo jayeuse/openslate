@@ -14,7 +14,29 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Route } from "next";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
-import { Columns3, MoreHorizontal, Plus, Settings2, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Columns3,
+  Download,
+  MoreHorizontal,
+  Plus,
+  X,
+} from "lucide-react";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { PageHeader } from "@/components/page-header";
+import { DisabledReason } from "@/components/ui/disabled-reason";
+import { cn } from "@/lib/utils";
+import {
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import {
   queryOpenViewGroupedRecords,
   type OpenViewGroupSelector,
@@ -61,15 +83,19 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { SearchFilterToolbar } from "@/components/ui/search-filter-toolbar";
+import {
+  AccessToolbar,
+  FilterSelect,
+  type FilterChip,
+} from "@/components/systems/access/components/access-toolbar";
+import { LayoutFieldPicker } from "./layout-field-picker";
+import { LayoutMenu } from "./layout-menu";
+import { QuickFilter, useQuickFilterCounts } from "./quick-filter";
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
@@ -90,7 +116,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   GuardedWorkspaceLink,
   useWorkspaceNavigationGuard,
@@ -120,11 +145,29 @@ import { useServerViewsResource } from "../hooks/use-server-views-resource";
 import { LiveGroupedResults } from "./live-grouped-results";
 import {
   LiveRecordInspector,
+  recordTitle,
+  recordUpdatedDate,
   type RecordInspectionContext,
   type RecordInspectionPage,
 } from "./live-record-inspector";
 import { LiveRecordResults } from "./live-record-results";
 import { RecordCreateDialog } from "./record-create-dialog";
+import { ModulePageSwitch } from "./module-page-switch";
+import {
+  MakeReportFromViewItem,
+  ModuleReports,
+  type ReportsRoute,
+} from "./module-reports";
+import {
+  ReportRecipeEditor,
+  type ReportDialogTarget,
+} from "./report-recipe-editor";
+import {
+  moduleReportListOptions,
+  reportKeys,
+} from "../adapters/report-queries";
+import type { OpenViewReport } from "../adapters/reports-api";
+import type { ReportViewSource } from "./report-draft";
 import { ExportDialog } from "./export-dialog";
 import { useOpenViewAccessDenied } from "../adapters/openview-access";
 import {
@@ -161,6 +204,8 @@ const SAVED_VIEW_LAYOUT_LABELS: Record<SavedViewLayout, string> = {
   timeline: "Timeline",
 };
 const GROUP_PAGE_SIZE = 12;
+/** The module page's search, where focus returns when nothing else fits. */
+const SEARCH_ID = "openview-search";
 const DEFAULT_RECORD_PAGE_SIZE = 25;
 
 type RecordPageState = {
@@ -246,18 +291,17 @@ function selectLabelForId(
   return option?.label ?? "Unavailable option";
 }
 
-function filterSummary(
+/** A filter's condition without its field, for its chip ("is Active"). */
+function filterCondition(
   filter: OpenViewQueryDefinition["filters"][number],
   field: OpenViewDataSourceField | undefined,
 ): string {
-  const fieldName = field?.name ?? "Unavailable field";
   const label = OPERATOR_LABELS[filter.operator];
-  if (filter.expectedType === "user") return `${fieldName} ${label} person`;
-  if (filter.value === null || filter.value === undefined)
-    return `${fieldName} ${label}`;
+  if (filter.expectedType === "user") return `${label} person`;
+  if (filter.value === null || filter.value === undefined) return label;
   if (filter.expectedType === "select") {
     const values = Array.isArray(filter.value) ? filter.value : [filter.value];
-    return `${fieldName} ${label} ${values
+    return `${label} ${values
       .map((value) => selectLabelForId(field, value))
       .join(", ")}`;
   }
@@ -268,7 +312,7 @@ function filterSummary(
         ? "Yes"
         : "No"
       : String(filter.value);
-  return value ? `${fieldName} ${label} ${value}` : `${fieldName} ${label}`;
+  return value ? `${label} ${value}` : label;
 }
 
 function quickSortLabel(
@@ -337,6 +381,10 @@ export default function ServerBackedViewsWorkspace({
   const requestedView = searchParams.get("view");
   const requestedRecord = searchParams.get("record");
   const requestedChanges = searchParams.get(TEMPORARY_VIEW_PARAM);
+  // The page's Reports view, its report and its copy (DC1).
+  const reportsTab = searchParams.get("tab") === "reports";
+  const requestedReport = searchParams.get("report");
+  const requestedCopy = searchParams.get("copy");
   const resource = useServerViewsResource(requestedModule);
   const verifiedUserId = useVerifiedWorkspaceUserId();
   const interactionSuspended = useWorkspaceInteractionSuspended();
@@ -351,7 +399,6 @@ export default function ServerBackedViewsWorkspace({
   } | null>(null);
   const {
     catalog,
-    catalogHasMore,
     catalogLoading,
     catalogError,
     moduleId,
@@ -362,7 +409,6 @@ export default function ServerBackedViewsWorkspace({
     metadataLoadingMore,
     metadataError,
     retryMetadata,
-    loadMoreCatalog,
     loadMoreModuleMetadata,
     refreshModule,
     retryCatalog,
@@ -417,10 +463,18 @@ export default function ServerBackedViewsWorkspace({
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
   const [saveOpen, setSaveOpen] = useState(false);
-  const [openViewPanel, setOpenViewPanel] = useState<
-    "columns" | "layout" | null
-  >(null);
+  // The panel keeps its kind while it closes, so its title does not change
+  // during the exit.
+  const [viewPanel, setViewPanel] = useState<{
+    kind: "columns" | "layout";
+    open: boolean;
+  }>({ kind: "columns", open: false });
   const [saveName, setSaveName] = useState("");
+  // Save as new view creates a view even while a saved one is selected.
+  const [saveAsNew, setSaveAsNew] = useState(false);
+  // The record sheet header's place for Edit and the record menu.
+  const [recordActionsSlot, setRecordActionsSlot] =
+    useState<HTMLDivElement | null>(null);
   const [saveError, setSaveError] = useState("");
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -450,14 +504,39 @@ export default function ServerBackedViewsWorkspace({
   } | null>(null);
 
   useEffect(() => {
-    if (!catalog || !moduleId || requestedModule) return;
+    if (!catalog || !moduleId) return;
+    // Records keeps an unreadable module in the address and says so; the
+    // Reports view moves to the module it shows, so the sidebar and the
+    // breadcrumb follow it (DC26).
+    if (requestedModule && (requestedModule === moduleId || !reportsTab))
+      return;
+    // The first readable module keeps the Reports view a link asked for
+    // (DC8, DC9).
     startNavigation(() =>
       router.replace(
-        serializeOpenViewUrl({ section: "views", module: moduleId }) as Route,
+        serializeOpenViewUrl({
+          section: "views",
+          module: moduleId,
+          ...(reportsTab
+            ? {
+                tab: "reports",
+                report: isUuid(requestedReport) ? requestedReport : undefined,
+                copy: isUuid(requestedCopy) ? requestedCopy : undefined,
+              }
+            : {}),
+        }) as Route,
         { scroll: false },
       ),
     );
-  }, [catalog, moduleId, requestedModule, router]);
+  }, [
+    catalog,
+    moduleId,
+    requestedModule,
+    reportsTab,
+    requestedReport,
+    requestedCopy,
+    router,
+  ]);
 
   const currentWorkspace =
     moduleWorkspace?.moduleId === moduleId ? moduleWorkspace : null;
@@ -516,6 +595,9 @@ export default function ServerBackedViewsWorkspace({
     : "";
   const source = catalog?.find((item) => item.id === moduleId);
   const moduleName = source?.name;
+  const departmentName = useOpenViewDepartmentNames(
+    source?.departmentId ? [source.departmentId] : [],
+  ).get(source?.departmentId ?? "");
   // The module's shared default view opens when the address names no view.
   const defaultViewId = currentWorkspace?.views.find(
     (view) => view.isDefault && !view.isDeleted,
@@ -762,7 +844,6 @@ export default function ServerBackedViewsWorkspace({
     };
     // The compiler cannot prove the stability of search-param values; this
     // memoization keeps record reads anchored to the actual address value.
-    // eslint-disable-next-line react-hooks/preserve-manual-memoization
   }, [normalizedDraftDefinition, requestedRecord]);
   const draftHasUnsafeIntegerFilter = draft.definition.filters.some(
     hasUnsafeIntegerFilter,
@@ -1222,10 +1303,6 @@ export default function ServerBackedViewsWorkspace({
   );
   const presentationLayoutLabel = SAVED_VIEW_LAYOUT_LABELS[presentationLayout];
   const activeLayout = presentationLayout;
-  const cardLayout =
-    presentationLayout === "grid" || presentationLayout === "gallery"
-      ? presentationLayout
-      : null;
   const incompletePresentation =
     (presentationLayout === "kanban" && !groupByField) ||
     (presentationLayout === "calendar" && !calendarDateField) ||
@@ -1270,6 +1347,7 @@ export default function ServerBackedViewsWorkspace({
   };
   const archivedViews = moduleViews.filter((view) => view.isDeleted);
   const saveTarget = canEditSaved ? activeSaved : undefined;
+  const renameTarget = saveAsNew ? undefined : saveTarget;
   const setRoute = useCallback(
     (
       patch: {
@@ -1310,7 +1388,6 @@ export default function ServerBackedViewsWorkspace({
       });
     },
     // This callback's identity tracks the current address and temporary draft.
-    // eslint-disable-next-line react-hooks/preserve-manual-memoization
     [moduleId, requestedRecord, router, selectedViewId, temporaryChanges],
   );
 
@@ -1455,7 +1532,7 @@ export default function ServerBackedViewsWorkspace({
       await navigator.clipboard.writeText(
         new URL(path, window.location.origin).href,
       );
-      setNotice("Safe link copied.");
+      setNotice("Link copied.");
     } catch {
       setInspectionError("Copy is unavailable in this browser.");
     }
@@ -1752,7 +1829,7 @@ export default function ServerBackedViewsWorkspace({
       )
     ) {
       setActionError(
-        "These unsaved moves belong to another data source. Discard them before moving records here.",
+        "These unsaved moves belong to another module. Discard them before moving records here.",
       );
       return;
     }
@@ -1907,6 +1984,87 @@ export default function ServerBackedViewsWorkspace({
       };
     });
 
+  // OD14: the first choice field is the quick filter. Its choice is an
+  // "is" filter on that field, shown in the strip rather than as a chip.
+  const quickField = fields.find((field) => field.type === "select");
+  const isQuickFilter = (filter: OpenViewQueryDefinition["filters"][number]) =>
+    filter.fieldId === quickField?.id &&
+    filter.operator === "eq" &&
+    typeof filter.value === "string" &&
+    filter.value !== "";
+  const quickFilterValue = draft.definition.filters.find(isQuickFilter)?.value;
+  const quickFilterCounts = useQuickFilterCounts({
+    moduleId: moduleId ?? "",
+    fieldId: quickField?.id ?? "",
+    definition: {
+      ...normalizedDraftDefinition,
+      filters: normalizedDraftDefinition.filters.filter(
+        (filter) => !isQuickFilter(filter),
+      ),
+    },
+    refreshKey: recordInvalidation,
+    // Any-condition logic would widen the view with the strip's choice.
+    enabled: Boolean(
+      moduleId && quickField && draft.definition.logic === "and",
+    ),
+  });
+  // The strip shows its choice; without a strip the choice is a chip.
+  const quickFilterShown = quickFilterCounts.choices.length > 0;
+  const setQuickFilter = (value: string | null) => {
+    if (!quickField) return;
+    updateDefinition((current) => {
+      const keys = new Map<object, string>();
+      const filters = current.filters.filter((item, itemIndex) => {
+        if (isQuickFilter(item)) return false;
+        keys.set(item, filterRowKeyFor(item, itemIndex));
+        return true;
+      });
+      if (value !== null) {
+        const quick: OpenViewQueryDefinition["filters"][number] = {
+          fieldId: quickField.id,
+          expectedType: "select",
+          operator: "eq",
+          value,
+        };
+        keys.set(
+          quick,
+          `${draftKey}:quick-filter:${nextFilterRowKey.current++}`,
+        );
+        filters.push(quick);
+      }
+      setFilterRowKeyState({ draftKey, keys });
+      return { ...current, filters };
+    });
+  };
+  const filterChips: FilterChip[] = [
+    ...draft.definition.filters.flatMap((filter, index) =>
+      quickFilterShown && isQuickFilter(filter)
+        ? []
+        : [
+            {
+              key: filterRowKeyFor(filter, index),
+              label:
+                activeFields.get(filter.fieldId)?.name ?? "Unavailable field",
+              value: filterCondition(filter, activeFields.get(filter.fieldId)),
+              onRemove: () => removeFilter(index),
+            },
+          ],
+    ),
+    ...(draft.definition.deleted === "exclude"
+      ? []
+      : [
+          {
+            key: "deleted",
+            label: "Deleted records",
+            value: draft.definition.deleted === "only" ? "Only" : "Shown",
+            onRemove: () =>
+              updateDefinition((current) => ({
+                ...current,
+                deleted: "exclude",
+              })),
+          },
+        ]),
+  ];
   const addFilter = () => {
     const field = fields[0];
     if (!field) return;
@@ -2157,14 +2315,25 @@ export default function ServerBackedViewsWorkspace({
     void saveView("update", activeSaved.name);
   };
 
-  const openSaveDialog = () => {
+  const openSaveDialog = (asNew?: boolean) => {
     if (saveConflict) {
       setSaveOpen(true);
       return;
     }
     setSaveError("");
-    setSaveName(saveTarget?.name ?? "");
+    setSaveAsNew(Boolean(asNew));
+    setSaveName(asNew ? "" : (saveTarget?.name ?? ""));
     setSaveOpen(true);
+  };
+
+  const copyViewLink = async () => {
+    try {
+      // The address carries any unsaved changes, so the link shares them.
+      await navigator.clipboard.writeText(window.location.href);
+      setNotice("Link copied.");
+    } catch {
+      setActionError("Copy is unavailable in this browser.");
+    }
   };
 
   const reloadConflictLatest = () => {
@@ -2391,32 +2560,130 @@ export default function ServerBackedViewsWorkspace({
     }
   };
 
+  // Reports (DC1–DC7): the count in the switch, the Reports view's address,
+  // and the report dialog, which also opens from the Records view menu.
+  const reportCountQuery = useQuery(
+    moduleReportListOptions(moduleId ?? "", "exclude"),
+  );
+  const reportCount =
+    reportCountQuery.data && !exportAccessDenied
+      ? reportCountQuery.data.pagination.total
+      : null;
+  // The dialog keeps its module and name, so a refused read that hides the
+  // catalog does not close it or drop the draft.
+  const [reportDialog, setReportDialog] = useState<{
+    moduleId: string;
+    moduleName: string;
+    target: ReportDialogTarget;
+  } | null>(null);
+  const routeReports = useCallback(
+    (route: ReportsRoute, replace = false) => {
+      const targetModule = route.module ?? moduleId;
+      const sameModule = targetModule === moduleId;
+      const target = serializeOpenViewUrl({
+        section: "views",
+        module: targetModule,
+        view: sameModule ? selectedViewId || undefined : undefined,
+        changes: sameModule ? (temporaryChanges ?? undefined) : undefined,
+        tab: "reports",
+        report: route.report,
+        copy: route.report ? route.copy : undefined,
+      });
+      startNavigation(() => {
+        if (replace) router.replace(target as Route, { scroll: false });
+        else router.push(target as Route, { scroll: false });
+      });
+    },
+    [moduleId, router, selectedViewId, temporaryChanges],
+  );
+  // The view the person is looking at, as a snapshot: the report dialog
+  // builds its draft from the snapshot, so it never shares the page's draft
+  // objects (and the compiler keeps this page's memoization).
+  // The view the person is looking at, for "Make a report from this view"
+  // (DC7). Children turn it into the dialog's target, so the page never
+  // hands its own draft objects to a report draft.
+  const reportGroup =
+    generalGroupedView || presentationLayout === "kanban"
+      ? groupByField
+      : undefined;
+  const reportView: ReportViewSource = {
+    name: activeSaved?.name ?? "",
+    columns: tableFields.length
+      ? tableFields.map((field) => ({
+          fieldId: field.id,
+          expectedType: field.type,
+        }))
+      : draft.definition.columns,
+    filters: normalizedDraftDefinition.filters,
+    logic: normalizedDraftDefinition.logic,
+    sort: normalizedDraftDefinition.sort,
+    groupBy: reportGroup
+      ? { fieldId: reportGroup.id, expectedType: reportGroup.type }
+      : null,
+  };
+  const openReportDialog = (target: ReportDialogTarget) => {
+    if (moduleId && moduleName)
+      setReportDialog({ moduleId, moduleName, target });
+  };
+  const onReportSaved = (saved: OpenViewReport, created: boolean) => {
+    // The list shows the saved revision at once; the read confirms it.
+    queryClient.setQueryData(
+      moduleReportListOptions(saved.moduleId, "exclude").queryKey,
+      (page) =>
+        page
+          ? {
+              ...page,
+              items: created
+                ? [saved, ...page.items]
+                : page.items.map((item) =>
+                    item.id === saved.id ? saved : item,
+                  ),
+              pagination: created
+                ? { ...page.pagination, total: page.pagination.total + 1 }
+                : page.pagination,
+            }
+          : page,
+    );
+    void queryClient.invalidateQueries({ queryKey: reportKeys.lists });
+    setReportDialog(null);
+    reportDone(created ? "Report created." : "Report saved.");
+    routeReports({ module: saved.moduleId, report: saved.id }, !created);
+  };
+
   const recoverLink = () => {
     if (!moduleId) return;
     setRoute({ module: moduleId, view: undefined, record: undefined }, true);
   };
 
   if (!catalogError && catalog?.length === 0) {
+    // OD13: one state for a person with no readable module. Only an
+    // administrator can publish one, so only they are offered the Sandbox.
+    const administrator = identity.data?.role === "admin";
     return (
-      <div className="flex min-w-0 flex-col gap-5">
-        <OpenViewHeader />
+      <div className="openview-ui slim-ui flex min-w-0 flex-col">
+        <PageHeader title="Records" />
         <Empty>
           <EmptyHeader>
             <EmptyTitle role="heading" aria-level={2}>
-              Nothing published yet
+              {administrator
+                ? "Nothing published yet"
+                : "No records to show yet"}
             </EmptyTitle>
             <EmptyDescription>
-              OpenView shows records from published modules. Design your modules
-              in the Sandbox and publish them to see records here.
+              {administrator
+                ? "Records appear here once a module is published in the Sandbox."
+                : "An administrator can give access in Access › Groups."}
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>
-            <Button asChild className="min-h-11">
-              <GuardedWorkspaceLink href={"/sandbox" as Route}>
-                Open Sandbox
-              </GuardedWorkspaceLink>
-            </Button>
-          </EmptyContent>
+          {administrator ? (
+            <EmptyContent>
+              <Button asChild className="min-h-11">
+                <GuardedWorkspaceLink href={"/sandbox" as Route}>
+                  Open Sandbox
+                </GuardedWorkspaceLink>
+              </Button>
+            </EmptyContent>
+          ) : null}
         </Empty>
       </div>
     );
@@ -2455,1202 +2722,1267 @@ export default function ServerBackedViewsWorkspace({
     !linkedRecordRow,
   );
   const linkedRecord = linkedRecordLoading ? null : linkedRecordRow;
-  const inspectionActions = linkedRecord ? (
-    <div className="flex flex-wrap items-center gap-2">
-      {activeInspectionContext ? (
-        <>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={!hasPreviousInspectedRecord || inspectionLoading}
-            onClick={() => void navigateInspectedRecord(-1)}
-          >
-            Previous record
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={!hasNextInspectedRecord || inspectionLoading}
-            onClick={() => void navigateInspectedRecord(1)}
-          >
-            Next record
-          </Button>
-        </>
-      ) : null}
+  const copyRecordLinkItem = (
+    <DropdownMenuItem
+      className="min-h-11 xl:min-h-8"
+      onClick={() => void copyInspectedRecordLink()}
+    >
+      Copy link
+    </DropdownMenuItem>
+  );
+  // While a record is open the list reads that record only, so its count
+  // would read "1 record"; the count waits for the list.
+  const recordTotal =
+    currentRecordPage && !generalGroupedView && !isUuid(requestedRecord)
+      ? currentRecordPage.total
+      : null;
+  // Refreshes report here, in the meta line, so the page never shifts.
+  const status = metadataLoadingMore
+    ? "Loading more fields and views…"
+    : pendingAction ||
+      (moduleLoading
+        ? "Refreshing views and fields…"
+        : rowPageLoading
+          ? "Refreshing records…"
+          : "");
+  const meta = [
+    departmentName,
+    reportsTab
+      ? reportCount === null
+        ? null
+        : reportCount === 0
+          ? "no reports yet"
+          : `${reportCount} ${reportCount === 1 ? "report" : "reports"}`
+      : recordTotal === null
+        ? null
+        : `${recordTotal} ${recordTotal === 1 ? "record" : "records"}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const savePending =
+    Boolean(pendingAction) ||
+    incompleteFilters ||
+    incompletePresentation ||
+    Boolean(saveConflict);
+  // OD5: one primary. With unsaved changes a manager saves the view;
+  // otherwise a writer adds a record.
+  const saving = dirty && canManageViews;
+  // A blocked save says why (the Four Moments Rule); a running action
+  // blocks it without a reason, as it ends on its own.
+  const saveBlockedReason = pendingAction
+    ? null
+    : saveConflict
+      ? "Resolve the conflict in the save dialog first."
+      : incompleteFilters
+        ? "Complete or remove the unfinished filter first."
+        : incompletePresentation
+          ? presentationLayout === "kanban"
+            ? "Choose a field to group the lanes first."
+            : presentationLayout === "calendar"
+              ? "Choose a date field first."
+              : presentationLayout === "timeline"
+                ? "Choose start and end fields first."
+                : "Finish the layout settings first."
+          : null;
+  const openExport = () => {
+    if (!canExport || !moduleId) return;
+    setExportContext({
+      key: exportContextKey,
+      moduleId,
+      viewId: activeSaved?.id ?? null,
+      definition: normalizedDraftDefinition,
+      fields: tableFields,
+    });
+  };
+  const headerActions = moduleId ? (
+    <>
+      <div className="flex min-w-0 items-center gap-2">
+        <label
+          htmlFor="openview-saved-view"
+          className="text-muted-foreground shrink-0 text-sm max-sm:sr-only"
+        >
+          View
+        </label>
+        <Select
+          id="openview-saved-view"
+          aria-label="Saved view"
+          className="min-h-11 w-36 min-w-0 sm:w-48"
+          value={activeSaved?.id ?? ""}
+          disabled={!currentWorkspace || Boolean(pendingAction)}
+          onValueChange={selectSavedView}
+        >
+          <option value="">All records</option>
+          {moduleViews
+            .filter((view) => !view.isDeleted)
+            .map((view) => (
+              <option key={view.id} value={view.id}>
+                {view.name}
+                {view.id === defaultViewId ? " · default" : ""}
+              </option>
+            ))}
+        </Select>
+      </div>
+      {/* On a phone Export moves into the view menu, so the header keeps
+          the view, the menu and the primary on one line. */}
       <Button
+        ref={exportButtonRef}
         type="button"
         variant="outline"
-        className="min-h-11"
-        onClick={() => void copyInspectedRecordLink()}
+        className="min-h-11 max-sm:hidden"
+        disabled={!canExport}
+        onClick={openExport}
       >
-        Copy safe link
+        <Download aria-hidden="true" />
+        Export
       </Button>
-    </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="size-11"
+              aria-label="More view actions"
+            />
+          }
+        >
+          <MoreHorizontal aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="slim-ui min-w-56">
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              className="min-h-11 sm:hidden xl:min-h-8"
+              disabled={!canExport}
+              onClick={openExport}
+            >
+              Export…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 md:hidden xl:min-h-8"
+              disabled={Boolean(pendingAction)}
+              onClick={() => setViewPanel({ kind: "columns", open: true })}
+            >
+              Columns…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 xl:min-h-8"
+              onClick={() => void copyViewLink()}
+            >
+              Copy link
+            </DropdownMenuItem>
+            {dirty ? (
+              <DropdownMenuItem
+                className="min-h-11 xl:min-h-8"
+                disabled={Boolean(pendingAction) || Boolean(saveConflict)}
+                onClick={resetChanges}
+              >
+                Reset changes
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuItem
+              className="min-h-11 xl:min-h-8"
+              disabled={!currentWorkspace || Boolean(pendingAction)}
+              onClick={() => setArchivedOpen(true)}
+            >
+              Archived views
+              {archivedViews.length ? ` (${archivedViews.length})` : ""}
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          {canManageViews ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <MakeReportFromViewItem
+                  view={reportView}
+                  disabled={!currentWorkspace || incompleteFilters}
+                  onOpen={openReportDialog}
+                />
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                {saving ? null : (
+                  <DropdownMenuItem
+                    className="min-h-11 xl:min-h-8"
+                    disabled={savePending}
+                    onClick={() => openSaveDialog(true)}
+                  >
+                    Save as new view…
+                  </DropdownMenuItem>
+                )}
+                {saveTarget ? (
+                  <DropdownMenuItem
+                    className="min-h-11 xl:min-h-8"
+                    disabled={
+                      Boolean(pendingAction) || dirty || Boolean(saveConflict)
+                    }
+                    onClick={() => openSaveDialog()}
+                  >
+                    Rename view…
+                  </DropdownMenuItem>
+                ) : null}
+                {activeSaved ? (
+                  <DropdownMenuItem
+                    className="min-h-11 xl:min-h-8"
+                    disabled={savePending}
+                    onClick={() => void duplicateActiveView()}
+                  >
+                    Duplicate view
+                  </DropdownMenuItem>
+                ) : null}
+                {canEditSaved ? (
+                  <DropdownMenuItem
+                    className="min-h-11 xl:min-h-8"
+                    disabled={Boolean(pendingAction)}
+                    onClick={() => {
+                      if (currentDefault && !routedView)
+                        confirmDraftDiscard(() => void setDefault());
+                      else void setDefault();
+                    }}
+                  >
+                    {currentDefault
+                      ? "Clear default view"
+                      : "Make default view"}
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuGroup>
+            </>
+          ) : null}
+          {canEditSaved ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem
+                  className="min-h-11 xl:min-h-8"
+                  disabled={Boolean(pendingAction)}
+                  onClick={() => setArchiveOpen(true)}
+                >
+                  Archive view
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {canWriteRecords ? (
+        <DisabledReason
+          reason={
+            currentWorkspace?.fieldsHasMore
+              ? "Load all fields before creating a record."
+              : null
+          }
+        >
+          <Button
+            type="button"
+            variant={saving ? "outline" : "default"}
+            className="min-h-11"
+            disabled={
+              Boolean(pendingAction) ||
+              Boolean(currentWorkspace?.fieldsHasMore) ||
+              metadataLoadingMore
+            }
+            onClick={() => setCreateRecordOpen(true)}
+          >
+            <Plus aria-hidden="true" />
+            New record
+          </Button>
+        </DisabledReason>
+      ) : null}
+      {saving && canEditSaved ? (
+        <DisabledReason reason={saveBlockedReason}>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            disabled={savePending}
+            onClick={() => openSaveDialog(true)}
+          >
+            Save as new view
+          </Button>
+        </DisabledReason>
+      ) : null}
+      {saving ? (
+        <DisabledReason reason={saveBlockedReason}>
+          <Button
+            type="button"
+            className="min-h-11"
+            disabled={savePending}
+            onClick={canEditSaved ? saveChanges : () => openSaveDialog(true)}
+          >
+            Save view
+          </Button>
+        </DisabledReason>
+      ) : null}
+    </>
   ) : null;
+  const reportsActive = Boolean(reportsTab && moduleId && moduleName);
+  const pageHref = (tab: "records" | "reports") =>
+    serializeOpenViewUrl({
+      section: "views",
+      module: moduleId,
+      view: selectedViewId || undefined,
+      changes: temporaryChanges ?? undefined,
+      tab,
+    });
+  const pageSwitch =
+    moduleId && moduleName ? (
+      <ModulePageSwitch
+        moduleName={moduleName}
+        reports={reportsTab}
+        recordsHref={pageHref("records")}
+        reportsHref={pageHref("reports")}
+        recordCount={recordTotal}
+        reportCount={reportCount}
+      />
+    ) : null;
+  const isAdmin =
+    identity.data?.role === "admin" && identity.data.id === verifiedUserId;
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      <OpenViewHeader />
-      <LoadingRegion
-        loading={catalogLoading && !catalog}
-        label="Loading OpenView catalog…"
-        skeleton={
-          <div className="flex min-w-0 flex-col gap-5">
-            <ViewsToolbarSkeleton />
-            <ViewsWorkspaceSkeleton />
-          </div>
-        }
-      >
-        <div className="flex min-w-0 flex-col gap-5">
-          {workspaceCalendar.isError && activeLayout !== "calendar" && (
-            <Alert variant="destructive">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="openview-ui slim-ui flex min-h-0 min-w-0 flex-col xl:flex-1">
+      <div className="shrink-0">
+        <PageHeader
+          title={moduleName ?? "Records"}
+          description={
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {meta ? <span>{meta}</span> : null}
+              {dirty && !reportsActive ? (
+                <Badge variant="outline">Unsaved changes</Badge>
+              ) : null}
+              <span role="status">{reportsActive ? "" : status}</span>
+            </span>
+          }
+          actions={
+            reportsActive ? (
+              pageSwitch
+            ) : (
+              <>
+                {pageSwitch}
+                {headerActions}
+              </>
+            )
+          }
+        />
+      </div>
+      {reportsActive && moduleId && moduleName ? (
+        <ModuleReports
+          key={moduleId}
+          moduleId={moduleId}
+          moduleName={moduleName}
+          fields={fields}
+          canManage={canManageViews}
+          copyBlockedReason={
+            identity.data?.role === "guest"
+              ? "Guests cannot make copies."
+              : null
+          }
+          isAdmin={isAdmin}
+          reportId={isUuid(requestedReport) ? requestedReport : undefined}
+          copyId={isUuid(requestedCopy) ? requestedCopy : undefined}
+          region={displayRegion}
+          onRoute={routeReports}
+          view={reportView}
+          onOpenDialog={openReportDialog}
+        />
+      ) : null}
+      {reportDialog ? (
+        <ReportRecipeEditor
+          moduleId={reportDialog.moduleId}
+          moduleName={reportDialog.moduleName}
+          target={reportDialog.target}
+          onClose={() => setReportDialog(null)}
+          onSaved={onReportSaved}
+        />
+      ) : null}
+      {/* Records stay mounted under the Reports view, so their drafts,
+          record moves and leave guard keep working (DC1). */}
+      <div className={reportsActive ? "hidden" : "contents"}>
+        <LoadingRegion
+          loading={catalogLoading && !catalog}
+          label="Loading OpenView catalog…"
+          className="access-fill"
+          skeleton={
+            <div className="flex min-w-0 flex-col gap-5">
+              <ViewsToolbarSkeleton />
+              <ViewsWorkspaceSkeleton />
+            </div>
+          }
+        >
+          <div className="access-fill flex min-w-0 flex-col gap-3">
+            {workspaceCalendar.isError && activeLayout !== "calendar" && (
+              <Alert variant="destructive">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {workspaceCalendar.data
+                      ? "Regional settings could not be refreshed. The last loaded settings are still in use."
+                      : "Could not load regional settings. Dates are unavailable."}
+                  </span>
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => void workspaceCalendar.refetch()}
+                  >
+                    Retry regional settings
+                  </Button>
+                </div>
+              </Alert>
+            )}
+            {currentWorkspace &&
+            (currentWorkspace.fieldsHasMore ||
+              currentWorkspace.viewsHasMore) ? (
+              <Alert
+                role="note"
+                className="flex flex-wrap items-center justify-between gap-3"
+              >
                 <span>
-                  {workspaceCalendar.data
-                    ? "Regional settings could not be refreshed. The last loaded settings are still in use."
-                    : "Could not load regional settings. Dates are unavailable."}
+                  This module has more fields or saved views than the first page
+                  shows.
                 </span>
                 <Button
+                  type="button"
                   variant="outline"
                   className="min-h-11"
-                  onClick={() => void workspaceCalendar.refetch()}
-                >
-                  Retry regional settings
-                </Button>
-              </div>
-            </Alert>
-          )}
-          <header
-            data-slot="card"
-            className="bg-card border-card-edge shadow-card flex flex-wrap items-end justify-between gap-3 rounded-[var(--radius)] border p-4 sm:p-5"
-          >
-            <div className="w-full min-w-0 sm:max-w-sm sm:flex-1">
-              <Field>
-                <FieldLabel htmlFor="openview-data-source">
-                  Data source
-                </FieldLabel>
-                <Select
-                  id="openview-data-source"
-                  className="min-h-11"
-                  value={moduleId ?? ""}
-                  disabled={!catalog?.length || Boolean(pendingAction)}
-                  onValueChange={(next) => {
-                    if (!isUuid(next) || next === moduleId) return;
-                    const href = serializeOpenViewUrl({
-                      section: "views",
-                      module: next,
-                    }) as Route;
-                    if (dirty || hasRecordMoves)
-                      setPendingNavigation({
-                        href,
-                        resume: () => router.push(href),
-                        discardDraft: true,
-                      });
-                    else
-                      startNavigation(() =>
-                        router.push(href, { scroll: false }),
-                      );
-                  }}
-                >
-                  {(catalog ?? []).map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <p className="text-muted-foreground mt-2 text-xs">
-                <DepartmentName
-                  departmentId={source?.departmentId}
-                  fallback="Department unavailable"
-                />{" "}
-                · {fields.length} active fields
-              </p>
-              {catalogHasMore ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="min-h-11 px-0"
                   disabled={Boolean(pendingAction) || metadataLoadingMore}
-                  onClick={() => void loadMoreCatalog()}
+                  onClick={() => void loadMoreModuleMetadata()}
                 >
-                  Load more data sources
+                  Load more metadata
                 </Button>
-              ) : null}
-            </div>
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-              <Field className="min-w-0 flex-1 basis-full sm:min-w-56 sm:flex-none">
-                <FieldLabel htmlFor="openview-saved-view">
-                  Saved view
-                </FieldLabel>
-                <Select
-                  id="openview-saved-view"
-                  className="min-h-11"
-                  value={activeSaved?.id ?? ""}
-                  disabled={!currentWorkspace || Boolean(pendingAction)}
-                  onValueChange={selectSavedView}
-                >
-                  <option value="">Unsaved view</option>
-                  {moduleViews
-                    .filter((view) => !view.isDeleted)
-                    .map((view) => (
-                      <option key={view.id} value={view.id}>
-                        {view.name}
-                        {view.id === defaultViewId ? " · default" : ""}
-                      </option>
-                    ))}
-                </Select>
-              </Field>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11 self-end"
-                disabled={!currentWorkspace || Boolean(pendingAction)}
-                onClick={() => setArchivedOpen(true)}
-              >
-                Archived views
-                {archivedViews.length ? ` (${archivedViews.length})` : ""}
-              </Button>
-            </div>
-          </header>
+              </Alert>
+            ) : null}
 
-          {currentWorkspace &&
-          (currentWorkspace.fieldsHasMore || currentWorkspace.viewsHasMore) ? (
-            <Alert
-              role="note"
-              className="flex flex-wrap items-center justify-between gap-3"
-            >
-              <span>
-                OpenView loads metadata in bounded pages. More fields or saved
-                views are available.
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={Boolean(pendingAction) || metadataLoadingMore}
-                onClick={() => void loadMoreModuleMetadata()}
+            {catalogError ? (
+              <Alert
+                role="alert"
+                variant="destructive"
+                className="flex flex-wrap items-center justify-between gap-3"
               >
-                Load more metadata
-              </Button>
-            </Alert>
-          ) : null}
-
-          {catalogError ? (
-            <Alert
-              role="alert"
-              variant="destructive"
-              className="flex flex-wrap items-center justify-between gap-3"
-            >
-              <span>
-                {catalogError}
-                {catalog?.length
-                  ? " Previously loaded catalog data remains available."
-                  : ""}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                onClick={retryCatalog}
-              >
-                Retry catalog
-              </Button>
-            </Alert>
-          ) : null}
-          {metadataError || fieldMetadataError ? (
-            <Alert
-              role="alert"
-              variant="destructive"
-              className="flex flex-wrap items-center justify-between gap-3"
-            >
-              <span>{metadataError || fieldMetadataError}</span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                onClick={
-                  fieldMetadataError ? selectedFields.retry : retryMetadata
-                }
-              >
-                Retry loading metadata
-              </Button>
-            </Alert>
-          ) : null}
-          {moduleError ? (
-            <Alert
-              role="alert"
-              variant="destructive"
-              className="flex flex-wrap items-center justify-between gap-3"
-            >
-              <span>
-                {moduleError}
-                {currentWorkspace
-                  ? " Previously loaded data remains available."
-                  : ""}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                onClick={refreshModule}
-              >
-                Retry data source
-              </Button>
-            </Alert>
-          ) : null}
-          {moduleLoading || rowPageLoading || metadataLoadingMore ? (
-            <Alert role="status" className="text-sm">
-              {metadataLoadingMore
-                ? "Loading more catalog metadata…"
-                : pendingAction ||
-                  (moduleLoading
-                    ? "Refreshing saved views and fields…"
-                    : "Refreshing records…")}
-            </Alert>
-          ) : null}
-          {pendingAction && !moduleLoading && !rowPageLoading ? (
-            <Alert role="status" className="text-sm">
-              {pendingAction} Navigation and conflicting actions are paused
-              until it finishes.
-            </Alert>
-          ) : null}
-          {rowError ? (
-            <Alert
-              role="alert"
-              variant="destructive"
-              className="flex flex-wrap items-center justify-between gap-3"
-            >
-              <span>
-                {rowError}{" "}
-                {pageRows.length
-                  ? "The last successful record page remains visible."
-                  : "No record rows remain displayed."}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                onClick={() => setRecordRetry((value) => value + 1)}
-              >
-                Retry records
-              </Button>
-            </Alert>
-          ) : null}
-          {invalidLink ? (
-            <Alert
-              role="alert"
-              variant="warning"
-              className="flex flex-wrap items-center justify-between gap-3"
-            >
-              <span>
-                This OpenView link is unavailable or contains unsupported state.
-                Return to the current workspace to clear it.
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={Boolean(pendingAction)}
-                onClick={recoverLink}
-              >
-                Return to workspace
-              </Button>
-            </Alert>
-          ) : null}
-          {deepLinkLookup?.id === requestedView &&
-          deepLinkLookup.status === "loading" ? (
-            <Alert role="status">Looking up the linked saved view…</Alert>
-          ) : null}
-          {notice ? <Alert role="status">{notice}</Alert> : null}
-          {actionError ? (
-            <Alert role="alert" variant="destructive">
-              {actionError}
-            </Alert>
-          ) : null}
-          {hasRecordMoves ? (
-            <section
-              aria-label="Unsaved record moves"
-              className="bg-card border-card-edge flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius)] border p-4"
-            >
-              <p className="text-sm">
-                {recordMoves.size} unsaved{" "}
-                {recordMoves.size === 1 ? "move" : "moves"}. Save to update the
-                records.
-              </p>
-              <div className="flex flex-wrap gap-2">
+                <span>
+                  {catalogError}
+                  {catalog?.length
+                    ? " Previously loaded catalog data remains available."
+                    : ""}
+                </span>
                 <Button
                   type="button"
+                  variant="outline"
                   className="min-h-11"
-                  disabled={!canWriteRecords || Boolean(pendingAction)}
-                  onClick={() => void saveRecordMoves()}
+                  onClick={retryCatalog}
                 >
-                  Save changes ({recordMoves.size})
+                  Retry catalog
                 </Button>
+              </Alert>
+            ) : null}
+            {metadataError || fieldMetadataError ? (
+              <Alert
+                role="alert"
+                variant="destructive"
+                className="flex flex-wrap items-center justify-between gap-3"
+              >
+                <span>{metadataError || fieldMetadataError}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={
+                    fieldMetadataError ? selectedFields.retry : retryMetadata
+                  }
+                >
+                  Retry loading metadata
+                </Button>
+              </Alert>
+            ) : null}
+            {moduleError ? (
+              <Alert
+                role="alert"
+                variant="destructive"
+                className="flex flex-wrap items-center justify-between gap-3"
+              >
+                <span>
+                  {moduleError}
+                  {currentWorkspace
+                    ? " Previously loaded data remains available."
+                    : ""}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={refreshModule}
+                >
+                  Retry views and fields
+                </Button>
+              </Alert>
+            ) : null}
+            {rowError ? (
+              <Alert
+                role="alert"
+                variant="destructive"
+                className="flex flex-wrap items-center justify-between gap-3"
+              >
+                <span>
+                  {rowError}{" "}
+                  {pageRows.length
+                    ? "The last successful record page remains visible."
+                    : "No record rows remain displayed."}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => setRecordRetry((value) => value + 1)}
+                >
+                  Retry records
+                </Button>
+              </Alert>
+            ) : null}
+            {invalidLink ? (
+              <Alert
+                role="alert"
+                variant="warning"
+                className="flex flex-wrap items-center justify-between gap-3"
+              >
+                <span>
+                  This OpenView link is unavailable or contains unsupported
+                  state. Return to the current workspace to clear it.
+                </span>
                 <Button
                   type="button"
                   variant="outline"
                   className="min-h-11"
                   disabled={Boolean(pendingAction)}
-                  onClick={() => {
-                    replaceRecordMoves(new Map());
-                    setActionError("");
-                    setNotice("Record moves were discarded.");
-                  }}
+                  onClick={recoverLink}
                 >
-                  Discard
+                  Return to workspace
                 </Button>
-              </div>
-            </section>
-          ) : null}
-
-          <LoadingRegion
-            loading={moduleLoading && !currentWorkspace}
-            label="Loading fields and saved views…"
-            skeleton={<ViewsWorkspaceSkeleton />}
-          >
-            {moduleError && !currentWorkspace ? (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>Data source unavailable</EmptyTitle>
-                  <EmptyDescription>{moduleError}</EmptyDescription>
-                </EmptyHeader>
-                <EmptyContent>
+              </Alert>
+            ) : null}
+            {deepLinkLookup?.id === requestedView &&
+            deepLinkLookup.status === "loading" ? (
+              <Alert role="status">Looking up the linked saved view…</Alert>
+            ) : null}
+            {notice ? <Alert role="status">{notice}</Alert> : null}
+            {actionError ? (
+              <Alert role="alert" variant="destructive">
+                {actionError}
+              </Alert>
+            ) : null}
+            {hasRecordMoves ? (
+              <section
+                aria-label="Unsaved record moves"
+                className="bg-card border-card-edge flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius)] border p-4"
+              >
+                <p className="text-sm">
+                  {recordMoves.size} unsaved{" "}
+                  {recordMoves.size === 1 ? "move" : "moves"}. Save to update
+                  the records.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    className="min-h-11"
+                    disabled={!canWriteRecords || Boolean(pendingAction)}
+                    onClick={() => void saveRecordMoves()}
+                  >
+                    Save changes ({recordMoves.size})
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
                     className="min-h-11"
-                    onClick={refreshModule}
+                    disabled={Boolean(pendingAction)}
+                    onClick={() => {
+                      replaceRecordMoves(new Map());
+                      setActionError("");
+                      setNotice("Record moves were discarded.");
+                    }}
                   >
-                    Retry
+                    Discard
                   </Button>
-                </EmptyContent>
-              </Empty>
-            ) : !moduleName || !moduleId ? (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>No data source selected</EmptyTitle>
-                  <EmptyDescription>
-                    Select an active catalog module to continue.
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              <div className="flex min-w-0 flex-col gap-5">
-                <Card
-                  className="flex min-w-0 flex-col gap-4 self-auto p-4 sm:p-5"
-                  aria-label="View controls"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <span className="truncate text-lg font-semibold">
-                        {activeSaved?.name ?? "Unsaved view"}
-                      </span>
-                      {activeSaved ? (
-                        <Badge variant="outline">
-                          Revision {activeSaved.revision}
-                        </Badge>
-                      ) : null}
-                      {activeSaved?.isDefault ? (
-                        <Badge variant="outline">Module default</Badge>
-                      ) : null}
-                      {dirty ? (
-                        <Badge variant="outline">Temporary changes</Badge>
-                      ) : null}
-                    </div>
-                    {dirty ? (
-                      <p className="text-muted-foreground w-full text-sm">
-                        These changes live in the page address. Share the link
-                        to share them.
-                        {!canManageViews
-                          ? " Only module managers can save the view."
-                          : null}
-                      </p>
-                    ) : null}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        ref={exportButtonRef}
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={!canExport}
-                        onClick={() => {
-                          if (!canExport || !moduleId) return;
-                          setExportContext({
-                            key: exportContextKey,
-                            moduleId,
-                            viewId: activeSaved?.id ?? null,
-                            definition: normalizedDraftDefinition,
-                            fields: tableFields,
-                          });
-                        }}
-                      >
-                        Export
-                      </Button>
-                      {dirty ? (
+                </div>
+              </section>
+            ) : null}
+
+            <LoadingRegion
+              loading={moduleLoading && !currentWorkspace}
+              label="Loading fields and saved views…"
+              className="access-fill"
+              skeleton={<ViewsWorkspaceSkeleton />}
+            >
+              {moduleError && !currentWorkspace ? (
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyTitle>Records unavailable</EmptyTitle>
+                    <EmptyDescription>{moduleError}</EmptyDescription>
+                  </EmptyHeader>
+                  <EmptyContent>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      onClick={refreshModule}
+                    >
+                      Retry
+                    </Button>
+                  </EmptyContent>
+                </Empty>
+              ) : !moduleName || !moduleId ? (
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyTitle>No module selected</EmptyTitle>
+                    <EmptyDescription>
+                      Choose a module in the sidebar.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : (
+                <div className="access-fill flex min-w-0 flex-col gap-3">
+                  <AccessToolbar
+                    searchLabel={`Search ${moduleName}`}
+                    searchId={SEARCH_ID}
+                    placeholder={`Search ${moduleName.toLowerCase()}`}
+                    query={draft.definition.search ?? ""}
+                    onQueryChange={(query) =>
+                      updateDefinition((current) => ({
+                        ...current,
+                        search: query || null,
+                      }))
+                    }
+                    searchMaxLength={240}
+                    sort={quickSortValue}
+                    sortOptions={[
+                      ...(!quickSortFields.some(
+                        (field) => field.id === firstSort?.fieldId,
+                      ) && firstSort
+                        ? [
+                            {
+                              value: quickSortValue,
+                              label: "Saved sort field unavailable",
+                              disabled: true,
+                            },
+                          ]
+                        : []),
+                      { value: "", label: "Default order" },
+                      ...quickSortFields.flatMap((field) => [
+                        {
+                          value: `${field.id}:asc`,
+                          label: quickSortLabel(field, "asc"),
+                        },
+                        {
+                          value: `${field.id}:desc`,
+                          label: quickSortLabel(field, "desc"),
+                        },
+                      ]),
+                    ]}
+                    onSortChange={changeQuickSort}
+                    sortDisabled={Boolean(pendingAction)}
+                    filtersDisabled={Boolean(pendingAction)}
+                    chips={filterChips}
+                    onClearFilters={() =>
+                      updateDefinition((current) => ({
+                        ...current,
+                        filters: [],
+                        deleted: "exclude",
+                      }))
+                    }
+                    sortInFiltersBelowXl
+                    quickFilters={
+                      quickField && quickFilterShown ? (
+                        <QuickFilter
+                          field={quickField}
+                          counts={quickFilterCounts}
+                          value={
+                            typeof quickFilterValue === "string"
+                              ? quickFilterValue
+                              : null
+                          }
+                          disabled={Boolean(pendingAction)}
+                          onChange={setQuickFilter}
+                        />
+                      ) : null
+                    }
+                    actions={
+                      <div className="flex items-center gap-2">
+                        {/* On a phone Columns moves into the view menu. */}
                         <Button
                           type="button"
                           variant="outline"
-                          className="min-h-11"
-                          disabled={
-                            Boolean(pendingAction) || Boolean(saveConflict)
-                          }
-                          onClick={resetChanges}
-                        >
-                          Reset changes
-                        </Button>
-                      ) : null}
-                      {canEditSaved && dirty ? (
-                        <Button
-                          type="button"
-                          className="min-h-11"
-                          disabled={
-                            Boolean(pendingAction) ||
-                            incompleteFilters ||
-                            incompletePresentation ||
-                            Boolean(saveConflict)
-                          }
-                          onClick={saveChanges}
-                        >
-                          Save changes
-                        </Button>
-                      ) : null}
-                      {canManageViews && !saveTarget ? (
-                        <Button
-                          type="button"
-                          className="min-h-11"
-                          disabled={
-                            Boolean(pendingAction) ||
-                            incompleteFilters ||
-                            incompletePresentation
-                          }
-                          onClick={openSaveDialog}
-                        >
-                          Save view as
-                        </Button>
-                      ) : null}
-                      {canManageViews ? (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className="min-h-11"
-                                aria-label="View actions"
-                              />
-                            }
-                          >
-                            <MoreHorizontal aria-hidden="true" />
-                            View actions
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="min-w-56">
-                            <DropdownMenuGroup>
-                              {saveTarget ? (
-                                <DropdownMenuItem
-                                  className="min-h-11"
-                                  disabled={
-                                    Boolean(pendingAction) ||
-                                    dirty ||
-                                    Boolean(saveConflict)
-                                  }
-                                  onClick={openSaveDialog}
-                                >
-                                  Rename view…
-                                </DropdownMenuItem>
-                              ) : null}
-                              {activeSaved && canManageViews ? (
-                                <DropdownMenuItem
-                                  className="min-h-11"
-                                  disabled={
-                                    Boolean(pendingAction) ||
-                                    Boolean(saveConflict) ||
-                                    incompleteFilters ||
-                                    incompletePresentation
-                                  }
-                                  onClick={() => void duplicateActiveView()}
-                                >
-                                  Duplicate view
-                                </DropdownMenuItem>
-                              ) : null}
-                              {activeSaved && canEditSaved ? (
-                                <DropdownMenuItem
-                                  className="min-h-11"
-                                  disabled={Boolean(pendingAction)}
-                                  onClick={() => {
-                                    if (currentDefault && !routedView)
-                                      confirmDraftDiscard(
-                                        () => void setDefault(),
-                                      );
-                                    else void setDefault();
-                                  }}
-                                >
-                                  {currentDefault
-                                    ? "Clear default view"
-                                    : "Make default view"}
-                                </DropdownMenuItem>
-                              ) : null}
-                            </DropdownMenuGroup>
-                            {canEditSaved ? (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuGroup>
-                                  <DropdownMenuItem
-                                    className="min-h-11"
-                                    disabled={Boolean(pendingAction)}
-                                    onClick={() => setArchiveOpen(true)}
-                                  >
-                                    Archive view
-                                  </DropdownMenuItem>
-                                </DropdownMenuGroup>
-                              </>
-                            ) : null}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="min-w-0">
-                    <SearchFilterToolbar
-                      searchLabel={`Search ${moduleName}`}
-                      placeholder={`Search ${moduleName.toLowerCase()}…`}
-                      query={draft.definition.search ?? ""}
-                      onQueryChange={(query) =>
-                        updateDefinition((current) => ({
-                          ...current,
-                          search: query || null,
-                        }))
-                      }
-                      searchMaxLength={240}
-                      sort={quickSortValue}
-                      sortOptions={[
-                        ...(!quickSortFields.some(
-                          (field) => field.id === firstSort?.fieldId,
-                        ) && firstSort
-                          ? [
-                              {
-                                value: quickSortValue,
-                                label: "Saved sort field unavailable",
-                                disabled: true,
-                              },
-                            ]
-                          : []),
-                        { value: "", label: "Default order" },
-                        ...quickSortFields.flatMap((field) => [
-                          {
-                            value: `${field.id}:asc`,
-                            label: quickSortLabel(field, "asc"),
-                          },
-                          {
-                            value: `${field.id}:desc`,
-                            label: quickSortLabel(field, "desc"),
-                          },
-                        ]),
-                      ]}
-                      onSortChange={changeQuickSort}
-                      sortDisabled={Boolean(pendingAction)}
-                      filtersDisabled={Boolean(pendingAction)}
-                      activeFilterCount={draft.definition.filters.length}
-                      filtersClassName="sm:grid-cols-1 xl:grid-cols-1"
-                    >
-                      <SavedViewFilterControls
-                        moduleId={moduleId}
-                        logic={draft.definition.logic}
-                        filters={draft.definition.filters}
-                        fields={fields}
-                        activeFields={activeFields}
-                        rowKeyFor={filterRowKeyFor}
-                        onLogicChange={(logic) =>
-                          updateDefinition((current) => ({ ...current, logic }))
-                        }
-                        onUpdateFilter={updateFilter}
-                        onRemoveFilter={removeFilter}
-                        onAddFilter={addFilter}
-                      />
-                      <Field>
-                        <FieldLabel htmlFor="openview-deleted-records">
-                          Deleted records
-                        </FieldLabel>
-                        <Select
-                          id="openview-deleted-records"
-                          className="min-h-11"
-                          value={draft.definition.deleted}
+                          className="min-h-11 max-md:hidden"
                           disabled={Boolean(pendingAction)}
-                          onValueChange={(next) => {
-                            if (
-                              next === "exclude" ||
-                              next === "include" ||
-                              next === "only"
-                            )
-                              updateDefinition((current) => ({
-                                ...current,
-                                deleted: next,
-                              }));
-                          }}
+                          onClick={() =>
+                            setViewPanel({ kind: "columns", open: true })
+                          }
                         >
-                          <option value="exclude">Hide deleted records</option>
-                          <option value="include">Show deleted records</option>
-                          <option value="only">
-                            Show only deleted records
-                          </option>
-                        </Select>
-                      </Field>
-                    </SearchFilterToolbar>
-                  </div>
+                          <Columns3 aria-hidden="true" />
+                          Columns
+                        </Button>
+                        <LayoutMenu
+                          layout={activeLayout}
+                          disabled={Boolean(pendingAction)}
+                          onLayoutChange={changeLayout}
+                          onOpenSettings={() =>
+                            setViewPanel({ kind: "layout", open: true })
+                          }
+                        />
+                      </div>
+                    }
+                  >
+                    <SavedViewFilterControls
+                      moduleId={moduleId}
+                      logic={draft.definition.logic}
+                      filters={draft.definition.filters}
+                      fields={fields}
+                      activeFields={activeFields}
+                      rowKeyFor={filterRowKeyFor}
+                      onLogicChange={(logic) =>
+                        updateDefinition((current) => ({ ...current, logic }))
+                      }
+                      onUpdateFilter={updateFilter}
+                      onRemoveFilter={removeFilter}
+                      onAddFilter={addFilter}
+                    />
+                    <FilterSelect
+                      id="openview-deleted-records"
+                      label="Deleted"
+                      ariaLabel="Deleted records"
+                      value={draft.definition.deleted}
+                      options={[
+                        { value: "exclude", label: "Hide deleted records" },
+                        { value: "include", label: "Show deleted records" },
+                        { value: "only", label: "Show only deleted records" },
+                      ]}
+                      onChange={(deleted) =>
+                        updateDefinition((current) => ({ ...current, deleted }))
+                      }
+                    />
+                  </AccessToolbar>
 
-                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-                    {draft.definition.filters.length ||
-                    draft.definition.deleted !== "exclude" ? (
-                      <div
-                        aria-label="Active filters"
-                        className="flex min-w-0 basis-full flex-wrap items-center gap-2 sm:flex-1 sm:basis-auto"
-                      >
-                        <span className="text-muted-foreground text-sm">
-                          Active filters
-                        </span>
-                        {draft.definition.filters.map((filter, index) => {
-                          const summary = filterSummary(
-                            filter,
-                            activeFields.get(filter.fieldId),
+                  <div className="access-fill min-w-0">
+                    {generalGroupedView && !incompleteFilters ? (
+                      <LiveGroupedResults
+                        fieldName={groupByField?.name ?? ""}
+                        range={groupRange}
+                        loading={generalGroupLoading}
+                        error={generalGroupError}
+                        hasPage={currentGeneralGroupPage !== null}
+                        groups={groupOptions}
+                        pagination={groupPagination ?? null}
+                        selectedGroup={generalSelectedGroup}
+                        pending={Boolean(pendingAction)}
+                        onRetry={() =>
+                          setGeneralGroupRetry((retry) => retry + 1)
+                        }
+                        onSelectGroup={(group) => {
+                          setGeneralSelectedGroup(group);
+                          setRecordOffset(0);
+                        }}
+                        onPreviousPage={() => {
+                          setGeneralGroupOffset(
+                            Math.max(
+                              0,
+                              (groupPagination?.offset ?? 0) - GROUP_PAGE_SIZE,
+                            ),
                           );
-                          return (
-                            <Button
-                              key={filterRowKeyFor(filter, index)}
-                              type="button"
-                              variant="outline"
-                              className="min-h-11 max-w-full justify-start whitespace-normal"
-                              aria-label={
-                                "Remove filter " + (index + 1) + ": " + summary
-                              }
-                              onClick={() => removeFilter(index)}
-                            >
-                              <span className="text-left break-words">
-                                {summary}
-                              </span>
-                              <X aria-hidden="true" />
-                            </Button>
+                          setGeneralSelectedGroup(null);
+                          setRecordOffset(0);
+                        }}
+                        onNextPage={() => {
+                          setGeneralGroupOffset(
+                            (groupPagination?.offset ?? 0) + GROUP_PAGE_SIZE,
                           );
-                        })}
-                        {draft.definition.deleted !== "exclude" ? (
+                          setGeneralSelectedGroup(null);
+                          setRecordOffset(0);
+                        }}
+                      />
+                    ) : null}
+
+                    {incompleteFilters ? (
+                      <Alert role="alert" variant="warning">
+                        {draftHasUnsafeIntegerFilter
+                          ? "Correct the number condition in Filters before loading matching records."
+                          : "Complete the condition in Filters before loading matching records."}
+                      </Alert>
+                    ) : generalGroupedView && generalGroupError ? (
+                      <Alert role="alert" variant="destructive">
+                        Grouped results are unavailable. Use the retry action
+                        above.
+                      </Alert>
+                    ) : generalGroupedView && !generalSelectedGroup ? (
+                      <Alert role="note">
+                        Select a group to load its records.
+                      </Alert>
+                    ) : activeLayout === "kanban" ? (
+                      groupByField && moduleId ? (
+                        <LiveKanban
+                          region={displayRegion}
+                          key={
+                            moduleId +
+                            ":" +
+                            JSON.stringify(normalizedDraftDefinition) +
+                            ":" +
+                            groupByField.id
+                          }
+                          moduleId={moduleId}
+                          definition={normalizedDraftDefinition}
+                          refreshKey={recordInvalidation}
+                          groupByField={groupByField}
+                          canWrite={canWriteRecords}
+                          movesPending={Boolean(pendingAction)}
+                          pendingMoves={recordMoves}
+                          onMoveRecord={stageRecordMove}
+                          fields={cardFields}
+                          primaryFieldId={draft.presentation.primaryFieldId}
+                          secondaryFieldId={draft.presentation.secondaryFieldId}
+                          onOpenRecord={openRecordFromResults}
+                        />
+                      ) : (
+                        <LayoutFieldPicker
+                          title="Choose how to group the lanes"
+                          missing="No field to group the lanes by"
+                          rows={[
+                            {
+                              id: "openview-empty-kanban-field",
+                              label: "Group lanes by",
+                              value: draft.presentation.groupByFieldId,
+                              options: queriedFields,
+                              onChange: (groupByFieldId) =>
+                                updatePresentation((current) => ({
+                                  ...current,
+                                  groupByFieldId,
+                                })),
+                            },
+                          ]}
+                        />
+                      )
+                    ) : activeLayout === "calendar" ? (
+                      moduleId && calendarDateField ? (
+                        <LiveCalendar
+                          region={workspaceCalendar.data}
+                          workspaceCalendar={workspaceCalendar.data}
+                          settingsPending={workspaceCalendar.isPending}
+                          settingsError={workspaceCalendar.isError}
+                          onRetrySettings={() =>
+                            void workspaceCalendar.refetch()
+                          }
+                          key={moduleId + ":" + selectedViewId + ":calendar"}
+                          moduleId={moduleId}
+                          definition={normalizedDraftDefinition}
+                          dateRange={draft.presentation.dateRange}
+                          refreshKey={recordInvalidation}
+                          scale={draft.presentation.scale}
+                          dateField={calendarDateField}
+                          canWrite={
+                            canWriteRecords &&
+                            !interactionSuspended &&
+                            !exportAccessDenied
+                          }
+                          movesPending={Boolean(pendingAction)}
+                          pendingMoves={recordMoves}
+                          onMoveDates={stageMove}
+                          titleField={liveTitleField}
+                          detailFields={liveDetailFields}
+                          onOpenRecord={openRecordFromResults}
+                        />
+                      ) : (
+                        <LayoutFieldPicker
+                          title="Choose the date that places each record"
+                          missing="No date field to place records on"
+                          rows={[
+                            {
+                              id: "openview-empty-calendar-field",
+                              label: "Date",
+                              value: draft.presentation.dateFieldId,
+                              options: dateFields,
+                              onChange: (dateFieldId) =>
+                                updatePresentation((current) => ({
+                                  ...current,
+                                  dateFieldId,
+                                })),
+                            },
+                          ]}
+                        />
+                      )
+                    ) : activeLayout === "timeline" ? (
+                      moduleId && timelineStartField && timelineEndField ? (
+                        <LiveTimeline
+                          region={workspaceCalendar.data}
+                          key={moduleId + ":" + selectedViewId + ":timeline"}
+                          moduleId={moduleId}
+                          definition={normalizedDraftDefinition}
+                          dateRange={draft.presentation.dateRange}
+                          refreshKey={recordInvalidation}
+                          startField={timelineStartField}
+                          canWrite={
+                            canWriteRecords &&
+                            !interactionSuspended &&
+                            !exportAccessDenied
+                          }
+                          movesPending={Boolean(pendingAction)}
+                          pendingMoves={recordMoves}
+                          onMoveDates={stageMove}
+                          endField={timelineEndField}
+                          deadlineField={timelineDeadlineField}
+                          progressField={timelineProgressField}
+                          titleField={liveTitleField}
+                          detailFields={liveDetailFields}
+                          onOpenRecord={openRecordFromResults}
+                        />
+                      ) : (
+                        <LayoutFieldPicker
+                          title="Choose when each record starts and ends"
+                          missing="No date fields to place records on"
+                          rows={[
+                            {
+                              id: "openview-empty-timeline-start",
+                              label: "Starts",
+                              value: draft.presentation.timelineStartFieldId,
+                              options: dateFields,
+                              onChange: (timelineStartFieldId) =>
+                                updatePresentation((current) => ({
+                                  ...current,
+                                  timelineStartFieldId,
+                                })),
+                            },
+                            {
+                              id: "openview-empty-timeline-end",
+                              label: "Ends",
+                              value: draft.presentation.timelineEndFieldId,
+                              options: dateFields,
+                              onChange: (timelineEndFieldId) =>
+                                updatePresentation((current) => ({
+                                  ...current,
+                                  timelineEndFieldId,
+                                })),
+                            },
+                          ]}
+                        />
+                      )
+                    ) : rowError && pageRows.length === 0 ? (
+                      <Empty>
+                        <EmptyHeader>
+                          <EmptyTitle>Records could not be loaded</EmptyTitle>
+                          <EmptyDescription>{rowError}</EmptyDescription>
+                        </EmptyHeader>
+                        <EmptyContent>
                           <Button
                             type="button"
                             variant="outline"
                             className="min-h-11"
-                            aria-label={
-                              draft.definition.deleted === "only"
-                                ? "Remove filter: Only deleted records"
-                                : "Remove filter: Deleted records shown"
-                            }
-                            onClick={() =>
-                              updateDefinition((current) => ({
-                                ...current,
-                                deleted: "exclude",
-                              }))
-                            }
+                            onClick={() => setRecordRetry((value) => value + 1)}
                           >
-                            {draft.definition.deleted === "only"
-                              ? "Only deleted records"
-                              : "Deleted records shown"}
-                            <X aria-hidden="true" />
+                            Retry records
                           </Button>
-                        ) : null}
+                        </EmptyContent>
+                      </Empty>
+                    ) : rowPageLoading && pageRows.length === 0 ? (
+                      <div
+                        role="status"
+                        className="text-muted-foreground rounded-[var(--radius)] border px-4 py-12 text-center"
+                      >
+                        {generalGroupedView
+                          ? "Loading records in the selected group…"
+                          : "Loading matching records…"}
                       </div>
+                    ) : pageRows.length === 0 ? (
+                      <Empty>
+                        <EmptyHeader>
+                          <EmptyTitle>No records match this view</EmptyTitle>
+                          <EmptyDescription>
+                            Try a broader search or remove one of the active
+                            filters.
+                          </EmptyDescription>
+                        </EmptyHeader>
+                      </Empty>
+                    ) : fields.length === 0 ? (
+                      <Empty>
+                        <EmptyHeader>
+                          <EmptyTitle>No active fields</EmptyTitle>
+                          <EmptyDescription>
+                            This module has records but no active fields to
+                            display.
+                          </EmptyDescription>
+                        </EmptyHeader>
+                      </Empty>
                     ) : (
-                      <p className="text-muted-foreground text-sm">
-                        {draft.definition.search?.trim()
-                          ? `Search: ${draft.definition.search.trim()}`
-                          : "No active filters"}
-                      </p>
-                    )}
-                    <div className="flex flex-wrap gap-2">
-                      {canWriteRecords ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="min-h-11"
-                          disabled={
-                            Boolean(pendingAction) ||
-                            Boolean(currentWorkspace?.fieldsHasMore) ||
-                            metadataLoadingMore
-                          }
-                          title={
-                            currentWorkspace?.fieldsHasMore
-                              ? "Load all fields before creating a record."
-                              : undefined
-                          }
-                          onClick={() => setCreateRecordOpen(true)}
-                        >
-                          <Plus aria-hidden="true" />
-                          New record
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={Boolean(pendingAction)}
-                        onClick={() => setOpenViewPanel("columns")}
-                      >
-                        <Columns3 aria-hidden="true" />
-                        Columns
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        disabled={Boolean(pendingAction)}
-                        onClick={() => setOpenViewPanel("layout")}
-                      >
-                        <Settings2 aria-hidden="true" />
-                        Layout settings
-                      </Button>
-                    </div>
-                  </div>
-
-                  <Tabs
-                    value={activeLayout}
-                    onValueChange={changeLayout}
-                    className="min-w-0"
-                  >
-                    <TabsList
-                      aria-label="View layouts"
-                      className="hidden w-full grid-cols-6 sm:grid"
-                    >
-                      <TabsTrigger value="table" className="min-h-11">
-                        Table
-                      </TabsTrigger>
-                      <TabsTrigger value="grid" className="min-h-11">
-                        Grid
-                      </TabsTrigger>
-                      <TabsTrigger value="gallery" className="min-h-11">
-                        Gallery
-                      </TabsTrigger>
-                      <TabsTrigger value="kanban" className="min-h-11">
-                        Kanban
-                      </TabsTrigger>
-                      <TabsTrigger value="calendar" className="min-h-11">
-                        Calendar
-                      </TabsTrigger>
-                      <TabsTrigger value="timeline" className="min-h-11">
-                        Timeline
-                      </TabsTrigger>
-                    </TabsList>
-                    <Field className="sm:hidden">
-                      <FieldLabel htmlFor="openview-mobile-layout">
-                        Layout
-                      </FieldLabel>
-                      <Select
-                        id="openview-mobile-layout"
-                        aria-label="Layout"
-                        className="min-h-11"
-                        value={activeLayout}
-                        onValueChange={changeLayout}
-                      >
-                        <option value="table">Table</option>
-                        <option value="grid">Grid</option>
-                        <option value="gallery">Gallery</option>
-                        <option value="kanban">Kanban</option>
-                        <option value="calendar">Calendar</option>
-                        <option value="timeline">Timeline</option>
-                      </Select>
-                    </Field>
-
-                    <TabsContent value={activeLayout} className="mt-0">
-                      {generalGroupedView && !incompleteFilters ? (
-                        <LiveGroupedResults
-                          fieldName={groupByField?.name ?? ""}
-                          range={groupRange}
-                          loading={generalGroupLoading}
-                          error={generalGroupError}
-                          hasPage={currentGeneralGroupPage !== null}
-                          groups={groupOptions}
-                          pagination={groupPagination ?? null}
-                          selectedGroup={generalSelectedGroup}
-                          pending={Boolean(pendingAction)}
-                          onRetry={() =>
-                            setGeneralGroupRetry((retry) => retry + 1)
-                          }
-                          onSelectGroup={(group) => {
-                            setGeneralSelectedGroup(group);
-                            setRecordOffset(0);
-                          }}
-                          onPreviousPage={() => {
-                            setGeneralGroupOffset(
-                              Math.max(
-                                0,
-                                (groupPagination?.offset ?? 0) -
-                                  GROUP_PAGE_SIZE,
-                              ),
-                            );
-                            setGeneralSelectedGroup(null);
-                            setRecordOffset(0);
-                          }}
-                          onNextPage={() => {
-                            setGeneralGroupOffset(
-                              (groupPagination?.offset ?? 0) + GROUP_PAGE_SIZE,
-                            );
-                            setGeneralSelectedGroup(null);
-                            setRecordOffset(0);
-                          }}
-                        />
-                      ) : null}
-
-                      {incompleteFilters ? (
-                        <Alert role="alert" variant="warning">
-                          {draftHasUnsafeIntegerFilter
-                            ? "Correct the integer condition in More filters before loading matching records."
-                            : "Complete the condition in More filters before loading matching records."}
-                        </Alert>
-                      ) : generalGroupedView && generalGroupError ? (
-                        <Alert role="alert" variant="destructive">
-                          Grouped results are unavailable. Use the retry action
-                          above.
-                        </Alert>
-                      ) : generalGroupedView && !generalSelectedGroup ? (
-                        <Alert role="note">
-                          Select a group to load its records.
-                        </Alert>
-                      ) : activeLayout === "kanban" ? (
-                        groupByField && moduleId ? (
-                          <LiveKanban
-                            region={displayRegion}
-                            key={
-                              moduleId +
-                              ":" +
-                              JSON.stringify(normalizedDraftDefinition) +
-                              ":" +
-                              groupByField.id
-                            }
-                            moduleId={moduleId}
-                            definition={normalizedDraftDefinition}
-                            refreshKey={recordInvalidation}
-                            groupByField={groupByField}
-                            canWrite={canWriteRecords}
-                            movesPending={Boolean(pendingAction)}
-                            pendingMoves={recordMoves}
-                            onMoveRecord={stageRecordMove}
-                            fields={cardFields}
-                            primaryFieldId={draft.presentation.primaryFieldId}
-                            secondaryFieldId={
-                              draft.presentation.secondaryFieldId
-                            }
-                            onOpenRecord={openRecordFromResults}
-                          />
-                        ) : (
-                          <Alert role="note">
-                            Choose an active queried field to load Kanban lane
-                            counts.
-                          </Alert>
-                        )
-                      ) : activeLayout === "calendar" ? (
-                        moduleId && calendarDateField ? (
-                          <LiveCalendar
-                            region={workspaceCalendar.data}
-                            workspaceCalendar={workspaceCalendar.data}
-                            settingsPending={workspaceCalendar.isPending}
-                            settingsError={workspaceCalendar.isError}
-                            onRetrySettings={() =>
-                              void workspaceCalendar.refetch()
-                            }
-                            key={moduleId + ":" + selectedViewId + ":calendar"}
-                            moduleId={moduleId}
-                            definition={normalizedDraftDefinition}
-                            dateRange={draft.presentation.dateRange}
-                            refreshKey={recordInvalidation}
-                            scale={draft.presentation.scale}
-                            dateField={calendarDateField}
-                            canWrite={
-                              canWriteRecords &&
-                              !interactionSuspended &&
-                              !exportAccessDenied
-                            }
-                            movesPending={Boolean(pendingAction)}
-                            pendingMoves={recordMoves}
-                            onMoveDates={stageMove}
-                            titleField={liveTitleField}
-                            detailFields={liveDetailFields}
-                            onOpenRecord={openRecordFromResults}
-                          />
-                        ) : (
-                          <Alert role="note">
-                            Choose an active queried DATE or DATETIME field to
-                            load Calendar records.
-                          </Alert>
-                        )
-                      ) : activeLayout === "timeline" ? (
-                        moduleId && timelineStartField && timelineEndField ? (
-                          <LiveTimeline
-                            region={workspaceCalendar.data}
-                            key={moduleId + ":" + selectedViewId + ":timeline"}
-                            moduleId={moduleId}
-                            definition={normalizedDraftDefinition}
-                            dateRange={draft.presentation.dateRange}
-                            refreshKey={recordInvalidation}
-                            startField={timelineStartField}
-                            canWrite={
-                              canWriteRecords &&
-                              !interactionSuspended &&
-                              !exportAccessDenied
-                            }
-                            movesPending={Boolean(pendingAction)}
-                            pendingMoves={recordMoves}
-                            onMoveDates={stageMove}
-                            endField={timelineEndField}
-                            deadlineField={timelineDeadlineField}
-                            progressField={timelineProgressField}
-                            titleField={liveTitleField}
-                            detailFields={liveDetailFields}
-                            onOpenRecord={openRecordFromResults}
-                          />
-                        ) : (
-                          <Alert role="note">
-                            Choose active queried start and end DATE or DATETIME
-                            fields to load Timeline records.
-                          </Alert>
-                        )
-                      ) : rowError && pageRows.length === 0 ? (
-                        <Empty>
-                          <EmptyHeader>
-                            <EmptyTitle>Records could not be loaded</EmptyTitle>
-                            <EmptyDescription>{rowError}</EmptyDescription>
-                          </EmptyHeader>
-                          <EmptyContent>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="min-h-11"
-                              onClick={() =>
-                                setRecordRetry((value) => value + 1)
-                              }
-                            >
-                              Retry records
-                            </Button>
-                          </EmptyContent>
-                        </Empty>
-                      ) : rowPageLoading && pageRows.length === 0 ? (
-                        <div
-                          role="status"
-                          className="text-muted-foreground rounded-[var(--radius)] border px-4 py-12 text-center"
-                        >
-                          {generalGroupedView
-                            ? "Loading records in the selected group…"
-                            : "Loading matching records…"}
-                        </div>
-                      ) : pageRows.length === 0 ? (
-                        <Empty>
-                          <EmptyHeader>
-                            <EmptyTitle>No records match this view</EmptyTitle>
-                            <EmptyDescription>
-                              Try a broader search or remove one of the active
-                              filters.
-                            </EmptyDescription>
-                          </EmptyHeader>
-                        </Empty>
-                      ) : fields.length === 0 ? (
-                        <Empty>
-                          <EmptyHeader>
-                            <EmptyTitle>No active fields</EmptyTitle>
-                            <EmptyDescription>
-                              This data source has records but no active fields
-                              to display.
-                            </EmptyDescription>
-                          </EmptyHeader>
-                        </Empty>
-                      ) : (
-                        <LiveRecordResults
-                          region={displayRegion}
-                          title={activeSaved?.name ?? "Unsaved view"}
-                          scopeLabel={
-                            generalGroupedView && generalSelectedGroup
-                              ? "records in selected group"
-                              : "matching records"
-                          }
-                          layoutDescription={
-                            cardLayout
-                              ? activeLayout + " layout"
-                              : "Table layout"
-                          }
-                          page={{
-                            rows: pageRows,
-                            offset: renderedRecordOffset,
-                            total: currentRecordPage?.total ?? pageRows.length,
-                            hasMore: currentRecordPage?.hasMore ?? false,
-                            loading: rowPageLoading,
-                          }}
-                          cardLayout={
-                            activeLayout === "grid" ||
-                            activeLayout === "gallery"
-                              ? activeLayout
-                              : null
-                          }
-                          cardFields={cardFields}
-                          tableFields={tableFields}
-                          pinnedFieldId={pinnedField?.id ?? null}
-                          presentation={draft.presentation}
-                          pending={Boolean(pendingAction)}
-                          pageSize={currentRecordPage?.limit ?? recordPageSize}
-                          onOpenRecord={openRecordFromResults}
-                          onPageIndexChange={(pageIndex) => {
-                            if (rowPageLoading || pendingAction) return;
-                            const pageSize =
-                              currentRecordPage?.limit ?? recordPageSize;
-                            setRecordOffset(pageIndex * pageSize);
-                          }}
-                          onPageSizeChange={changeRecordPageSize}
-                        />
-                      )}
-                    </TabsContent>
-                  </Tabs>
-                </Card>
-
-                <Dialog
-                  open={openViewPanel !== null}
-                  onOpenChange={(open) => {
-                    if (!open) setOpenViewPanel(null);
-                  }}
-                >
-                  <DialogContent className="max-w-5xl">
-                    <DialogHeader>
-                      <DialogTitle>
-                        {openViewPanel === "columns"
-                          ? "Columns"
-                          : "Layout settings"}
-                      </DialogTitle>
-                      <DialogDescription>
-                        Changes are kept in this view draft until you save them.
-                      </DialogDescription>
-                    </DialogHeader>
-
-                    {openViewPanel === "columns" ? (
-                      <SavedViewColumnControls
-                        layout={activeLayout}
-                        fields={presentationSettingsFields}
-                        visibleFields={presentationVisibleFields}
-                        selectedVisibleFieldCount={
-                          presentationVisibleFields.length
+                      <LiveRecordResults
+                        region={displayRegion}
+                        selectedId={
+                          isUuid(requestedRecord) ? requestedRecord : null
                         }
-                        visibleFieldIds={presentationVisibleFieldIds}
+                        page={{
+                          rows: pageRows,
+                          offset: renderedRecordOffset,
+                          total: currentRecordPage?.total ?? pageRows.length,
+                          hasMore: currentRecordPage?.hasMore ?? false,
+                          loading: rowPageLoading,
+                        }}
+                        cardLayout={
+                          activeLayout === "grid" || activeLayout === "gallery"
+                            ? activeLayout
+                            : null
+                        }
+                        cardFields={cardFields}
+                        tableFields={tableFields}
                         pinnedFieldId={pinnedField?.id ?? null}
                         presentation={draft.presentation}
-                        onToggleVisibility={updatePresentationFieldVisibility}
-                        onTogglePinned={updatePinnedField}
-                        onMove={movePresentationField}
-                        onDensityChange={(density) =>
-                          updatePresentation((current) => ({
-                            ...current,
-                            density,
-                          }))
+                        pending={Boolean(pendingAction)}
+                        pageSize={currentRecordPage?.limit ?? recordPageSize}
+                        onOpenRecord={openRecordFromResults}
+                        onPageIndexChange={(pageIndex) => {
+                          if (rowPageLoading || pendingAction) return;
+                          const pageSize =
+                            currentRecordPage?.limit ?? recordPageSize;
+                          setRecordOffset(pageIndex * pageSize);
+                        }}
+                        onPageSizeChange={changeRecordPageSize}
+                      />
+                    )}
+                  </div>
+
+                  <Dialog
+                    open={viewPanel.open}
+                    onOpenChange={(open) => {
+                      if (!open)
+                        setViewPanel((current) => ({
+                          ...current,
+                          open: false,
+                        }));
+                    }}
+                  >
+                    <DialogContent
+                      className={cn(dialogFrameContentClass, "max-w-5xl")}
+                    >
+                      <DialogFrameHeader
+                        title={
+                          <DialogTitle>
+                            {viewPanel.kind === "columns"
+                              ? "Columns"
+                              : "Layout settings"}
+                          </DialogTitle>
                         }
-                        onCardSizeChange={(cardSize) =>
-                          updatePresentation((current) => ({
-                            ...current,
-                            cardSize,
-                          }))
+                        description={
+                          <DialogDescription>
+                            Changes apply to the view as you make them.
+                          </DialogDescription>
                         }
-                        onWrapChange={(wrap) =>
-                          updatePresentation((current) => ({
+                        closeLabel={
+                          viewPanel.kind === "columns"
+                            ? "Close columns"
+                            : "Close layout settings"
+                        }
+                        onClose={() =>
+                          setViewPanel((current) => ({
                             ...current,
-                            wrap,
+                            open: false,
                           }))
                         }
                       />
-                    ) : null}
 
-                    {openViewPanel === "layout" ? (
-                      <div className="flex flex-col gap-6">
-                        <Field className="max-w-sm">
-                          <FieldLabel htmlFor="openview-presentation-layout">
-                            Presentation layout
-                          </FieldLabel>
-                          <Select
-                            id="openview-presentation-layout"
-                            className="min-h-11"
-                            value={presentationLayout}
-                            onValueChange={changeLayout}
-                          >
-                            <option value="table">Table</option>
-                            <option value="grid">Grid</option>
-                            <option value="gallery">Gallery</option>
-                            <option value="kanban">Kanban</option>
-                            <option value="calendar">Calendar</option>
-                            <option value="timeline">Timeline</option>
-                          </Select>
-                        </Field>
-                        <SavedViewAdvancedControls
-                          model={{
-                            draft,
-                            layout: presentationLayout,
-                            layoutLabel: presentationLayoutLabel,
-                            fields: {
-                              all: fields,
-                              queried: queriedFields,
-                              groupByField,
-                              dates: dateFields,
-                              calendarDateField,
-                              timelineStartField,
-                              timelineEndField,
-                              timelineDeadlineField,
-                              timelineProgressField,
-                            },
-                            incompletePresentation,
-                          }}
-                          actions={{ updateDefinition, updatePresentation }}
+                      {viewPanel.kind === "columns" ? (
+                        <SavedViewColumnControls
+                          layout={activeLayout}
+                          fields={presentationSettingsFields}
+                          visibleFields={presentationVisibleFields}
+                          selectedVisibleFieldCount={
+                            presentationVisibleFields.length
+                          }
+                          visibleFieldIds={presentationVisibleFieldIds}
+                          pinnedFieldId={pinnedField?.id ?? null}
+                          presentation={draft.presentation}
+                          onToggleVisibility={updatePresentationFieldVisibility}
+                          onTogglePinned={updatePinnedField}
+                          onMove={movePresentationField}
+                          onDensityChange={(density) =>
+                            updatePresentation((current) => ({
+                              ...current,
+                              density,
+                            }))
+                          }
+                          onCardSizeChange={(cardSize) =>
+                            updatePresentation((current) => ({
+                              ...current,
+                              cardSize,
+                            }))
+                          }
+                          onWrapChange={(wrap) =>
+                            updatePresentation((current) => ({
+                              ...current,
+                              wrap,
+                            }))
+                          }
                         />
-                      </div>
-                    ) : null}
+                      ) : null}
 
-                    <DialogFooter>
-                      <DialogClose
-                        render={
-                          <Button variant="outline" className="min-h-11" />
-                        }
-                      >
-                        Close
-                      </DialogClose>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
+                      {viewPanel.kind === "layout" ? (
+                        <div className="flex flex-col gap-6">
+                          <Field className="max-w-sm">
+                            <FieldLabel htmlFor="openview-presentation-layout">
+                              Presentation layout
+                            </FieldLabel>
+                            <Select
+                              id="openview-presentation-layout"
+                              className="min-h-11"
+                              value={presentationLayout}
+                              onValueChange={changeLayout}
+                            >
+                              <option value="table">Table</option>
+                              <option value="grid">Grid</option>
+                              <option value="gallery">Gallery</option>
+                              <option value="kanban">Kanban</option>
+                              <option value="calendar">Calendar</option>
+                              <option value="timeline">Timeline</option>
+                            </Select>
+                          </Field>
+                          <SavedViewAdvancedControls
+                            model={{
+                              draft,
+                              layout: presentationLayout,
+                              layoutLabel: presentationLayoutLabel,
+                              fields: {
+                                all: fields,
+                                queried: queriedFields,
+                                groupByField,
+                                dates: dateFields,
+                                calendarDateField,
+                                timelineStartField,
+                                timelineEndField,
+                                timelineDeadlineField,
+                                timelineProgressField,
+                              },
+                              incompletePresentation,
+                            }}
+                            actions={{ updateDefinition, updatePresentation }}
+                          />
+                        </div>
+                      ) : null}
+                    </DialogContent>
+                  </Dialog>
 
-                <Dialog
-                  open={isUuid(requestedRecord)}
-                  dismissible={!recordEditing}
-                  onOpenChange={(open) => {
-                    if (!open && isUuid(requestedRecord)) returnToResults();
-                  }}
-                >
-                  <DialogContent className="flex max-w-2xl flex-col overflow-y-hidden">
-                    <DialogHeader>
-                      <DialogTitle>Record details</DialogTitle>
-                      <DialogDescription className="space-y-1">
-                        <span className="block">
-                          Showing this linked record. The saved view query
-                          remains unchanged.
-                        </span>
-                        {activeLayout === "kanban" ? (
-                          <span className="block">
-                            Kanban lanes and counts continue to use the saved
-                            view query.
-                          </span>
-                        ) : null}
-                        <span className="block">
-                          Details show the fields selected in this view. Editing
-                          shows every field.
-                        </span>
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="min-h-0 flex-1 overflow-y-auto">
+                  <Sheet
+                    open={isUuid(requestedRecord)}
+                    dismissible={!recordEditing}
+                    onOpenChange={(open) => {
+                      if (!open && isUuid(requestedRecord)) returnToResults();
+                    }}
+                  >
+                    {/* OD7: the record opens in a right sheet. Its name is
+                      the heading; the sheet keeps the name "Record
+                      details" for assistive technology. */}
+                    <SheetContent
+                      className="openview-ui slim-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,40rem)]"
+                      // The sheet opens from the address, so focus returns to
+                      // the record's row, or else the search.
+                      finalFocus={() =>
+                        (isUuid(requestedRecord)
+                          ? document.querySelector<HTMLElement>(
+                              `[data-record-id="${requestedRecord}"] button`,
+                            )
+                          : null) ??
+                        document.getElementById(SEARCH_ID) ??
+                        true
+                      }
+                    >
+                      <SheetTitle className="sr-only">
+                        Record details
+                      </SheetTitle>
+                      <header className="flex shrink-0 items-start gap-3 border-b p-5 pr-3">
+                        <div className="min-w-0 flex-1">
+                          <h2 className="text-lg leading-tight font-semibold wrap-anywhere">
+                            {linkedRecord
+                              ? recordTitle(
+                                  linkedRecord,
+                                  queriedFields,
+                                  draft.presentation.primaryFieldId,
+                                )
+                              : linkedRecordLoading
+                                ? "Loading record…"
+                                : "Record unavailable"}
+                          </h2>
+                          {linkedRecord ? (
+                            <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
+                              <span>
+                                {[moduleName, departmentName]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                                {" · Updated "}
+                                <time dateTime={linkedRecord.updatedAt}>
+                                  {recordUpdatedDate(
+                                    linkedRecord.updatedAt,
+                                    displayRegion,
+                                  )}
+                                </time>
+                              </span>
+                              {linkedRecord.isDeleted ? (
+                                <Badge variant="destructive">Deleted</Badge>
+                              ) : canWriteRecords ? null : (
+                                <Badge variant="secondary">Read-only</Badge>
+                              )}
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {linkedRecord &&
+                          activeInspectionContext &&
+                          !recordEditing ? (
+                            <>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-11"
+                                aria-label="Previous record"
+                                disabled={
+                                  !hasPreviousInspectedRecord ||
+                                  inspectionLoading
+                                }
+                                onClick={() => void navigateInspectedRecord(-1)}
+                              >
+                                <ChevronUp aria-hidden="true" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-11"
+                                aria-label="Next record"
+                                disabled={
+                                  !hasNextInspectedRecord || inspectionLoading
+                                }
+                                onClick={() => void navigateInspectedRecord(1)}
+                              >
+                                <ChevronDown aria-hidden="true" />
+                              </Button>
+                            </>
+                          ) : null}
+                          {/* Edit and the record menu render here. */}
+                          <div
+                            ref={setRecordActionsSlot}
+                            className="flex items-center gap-1"
+                          />
+                          <SheetClose
+                            render={
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-11"
+                                aria-label="Close"
+                                disabled={recordEditing}
+                              />
+                            }
+                          >
+                            <X aria-hidden="true" />
+                          </SheetClose>
+                        </div>
+                      </header>
                       <LiveRecordInspector
                         region={displayRegion}
-                        actions={recordEditing ? null : inspectionActions}
+                        actionsSlot={recordActionsSlot}
+                        menuItems={copyRecordLinkItem}
                         record={linkedRecord}
                         recordLoading={linkedRecordLoading}
                         recordError={ordinaryRecordPage?.error ?? ""}
                         inspectionLoading={inspectionLoading}
                         inspectionError={inspectionError}
                         fields={queriedFields}
-                        primaryFieldId={draft.presentation.primaryFieldId}
                         onRetryRecord={() =>
                           setRecordRetry((value) => value + 1)
                         }
@@ -3678,364 +4010,365 @@ export default function ServerBackedViewsWorkspace({
                             : undefined
                         }
                       />
-                    </div>
-                    {recordEditing ? null : (
-                      <DialogFooter>
-                        <DialogClose
-                          render={
-                            <Button variant="outline" className="min-h-11" />
-                          }
-                        >
-                          Close
-                        </DialogClose>
-                      </DialogFooter>
-                    )}
-                  </DialogContent>
-                </Dialog>
-                {exportContext &&
-                exportContext.key === exportContextKey &&
-                canExport ? (
-                  <ExportDialog
-                    moduleId={exportContext.moduleId}
-                    viewId={exportContext.viewId}
-                    definition={exportContext.definition}
-                    fields={exportContext.fields}
-                    returnFocus={exportButtonRef}
-                    onClose={() => setExportContext(null)}
-                    onDownloaded={() => {
-                      setExportContext(null);
-                      setNotice("Export downloaded.");
-                      reportDone("Export downloaded.");
-                    }}
-                  />
-                ) : null}
-                {moduleId && canWriteRecords ? (
-                  <RecordCreateDialog
-                    open={createRecordOpen}
-                    moduleId={moduleId}
-                    moduleName={moduleName ?? "this data source"}
-                    fields={fields}
-                    onOpenChange={setCreateRecordOpen}
-                    onCreated={(created) => {
-                      setCreateRecordOpen(false);
-                      setNotice("Record created.");
-                      setRecordChanges((value) => value + 1);
-                      setInspectionContext(null);
-                      setRoute({ record: created.id });
-                    }}
-                  />
-                ) : null}
-              </div>
-            )}
-          </LoadingRegion>
+                    </SheetContent>
+                  </Sheet>
+                  {exportContext &&
+                  exportContext.key === exportContextKey &&
+                  canExport ? (
+                    <ExportDialog
+                      moduleId={exportContext.moduleId}
+                      viewId={exportContext.viewId}
+                      definition={exportContext.definition}
+                      fields={exportContext.fields}
+                      returnFocus={exportButtonRef}
+                      onClose={() => setExportContext(null)}
+                      onDownloaded={() => {
+                        setExportContext(null);
+                        setNotice("Export downloaded.");
+                        reportDone("Export downloaded.");
+                      }}
+                    />
+                  ) : null}
+                  {moduleId && canWriteRecords ? (
+                    <RecordCreateDialog
+                      open={createRecordOpen}
+                      moduleId={moduleId}
+                      moduleName={moduleName ?? "this module"}
+                      fields={fields}
+                      onOpenChange={setCreateRecordOpen}
+                      onCreated={(created) => {
+                        setCreateRecordOpen(false);
+                        setNotice("Record created.");
+                        setRecordChanges((value) => value + 1);
+                        setInspectionContext(null);
+                        setRoute({ record: created.id });
+                      }}
+                    />
+                  ) : null}
+                </div>
+              )}
+            </LoadingRegion>
 
-          <Dialog
-            open={saveOpen}
-            onOpenChange={(open) => {
-              if (!pendingAction && (!saveConflict || open)) {
-                setSaveOpen(open);
-                setSaveError("");
-              }
-            }}
-          >
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>
-                  {saveConflict
-                    ? "Update saved view"
-                    : saveTarget
-                      ? "Rename view"
-                      : "Save view"}
-                </DialogTitle>
-                <DialogDescription>
-                  {saveTarget ? "Rename" : "Save"} this view for everyone who
-                  can read this module in the{" "}
-                  <DepartmentName
-                    departmentId={source?.departmentId}
-                    fallback="current"
-                  />{" "}
-                  department. Record access still follows each person’s access.
-                </DialogDescription>
-              </DialogHeader>
-              {saveConflict ? (
-                <Alert
-                  role="alert"
-                  variant="destructive"
-                  className="flex flex-col gap-3"
-                >
-                  <p className="font-medium">
-                    Another edit was saved at revision{" "}
-                    {saveConflict.latest.revision}.
-                  </p>
-                  <p>
-                    Latest saved fields changed:{" "}
-                    {changedSavedViewFields(
-                      saveConflict.base,
-                      saveConflict.latest,
-                    ).join(", ")}
-                    .
-                  </p>
-                  <p>
-                    Your local version remains open: “{saveConflict.local.name}
-                    ”, local search “
-                    {saveConflict.local.definition.search ?? "none"}”,{" "}
-                    {saveConflict.local.definition.filters.length} filters,{" "}
-                    {saveConflict.local.definition.sort.length} sort rules, and{" "}
-                    {saveConflict.local.presentation.layout} layout with{" "}
-                    {saveConflict.local.presentation.columnFieldIds.length}{" "}
-                    columns.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
+            <Dialog
+              open={saveOpen}
+              onOpenChange={(open) => {
+                if (!pendingAction && (!saveConflict || open)) {
+                  setSaveOpen(open);
+                  setSaveError("");
+                }
+              }}
+            >
+              <DialogContent className={dialogFrameContentClass}>
+                <DialogFrameHeader
+                  title={
+                    <DialogTitle>
+                      {saveConflict
+                        ? "Update saved view"
+                        : renameTarget
+                          ? "Rename view"
+                          : "Save view"}
+                    </DialogTitle>
+                  }
+                  description={
+                    <DialogDescription>
+                      {renameTarget ? "Rename" : "Save"} this view for everyone
+                      who can read this module in the{" "}
+                      <DepartmentName
+                        departmentId={source?.departmentId}
+                        fallback="current"
+                      />{" "}
+                      department. Record access still follows each person’s
+                      access.
+                    </DialogDescription>
+                  }
+                  closeLabel="Close without saving"
+                  closeDisabled={
+                    Boolean(pendingAction) || Boolean(saveConflict)
+                  }
+                  onClose={() => setSaveOpen(false)}
+                />
+                {saveConflict ? (
+                  <Alert
+                    role="alert"
+                    variant="destructive"
+                    className="flex flex-col gap-3"
+                  >
+                    <p className="font-medium">
+                      Another edit was saved at revision{" "}
+                      {saveConflict.latest.revision}.
+                    </p>
+                    <p>
+                      Latest saved fields changed:{" "}
+                      {changedSavedViewFields(
+                        saveConflict.base,
+                        saveConflict.latest,
+                      ).join(", ")}
+                      .
+                    </p>
+                    <p>
+                      Your local version remains open: “
+                      {saveConflict.local.name}
+                      ”, local search “
+                      {saveConflict.local.definition.search ?? "none"}”,{" "}
+                      {saveConflict.local.definition.filters.length} filters,{" "}
+                      {saveConflict.local.definition.sort.length} sort rules,
+                      and {saveConflict.local.presentation.layout} layout with{" "}
+                      {saveConflict.local.presentation.columnFieldIds.length}{" "}
+                      columns.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11"
+                        disabled={Boolean(pendingAction)}
+                        onClick={reloadConflictLatest}
+                      >
+                        Reload latest
+                      </Button>
+                      <Button
+                        type="button"
+                        className="min-h-11"
+                        disabled={
+                          Boolean(pendingAction) ||
+                          !saveName.trim() ||
+                          incompleteFilters ||
+                          incompletePresentation
+                        }
+                        onClick={saveMyVersionOverLatest}
+                      >
+                        Save my version over latest
+                      </Button>
+                    </div>
+                  </Alert>
+                ) : null}
+                {saveError ? (
+                  <Alert role="alert" variant="destructive">
+                    {saveError}
+                  </Alert>
+                ) : null}
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="openview-save-name">
+                      View name
+                    </FieldLabel>
+                    <Input
+                      id="openview-save-name"
+                      className="min-h-11"
+                      maxLength={200}
+                      value={saveName}
+                      disabled={Boolean(pendingAction)}
+                      onChange={(event) => setSaveName(event.target.value)}
+                    />
+                  </Field>
+                </FieldGroup>
+                <DialogFrameFooter>
+                  <DialogFooter className="mt-0">
                     <Button
                       type="button"
                       variant="outline"
                       className="min-h-11"
-                      disabled={Boolean(pendingAction)}
-                      onClick={reloadConflictLatest}
+                      disabled={Boolean(pendingAction) || Boolean(saveConflict)}
+                      onClick={() => setSaveOpen(false)}
                     >
-                      Reload latest
+                      Cancel
                     </Button>
-                    <Button
-                      type="button"
-                      className="min-h-11"
-                      disabled={
-                        Boolean(pendingAction) ||
-                        !saveName.trim() ||
-                        incompleteFilters ||
-                        incompletePresentation
-                      }
-                      onClick={saveMyVersionOverLatest}
-                    >
-                      Save my version over latest
-                    </Button>
-                  </div>
-                </Alert>
-              ) : null}
-              {saveError ? (
-                <Alert role="alert" variant="destructive">
-                  {saveError}
-                </Alert>
-              ) : null}
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="openview-save-name">
-                    View name
-                  </FieldLabel>
-                  <Input
-                    id="openview-save-name"
-                    className="min-h-11"
-                    maxLength={200}
-                    value={saveName}
-                    disabled={Boolean(pendingAction)}
-                    onChange={(event) => setSaveName(event.target.value)}
-                  />
-                </Field>
-              </FieldGroup>
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={Boolean(pendingAction) || Boolean(saveConflict)}
-                  onClick={() => setSaveOpen(false)}
-                >
-                  Cancel
-                </Button>
-                {!saveConflict ? (
+                    {!saveConflict ? (
+                      <Button
+                        type="button"
+                        className="min-h-11"
+                        disabled={
+                          Boolean(pendingAction) ||
+                          incompleteFilters ||
+                          incompletePresentation ||
+                          !saveName.trim()
+                        }
+                        onClick={() =>
+                          void saveView(
+                            renameTarget ? "update" : "create",
+                            saveName,
+                          )
+                        }
+                      >
+                        {pendingAction ||
+                          (renameTarget ? "Rename view" : "Save view")}
+                      </Button>
+                    ) : null}
+                  </DialogFooter>
+                </DialogFrameFooter>
+              </DialogContent>
+            </Dialog>
+
+            <AlertDialog
+              open={archiveOpen}
+              onOpenChange={(open) => {
+                if (!pendingAction) {
+                  setArchiveOpen(open);
+                  setArchiveError("");
+                }
+              }}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Archive saved view?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    “{activeSaved?.name}” will move to your archived views. Its
+                    records will not be changed.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                {archiveError ? (
+                  <Alert role="alert" variant="destructive">
+                    {archiveError}
+                  </Alert>
+                ) : null}
+                <AlertDialogFooter>
                   <Button
                     type="button"
+                    variant="outline"
                     className="min-h-11"
-                    disabled={
-                      Boolean(pendingAction) ||
-                      incompleteFilters ||
-                      incompletePresentation ||
-                      !saveName.trim()
-                    }
+                    disabled={Boolean(pendingAction)}
+                    onClick={() => setArchiveOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="min-h-11"
+                    disabled={!canEditSaved || Boolean(pendingAction)}
                     onClick={() =>
-                      void saveView(saveTarget ? "update" : "create", saveName)
+                      confirmDraftDiscard(() => void archiveView())
                     }
                   >
-                    {pendingAction ||
-                      (saveTarget ? "Rename view" : "Save view")}
+                    Archive view
                   </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+
+            <Dialog
+              open={archivedOpen}
+              onOpenChange={(open) => {
+                if (!pendingAction) {
+                  setArchivedOpen(open);
+                  setArchivedError("");
+                }
+              }}
+            >
+              <DialogContent className={dialogFrameContentClass}>
+                <DialogFrameHeader
+                  title={<DialogTitle>Archived views</DialogTitle>}
+                  description={
+                    <DialogDescription>
+                      Only your archived saved views can be restored here.
+                    </DialogDescription>
+                  }
+                  closeLabel="Close archived views"
+                  closeDisabled={Boolean(pendingAction)}
+                  onClose={() => setArchivedOpen(false)}
+                />
+                {archivedError ? (
+                  <Alert role="alert" variant="destructive">
+                    {archivedError}
+                  </Alert>
                 ) : null}
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                {archivedNotice ? (
+                  <Alert role="status">{archivedNotice}</Alert>
+                ) : null}
+                {archivedViews.length ? (
+                  <ul className="flex max-h-[min(24rem,60vh)] flex-col gap-2 overflow-y-auto">
+                    {archivedViews.map((view) => (
+                      <li
+                        key={view.id}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
+                      >
+                        <div>
+                          <p className="font-medium">{view.name}</p>
+                          <p className="text-muted-foreground text-xs">
+                            Revision {view.revision}
+                          </p>
+                        </div>
+                        {canManageViews && view.canEdit ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="min-h-11"
+                            disabled={Boolean(pendingAction)}
+                            aria-label={`Restore ${view.name}`}
+                            onClick={() =>
+                              confirmDraftDiscard(() => void restoreView(view))
+                            }
+                          >
+                            Restore {view.name}
+                          </Button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyTitle>No archived views</EmptyTitle>
+                      <EmptyDescription>
+                        Your archived saved views will appear here.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                )}
+              </DialogContent>
+            </Dialog>
 
-          <AlertDialog
-            open={archiveOpen}
-            onOpenChange={(open) => {
-              if (!pendingAction) {
-                setArchiveOpen(open);
-                setArchiveError("");
-              }
-            }}
-          >
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Archive saved view?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  “{activeSaved?.name}” will move to your archived views. Its
-                  records will not be changed.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              {archiveError ? (
-                <Alert role="alert" variant="destructive">
-                  {archiveError}
-                </Alert>
-              ) : null}
-              <AlertDialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={Boolean(pendingAction)}
-                  onClick={() => setArchiveOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  className="min-h-11"
-                  disabled={!canEditSaved || Boolean(pendingAction)}
-                  onClick={() => confirmDraftDiscard(() => void archiveView())}
-                >
-                  Archive view
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-
-          <Dialog
-            open={archivedOpen}
-            onOpenChange={(open) => {
-              if (!pendingAction) {
-                setArchivedOpen(open);
-                setArchivedError("");
-              }
-            }}
-          >
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Archived views</DialogTitle>
-                <DialogDescription>
-                  Only your archived saved views can be restored here.
-                </DialogDescription>
-              </DialogHeader>
-              {archivedError ? (
-                <Alert role="alert" variant="destructive">
-                  {archivedError}
-                </Alert>
-              ) : null}
-              {archivedNotice ? (
-                <Alert role="status">{archivedNotice}</Alert>
-              ) : null}
-              {archivedViews.length ? (
-                <ul className="flex max-h-[min(24rem,60vh)] flex-col gap-2 overflow-y-auto">
-                  {archivedViews.map((view) => (
-                    <li
-                      key={view.id}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
-                    >
-                      <div>
-                        <p className="font-medium">{view.name}</p>
-                        <p className="text-muted-foreground text-xs">
-                          Revision {view.revision}
-                        </p>
-                      </div>
-                      {canManageViews && view.canEdit ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="min-h-11"
-                          disabled={Boolean(pendingAction)}
-                          aria-label={`Restore ${view.name}`}
-                          onClick={() =>
-                            confirmDraftDiscard(() => void restoreView(view))
-                          }
-                        >
-                          Restore {view.name}
-                        </Button>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <Empty>
-                  <EmptyHeader>
-                    <EmptyTitle>No archived views</EmptyTitle>
-                    <EmptyDescription>
-                      Your archived saved views will appear here.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              )}
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={Boolean(pendingAction)}
-                  onClick={() => setArchivedOpen(false)}
-                >
-                  Close
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          <AlertDialog
-            open={pendingNavigation !== null}
-            onOpenChange={(open) => {
-              if (!open && !pendingAction) setPendingNavigation(null);
-            }}
-          >
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>
-                  {hasRecordMoves
-                    ? "Discard unsaved changes?"
-                    : "Discard unsaved view changes?"}
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  {hasRecordMoves
-                    ? `You have ${recordMoves.size} unsaved ${recordMoves.size === 1 ? "move" : "moves"}.${dirty ? " Your current view draft also has unsaved changes." : ""} Continuing will discard them.`
-                    : "Your current view draft has unsaved changes. Continuing will discard them."}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={Boolean(pendingAction)}
-                  onClick={() => setPendingNavigation(null)}
-                >
-                  Keep editing
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  className="min-h-11"
-                  disabled={Boolean(pendingAction)}
-                  onClick={() => {
-                    const transition = pendingNavigation;
-                    if (!transition) return;
-                    if (transition.discardDraft) setDraftState(null);
-                    replaceRecordMoves(new Map());
-                    setPendingNavigation(null);
-                    startNavigation(transition.resume);
-                  }}
-                >
-                  Discard and continue
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      </LoadingRegion>
+            <AlertDialog
+              open={pendingNavigation !== null}
+              onOpenChange={(open) => {
+                if (!open && !pendingAction) setPendingNavigation(null);
+              }}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    {hasRecordMoves
+                      ? "Discard unsaved changes?"
+                      : "Discard unsaved view changes?"}
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {hasRecordMoves
+                      ? `You have ${recordMoves.size} unsaved ${recordMoves.size === 1 ? "move" : "moves"}.${dirty ? " Your current view draft also has unsaved changes." : ""} Continuing will discard them.`
+                      : "Your current view draft has unsaved changes. Continuing will discard them."}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={Boolean(pendingAction)}
+                    onClick={() => setPendingNavigation(null)}
+                  >
+                    Keep editing
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="min-h-11"
+                    disabled={Boolean(pendingAction)}
+                    onClick={() => {
+                      const transition = pendingNavigation;
+                      if (!transition) return;
+                      if (transition.discardDraft) setDraftState(null);
+                      replaceRecordMoves(new Map());
+                      setPendingNavigation(null);
+                      startNavigation(transition.resume);
+                    }}
+                  >
+                    Discard and continue
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        </LoadingRegion>
+      </div>
     </div>
   );
 }

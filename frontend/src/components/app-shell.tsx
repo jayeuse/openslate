@@ -44,6 +44,7 @@ import {
   type NavigationSurface,
 } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { isModulePage } from "@/components/department-navigation-model";
 import { HelpPanel } from "@/components/help/help-panel";
 import {
   GuardedWorkspaceLink,
@@ -139,6 +140,11 @@ export function AppShell({
   // scrolls; its panels do. Phones and tablets scroll the page.
   const isSandbox = pathname === "/sandbox";
   const isManage = pathname === "/manage";
+  // A module page and a department dashboard are still pages like Manage
+  // (OD6, EXIT-B2).
+  const isModule =
+    isModulePage(pathname, searchParams) ||
+    (pathname === "/openview" && searchParams.get("section") === "dashboards");
   const suspended = useWorkspaceInteractionSuspended();
   const queryClient = useQueryClient();
   const brandQuery = useQuery({
@@ -606,7 +612,7 @@ export function AppShell({
                   ? "flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden"
                   : isSandbox
                     ? "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7 xl:flex xl:h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-col xl:overflow-hidden"
-                    : isManage
+                    : isManage || isModule
                       ? "min-h-[calc(100vh-3.5rem)] p-3 sm:px-5 sm:py-3 xl:flex xl:h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-col xl:overflow-hidden"
                       : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
               )}

@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { filterRowClassName } from "@/components/systems/access/components/access-toolbar";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 
@@ -85,41 +86,32 @@ export function SavedViewFilterControls({
       ? assignableUsers.data.items
       : [];
   return (
-    <section
-      aria-labelledby="openview-filter-controls-heading"
-      className="flex flex-col gap-4"
-    >
-      <div>
-        <h2
-          data-slot="section-title"
-          id="openview-filter-controls-heading"
-          className="font-medium"
+    // The Filters popover's rows (OD3): label-left, no heading of its own.
+    <section aria-label="Filter conditions" className="flex flex-col gap-2">
+      <Field className={filterRowClassName}>
+        <FieldLabel
+          htmlFor="openview-filter-logic"
+          className="md:text-muted-foreground"
         >
-          Filter conditions
-        </h2>
-        <p className="text-muted-foreground text-sm">
-          Match all conditions or any condition, then add or update a filter.
-        </p>
-      </div>
-      <Field className="max-w-xs">
-        <FieldLabel htmlFor="openview-filter-logic">Match filters</FieldLabel>
+          Match filters
+        </FieldLabel>
         <Select
           id="openview-filter-logic"
-          className="min-h-11"
+          className="min-h-11 w-full"
           value={logic}
           onValueChange={(value) => {
             if (value === "and" || value === "or") onLogicChange(value);
           }}
         >
-          <option value="and">All conditions (AND)</option>
-          <option value="or">Any condition (OR)</option>
+          <option value="and">All conditions</option>
+          <option value="or">Any condition</option>
         </Select>
       </Field>
       {hasValuedUserFilter ? (
         <div className="grid max-w-xl gap-2">
           <Field>
             <FieldLabel htmlFor="openview-eligible-user-search">
-              Search eligible people
+              Search people
             </FieldLabel>
             <Input
               id="openview-eligible-user-search"
@@ -130,18 +122,18 @@ export function SavedViewFilterControls({
               onChange={(event) => setUserSearch(event.target.value)}
             />
             <FieldDescription>
-              Only people who can read this data source can be selected.
+              Only people who can read these records can be chosen.
             </FieldDescription>
           </Field>
           {assignableUsers.isFetching ? (
             <p role="status" className="text-muted-foreground text-sm">
-              Loading eligible people…
+              Loading people…
             </p>
           ) : null}
           {assignableUsers.isError ? (
             <div className="flex flex-wrap items-center gap-2">
               <p role="alert" className="text-destructive text-sm">
-                Eligible people could not be loaded.
+                People could not be loaded.
               </p>
               <Button
                 type="button"
@@ -157,14 +149,14 @@ export function SavedViewFilterControls({
           !assignableUsers.isError &&
           assignableUsers.data?.pagination.hasMore ? (
             <p className="text-muted-foreground text-sm">
-              Showing the first 100 eligible people. Search to narrow the list.
+              Showing the first 100 people. Search to narrow the list.
             </p>
           ) : null}
           {!assignableUsers.isFetching &&
           !assignableUsers.isError &&
           assignableUsers.data?.items.length === 0 ? (
             <p className="text-muted-foreground text-sm">
-              No eligible people match this search.
+              No one matches this search.
             </p>
           ) : null}
         </div>
@@ -192,7 +184,7 @@ export function SavedViewFilterControls({
         return (
           <div
             key={rowKeyFor(filter, index)}
-            className="bg-muted/40 grid min-w-0 gap-3 rounded-md p-3 sm:grid-cols-[minmax(8rem,1fr)_minmax(9rem,1fr)_minmax(8rem,1fr)_auto]"
+            className="bg-muted/40 grid min-w-0 gap-2 rounded-md p-2.5"
           >
             <Field>
               <FieldLabel htmlFor={`openview-filter-field-${index}`}>
@@ -292,7 +284,7 @@ export function SavedViewFilterControls({
                         return (
                           <div
                             key={option.id}
-                            className="flex min-h-8 items-center gap-2"
+                            className="flex min-h-11 items-center gap-2 xl:min-h-8"
                           >
                             <Checkbox
                               id={optionId}
@@ -340,7 +332,7 @@ export function SavedViewFilterControls({
                         <Button
                           type="button"
                           variant="ghost"
-                          className="min-h-9"
+                          className="min-h-11 xl:min-h-8"
                           onClick={() =>
                             onUpdateFilter(index, (item) => ({
                               ...item,
@@ -394,7 +386,7 @@ export function SavedViewFilterControls({
                       onUpdateFilter(index, (item) => ({ ...item, value }))
                     }
                   >
-                    <option value="">Choose an eligible person</option>
+                    <option value="">Choose a person</option>
                     {value &&
                     assignableUsers.isSuccess &&
                     !assignableUsers.isFetching &&

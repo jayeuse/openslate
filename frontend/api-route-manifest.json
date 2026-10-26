@@ -1885,6 +1885,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
+    "function": "listReadableRelationshipFields",
+    "method": "GET",
+    "path": "/api/fields"
+  },
+  {
+    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
     "function": "previewRecordPurge",
     "method": "POST",
     "path": "/api/records/{param}/purge/preview"

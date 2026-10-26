@@ -25,7 +25,7 @@ pytestmark = pytest.mark.integration
 
 
 def _consumers(world, client, chart_id, kind):
-    spec = {"widget_type": "chart", "chart_id": chart_id, "config": None, "size": "S"}
+    spec: dict[str, object] = {"widget_type": "chart", "chart_id": chart_id, "config": None}
     if kind == "board":
         parent = managed_board(world, "admin")
         response = client.post(
@@ -34,6 +34,7 @@ def _consumers(world, client, chart_id, kind):
                 "revision": parent.revision,
                 "widget": {
                     **spec,
+                    "size": "S",
                     "name": "Owned reference",
                     "module_id": str(world.module.id),
                     "pinned": True,
@@ -48,7 +49,9 @@ def _consumers(world, client, chart_id, kind):
             json={
                 "department_id": str(world.module.department_id),
                 "name": "Owned reference",
-                "widgets": [spec],
+                "widgets": [
+                    {**spec, "grid_column": 0, "grid_row": 0, "column_span": 2, "row_span": 2}
+                ],
             },
         )
         assert response.status_code == 201, response.text
@@ -150,7 +153,7 @@ def test_parent_scope_inventories_all_charts_and_retained_foreign_consumers(char
         ("board", "size"),
         ("board", "pinned"),
         ("dashboard", "chart_id"),
-        ("dashboard", "size"),
+        ("dashboard", "column_span"),
     ],
 )
 def test_saved_source_and_presentation_fingerprints_reject_old_preview(chart_world, entity, change):
@@ -178,6 +181,7 @@ def test_saved_source_and_presentation_fingerprints_reject_old_preview(chart_wor
                 "revision": 2,
                 "chart_id": UUID(second["id"]),
                 "size": "L",
+                "column_span": 4,
                 "pinned": False,
             }[change]
             setattr(row, change, value)

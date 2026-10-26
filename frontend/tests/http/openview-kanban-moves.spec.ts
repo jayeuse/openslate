@@ -542,7 +542,10 @@ test("Kanban Discard and the existing navigation guard protect moves without cle
         !window.dispatchEvent(new Event("beforeunload", { cancelable: true })),
     );
   await expect.poll(preventsUnload).toBe(true);
-  await page.getByRole("link", { name: "Charts", exact: true }).click();
+  // Leaving the page through the shell asks first.
+  await page
+    .getByRole("link", { name: "Search workspace", exact: true })
+    .click();
   const confirmation = page.getByRole("alertdialog");
   await expect(confirmation).toContainText("1 unsaved move");
   await confirmation

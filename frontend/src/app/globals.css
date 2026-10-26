@@ -958,16 +958,16 @@ html[data-density="spacious"]
     translate: 0.75rem 0;
   }
 
-  /* The Still Page Rule in Access and Manage (MD1,
-     docs/specs/manage-relayout.md): from 1280px each section fills the
-     viewport under its header and each link of the chain (`access-fill`,
-     `manage-fill`) shrinks; only a scroll panel or a table scrolls. One rule
-     serves both pages, so the shared table skeleton and Security events fill
-     in either. A table card fills the height that is left, with its pager at
-     the bottom, however few its rows (PD66,
-     docs/specs/profile-sidebar-relayout.md). */
-  :is(.access-ui, .manage-ui) :is(.access-fill, .manage-fill),
-  :is(.access-ui, .manage-ui)
+  /* The Still Page Rule in Access, Manage and the OpenView module page (MD1,
+     docs/specs/manage-relayout.md; OD6, docs/specs/openview-relayout.md):
+     from 1280px each section fills the viewport under its header and each
+     link of the chain (`access-fill`, `manage-fill`) shrinks; only a scroll
+     panel or a table scrolls. One rule serves every page, so the shared
+     table skeleton and Security events fill in any. A table card fills the
+     height that is left, with its pager at the bottom, however few its rows
+     (PD66, docs/specs/profile-sidebar-relayout.md). */
+  :is(.access-ui, .manage-ui, .openview-ui) :is(.access-fill, .manage-fill),
+  :is(.access-ui, .manage-ui, .openview-ui)
     [data-slot="loading-region"]:is(.access-fill, .manage-fill)
     > div {
     display: flex;
@@ -985,8 +985,10 @@ html[data-density="spacious"]
     overscroll-behavior: contain;
   }
 
-  /* In Access only the table container scrolls. */
-  .access-ui .access-scroll-table > [data-slot="table-container"] {
+  /* In Access and on the module page only the table container scrolls. */
+  :is(.access-ui, .openview-ui)
+    .access-scroll-table
+    > [data-slot="table-container"] {
     flex: 1 1 0%;
     min-height: 0;
     overflow: auto;
@@ -997,7 +999,8 @@ html[data-density="spacious"]
   /* :where keeps this weaker than a look's own head band (Stockroom steel).
      The rule under the head is a shadow on the cell, so it stays with the
      sticky head instead of the collapsed row border. */
-  :where(.access-ui .access-scroll-table) [data-slot="table-head"] {
+  :where(:is(.access-ui, .openview-ui) .access-scroll-table)
+    [data-slot="table-head"] {
     position: sticky;
     top: 0;
     z-index: 1;

@@ -50,11 +50,24 @@ const VALUELESS_OPERATORS = new Set([
 ]);
 
 export function reportDraftFrom(report: OpenViewReport): ReportDraft {
-  const { recipe } = report;
+  return draftFromRecipe(
+    report.moduleId,
+    report.name,
+    report.subtitle ?? "",
+    report.recipe,
+  );
+}
+
+function draftFromRecipe(
+  moduleId: string,
+  name: string,
+  subtitle: string,
+  recipe: OpenViewReportRecipe,
+): ReportDraft {
   return {
-    moduleId: report.moduleId,
-    name: report.name,
-    subtitle: report.subtitle ?? "",
+    moduleId,
+    name,
+    subtitle,
     fields: recipe.fields.map((field) => ({ ...field })),
     filters: recipe.filters.map((filter, index) => {
       const value = Array.isArray(filter.value)
@@ -77,6 +90,49 @@ export function reportDraftFrom(report: OpenViewReport): ReportDraft {
     groupBy: recipe.groupBy ? { ...recipe.groupBy } : null,
     includeRowCount: recipe.includeRowCount,
   };
+}
+
+/** What a module page's current view holds, for "Make a report from this view". */
+export type ReportViewSource = {
+  name: string;
+  columns: OpenViewReportRecipe["fields"];
+  filters: Array<
+    Omit<OpenViewReportRecipe["filters"][number], "value"> & {
+      value?: OpenViewReportRecipe["filters"][number]["value"];
+    }
+  >;
+  logic: OpenViewReportRecipe["logic"];
+  sort: OpenViewReportRecipe["sorts"];
+  groupBy: OpenViewReportRecipe["groupBy"];
+};
+
+/**
+ * The recipe of the view a person is looking at (DC7): its columns, its
+ * finished filters, its first three sorts and its grouping. The view's search
+ * has no place in a recipe, so it is left out.
+ */
+export function reportDraftFromView(
+  moduleId: string,
+  view: ReportViewSource,
+): ReportDraft {
+  const filters = view.filters.flatMap((filter) =>
+    VALUELESS_OPERATORS.has(filter.operator) ||
+    (filter.value !== undefined &&
+      filter.value !== null &&
+      filter.value !== "" &&
+      !(Array.isArray(filter.value) && filter.value.length === 0))
+      ? [{ ...filter, value: filter.value ?? null }]
+      : [],
+  );
+  return draftFromRecipe(moduleId, view.name, "", {
+    version: 1,
+    fields: view.columns.slice(0, 100),
+    filters: filters.slice(0, 10),
+    logic: view.logic,
+    sorts: view.sort.slice(0, 3),
+    groupBy: view.groupBy,
+    includeRowCount: false,
+  });
 }
 
 export function reportDraftSignature(draft: ReportDraft): string {

@@ -2,8 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  useQueries,
   useQuery,
   useQueryClient,
+  type Query,
+  type QueryKey,
   type UseQueryOptions,
 } from "@tanstack/react-query";
 import { apiErrorMessage } from "@/lib/api-errors";
@@ -18,15 +21,62 @@ import {
 import type { OpenViewDashboard } from "../adapters/dashboards-api";
 import {
   configSignature,
+  draftWidgetFrom,
   type DraftWidget,
   type SnapshotState,
 } from "../domain/dashboard-draft";
+import { chunks } from "../domain/dashboard-grid";
 
 function refused(error: unknown) {
   return (
     error instanceof ApiContractError ||
     (error instanceof ApiError && [401, 403, 404].includes(error.status))
   );
+}
+
+function cadenceInterval(dashboard: OpenViewDashboard | null): number {
+  return dashboard?.refreshCadence === "one-minute"
+    ? 60_000
+    : dashboard?.refreshCadence === "five-minutes"
+      ? 300_000
+      : 0;
+}
+
+/** D23: the cadence counts from the end of the last read, never in the background. */
+function nextRefresh(
+  candidate: {
+    state: {
+      error: unknown;
+      fetchStatus: string;
+      dataUpdatedAt: number;
+      errorUpdatedAt: number;
+    };
+  },
+  automatic: boolean,
+  interval: number,
+): number | false {
+  const state = candidate.state;
+  if (!automatic || refused(state.error) || state.fetchStatus !== "idle")
+    return false;
+  const finished = Math.max(state.dataUpdatedAt, state.errorUpdatedAt);
+  return Math.max(1, interval - (finished ? Date.now() - finished : 0));
+}
+
+function overdue(
+  state:
+    | {
+        error: unknown;
+        fetchStatus: string;
+        dataUpdatedAt: number;
+        errorUpdatedAt: number;
+      }
+    | undefined,
+  interval: number,
+): boolean {
+  if (!state || refused(state.error) || state.fetchStatus !== "idle")
+    return false;
+  const finished = Math.max(state.dataUpdatedAt, state.errorUpdatedAt);
+  return finished > 0 && Date.now() - finished >= interval;
 }
 
 export function useDashboardVisibility() {
@@ -58,30 +108,13 @@ function useSnapshotRead<T>(
   dirty: boolean,
 ) {
   const client = useQueryClient();
-  const interval =
-    dashboard?.refreshCadence === "one-minute"
-      ? 60_000
-      : dashboard?.refreshCadence === "five-minutes"
-        ? 300_000
-        : 0;
+  const interval = cadenceInterval(dashboard);
   const automatic = enabled && !dirty && !dashboard?.isDeleted && interval > 0;
   const query = useQuery<T>({
     ...options,
     enabled: (candidate) => enabled && !refused(candidate.state.error),
     refetchIntervalInBackground: false,
-    refetchInterval: (candidate) => {
-      if (
-        !automatic ||
-        refused(candidate.state.error) ||
-        candidate.state.fetchStatus !== "idle"
-      )
-        return false;
-      const finished = Math.max(
-        candidate.state.dataUpdatedAt,
-        candidate.state.errorUpdatedAt,
-      );
-      return Math.max(1, interval - (finished ? Date.now() - finished : 0));
-    },
+    refetchInterval: (candidate) => nextRefresh(candidate, automatic, interval),
   });
   const eligibleKey = automatic ? JSON.stringify(options.queryKey) : "";
   const previousEligibleKey = useRef("");
@@ -119,17 +152,8 @@ function useSnapshotRead<T>(
   return {
     data: refused(query.error) ? undefined : query.data,
     loading: enabled && query.isFetching,
-    error:
-      query.error && !query.isFetching
-        ? query.error instanceof ApiError &&
-          query.error.code === "chart_source_unavailable" &&
-          query.error.status === 403
-          ? "You do not have access to this data."
-          : apiErrorMessage(
-              query.error,
-              "These Dashboard results could not be refreshed.",
-            )
-        : "",
+    error: readError(query.error, query.isFetching),
+    locked: lockedRead(query.error),
     refresh: () => {
       if (enabled && !query.isFetching) void query.refetch();
     },
@@ -145,32 +169,137 @@ export function savedWidgetUnchanged(
   );
   return Boolean(
     saved &&
-    configSignature({ ...saved, key: saved.id }) === configSignature(widget),
+    configSignature(draftWidgetFrom(saved)) === configSignature(widget),
   );
+}
+
+/**
+ * The widgets read together: saved inline widgets of one module share one
+ * `aggregate-snapshots` read (at most 12 queries each), and each saved Chart
+ * is read on its own. A refused module then locks only its own widgets (BD6).
+ * The order follows the saved list, so results stay correlated by widget key.
+ */
+export function dashboardCohorts(
+  dashboard: OpenViewDashboard | null,
+  widgets: readonly DraftWidget[],
+): DraftWidget[][] {
+  const groups = new Map<string, DraftWidget[]>();
+  for (const saved of dashboard?.widgets ?? []) {
+    const widget = widgets.find((candidate) => candidate.key === saved.id);
+    if (
+      !widget ||
+      widget.widgetType === "records" ||
+      !savedWidgetUnchanged(dashboard, widget)
+    )
+      continue;
+    const group =
+      widget.chartId != null
+        ? `chart:${widget.chartId}`
+        : `module:${widget.config?.query.moduleId ?? ""}`;
+    groups.set(group, [...(groups.get(group) ?? []), widget]);
+  }
+  return [...groups.values()].flatMap((group) => chunks(group, 12));
+}
+
+/** A refusal of the viewer's read of one source: its widgets show a lock. */
+export function lockedRead(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.status === 403 ||
+      error.status === 404 ||
+      error.code === "chart_source_unavailable")
+  );
+}
+
+export type WidgetRead = {
+  snapshot: SnapshotState | null;
+  loading: boolean;
+  error: string;
+  locked: boolean;
+  /** Reads this widget's source again (its Retry). */
+  refresh?: () => void;
+};
+
+function readError(error: unknown, fetching: boolean): string {
+  if (!error || fetching || lockedRead(error)) return "";
+  return apiErrorMessage(error, "These results could not be refreshed.");
 }
 
 export function useDashboardAggregateSnapshots(
   dashboard: OpenViewDashboard | null,
-  widgets: DraftWidget[],
+  widgets: readonly DraftWidget[],
   visible: boolean,
   dirty: boolean,
 ) {
-  // Preserve persisted order across presentation-only draft moves. The response
-  // carries each stable key, so neither tile order nor size can misassign it.
-  const cohort = (dashboard?.widgets ?? []).flatMap((saved) => {
-    const widget = widgets.find((candidate) => candidate.key === saved.id);
-    return widget &&
-      widget.widgetType !== "records" &&
-      savedWidgetUnchanged(dashboard, widget)
-      ? [widget]
-      : [];
+  const client = useQueryClient();
+  const cohorts = dashboardCohorts(dashboard, widgets);
+  const interval = cadenceInterval(dashboard);
+  const automatic = visible && !dirty && !dashboard?.isDeleted && interval > 0;
+  const results = useQueries({
+    queries: cohorts.map((cohort) => ({
+      ...dashboardAggregateSnapshotOptions(dashboard?.id ?? "", cohort),
+      enabled: (candidate: Query<SnapshotState[]>) =>
+        visible && !refused(candidate.state.error),
+      refetchIntervalInBackground: false,
+      refetchInterval: (candidate: Query<SnapshotState[]>) =>
+        nextRefresh(candidate, automatic, interval),
+    })),
   });
-  return useSnapshotRead(
-    dashboardAggregateSnapshotOptions(dashboard?.id ?? "", cohort),
-    dashboard,
-    visible && cohort.length > 0,
-    dirty,
+  const keys = cohorts.map((cohort) =>
+    JSON.stringify(
+      dashboardAggregateSnapshotOptions(dashboard?.id ?? "", cohort).queryKey,
+    ),
   );
+  const keyList = keys.join("|");
+  const eligibleKey = automatic ? keyList : "";
+  const previousEligibleKey = useRef("");
+  useEffect(() => {
+    const returning =
+      Boolean(eligibleKey) && previousEligibleKey.current !== eligibleKey;
+    previousEligibleKey.current = eligibleKey;
+    if (!returning) return;
+    // A cohort overdue while hidden or edited reads once on return (D23).
+    for (const key of eligibleKey.split("|").filter(Boolean)) {
+      const queryKey = JSON.parse(key) as QueryKey;
+      if (overdue(client.getQueryState(queryKey), interval))
+        void client.refetchQueries({ queryKey, exact: true });
+    }
+  }, [client, eligibleKey, interval]);
+  useEffect(
+    () => () => {
+      // The shared refusal latch cancels its own failing read. Do not let that
+      // reverted last-good cache reappear when an unrelated read recovers.
+      if (isOpenViewAccessDenied())
+        for (const key of keyList.split("|").filter(Boolean))
+          client.removeQueries({ queryKey: JSON.parse(key), exact: true });
+    },
+    [client, keyList],
+  );
+  const reads = new Map<string, WidgetRead>();
+  cohorts.forEach((cohort, index) => {
+    const result = results[index];
+    if (!result) return;
+    const locked = lockedRead(result.error);
+    const data = refused(result.error) ? undefined : result.data;
+    for (const widget of cohort)
+      reads.set(widget.key, {
+        snapshot: data?.find((item) => item.widgetKey === widget.key) ?? null,
+        loading: visible && result.isFetching,
+        error: readError(result.error, result.isFetching),
+        locked,
+        refresh: () => {
+          if (!result.isFetching) void result.refetch();
+        },
+      });
+  });
+  return {
+    reads,
+    /** Read every cohort again, the locked ones too (the header's Refresh). */
+    refresh: () => {
+      for (const result of results)
+        if (!result.isFetching) void result.refetch();
+    },
+  };
 }
 
 export function useDashboardRecordSnapshot(

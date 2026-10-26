@@ -480,8 +480,11 @@ test("Timeline stages one atomic interval through repeated moves, end resize, an
   await expect(card(page)).toContainText("2026-03-12");
   expect(api.batches).toEqual([]);
   await stage(page, "2026-03-15", "Task 1", "Resize end date…");
-  await page.getByRole("tab", { name: "Calendar", exact: true }).click();
-  await page.getByRole("tab", { name: "Timeline", exact: true }).click();
+  // Switch layouts through the Layout menu (OD4).
+  for (const layout of ["Calendar", "Timeline"]) {
+    await page.getByRole("button", { name: /^Layout: / }).click();
+    await page.getByRole("menuitemradio", { name: layout }).click();
+  }
   await stage(page, "2026-03-08");
   const save = page.getByRole("button", {
     name: "Save changes (1)",

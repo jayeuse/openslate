@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   emptyReportDraft,
   reportDraftFrom,
+  reportDraftFromView,
   reportDraftSignature,
   reportRecipeFromDraft,
 } from "../../../src/components/systems/openview/components/report-draft";
@@ -105,4 +106,61 @@ test("Report drafts carry no owner or audience, so dirty tracking follows the re
   const baseline = reportDraftSignature(draft);
   draft.subtitle = "Changed";
   expect(reportDraftSignature(draft)).not.toBe(baseline);
+});
+
+test("a report made from a view keeps its columns, ready filters, first three sorts and grouping", () => {
+  const draft = reportDraftFromView(moduleId, {
+    name: "Open work",
+    columns: [
+      { fieldId: selectFieldId, expectedType: "select" },
+      { fieldId: textFieldId, expectedType: "text" },
+    ],
+    filters: [
+      {
+        fieldId: selectFieldId,
+        expectedType: "select",
+        operator: "in",
+        value: ["active", "pending"],
+      },
+      // An unfinished filter row on the page is not part of the report.
+      { fieldId: amountFieldId, expectedType: "number", operator: "gte" },
+    ],
+    logic: "or",
+    sort: [
+      { fieldId: amountFieldId, expectedType: "number", direction: "desc" },
+      { fieldId: textFieldId, expectedType: "text", direction: "asc" },
+      { fieldId: selectFieldId, expectedType: "select", direction: "asc" },
+    ],
+    groupBy: { fieldId: selectFieldId, expectedType: "select" },
+  });
+
+  expect(draft.moduleId).toBe(moduleId);
+  expect(draft.name).toBe("Open work");
+  expect(reportRecipeFromDraft(draft)).toEqual({
+    version: 1,
+    fields: [
+      { fieldId: selectFieldId, expectedType: "select" },
+      { fieldId: textFieldId, expectedType: "text" },
+    ],
+    filters: [
+      {
+        fieldId: selectFieldId,
+        expectedType: "select",
+        operator: "in",
+        value: ["active", "pending"],
+      },
+    ],
+    logic: "or",
+    sorts: [
+      { fieldId: amountFieldId, expectedType: "number", direction: "desc" },
+      { fieldId: textFieldId, expectedType: "text", direction: "asc" },
+      { fieldId: selectFieldId, expectedType: "select", direction: "asc" },
+    ],
+    groupBy: { fieldId: selectFieldId, expectedType: "select" },
+    includeRowCount: false,
+  });
+  // A new report from a view starts unsaved, so Create is the next step.
+  expect(reportDraftSignature(draft)).not.toBe(
+    reportDraftSignature(emptyReportDraft(moduleId)),
+  );
 });

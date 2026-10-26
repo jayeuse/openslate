@@ -21,6 +21,18 @@ from operations.sample.controls.board_execution import (
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import SamplePhaseActionError, _record_mapping
 
+DASHBOARD_SPEC_FIELDS = {
+    "widget_type",
+    "grid_column",
+    "grid_row",
+    "column_span",
+    "row_span",
+    "chart_id",
+    "config",
+}
+# Free cells of the sample Dashboard (population/openview.py) for the appended chart.
+APPENDED_CHART_CELLS = {"grid_column": 0, "grid_row": 3, "column_span": 2, "row_span": 2}
+
 if TYPE_CHECKING:
     from operations.sample.controls.charts import _Journey
 
@@ -53,7 +65,7 @@ def _board_specs(widgets: BoardWidgetListResponse) -> list[dict[str, object]]:
 
 def _dashboard_specs(dashboard: DashboardResponse) -> list[dict[str, object]]:
     return [
-        row.model_dump(mode="json", include={"widget_type", "size", "chart_id", "config"})
+        row.model_dump(mode="json", include=DASHBOARD_SPEC_FIELDS)
         for row in dashboard.widgets
     ]
 
@@ -207,7 +219,7 @@ def prepare_consumers(
             "position": before_dashboard.position,
             "refresh_cadence": before_dashboard.refresh_cadence,
             "widgets": [
-                row.model_dump(mode="json", include={"widget_type", "size", "chart_id", "config"})
+                row.model_dump(mode="json", include=DASHBOARD_SPEC_FIELDS)
                 for row in before_dashboard.widgets
             ],
         },
@@ -244,7 +256,7 @@ def prepare_consumers(
     )
     dashboard_path = f"/api/dashboards/{dashboard_id}"
     copied_specs = [
-        row.model_dump(mode="json", include={"widget_type", "size", "chart_id", "config"})
+        row.model_dump(mode="json", include=DASHBOARD_SPEC_FIELDS)
         for row in dashboard.widgets
     ]
     metadata = dashboard.model_dump(mode="json", exclude={"widgets", "revision", "updated_at"})
@@ -261,7 +273,7 @@ def prepare_consumers(
                     *copied_specs,
                     {
                         "widget_type": "chart",
-                        "size": "S",
+                        **APPENDED_CHART_CELLS,
                         "chart_id": str(chart.id),
                         "config": None,
                     },
@@ -278,7 +290,8 @@ def prepare_consumers(
         or len(dashboard.widgets) != len(copied_specs) + 1
         or dashboard.widgets[-1].chart_id != chart.id
         or dashboard.widgets[-1].config is not None
-        or dashboard.widgets[-1].size != "S"
+        or dashboard.widgets[-1].model_dump(include=set(APPENDED_CHART_CELLS))
+        != APPENDED_CHART_CELLS
         or dashboard.widgets[-1].widget_type != "chart"
         or _dashboard_specs(dashboard)[:-1] != copied_specs
         or dashboard.model_dump(mode="json", exclude={"widgets", "revision", "updated_at"})

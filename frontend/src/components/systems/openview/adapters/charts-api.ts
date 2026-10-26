@@ -6,7 +6,7 @@ import {
   dashboardWidgetWireConfigSchema,
   serializeDashboardWidgetConfig,
   type OpenViewDashboardWidgetType,
-} from "./dashboards-api";
+} from "./dashboard-widget-config";
 import type { InlineChartEditorValue } from "../domain/chart-query";
 
 const uuid = z.string().uuid();

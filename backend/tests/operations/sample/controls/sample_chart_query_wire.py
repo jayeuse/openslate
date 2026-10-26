@@ -8,6 +8,9 @@ import httpx
 from app.systems.openview.dashboards.schemas import DashboardCreate, DashboardUpdate
 from tests.operations.sample.controls.sample_chart_wire import STAMP, ChartWire, identity
 
+PLACEMENT = ("grid_column", "grid_row", "column_span", "row_span")
+APPENDED = {"grid_column": 0, "grid_row": 3, "column_span": 2, "row_span": 2}
+
 
 def boundary_reply_fault(wire, fault):
     original = wire.__call__
@@ -25,7 +28,7 @@ def boundary_reply_fault(wire, fault):
             if fault == "populated_name":
                 body["name"] = "Unrelated current Dashboard"
             else:
-                body["widgets"][-1]["size"] = "M"
+                body["widgets"][-1]["column_span"] = 4
         elif fault in {"manager_name", "admin_name"} and (
             path.endswith("/usage") or response.status_code == 409
         ):
@@ -209,8 +212,14 @@ class RichChartWire(ChartWire):
         ]
         self.widgets[self.source_board_id] = []
         self.dashboards[self.source_dashboard_id]["widgets"] = []
-        for index, (kind, size, config) in enumerate(
-            zip(["chart", "chart", "records"], ["S", "M", "L"], configs, strict=True)
+        for index, (kind, size, cells, config) in enumerate(
+            zip(
+                ["chart", "chart", "records"],
+                ["S", "M", "L"],
+                [(0, 0), (2, 0), (2, 2)],
+                configs,
+                strict=True,
+            )
         ):
             row = self.widget(
                 self.source_board_id,
@@ -228,7 +237,7 @@ class RichChartWire(ChartWire):
                     "id": identity("rich:dashboard:" + str(index)),
                     "position": index,
                     "widget_type": kind,
-                    "size": size,
+                    **dict(zip(PLACEMENT, (*cells, 2, 2), strict=True)),
                     "chart_id": None,
                     "config": deepcopy(config),
                     "created_at": STAMP,
@@ -298,7 +307,7 @@ class RichChartWire(ChartWire):
             body = json.loads(request.content)
             source = self.dashboards[self.source_dashboard_id]
             specs = [
-                {key: row[key] for key in ("widget_type", "size", "chart_id", "config")}
+                {key: row[key] for key in ("widget_type", *PLACEMENT, "chart_id", "config")}
                 for row in source["widgets"]
             ]
             if method == "POST":
@@ -319,7 +328,7 @@ class RichChartWire(ChartWire):
                         *specs,
                         {
                             "widget_type": "chart",
-                            "size": "S",
+                            **APPENDED,
                             "chart_id": self.chart["id"],
                             "config": None,
                         },
@@ -329,7 +338,7 @@ class RichChartWire(ChartWire):
                             "id": identity("rich:reference"),
                             "position": 3,
                             "widget_type": "chart",
-                            "size": "S",
+                            **APPENDED,
                             "chart_id": self.chart["id"],
                             "config": None,
                             "created_at": STAMP,
@@ -342,7 +351,7 @@ class RichChartWire(ChartWire):
                 status = 200
             response_row = deepcopy(row)
             if self.corrupt == "dashboard_copy" and method == "POST":
-                response_row["widgets"][0]["size"] = "M"
+                response_row["widgets"][0]["column_span"] = 4
             headers = {
                 "X-Request-ID": identity("request:" + str(self.sequence)),
                 "Cache-Control": "private, no-store",

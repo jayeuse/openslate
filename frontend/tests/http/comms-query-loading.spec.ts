@@ -6,6 +6,7 @@ import {
   signedInAs,
   heldResponse,
   settleReact,
+  isSidebarDepartmentRead,
 } from "./helpers/test";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
 import type { Page, Request } from "@playwright/test";
@@ -238,9 +239,14 @@ test("cold Comms reads are deduplicated and configuration catalogs wait for inte
       );
     await expect.poll(() => recordSearches().length).toBe(1);
     await settleReact(page);
+    // The sidebar's department read is the shell's, not Comms's.
     const count = (path: string) =>
-      api.calls.filter((call) => call.method === "GET" && call.path === path)
-        .length;
+      api.calls.filter(
+        (call) =>
+          call.method === "GET" &&
+          call.path === path &&
+          !isSidebarDepartmentRead(new URL(path + call.query, "http://x")),
+      ).length;
     const gets = api.calls.filter((call) => call.method === "GET");
     expect(count("/api/departments")).toBe(1);
     // Comms reuses the shell's verified identity read.
@@ -332,7 +338,11 @@ test("cold Comms reads are deduplicated and configuration catalogs wait for inte
       api.calls.filter((call) => call.path === "/api/comms/search"),
     ).toHaveLength(2);
     expect(
-      api.calls.filter((call) => call.path === "/api/departments"),
+      api.calls.filter(
+        (call) =>
+          call.path === "/api/departments" &&
+          !isSidebarDepartmentRead(new URL(call.path + call.query, "http://x")),
+      ),
     ).toHaveLength(1);
   } finally {
     token.release();
@@ -1132,7 +1142,11 @@ test("a cold load without department categories reads no department names", asyn
       page.getByRole("button", { name: "Service delivery", exact: true }),
     ).toBeVisible();
     expect(
-      api.calls.filter((call) => call.path === "/api/departments"),
+      api.calls.filter(
+        (call) =>
+          call.path === "/api/departments" &&
+          !isSidebarDepartmentRead(new URL(call.path + call.query, "http://x")),
+      ),
     ).toEqual([]);
   } finally {
     await testInfo.attach("departmentless cold query evidence", {

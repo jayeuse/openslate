@@ -1,551 +1,318 @@
-import {
-  authMeBody,
-  expect,
-  signedInAs,
-  test,
-  type Locator,
-  type Page,
-  type Route,
-} from "./helpers/test";
+import { expect, test, type Page } from "./helpers/test";
 import { readFile } from "node:fs/promises";
 import { profilePreferences } from "./helpers/profile-api";
-import { pageOf, wirePagination } from "../helpers/pagination";
-import { gate } from "./helpers/gate";
-import { wireField } from "../helpers/wire";
-import { hideDevOverlay } from "./helpers/test-styles";
+import {
+  installModuleReportsApi,
+  modulePage,
+  reportIds,
+  reportTimestamp,
+  wireReport,
+  wireRun,
+  wireSchedule,
+} from "./helpers/openview-reports-api";
+import { wireView } from "../helpers/wire";
 
-const userId = "00000000-0000-4000-8000-000000000101";
-const ownerId = "00000000-0000-4000-8000-000000000102";
-const duplicateReportId = "00000000-0000-4000-8000-000000000109";
-const moduleId = "00000000-0000-4000-8000-000000000103";
-const fieldId = "00000000-0000-4000-8000-000000000104";
-const reportId = "00000000-0000-4000-8000-000000000105";
-const runId = "00000000-0000-4000-8000-000000000106";
-const scheduleId = "00000000-0000-4000-8000-000000000107";
-const timestamp = "2026-09-24T00:00:00Z";
-// A second department whose only module the member can read, not manage.
-const readOnlyDepartmentId = "00000000-0000-4000-8000-000000000110";
-const readOnlyModuleId = "00000000-0000-4000-8000-000000000111";
-const readOnlyReportId = "00000000-0000-4000-8000-000000000112";
+// OpenView part C (docs/specs/openview-reports-in-modules.md): a module's
+// reports live on its module page. Records and Reports are the page's two
+// views; a report reads as three steps (what it lists → when it runs → what
+// you keep) with its latest copy under them.
 
-const report = {
-  id: reportId,
-  module_id: moduleId,
-  name: "Operations review",
-  subtitle: null,
-  revision: 1,
-  recipe: {
-    version: 1,
-    fields: [{ field_id: fieldId, expected_type: "text" }],
-    filters: [],
-    logic: "and",
-    sorts: [],
-    group_by: null,
-    include_row_count: false,
-  },
-  is_deleted: false,
-  created_at: timestamp,
-  updated_at: timestamp,
-};
-type ReportFixture = Omit<typeof report, "subtitle"> & {
-  subtitle: string | null;
-};
-const run = {
-  id: runId,
-  report_id: reportId,
-  recipe_revision: 1,
-  row_count: 1,
-  headings: ["Asset"],
-  created_at: timestamp,
-};
-const newRunId = "00000000-0000-4000-8000-000000000900";
-const readOnlyReport = {
-  ...report,
-  id: readOnlyReportId,
-  module_id: readOnlyModuleId,
-  name: "Invoice review",
-};
+const ids = reportIds;
+const main = (page: Page) => page.locator("#main-content");
+const reportsView = (page: Page) =>
+  page.getByRole("navigation", { name: "Assets page" });
+const reportRow = (page: Page, name = "Operations review") =>
+  page
+    .getByRole("list", { name: "Assets reports" })
+    .getByRole("button", { name: new RegExp(`^${name}`) });
+const steps = (page: Page) =>
+  page.getByRole("list", { name: "How this report works" });
+const copy = (page: Page) => page.getByRole("region", { name: /^Copy of / });
 
-async function installReportsApi(
-  page: Page,
-  sharedOnly = false,
-  initialReport: ReportFixture = report,
-  options: {
-    ownerRunCount?: number;
-    sharedRunCount?: number;
-    failOwnedSecondPage?: boolean;
-    failSharedSecondPage?: boolean;
-    distinctNewRun?: boolean;
-    failFirstHistoryAfterRun?: boolean;
-    /** The user's level on the Report department; the default manages it. */
-    level?: "read" | "manage";
-    savedSchedule?: boolean;
-    lastRun?: {
-      state: "pending" | "running" | "succeeded" | "failed" | "canceled";
-      finished_at: string | null;
-      failure_label: string | null;
-    } | null;
-    /** The account role; the default is a member. */
-    role?: "admin" | "member";
-    /** Add a module (and a Report on it) that the member can only read. */
-    readOnlySource?: boolean;
-  } = {},
-) {
-  let currentReport = initialReport;
-  let copiedReport: Record<string, unknown> | null = null;
-  let manualRuns = 0;
-  let scheduleWrites = 0;
-  let csvReads = 0;
-  let reportCreates = 0;
-  let reportUpdates = 0;
-  const ownedRunPageRequests: Array<{ limit: number; offset: number }> = [];
-  const sharedRunPageRequests: Array<{ limit: number; offset: number }> = [];
-  let failOwnedSecondPage = options.failOwnedSecondPage ?? false;
-  let failSharedSecondPage = options.failSharedSecondPage ?? false;
-  let failFirstHistoryAfterRun = options.failFirstHistoryAfterRun ?? false;
-  const newRun = {
-    ...run,
-    id: newRunId,
-    recipe_revision: 99,
-    created_at: "2026-09-26T00:00:00Z",
-  };
-  const createdReports: Array<{ request: unknown; response: unknown }> = [];
-  const sharedRunCount = options.sharedRunCount ?? (sharedOnly ? 26 : 0);
-  const sharedRuns = Array.from({ length: sharedRunCount }, (_, index) => ({
-    ...run,
-    id:
-      index === 0
-        ? run.id
-        : `00000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`,
-    recipe_revision: index + 1,
-    row_count: index + 1,
-    created_at: index === 0 ? timestamp : "2026-09-25T00:00:00Z",
-    report_name: "Shared operations review",
-    status: "succeeded",
-  }));
-  await signedInAs(page, {
-    id: userId,
-    role: options.role ?? "member",
-    access: [
-      {
-        department_id: ownerId,
-        module_id: null,
-        level: options.level ?? "manage",
-      },
-      ...(options.readOnlySource
-        ? [
-            {
-              department_id: readOnlyDepartmentId,
-              module_id: readOnlyModuleId,
-              level: "read" as const,
-            },
-          ]
-        : []),
-    ],
-  });
-  await page.route("**/api/departments**", (route) =>
-    route.fulfill({
-      json: pageOf(
-        [
-          {
-            id: ownerId,
-            department_name: "Field operations",
-            created_at: timestamp,
-            updated_at: timestamp,
-            deleted_at: null,
-            is_deleted: false,
-            performed_by: null,
-          },
-          ...(options.readOnlySource
-            ? [
-                {
-                  id: readOnlyDepartmentId,
-                  department_name: "Finance",
-                  created_at: timestamp,
-                  updated_at: timestamp,
-                  deleted_at: null,
-                  is_deleted: false,
-                  performed_by: null,
-                },
-              ]
-            : []),
-        ],
-        { limit: 100 },
-      ),
+async function documentScrolls(page: Page) {
+  return page.evaluate(
+    () =>
+      document.documentElement.scrollHeight > window.innerHeight + 1 ||
+      document.documentElement.scrollWidth > window.innerWidth,
+  );
+}
+
+test("a module page switches between Records and Reports and keeps its view in the address", async ({
+  page,
+}) => {
+  await installModuleReportsApi(page);
+  await page.goto(modulePage());
+  const pages = reportsView(page);
+  const records = pages.getByRole("link", { name: /^Records/ });
+  const reports = pages.getByRole("link", { name: /^Reports/ });
+  await expect(records).toHaveText("Records 1");
+  await expect(records).toHaveAttribute("aria-current", "page");
+  await expect(reports).toHaveText("Reports 1");
+  await expect(
+    main(page).getByText("Field operations · 1 record"),
+  ).toBeVisible();
+
+  await reports.click();
+  await expect(page).toHaveURL(modulePage("reports"));
+  await expect(reports).toHaveAttribute("aria-current", "page");
+  await expect(
+    main(page).getByText("Field operations · 1 report"),
+  ).toBeVisible();
+  // The Records controls belong to the Records view.
+  await expect(
+    page.getByRole("button", { name: "More view actions" }),
+  ).toHaveCount(0);
+  await expect(reportRow(page)).toBeVisible();
+
+  await records.click();
+  await expect(page).toHaveURL(modulePage());
+  await expect(
+    page.getByRole("button", { name: "More view actions" }),
+  ).toBeVisible();
+});
+
+test("a report reads as three steps with its latest copy under them, and only its panels scroll", async ({
+  page,
+}) => {
+  const api = await installModuleReportsApi(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(modulePage("reports"));
+  const row = page
+    .getByRole("list", { name: "Assets reports" })
+    .getByRole("listitem")
+    .filter({ hasText: "Operations review" });
+  await expect(row).toContainText("Every Monday · 1 copy");
+  await expect(row).toContainText("Scheduled");
+  // The first report opens by itself; its row carries the selection.
+  await expect(row).toHaveAttribute("aria-current", "true");
+  await expect(row).toHaveAttribute("data-state", "selected");
+
+  await expect(
+    main(page).getByRole("heading", { level: 2, name: "Operations review" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Make a copy now" }),
+  ).toBeVisible();
+  await expect(steps(page).getByRole("listitem")).toHaveText([
+    /^1 · What it listsAll assets1 column · Change what it lists$/,
+    /^2 · When it runsEvery Monday at 9:00 AMNext: Mon, Sep 28 · Change when it runs$/,
+    /^3 · What you keepA dated copy each time1 copy · latest Thu, Sep 24$/,
+  ]);
+  // A step a manager changes is one button named by its facts, then Change.
+  await expect(
+    steps(page).getByRole("button", {
+      name: /^2 · When it runs\s*Every Monday at 9:00 AM\s*Next: Mon, Sep 28 · Change when it runs$/,
+    }),
+  ).toBeVisible();
+  await expect(copy(page)).toContainText("Copy of Thu, Sep 24 at 8:00 AM");
+  await expect(copy(page)).toContainText("1 row · as they were then");
+  await expect(
+    copy(page)
+      .getByRole("table", { name: /^Copy of / })
+      .getByRole("row"),
+  ).toHaveText(["Asset", "Forklift"]);
+  // A long cell wraps to two lines and keeps its whole text in reach.
+  await expect(
+    copy(page).getByRole("cell", { name: "Forklift" }),
+  ).toHaveAttribute("title", "Forklift");
+  expect(api.state.csvReads).toBe(1);
+
+  // EXIT-C4: the document never scrolls; the list and the copy do.
+  expect(await documentScrolls(page)).toBe(false);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(copy(page)).toBeVisible();
+  expect(await documentScrolls(page)).toBe(false);
+});
+
+test("Make a copy now makes one copy, shows it in place, and a retry reuses its key", async ({
+  page,
+}) => {
+  const api = await installModuleReportsApi(page);
+  await page.goto(modulePage("reports"));
+  await expect(copy(page)).toContainText("Copy of Thu, Sep 24 at 8:00 AM");
+
+  api.state.failNextRun = 503;
+  const make = page.getByRole("button", { name: "Make a copy now" });
+  await make.click();
+  // The failure shows beside the action, in safe words.
+  const failure = main(page).getByRole("alert");
+  await expect(failure).toBeVisible();
+  await expect(page.getByText("Private run failure detail")).toHaveCount(0);
+
+  await make.click();
+  await expect(copy(page)).toContainText("Copy of Sat, Sep 26 at 8:00 AM");
+  await expect(copy(page)).toContainText("2 rows · as they were then");
+  await expect(failure).toHaveCount(0);
+  // One click made one copy: the retry sent the same request key.
+  expect(api.state.runKeys).toHaveLength(2);
+  expect(api.state.runKeys[1]).toBe(api.state.runKeys[0]);
+  await expect(steps(page).getByRole("listitem").nth(2)).toContainText(
+    "2 copies · latest Sat, Sep 26",
+  );
+  await expect(reportRow(page)).toContainText("Every Monday · 2 copies");
+});
+
+test("Older copies open the copy they name, and a link to an older copy opens it", async ({
+  page,
+}) => {
+  const runs = Array.from({ length: 27 }, (_, index) =>
+    wireRun({
+      id: `00000000-0000-4000-8000-${String(600 + index).padStart(12, "0")}`,
+      row_count: index + 1,
+      created_at: `2026-09-${String(27 - index).padStart(2, "0")}T00:00:00Z`,
     }),
   );
-  await page.route("**/api/views/data-sources**", (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === "/api/views/data-sources")
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(
-          pageOf(
-            [
-              {
-                id: moduleId,
-                name: "Assets",
-                department_id: ownerId,
-                title_field_id: null,
-              },
-              ...(options.readOnlySource
-                ? [
-                    {
-                      id: readOnlyModuleId,
-                      name: "Invoices",
-                      department_id: readOnlyDepartmentId,
-                      title_field_id: null,
-                    },
-                  ]
-                : []),
-            ],
-            { limit: 100 },
-          ),
-        ),
-      });
-    return route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify(
-        pageOf(
-          [
-            wireField({
-              id: fieldId,
-              // Answer for the requested module: /api/views/data-sources/<id>/fields.
-              module_id: path.split("/")[4],
-              name: "Asset",
-              type: "text",
-              required: true,
-              position: 0,
-            }),
-          ],
-          { limit: 100 },
-        ),
-      ),
-    });
-  });
-  await page.route("**/api/reports**", async (route: Route) => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    const method = request.method();
-    if (path === "/api/reports" && method === "POST") {
-      reportCreates += 1;
-      const body = request.postDataJSON() as Record<string, unknown>;
-      const created = {
-        ...initialReport,
-        id: duplicateReportId,
-        module_id: body.module_id,
-        name: body.name,
-        subtitle: body.subtitle,
-        recipe: body.recipe,
-        revision: 1,
-        is_deleted: false,
-      };
-      createdReports.push({ request: body, response: created });
-      copiedReport = created;
-      return route.fulfill({
-        status: 201,
-        headers: { Location: `/api/reports/${duplicateReportId}` },
-        contentType: "application/json",
-        body: JSON.stringify(created),
-      });
-    }
-    if (path === `/api/reports/${reportId}` && method === "GET")
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(currentReport),
-      });
-    if (path === `/api/reports/${readOnlyReportId}` && method === "GET")
-      return route.fulfill({ json: readOnlyReport });
-    if (
-      path === `/api/reports/${duplicateReportId}` &&
-      method === "GET" &&
-      copiedReport
-    )
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(copiedReport),
-      });
-    if (path === `/api/reports/${reportId}` && method === "PATCH") {
-      reportUpdates += 1;
-      const body = request.postDataJSON() as Record<string, unknown>;
-      currentReport = {
-        ...currentReport,
-        module_id: body.module_id as string,
-        name: body.name as string,
-        subtitle: body.subtitle as string | null,
-        recipe: body.recipe as typeof currentReport.recipe,
-        revision: currentReport.revision + 1,
-      };
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(currentReport),
-      });
-    }
-    if (path === "/api/reports/shared-runs") {
-      const url = new URL(request.url());
-      const limit = Number(url.searchParams.get("limit") ?? 25);
-      const offset = Number(url.searchParams.get("offset") ?? 0);
-      sharedRunPageRequests.push({ limit, offset });
-      if (offset === 25 && failSharedSecondPage) {
-        failSharedSecondPage = false;
-        return route.fulfill({ status: 503, body: "{}" });
-      }
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(
-          pageOf(sharedRuns.slice(offset, offset + limit), {
-            limit,
-            offset,
-            total: sharedRuns.length,
-          }),
-        ),
-      });
-    }
-    if (path === "/api/reports" && method === "GET")
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(
-          pageOf(
-            sharedOnly
-              ? []
-              : [
-                  currentReport,
-                  ...(copiedReport ? [copiedReport] : []),
-                  ...(options.readOnlySource ? [readOnlyReport] : []),
-                ],
-            { limit: 25 },
-          ),
-        ),
-      });
-    if (path === `/api/reports/${reportId}/schedule` && method === "GET")
-      return route.fulfill(
-        options.savedSchedule
-          ? {
-              json: {
-                id: scheduleId,
-                report_id: reportId,
-                revision: 1,
-                enabled: true,
-                cadence: "weekly",
-                timezone_name: "Asia/Manila",
-                local_time: "09:00",
-                weekday: 0,
-                month_day: null,
-                next_due_at: "2026-09-28T01:00:00Z",
-                last_run: options.lastRun ?? null,
-                created_at: timestamp,
-                updated_at: timestamp,
-              },
-            }
-          : {
-              status: 404,
-              contentType: "application/json",
-              body: JSON.stringify({ detail: "Report schedule not found" }),
-            },
-      );
-    if (path === `/api/reports/${reportId}/schedule` && method === "POST") {
-      scheduleWrites += 1;
-      return route.fulfill({
-        status: 201,
-        headers: { Location: `/api/reports/${reportId}/schedule` },
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: scheduleId,
-          report_id: reportId,
-          revision: 1,
-          enabled: true,
-          cadence: "daily",
-          timezone_name: "Asia/Manila",
-          local_time: "09:00",
-          weekday: null,
-          month_day: null,
-          next_due_at: "2026-09-25T01:00:00Z",
-          last_run: null,
-          created_at: timestamp,
-          updated_at: timestamp,
-        }),
-      });
-    }
-    if (path === `/api/reports/${reportId}/runs` && method === "GET") {
-      const url = new URL(request.url());
-      const limit = Number(url.searchParams.get("limit") ?? 25);
-      const offset = Number(url.searchParams.get("offset") ?? 0);
-      ownedRunPageRequests.push({ limit, offset });
-      if (manualRuns > 0 && offset === 0 && failFirstHistoryAfterRun) {
-        failFirstHistoryAfterRun = false;
-        return route.fulfill({ status: 503, body: "{}" });
-      }
-      if (offset === 25 && failOwnedSecondPage) {
-        failOwnedSecondPage = false;
-        return route.fulfill({ status: 503, body: "{}" });
-      }
-      const ownerRuns = options.ownerRunCount
-        ? [
-            ...(manualRuns && options.distinctNewRun ? [newRun] : []),
-            ...Array.from({ length: options.ownerRunCount }, (_, index) => ({
-              ...run,
-              id:
-                index === 0
-                  ? run.id
-                  : `00000000-0000-4000-8000-${String(500 + index).padStart(12, "0")}`,
-              recipe_revision: index + 1,
-              row_count: index + 1,
-            })),
-          ]
-        : manualRuns
-          ? [run]
-          : [];
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(
-          pageOf(ownerRuns.slice(offset, offset + limit), {
-            limit,
-            offset,
-            total: ownerRuns.length,
-          }),
-        ),
-      });
-    }
-    if (path === `/api/reports/${reportId}/runs` && method === "POST") {
-      manualRuns += 1;
-      return route.fulfill({
-        status: 201,
-        contentType: "application/json",
-        body: JSON.stringify(options.distinctNewRun ? newRun : run),
-      });
-    }
-    if (path === `/api/reports/${reportId}/runs/${runId}/csv`) {
-      csvReads += 1;
-      return route.fulfill({
-        headers: {
-          "Content-Type": "text/csv; charset=utf-8",
-          "Content-Disposition": `attachment; filename="report-${runId}.csv"`,
-        },
-        body: "Asset\r\nForklift\r\n",
-      });
-    }
-    return route.fulfill({ status: 404, body: "{}" });
-  });
-  return {
-    counts: () => ({ manualRuns, scheduleWrites, csvReads }),
-    reportCreates: () => reportCreates,
-    reportUpdates: () => reportUpdates,
-    createdReports: () => createdReports,
-    runPageRequests: () => ({
-      owned: [...ownedRunPageRequests],
-      shared: [...sharedRunPageRequests],
-    }),
-  };
-}
+  await installModuleReportsApi(page, { runs: { [ids.report]: runs } });
+  await page.goto(modulePage("reports"));
+  await expect(copy(page)).toContainText("Copy of Sun, Sep 27 at 8:00 AM");
 
-async function expectWithinMobileWidth(control: Locator) {
-  await expect
-    .poll(async () => {
-      const bounds = await control.boundingBox();
-      return bounds !== null && bounds.x >= 0 && bounds.x + bounds.width <= 390;
-    })
-    .toBe(true);
-}
+  await page.getByRole("button", { name: "Older copies (26)" }).click();
+  const choices = page.getByRole("menuitemradio");
+  await expect(choices).toHaveCount(25);
+  await expect(choices.first()).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("menuitemradio", { name: /^Sat, Sep 26/ }).click();
+  await expect(page).toHaveURL(modulePage("reports", ids.report, runs[1]!.id));
+  await expect(copy(page)).toContainText("Copy of Sat, Sep 26 at 8:00 AM");
+  await expect(copy(page)).toContainText("2 rows · as they were then");
 
-test.describe("Reports in a non-UTC browser timezone", () => {
-  test.use({ timezoneId: "America/Los_Angeles" });
+  // A link to a copy past the latest page reads that copy.
+  await page.goto(modulePage("reports", ids.report, runs[26]!.id));
+  await expect(copy(page)).toContainText("Copy of Tue, Sep 1 at 8:00 AM");
+  await expect(copy(page)).toContainText("27 rows · as they were then");
+});
 
-  test("connected Reports let an owner run, schedule, and export a saved recipe", async ({
+const failedSchedule = wireSchedule({
+  last_run: {
+    state: "failed",
+    finished_at: reportTimestamp,
+    failure_label: "Source unavailable",
+  },
+});
+
+for (const who of [
+  { role: "member", level: "read", copies: true },
+  { role: "guest", level: "read", copies: false },
+] as const)
+  test(`a ${who.role} reader sees the steps without Change and no manager tools`, async ({
     page,
   }) => {
-    const api = await installReportsApi(page);
-    await page.goto("/openview?section=reports");
-    await page.getByRole("button", { name: "Operations review" }).click();
-    await expect(page.getByRole("button", { name: "Run now" })).toBeVisible();
-    await expect(
-      page.getByRole("tab", { name: "Saved outputs" }),
-    ).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Schedule" })).toBeVisible();
-    await page.getByRole("button", { name: "Run now" }).click();
-    await expect(page.getByText("Report run saved with 1 row.")).toBeVisible();
-    await expect(page.getByText(/Recipe version 1/)).toBeVisible();
-    await expect(
-      page
-        .getByRole("table", { name: "Saved outputs" })
-        // The shared workspace fixture is en-PH in Asia/Manila (UTC+8).
-        .getByText(/Sep 24, 2026.*8:00\sAM$/),
-    ).toBeVisible();
-    await page.getByRole("tab", { name: "Schedule" }).click();
-    await page.getByRole("checkbox", { name: "Enable scheduled runs" }).check();
-    await page.getByLabel("Repeat").selectOption("weekly");
-    await page.getByLabel("Weekday").selectOption("4");
-    await page.getByRole("textbox", { name: "Timezone" }).fill("Asia/Manila");
-    await page.getByLabel("Local time").fill("10:30");
-    await page.getByRole("tab", { name: "Saved outputs" }).click();
-    await page.getByRole("tab", { name: "Schedule" }).click();
-    await expect(
-      page.getByRole("checkbox", { name: "Enable scheduled runs" }),
-    ).toBeChecked();
-    await expect(page.getByLabel("Repeat")).toHaveValue("weekly");
-    await expect(page.getByLabel("Weekday")).toHaveValue("4");
-    await expect(page.getByLabel("Local time")).toHaveValue("10:30");
-    await expect(page.getByRole("textbox", { name: "Timezone" })).toHaveValue(
-      "Asia/Manila",
-    );
-    await page.getByRole("button", { name: "Create schedule" }).click();
-    await expect(page.getByText("Schedule saved and enabled.")).toBeVisible();
-    await page.getByRole("tab", { name: "Saved outputs" }).click();
-    const download = page.waitForEvent("download");
-    await page.getByRole("button", { name: /Download CSV/ }).click();
-    expect((await download).suggestedFilename()).toBe(`report-${runId}.csv`);
-    expect(api.counts()).toEqual({
-      manualRuns: 1,
-      scheduleWrites: 1,
-      csvReads: 1,
+    await installModuleReportsApi(page, {
+      role: who.role,
+      level: who.level,
+      schedules: { [ids.report]: failedSchedule },
     });
+    await page.goto(modulePage("reports"));
+    await expect(steps(page)).toBeVisible();
+    // Readers see the same three steps without Change, and no manager tools.
+    await expect(steps(page).getByRole("button")).toHaveCount(0);
+    await expect(steps(page).getByText("Change", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
+      "Last run failed · Source unavailable",
+    );
+    await expect(
+      page.getByRole("button", { name: "More report actions" }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "New report" })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole("button", { name: /^Show: / })).toHaveCount(0);
+    const make = page.getByRole("button", { name: "Make a copy now" });
+    if (who.copies) await expect(make).toBeEnabled();
+    else {
+      await expect(make).toHaveAttribute("aria-disabled", "true");
+      await expect(make).toHaveAccessibleDescription(
+        "Guests cannot make copies.",
+      );
+    }
+    // Making a report from a view is a manager's action too.
+    await reportsView(page)
+      .getByRole("link", { name: /^Records/ })
+      .click();
+    await page.getByRole("button", { name: "More view actions" }).click();
+    await expect(
+      page.getByRole("menuitem", { name: "Make a report from this view…" }),
+    ).toHaveCount(0);
+  });
+
+test.describe("schedules in a non-UTC browser timezone", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
+
+  test("step 2 opens the schedule, and Save schedule waits for a change", async ({
+    page,
+  }) => {
+    const api = await installModuleReportsApi(page, { schedules: {} });
+    await page.goto(modulePage("reports"));
+    await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
+      "When someone makes a copyNot scheduled",
+    );
+    await expect(reportRow(page)).toContainText(
+      "When someone makes a copy · 1 copy",
+    );
+    const change = steps(page).getByRole("listitem").nth(1).getByRole("button");
+    await expect(change).toHaveAttribute("aria-expanded", "false");
+    await expect(change).toHaveAccessibleName(/Change when it runs$/);
+    await change.click();
+    await expect(change).toHaveAttribute("aria-expanded", "true");
+    // While open, the card closes the schedule.
+    await expect(change).toHaveAccessibleName(/Close when it runs$/);
+    const schedule = page.getByRole("form", { name: "Schedule" });
+    const save = schedule.getByRole("button", { name: "Save schedule" });
+    await expect(save).toBeDisabled();
+    await expect(schedule.getByText("No changes to save")).toBeVisible();
+    // The copy gives its place to the schedule while step 2 is open.
+    await expect(copy(page)).toHaveCount(0);
+
+    await schedule.getByRole("button", { name: "Weekly" }).click();
+    await schedule.getByLabel("Day").selectOption("3");
+    await schedule.getByLabel("Time", { exact: true }).fill("10:30");
+    // The report's time zone is a choice, not the browser's.
+    await schedule.getByLabel("Time zone").selectOption("Asia/Manila");
+    await expect(save).toBeEnabled();
+    await save.click();
+    await expect(schedule.getByText("Schedule saved.")).toBeVisible();
+    expect(api.state.scheduleWrites).toEqual([
+      {
+        enabled: true,
+        cadence: "weekly",
+        timezone_name: "Asia/Manila",
+        local_time: "10:30",
+        weekday: 3,
+        month_day: null,
+      },
+    ]);
+    await expect(save).toBeDisabled();
+    await expect(steps(page).getByRole("listitem").nth(1)).toContainText(
+      "Every Thursday at 10:30 AM",
+    );
+    await expect(reportRow(page)).toContainText("Every Thursday · 1 copy");
+
+    // Off keeps the policy and stops the copies.
+    await schedule.getByRole("button", { name: "Off" }).click();
+    await save.click();
+    await expect(schedule.getByText("Schedule turned off.")).toBeVisible();
+    expect(api.state.scheduleWrites[1]).toMatchObject({
+      revision: 1,
+      enabled: false,
+      cadence: "weekly",
+      weekday: 3,
+      local_time: "10:30",
+    });
+    await change.click();
+    await expect(copy(page)).toBeVisible();
   });
 });
 
-test("Report metadata follows personal display while schedule inputs and frozen CSV remain unchanged", async ({
+test("copy dates follow personal display while the copy and its CSV stay as they were", async ({
   page,
 }, testInfo) => {
-  await installReportsApi(page, false, report, {
-    ownerRunCount: 1,
-    savedSchedule: true,
-    lastRun: {
-      state: "succeeded",
-      finished_at: "2026-09-24T00:00:00Z",
-      failure_label: null,
-    },
-  });
-  const scheduleWrites: unknown[] = [];
-  const savedSchedule = {
-    id: scheduleId,
-    report_id: reportId,
-    revision: 1,
-    enabled: true,
-    cadence: "weekly",
-    timezone_name: "Asia/Manila",
-    local_time: "09:00",
-    weekday: 0,
-    month_day: null,
-    next_due_at: "2026-09-28T01:00:00Z",
-    last_run: {
-      state: "succeeded",
-      finished_at: "2026-09-24T00:00:00Z",
-      failure_label: null,
-    },
-    created_at: timestamp,
-    updated_at: timestamp,
-  };
-  await page.route(`**/api/reports/${reportId}/schedule`, (route) => {
-    if (route.request().method() === "PATCH") {
-      const body: unknown = route.request().postDataJSON();
-      scheduleWrites.push(body);
-      if (typeof body !== "object" || body === null)
-        throw new Error("Invalid schedule command");
-      Object.assign(savedSchedule, body, { revision: 2 });
-    }
-    return route.fulfill({ json: savedSchedule });
-  });
-  await page.route(`**/api/users/${userId}/preferences`, (route) =>
+  // Date-like cell text is server-owned output, never personally reformatted.
+  const snapshot = '"Asset"\r\n"2026-09-24 08:00 · 2026-09-24"\r\n';
+  const api = await installModuleReportsApi(page, { csv: snapshot });
+  await page.route(`**/api/users/${ids.user}/preferences`, (route) =>
     route.fulfill({
-      json: profilePreferences(userId, {
+      json: profilePreferences(ids.user, {
         timezone: "America/Los_Angeles",
         date_format: "ymd",
         time_format: "24h",
@@ -553,704 +320,392 @@ test("Report metadata follows personal display while schedule inputs and frozen 
       }),
     }),
   );
-  // One captured text column, matching the run's Asset heading and row count.
-  // Date-like cell text is server-owned output, never personally reformatted.
-  const snapshotCsv = '"Asset"\r\n"2026-09-24 08:00 · 2026-09-24"\r\n';
-  await page.route(`**/api/reports/${reportId}/runs/${runId}`, (route) =>
-    route.fulfill({ json: run }),
-  );
-  const outputRequests: { path: string; search: string; method: string }[] = [];
-  await page.route(`**/api/reports/${reportId}/runs/${runId}/csv`, (route) => {
-    const url = new URL(route.request().url());
-    outputRequests.push({
-      path: url.pathname,
-      search: url.search,
-      method: route.request().method(),
-    });
-    return route.fulfill({
-      headers: {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="report-${runId}.csv"`,
-      },
-      body: snapshotCsv,
-    });
-  });
-  await page.goto(`/openview?section=reports&report=${reportId}&run=${runId}`);
-  const selected = page.getByRole("region", {
-    name: "Selected output",
-    exact: true,
-  });
-  await expect(selected).toContainText("2026-09-23");
-  await expect(selected).toContainText("17:00");
-  await expect(selected).toContainText("Recipe version 1");
-  await expect(selected).toContainText("1 row");
-  await page.getByRole("tab", { name: "Schedule", exact: true }).click();
-  const lastRun = page.getByRole("status", {
-    name: "Last scheduled run",
-    exact: true,
-  });
-  await expect(lastRun).toContainText("2026-09-23");
-  await expect(lastRun).toContainText("17:00");
-  await page
-    .getByRole("checkbox", { name: "Enable scheduled runs", exact: true })
-    .check();
-  await page.getByLabel("Local time", { exact: true }).fill("10:30");
-  await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue(
-    "Asia/Manila",
-  );
-  await expect(page.getByLabel("Weekday", { exact: true })).toHaveValue("0");
-  await page
-    .getByRole("button", { name: "Save schedule", exact: true })
-    .click();
+  await page.goto(modulePage("reports", ids.report, ids.run));
+  await expect(copy(page)).toContainText("Copy of Wed, Sep 23 at 17:00");
   await expect(
-    page.getByText("Schedule saved and enabled.", { exact: true }),
-  ).toBeVisible();
-  expect(scheduleWrites).toHaveLength(1);
-  expect(scheduleWrites[0]).toMatchObject({
-    enabled: true,
-    cadence: "weekly",
-    revision: 1,
-    weekday: 0,
-    local_time: "10:30",
-    timezone_name: "Asia/Manila",
-  });
-  expect(savedSchedule).toMatchObject({
-    revision: 2,
-    weekday: 0,
-    local_time: "10:30",
-    timezone_name: "Asia/Manila",
-  });
+    copy(page).getByRole("table", { name: /^Copy of / }),
+  ).toContainText("2026-09-24 08:00 · 2026-09-24");
   const downloaded = page.waitForEvent("download");
-  await selected.getByRole("button", { name: /Download CSV/ }).click();
+  await copy(page)
+    .getByRole("button", { name: /^Download CSV/ })
+    .click();
   const download = await downloaded;
-  const path = testInfo.outputPath("s21-frozen-report.csv");
+  expect(download.suggestedFilename()).toBe(`report-${ids.run}.csv`);
+  const path = testInfo.outputPath("frozen-report.csv");
   await download.saveAs(path);
-  expect(await readFile(path, "utf8")).toBe(snapshotCsv);
-  expect(outputRequests).toEqual([
-    {
-      path: `/api/reports/${reportId}/runs/${runId}/csv`,
-      search: "",
-      method: "GET",
-    },
-  ]);
+  expect(await readFile(path, "utf8")).toBe(snapshot);
+  // The CSV is the one the copy showed; it is not read again.
+  expect(api.state.csvReads).toBe(1);
 });
 
-test("connected Reports expose only authorized shared-run metadata to a reader", async ({
-  page,
-}) => {
-  const api = await installReportsApi(page, true);
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Available outputs" }).click();
-  const outputs = page.getByRole("dialog", { name: "Available outputs" });
-  await expect(outputs).toBeVisible();
-  await expect(
-    outputs.getByRole("cell", { name: "Shared operations review" }).first(),
-  ).toBeVisible();
-  await expect(page.getByText("No saved Reports")).toBeVisible();
-  const download = page.waitForEvent("download");
-  await outputs
-    .getByRole("button", { name: /Download CSV/ })
-    .first()
-    .click();
-  expect((await download).suggestedFilename()).toBe(`report-${runId}.csv`);
-  await outputs.getByRole("button", { name: "Go to next page" }).click();
-  await expect(outputs.getByLabel("Page 2 of 2")).toBeVisible();
-  await expect(
-    outputs.getByRole("row").filter({ hasText: "26" }),
-  ).toBeVisible();
-  expect(api.counts()).toEqual({
-    manualRuns: 0,
-    scheduleWrites: 0,
-    csvReads: 1,
-  });
-});
-
-test("owned and shared output page sizes reset independently to the first page", async ({
-  page,
-}) => {
-  const api = await installReportsApi(page, false, report, {
-    ownerRunCount: 26,
-    sharedRunCount: 26,
-  });
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-
-  const ownedOutputPanel = page.getByRole("tabpanel", {
-    name: "Saved outputs",
-  });
-  const ownedOutputs = ownedOutputPanel.getByRole("table", {
-    name: "Saved outputs",
-  });
-  const ownedPageSize = ownedOutputPanel.getByLabel("Rows per page");
-  await expect(ownedPageSize).toHaveValue("25");
-  await page
-    .getByRole("navigation", { name: "Saved output pages" })
-    .getByRole("button", { name: "Go to next page" })
-    .click();
-  await expect(page.getByText("Showing 26–26 of 26")).toBeVisible();
-
-  await ownedPageSize.selectOption("10");
-  await expect(ownedPageSize).toHaveValue("10");
-  await expect(ownedOutputs.getByRole("row")).toHaveCount(11);
-  await expect(page.getByText("Showing 1–10 of 26")).toBeVisible();
-  await expect(
-    ownedOutputs.getByRole("cell", { name: "Recipe version 10" }),
-  ).toBeVisible();
-  expect(api.runPageRequests().owned).toContainEqual({ limit: 10, offset: 0 });
-
-  await page.getByRole("button", { name: "Available outputs" }).click();
-  const availableOutputs = page.getByRole("dialog", {
-    name: "Available outputs",
-  });
-  const sharedPageSize = availableOutputs.getByLabel("Rows per page");
-  const sharedTable = availableOutputs.getByRole("table", {
-    name: "Available outputs",
-  });
-  await expect(sharedPageSize).toHaveValue("25");
-  await availableOutputs
-    .getByRole("navigation", { name: "Available output pages" })
-    .getByRole("button", { name: "Go to next page" })
-    .click();
-  await expect(availableOutputs.getByText("Showing 26–26 of 26")).toBeVisible();
-
-  await sharedPageSize.selectOption("5");
-  await expect(sharedPageSize).toHaveValue("5");
-  await expect(sharedTable.getByRole("row")).toHaveCount(6);
-  await expect(availableOutputs.getByText("Showing 1–5 of 26")).toBeVisible();
-  await expect(
-    sharedTable.getByRole("cell", { name: "Recipe version 5" }),
-  ).toBeVisible();
-  expect(api.runPageRequests().shared).toContainEqual({ limit: 5, offset: 0 });
-  await expect(ownedPageSize).toHaveValue("10");
-});
-
-for (const list of [
-  {
-    name: "owned",
-    sharedOnly: false,
-    options: { ownerRunCount: 26, failOwnedSecondPage: true },
-    pages: "Saved output pages",
-    failure: "Report history could not be loaded",
-    open: async (page: Page): Promise<Locator> => {
-      await page.getByRole("button", { name: "Operations review" }).click();
-      await expect(
-        page.getByRole("table", { name: "Saved outputs" }),
-      ).toBeVisible();
-      return page.locator("body");
-    },
-  },
-  {
-    name: "available",
-    sharedOnly: true,
-    options: { failSharedSecondPage: true },
-    pages: "Available output pages",
-    failure: "Available runs could not be loaded",
-    open: async (page: Page): Promise<Locator> => {
-      await page.getByRole("button", { name: "Available outputs" }).click();
-      return page.getByRole("dialog", { name: "Available outputs" });
-    },
-  },
-]) {
-  test(`failed ${list.name} output page does not relabel old results or leave their actions available`, async ({
+for (const level of ["manage", "read"] as const)
+  test(`an empty module teaches the three steps, with actions only for a manager (${level})`, async ({
     page,
   }) => {
-    await installReportsApi(page, list.sharedOnly, report, list.options);
-    await page.goto("/openview?section=reports");
-    const outputs = await list.open(page);
+    await installModuleReportsApi(page, { level, reports: [] });
+    await page.goto(modulePage("reports"));
     await expect(
-      outputs.getByText("Recipe version 1", { exact: true }),
-    ).toBeVisible();
-    await outputs
-      .getByRole("navigation", { name: list.pages })
-      .getByRole("button", { name: "Go to next page" })
-      .click();
-    await expect(
-      outputs.getByRole("alert").filter({ hasText: list.failure }),
+      page.getByRole("heading", { name: "Keep a dated copy of these assets" }),
     ).toBeVisible();
     await expect(
-      outputs.getByText("Recipe version 1", { exact: true }),
-    ).toHaveCount(0);
+      main(page).getByText("Field operations · no reports yet"),
+    ).toBeVisible();
     await expect(
-      outputs.getByRole("button", { name: /Download CSV/ }),
-    ).toHaveCount(0);
-    await expect(
-      outputs.getByRole("button", { name: /Print output from/ }),
-    ).toHaveCount(0);
-    await outputs.getByRole("button", { name: "Retry" }).click();
-    await expect(outputs.getByText("Recipe version 26")).toBeVisible();
+      page
+        .getByRole("list", { name: "How a report works" })
+        .getByRole("listitem"),
+    ).toHaveText([
+      /What it listsThe assets you chooseStart from the view you are using/,
+      /When it runsNow, or every day, week, or monthAt a time you pick/,
+      /What you keepA dated copy each timePrint it or download it later/,
+    ]);
+    const fromView = page.getByRole("button", {
+      name: "Make a report from the current view",
+    });
+    const scratch = page.getByRole("button", { name: "Start from scratch" });
+    if (level === "manage") {
+      await expect(fromView).toBeVisible();
+      await scratch.click();
+      const dialog = page.getByRole("dialog", { name: "New report" });
+      await expect(dialog.getByLabel("Name")).toHaveValue("");
+      // The module is the page's: there is no module picker.
+      await expect(dialog.getByLabel("Data source")).toHaveCount(0);
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(dialog).toBeHidden();
+    } else {
+      await expect(fromView).toHaveCount(0);
+      await expect(scratch).toHaveCount(0);
+      await expect(page.getByText("No reports for Assets yet.")).toBeVisible();
+    }
   });
-}
 
-test("a confirmed new run caps the selected page size when history refresh fails", async ({
+test("Make a report from this view fills the new report with the view's columns, filters and sort", async ({
   page,
 }) => {
-  await installReportsApi(page, false, report, {
-    ownerRunCount: 5,
-    distinctNewRun: true,
-    failFirstHistoryAfterRun: true,
+  const view = wireView({
+    id: ids.view,
+    module_id: ids.module,
+    name: "Assets in service",
+    definition: {
+      version: 1,
+      logic: "and",
+      columns: [
+        { field_id: ids.assetField, expected_type: "text" },
+        { field_id: ids.statusField, expected_type: "select" },
+      ],
+      filters: [
+        {
+          field_id: ids.statusField,
+          expected_type: "select",
+          operator: "in",
+          value: [ids.inService],
+        },
+      ],
+      sort: [
+        { field_id: ids.assetField, expected_type: "text", direction: "desc" },
+      ],
+      deleted: "exclude",
+      search: null,
+      search_fields: [],
+    },
+    presentation: {
+      version: 1,
+      layout: "table",
+      column_field_ids: [ids.statusField, ids.assetField],
+      pinned_field_ids: [],
+      density: "comfortable",
+      wrap: false,
+      card_size: "comfortable",
+      primary_field_id: null,
+      secondary_field_id: null,
+      date_field_id: null,
+      group_by_field_id: null,
+      date_range: "month",
+      scale: null,
+    },
+    created_at: reportTimestamp,
+    updated_at: reportTimestamp,
   });
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-  const outputs = page.getByRole("table", { name: "Saved outputs" });
-  await page.getByLabel("Rows per page").selectOption("5");
-  await expect(outputs.getByRole("row")).toHaveCount(6);
-  await expect(
-    outputs.getByRole("cell", { name: "Recipe version 5" }),
-  ).toBeVisible();
-
-  await page.getByRole("button", { name: "Run now" }).click();
-  await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: "Report history could not be loaded" }),
-  ).toBeVisible();
-  await expect(outputs.getByRole("row")).toHaveCount(6);
-  await expect(
-    outputs.getByRole("cell", { name: "Recipe version 99" }),
-  ).toBeVisible();
-  await expect(
-    outputs.getByRole("cell", { name: "Recipe version 5" }),
-  ).toHaveCount(0);
-  await expect(page.getByText("Showing 1–5 of 6")).toBeVisible();
-
-  await page.getByRole("button", { name: "Retry" }).click();
-  await expect(outputs.getByRole("row")).toHaveCount(6);
+  const api = await installModuleReportsApi(page, {
+    reports: [],
+    views: [view],
+  });
+  await page.goto(`${modulePage()}&view=${ids.view}`);
+  await page.getByRole("button", { name: "More view actions" }).click();
   await page
-    .getByRole("navigation", { name: "Saved output pages" })
-    .getByRole("button", { name: "Go to next page" })
+    .getByRole("menuitem", { name: "Make a report from this view…" })
     .click();
-  await expect(
-    outputs.getByRole("cell", { name: "Recipe version 5" }),
-  ).toBeVisible();
-  await expect(page.getByText("Showing 6–6 of 6")).toBeVisible();
-});
-
-test("saved and available output actions fit a narrow viewport", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await installReportsApi(page, false, report, {
-    ownerRunCount: 1,
-    sharedRunCount: 1,
-  });
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-  const savedOutput = page
-    .getByRole("list", { name: "Saved outputs" })
-    .getByRole("listitem")
-    .first();
-  await expect(savedOutput.getByText("Recipe version")).toBeVisible();
-  await expect(savedOutput.getByText("Rows")).toBeVisible();
-  await expect(savedOutput.locator("time")).toBeVisible();
-  await expectWithinMobileWidth(
-    page.getByRole("button", { name: /Download CSV/ }),
-  );
-  await expectWithinMobileWidth(
-    page.getByRole("button", { name: /Print output from/ }),
-  );
-
-  await page.getByRole("button", { name: "Available outputs" }).click();
-  const outputs = page.getByRole("dialog", { name: "Available outputs" });
-  const sharedOutput = outputs
-    .getByRole("list", { name: "Available outputs" })
-    .getByRole("listitem")
-    .first();
-  await expect(
-    sharedOutput.getByText("Shared operations review"),
-  ).toBeVisible();
-  await expect(sharedOutput.getByText("Recipe version")).toBeVisible();
-  await expect(sharedOutput.getByText("Rows")).toBeVisible();
-  await expect(sharedOutput.locator("time")).toBeVisible();
-  await expectWithinMobileWidth(
-    outputs.getByRole("button", { name: /Download CSV/ }),
-  );
-  await expectWithinMobileWidth(
-    outputs.getByRole("button", { name: /Print output from/ }),
-  );
-});
-
-test("a module reader runs a Report but cannot change, copy or schedule it", async ({
-  page,
-}) => {
-  const api = await installReportsApi(page, false, report, {
-    level: "read",
-    savedSchedule: true,
-  });
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-
-  await expect(page.getByRole("button", { name: "Run now" })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "New Report" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Edit report" })).toHaveCount(
-    0,
-  );
-  await expect(page.getByRole("button", { name: "Duplicate" })).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Report options" }),
-  ).toHaveCount(0);
-  await expect(page.getByText(/audience|owner/i)).toHaveCount(0);
-  await page.getByRole("tab", { name: "Schedule" }).click();
-  await expect(
-    page.getByRole("checkbox", { name: "Enable scheduled runs" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByText("Weekly on Monday at 9:00 AM (Asia/Manila)"),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Only a manager of this module changes the schedule."),
-  ).toBeVisible();
-  expect(api.counts().manualRuns).toBe(0);
-});
-
-test("a new Report offers only data sources the member manages", async ({
-  page,
-}) => {
-  const api = await installReportsApi(page, false, report, {
-    readOnlySource: true,
-  });
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "New Report" }).click();
-
-  const source = page.getByRole("combobox", { name: "Data source" });
-  await expect(source.getByRole("option", { name: "Assets" })).toBeAttached();
-  await expect(source.getByRole("option", { name: "Invoices" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Close editor" }).click();
-
-  // A template on a module the member only reads cannot become a new Report.
-  await page
-    .getByLabel("Start from saved Report")
-    .selectOption(readOnlyReportId);
-  await page.getByRole("button", { name: "Start from saved Report" }).click();
-  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
-    "Copy of Invoice review",
-  );
-  await page.getByRole("button", { name: "Create Report" }).click();
-  await expect(
-    page.getByText("Choose a data source you manage for this Report"),
-  ).toBeVisible();
-  expect(api.reportCreates()).toBe(0);
-});
-
-test("an administrator's new Report offers every data source", async ({
-  page,
-}) => {
-  await installReportsApi(page, false, report, {
-    role: "admin",
-    readOnlySource: true,
-  });
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "New Report" }).click();
-
-  const source = page.getByRole("combobox", { name: "Data source" });
-  await expect(source.getByRole("option", { name: "Assets" })).toBeAttached();
-  await expect(source.getByRole("option", { name: "Invoices" })).toBeAttached();
-});
-
-test("saved Report cards name the department of their module", async ({
-  page,
-}) => {
-  await installReportsApi(page, false, report, { level: "read" });
-  await page.route("**/api/departments**", (route) =>
-    route.fulfill({
-      json: {
-        items: [
+  const dialog = page.getByRole("dialog", { name: "New report" });
+  await expect(dialog.getByLabel("Name")).toHaveValue("Assets in service");
+  await expect(dialog.getByRole("checkbox", { name: "Asset" })).toBeChecked();
+  await expect(dialog.getByRole("checkbox", { name: "Status" })).toBeChecked();
+  await dialog.getByRole("button", { name: "Create report" }).click();
+  await expect(dialog).toBeHidden();
+  expect(api.state.creates).toEqual([
+    {
+      module_id: ids.module,
+      name: "Assets in service",
+      subtitle: null,
+      recipe: {
+        version: 1,
+        fields: [
+          { field_id: ids.statusField, expected_type: "select" },
+          { field_id: ids.assetField, expected_type: "text" },
+        ],
+        filters: [
           {
-            id: ownerId,
-            department_name: "Field operations",
-            created_at: "2026-09-23T00:00:00Z",
-            updated_at: "2026-09-23T00:00:00Z",
-            deleted_at: null,
-            is_deleted: false,
-            performed_by: null,
+            field_id: ids.statusField,
+            expected_type: "select",
+            operator: "in",
+            value: [ids.inService],
           },
         ],
-        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
+        logic: "and",
+        sorts: [
+          {
+            field_id: ids.assetField,
+            expected_type: "text",
+            direction: "desc",
+          },
+        ],
+        group_by: null,
+        include_row_count: false,
       },
-    }),
+    },
+  ]);
+  // The new report opens in the Reports view.
+  await expect(page).toHaveURL(
+    `/openview?section=views&module=${ids.module}&tab=reports&view=${ids.view}&report=${ids.newReport}`,
   );
-  await page.goto("/openview?section=reports");
-  const card = page.getByRole("button", { name: /^Operations review/ });
-  await expect(card).toContainText("Field operations");
-  await expect(card).toHaveAccessibleName("Operations review Field operations");
+  await expect(
+    main(page).getByRole("heading", { level: 2, name: "Assets in service" }),
+  ).toBeVisible();
+  await expect(steps(page).getByRole("listitem").first()).toContainText(
+    "Assets that match 1 filter",
+  );
 });
 
-for (const entry of [
-  {
-    title: "duplicating a saved Report",
-    start: async (page: Page) => {
-      await page.getByRole("button", { name: "Operations review" }).click();
-      await page.getByRole("button", { name: "Duplicate" }).click();
-    },
-  },
-  {
-    title: "starting from a saved Report in the template chooser",
-    start: async (page: Page) => {
-      await page.getByLabel("Start from saved Report").selectOption(reportId);
-      await page
-        .getByRole("button", { name: "Start from saved Report" })
-        .click();
-    },
-  },
-]) {
-  test(`${entry.title} creates a separate draft on its first Save`, async ({
-    page,
-  }) => {
-    const api = await installReportsApi(page);
-    await page.goto("/openview?section=reports");
-    await entry.start(page);
-
-    await expect(
-      page.getByRole("textbox", { name: "Report name" }),
-    ).toHaveValue("Copy of Operations review");
-    await expect(
-      page.getByText("Save to create a separate Report."),
-    ).toBeVisible();
-    expect(api.reportCreates()).toBe(0);
-    expect(api.reportUpdates()).toBe(0);
-
-    await page.getByRole("button", { name: "Create Report" }).click();
-    await expect(
-      page.locator("#main-content").getByText("Report created."),
-    ).toBeVisible();
-    expect(api.reportCreates()).toBe(1);
-    expect(api.reportUpdates()).toBe(0);
-    expect(api.createdReports()[0]?.request).toMatchObject({
-      name: "Copy of Operations review",
-      recipe: report.recipe,
-    });
-    expect(api.createdReports()[0]?.response).toMatchObject({
-      id: duplicateReportId,
-      name: "Copy of Operations review",
-      recipe: report.recipe,
-    });
-    await page.reload();
-    const original = page.getByRole("button", {
-      name: "Operations review Field operations",
-      exact: true,
-    });
-    const copy = page.getByRole("button", {
-      name: "Copy of Operations review Field operations",
-      exact: true,
-    });
-    await expect(original).toBeVisible();
-    await expect(copy).toBeVisible();
-    await original.click();
-    await page.getByRole("button", { name: "Edit report" }).click();
-    await expect(
-      page.getByRole("textbox", { name: "Report name" }),
-    ).toHaveValue("Operations review");
-    await page.getByRole("button", { name: "Close editor" }).click();
-    await copy.click();
-    await page.getByRole("button", { name: "Edit report" }).click();
-    await expect(
-      page.getByRole("textbox", { name: "Report name" }),
-    ).toHaveValue("Copy of Operations review");
-  });
-}
-
-test("unsaved Report edits guard workspace navigation", async ({ page }) => {
-  const api = await installReportsApi(page);
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-  await page.getByRole("button", { name: "Edit report" }).click();
-  const editor = page.getByRole("dialog", { name: "Edit report" });
-  await editor
-    .getByRole("textbox", { name: "Report name" })
-    .fill("Unsaved review");
-  await editor.getByRole("button", { name: "Close editor" }).click();
-  await expect(
-    page.locator("#main-content").getByText(/Unsaved changes/),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "Search workspace" }).click();
-  const dialog = page.getByRole("alertdialog", {
-    name: "Discard unsaved Report changes?",
-  });
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Keep editing" }).click();
-  await expect(page).toHaveURL(`/openview?section=reports&report=${reportId}`);
-  await page.getByRole("button", { name: "Edit report" }).click();
-  await expect(
-    editor.getByRole("textbox", { name: "Report name" }),
-  ).toHaveValue("Unsaved review");
-  await editor.getByRole("button", { name: "Close editor" }).click();
-  await page.getByRole("link", { name: "Search workspace" }).click();
-  await dialog.getByRole("button", { name: "Discard and continue" }).click();
-  await expect(page).toHaveURL("/platform");
-
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-  await page.getByRole("button", { name: "Edit report" }).click();
-  await page
-    .getByRole("dialog", { name: "Edit report" })
-    .getByRole("textbox", { name: "Report name" })
-    .fill("Saved review");
-  await page.getByRole("button", { name: "Save changes" }).click();
-  await expect(
-    page.locator("#main-content").getByText("Report saved."),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Saved review" }),
-  ).toBeVisible();
-  expect(api.reportUpdates()).toBe(1);
-});
-
-test("Report recipes open on demand and preserve cross-tab drafts when closed", async ({
+test("moving a column reorders the rows, says where it went and keeps focus", async ({
   page,
 }) => {
-  const api = await installReportsApi(page);
-  await page.goto("/openview?section=reports");
+  const api = await installModuleReportsApi(page);
+  await page.goto(modulePage("reports"));
+  await page.getByRole("button", { name: /Change what it lists$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit report" });
+  const columns = dialog.getByRole("group", { name: "Columns" });
+  await columns.getByRole("checkbox", { name: "Status" }).check();
+  // Chosen columns come first, in report order.
+  await expect(columns.locator('[data-slot="field-label"]')).toHaveText([
+    "Asset",
+    "Status",
+  ]);
+  await columns.getByRole("button", { name: "Move Status up" }).click();
+  await expect(columns.locator('[data-slot="field-label"]')).toHaveText([
+    "Status",
+    "Asset",
+  ]);
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "Status moved to column 1" }),
+  ).toBeAttached();
+  // Up is now off, so focus stays on Status's other move button.
+  await expect(
+    columns.getByRole("button", { name: "Move Status down" }),
+  ).toBeFocused();
+  await columns.getByRole("checkbox", { name: "Asset" }).uncheck();
+  await expect(columns.locator('[data-slot="field-label"]')).toHaveText([
+    "Status",
+    "Asset",
+  ]);
+  await columns.getByRole("checkbox", { name: "Asset" }).check();
+  await dialog.getByRole("button", { name: "Save report" }).click();
+  await expect(dialog).toBeHidden();
+  expect(api.state.updates[0]).toMatchObject({
+    recipe: {
+      fields: [
+        { field_id: ids.statusField, expected_type: "select" },
+        { field_id: ids.assetField, expected_type: "text" },
+      ],
+    },
+  });
+});
 
-  await expect(page.getByRole("button", { name: "New Report" })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveCount(
-    0,
+test("a report dialog's save says why it waits, and leaving asks before it discards", async ({
+  page,
+}) => {
+  const api = await installModuleReportsApi(page);
+  await page.goto(modulePage("reports"));
+  await page.getByRole("button", { name: /Change what it lists$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit report" });
+  const save = dialog.getByRole("button", { name: "Save report" });
+  await expect(save).toHaveAttribute("aria-disabled", "true");
+  await expect(save).toHaveAccessibleDescription("No changes to save");
+
+  await dialog.getByLabel("Name").fill("Weekly assets");
+  await expect(save).not.toHaveAttribute("aria-disabled", "true");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  const discard = page.getByRole("alertdialog", {
+    name: "Discard your report changes?",
+  });
+  await discard.getByRole("button", { name: "Keep editing" }).click();
+  await expect(discard).toBeHidden();
+  await expect(dialog.getByLabel("Name")).toHaveValue("Weekly assets");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await discard.getByRole("button", { name: "Discard" }).click();
+  await expect(dialog).toBeHidden();
+  expect(api.state.updates).toEqual([]);
+});
+
+test("editing a report saves its revision, and a conflict offers the latest", async ({
+  page,
+}) => {
+  const api = await installModuleReportsApi(page);
+  await page.goto(modulePage("reports"));
+  await page.getByRole("button", { name: /Change what it lists$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit report" });
+  await dialog.getByLabel("Name").fill("Weekly assets");
+  await dialog.getByRole("checkbox", { name: "Status" }).check();
+  await dialog.getByRole("checkbox", { name: "Include row count" }).check();
+  await dialog.getByRole("button", { name: "Save report" }).click();
+  await expect(dialog).toBeHidden();
+  expect(api.state.updates[0]).toMatchObject({
+    revision: 1,
+    name: "Weekly assets",
+    recipe: {
+      fields: [
+        { field_id: ids.assetField, expected_type: "text" },
+        { field_id: ids.statusField, expected_type: "select" },
+      ],
+      include_row_count: true,
+    },
+  });
+  await expect(reportRow(page, "Weekly assets")).toBeVisible();
+  await expect(steps(page).getByRole("listitem").first()).toContainText(
+    "2 columns · with the number of rows",
   );
-  await page.getByRole("button", { name: "New Report" }).click();
-  const editor = page.getByRole("dialog", { name: "New report" });
-  await expect(editor).toBeVisible();
-  for (const tab of ["Basics", "Columns", "Advanced"]) {
-    await expect(editor.getByRole("tab", { name: tab })).toBeVisible();
-  }
-  await expect(
-    editor.getByText("Reports use records from one source."),
-  ).toBeVisible();
 
-  await editor.getByLabel("Data source").selectOption(moduleId);
-  await editor.getByLabel("Report name").fill("Quarterly review");
-  await editor.getByRole("tab", { name: "Columns" }).click();
-  await editor.getByRole("checkbox", { name: "Asset" }).check();
-  await editor.getByRole("tab", { name: "Advanced" }).click();
+  // Someone else saved in between: the dialog keeps the edit and offers the
+  // latest report.
+  api.state.conflictNextUpdate = true;
+  await page.getByRole("button", { name: /Change what it lists$/ }).click();
+  await dialog.getByLabel("Subtitle").fill("Mondays");
+  await dialog.getByRole("button", { name: "Save report" }).click();
   await expect(
-    editor.getByRole("button", { name: "Add filter" }),
+    dialog.getByRole("alert").filter({ hasText: /reload/i }),
   ).toBeVisible();
-  await expect(editor.getByRole("tab", { name: "Audience" })).toHaveCount(0);
-  await editor.getByRole("tab", { name: "Basics" }).click();
-  await editor.getByRole("button", { name: "Close editor" }).click();
-
-  await expect(
-    page.locator("#main-content").getByText(/Unsaved changes/),
-  ).toBeVisible();
-  expect(api.reportCreates()).toBe(0);
-  await page.getByRole("button", { name: "Edit report" }).click();
-  await expect(editor).toBeVisible();
-  await expect(editor.getByLabel("Report name")).toHaveValue(
-    "Quarterly review",
-  );
-  await editor.getByRole("tab", { name: "Columns" }).click();
-  await expect(editor.getByRole("checkbox", { name: "Asset" })).toBeChecked();
-  await editor.getByRole("button", { name: "Create Report" }).click();
-
-  await expect(editor).toBeHidden();
-  await expect(
-    page.locator("#main-content").getByText("Report created."),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Quarterly review" }),
-  ).toBeVisible();
-  expect(api.reportCreates()).toBe(1);
-  expect(api.createdReports()[0]?.request).toMatchObject({
-    module_id: moduleId,
-    name: "Quarterly review",
-    recipe: { fields: [{ field_id: fieldId, expected_type: "text" }] },
+  await expect(dialog.getByLabel("Subtitle")).toHaveValue("Mondays");
+  page.once("dialog", (prompt) => void prompt.accept());
+  await dialog.getByRole("button", { name: "Reload latest" }).click();
+  await expect(dialog.getByLabel("Subtitle")).toHaveValue("");
+  await dialog.getByLabel("Subtitle").fill("Mondays");
+  await dialog.getByRole("button", { name: "Save report" }).click();
+  await expect(dialog).toBeHidden();
+  expect(api.state.updates.at(-1)).toMatchObject({
+    revision: 3,
+    subtitle: "Mondays",
   });
 });
 
 test("Report filters display Select labels, submit stable IDs, and use module-eligible people", async ({
   page,
 }) => {
-  const api = await installReportsApi(page);
-  const selectFieldId = "00000000-0000-4000-8000-000000000112";
-  const inServiceChoiceId = "00000000-0000-4000-8000-000000000113";
-  const inspectionChoiceId = "00000000-0000-4000-8000-000000000114";
-  const userFieldId = "00000000-0000-4000-8000-000000000115";
-  const eligibleUserId = "00000000-0000-4000-8000-000000000116";
+  const api = await installModuleReportsApi(page);
+  const userFieldId = "00000000-0000-4000-8000-000000000130";
+  const eligibleUserId = "00000000-0000-4000-8000-000000000131";
   const assignableUserRequests: string[] = [];
   const globalUserRequests: string[] = [];
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
-    if (path === `/api/modules/${moduleId}/assignable-users`)
+    if (path === `/api/modules/${ids.module}/assignable-users`)
       assignableUserRequests.push(path);
     if (
       (path === "/api/users" || path.startsWith("/api/users/")) &&
       !(
-        path === `/api/users/${userId}/preferences` &&
+        path === `/api/users/${ids.user}/preferences` &&
         request.method() === "GET"
       )
     )
       globalUserRequests.push(path);
   });
-  await page.route(`**/api/views/data-sources/${moduleId}/fields**`, (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify(
-        pageOf(
-          [
-            wireField({
-              id: fieldId,
-              module_id: moduleId,
+  await page.route(
+    `**/api/views/data-sources/${ids.module}/fields**`,
+    (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: ids.assetField,
+              module_id: ids.module,
               name: "Asset",
               type: "text",
               required: true,
               position: 0,
-            }),
-            wireField({
-              id: selectFieldId,
-              module_id: moduleId,
+              config: {},
+            },
+            {
+              id: ids.statusField,
+              module_id: ids.module,
               name: "Status",
               type: "select",
+              required: false,
               position: 1,
               config: {
                 options: [
-                  { id: inServiceChoiceId, label: "In service" },
-                  { id: inspectionChoiceId, label: "Inspection due" },
+                  { id: ids.inService, label: "In service" },
+                  { id: ids.inspectionDue, label: "Inspection due" },
                 ],
               },
-            }),
-            wireField({
+            },
+            {
               id: userFieldId,
-              module_id: moduleId,
+              module_id: ids.module,
               name: "Assignee",
               type: "user",
+              required: false,
               position: 2,
               config: { kind: "user" },
-            }),
-          ],
-          { limit: 100 },
-        ),
-      ),
-    }),
-  );
-  await page.route(`**/api/modules/${moduleId}/assignable-users**`, (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify(
-        pageOf(
-          [
-            {
-              id: eligibleUserId,
-              display_name: "Alex Reader",
-              username: "alex.reader",
             },
           ],
-          { limit: 100 },
-        ),
-      ),
+          pagination: {
+            limit: 100,
+            offset: 0,
+            count: 3,
+            total: 3,
+            has_more: false,
+          },
+        },
+      }),
+  );
+  await page.route(`**/api/modules/${ids.module}/assignable-users**`, (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: eligibleUserId,
+            display_name: "Alex Reader",
+            username: "alex.reader",
+          },
+        ],
+        pagination: {
+          limit: 100,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
     }),
   );
 
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "New Report" }).click();
+  await page.goto(modulePage("reports"));
+  await page.getByRole("button", { name: "New report" }).click();
   const editor = page.getByRole("dialog", { name: "New report" });
-  await editor.getByLabel("Data source").selectOption(moduleId);
-  await editor.getByLabel("Report name").fill("Stable filters");
-  await editor.getByRole("tab", { name: "Columns" }).click();
+  await editor.getByLabel("Name").fill("Stable filters");
   await editor.getByRole("checkbox", { name: "Asset" }).check();
-  await editor.getByRole("tab", { name: "Advanced" }).click();
-
   await editor.getByRole("button", { name: "Add filter" }).click();
   await editor
     .getByRole("combobox", { name: "Field" })
     .nth(0)
-    .selectOption(selectFieldId);
+    .selectOption(ids.statusField);
   await editor
     .getByRole("combobox", { name: "Condition" })
     .nth(0)
@@ -1275,16 +730,17 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
   );
   expect(globalUserRequests).toEqual([]);
 
-  await editor.getByRole("button", { name: "Create Report" }).click();
+  await editor.getByRole("button", { name: "Create report" }).click();
   await expect(editor).toBeHidden();
-  expect(api.createdReports()[0]?.request).toMatchObject({
+  expect(api.state.creates[0]).toMatchObject({
+    module_id: ids.module,
     recipe: {
       filters: [
         {
-          field_id: selectFieldId,
+          field_id: ids.statusField,
           expected_type: "select",
           operator: "in",
-          value: [inServiceChoiceId, inspectionChoiceId],
+          value: [ids.inService, ids.inspectionDue],
         },
         {
           field_id: userFieldId,
@@ -1297,648 +753,90 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
   });
 });
 
-test("Report CSV errors cannot impersonate browser-blocked print guidance", async ({
+test("Duplicate opens a new report with the same recipe and creates a separate report", async ({
   page,
 }) => {
-  await installReportsApi(page, false, report, { ownerRunCount: 1 });
-  const detail = "Your browser blocked private report database detail";
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-  await page.evaluate(
-    ({ detail, path }) => {
-      const original = window.fetch;
-      window.fetch = (input, init) =>
-        new URL(
-          input instanceof Request ? input.url : String(input),
-          location.href,
-        ).pathname === path
-          ? Promise.reject(new Error(detail))
-          : original(input, init);
+  const api = await installModuleReportsApi(page);
+  await page.goto(modulePage("reports"));
+  await page.getByRole("button", { name: "More report actions" }).click();
+  await page.getByRole("menuitem", { name: "Duplicate" }).click();
+  const dialog = page.getByRole("dialog", { name: "New report" });
+  await expect(dialog.getByLabel("Name")).toHaveValue(
+    "Copy of Operations review",
+  );
+  await expect(dialog.getByRole("checkbox", { name: "Asset" })).toBeChecked();
+  await dialog.getByRole("button", { name: "Create report" }).click();
+  await expect(dialog).toBeHidden();
+  expect(api.state.updates).toEqual([]);
+  expect(api.state.creates).toEqual([
+    {
+      module_id: ids.module,
+      name: "Copy of Operations review",
+      subtitle: null,
+      recipe: wireReport().recipe,
     },
-    { detail, path: `/api/reports/${reportId}/runs/${runId}/csv` },
-  );
-  await page
-    .getByRole("button", { name: /Download CSV/ })
-    .first()
-    .click();
-  const failure = page.getByRole("alert").filter({
-    hasText: "The saved Report output could not be opened. Try again.",
-  });
-  await expect(failure).toBeVisible();
-  await expect(failure).toHaveAttribute("data-variant", "destructive");
-  await expect(page.getByText(detail, { exact: true })).toHaveCount(0);
-});
-
-test("Report printing preserves genuine blocked-popup guidance", async ({
-  page,
-}) => {
-  const api = await installReportsApi(page, false, report, {
-    ownerRunCount: 1,
-  });
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-  await page.evaluate(() => {
-    window.open = () => null;
-  });
-  await page
-    .getByRole("button", { name: /Print output from/ })
-    .first()
-    .click();
-  await expect(
-    page.getByRole("alert").filter({
-      hasText:
-        "Your browser blocked the print window. Allow pop-ups and try again.",
-    }),
-  ).toBeVisible();
-  expect(api.counts().csvReads).toBe(0);
-});
-
-test("notification URL opens the exact Report and run beyond the first catalog and history pages", async ({
-  page,
-}) => {
-  const api = await installReportsApi(page, true, report, {
-    ownerRunCount: 26,
-  });
-  const exactRun = {
-    ...run,
-    id: newRunId,
-    recipe_revision: 99,
-    row_count: 123,
-    created_at: "2026-10-01T00:00:00Z",
-  };
-  await page.route(`**/api/reports/${reportId}/runs/${newRunId}`, (route) =>
-    route.fulfill({ json: exactRun }),
-  );
-  await page.goto(
-    `/openview?section=reports&report=${reportId}&run=${newRunId}`,
-  );
-  const selected = page.getByRole("region", { name: "Selected output" });
-  await expect(
-    selected.getByRole("heading", { name: "Operations review" }),
-  ).toBeVisible();
-  await expect(selected.getByText("Recipe version 99")).toBeVisible();
-  await expect(selected.getByText("123 rows")).toBeVisible();
-  expect(api.counts().csvReads).toBe(0);
-  await expect(
-    page.getByText("Showing 1–25 of 26", { exact: true }),
-  ).toBeVisible();
-  await page.reload();
-  await expect(selected.getByText("Recipe version 99")).toBeVisible();
-  expect(api.counts().csvReads).toBe(0);
-});
-
-// The navigation guard itself (Keep editing, Discard and continue) is owned by
-// "unsaved Report edits guard workspace navigation".
-test("Report-only links retain their exact selection and Back restores it after leaving a dirty recipe", async ({
-  page,
-}) => {
-  await installReportsApi(page, true);
-  await page.goto(`/openview?section=reports&report=${reportId}`);
-  await expect(page.getByRole("button", { name: "Run now" })).toBeVisible();
-  await page.getByRole("button", { name: "Edit report" }).click();
-  await page
-    .getByRole("textbox", { name: "Report name" })
-    .fill("Unsaved operations review");
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await page.getByRole("link", { name: "Search workspace" }).click();
-  await page
-    .getByRole("alertdialog", { name: "Discard unsaved Report changes?" })
-    .getByRole("button", { name: "Discard and continue" })
-    .click();
-  await expect(
-    page.getByRole("searchbox", { name: "Search workspace" }),
-  ).toBeVisible();
-  await page.goBack();
-  await expect(page.getByRole("button", { name: "Run now" })).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`report=${reportId}`));
-});
-
-// The parse of an invalid or run-only link is owned by
-// isolated/openview/url-state.spec.ts; `invalid` keeps the rendered alert.
-for (const failure of ["missing", "wrong-parent", "invalid"] as const) {
-  test(`a ${failure} Report target cannot select a default Report or wrong output`, async ({
-    page,
-  }) => {
-    await installReportsApi(page);
-    await page.route(`**/api/reports/${reportId}/runs/${newRunId}`, (route) =>
-      route.fulfill(
-        failure === "missing"
-          ? { status: 404, json: { detail: "Private target detail" } }
-          : { json: { ...run, id: newRunId, report_id: duplicateReportId } },
-      ),
-    );
-    const query =
-      failure === "invalid"
-        ? "report=invalid"
-        : `report=${reportId}&run=${newRunId}`;
-    await page.goto(`/openview?section=reports&${query}`);
-    await expect(
-      page.getByText(
-        failure === "invalid"
-          ? "This Report link is invalid."
-          : "Selected output could not be loaded. Try again.",
-      ),
-    ).toBeVisible();
-    await expect(
-      page
-        .getByRole("region", { name: "Selected output" })
-        .getByRole("button", { name: /Download CSV/ }),
-    ).toHaveCount(0);
-    await expect(page.getByRole("main")).not.toContainText(
-      "Private target detail",
-    );
-  });
-}
-
-test("a late old Report target cannot replace a newer URL selection", async ({
-  page,
-}) => {
-  await installReportsApi(page, false, report, { readOnlySource: true });
-  const target = gate();
-  await page.route(`**/api/reports/${reportId}`, async (route) => {
-    target.signalStarted();
-    await target.wait;
-    await route.fulfill({ json: report });
-  });
-  await page.goto(`/openview?section=reports&report=${reportId}`);
-  await target.started;
-  await page.getByRole("button", { name: "Invoice review" }).click();
-  await expect(page).toHaveURL(new RegExp(`report=${readOnlyReportId}`));
-  target.release();
-  await expect(page.getByRole("button", { name: "Edit report" })).toHaveCount(
-    0,
-  );
-  await expect(
-    page.getByRole("heading", { name: "Invoice review", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Operations review", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveCount(
-    0,
-  );
-});
-
-test("an unavailable explicit Report clears the selection and supports a current-access retry", async ({
-  page,
-}) => {
-  await installReportsApi(page, true);
-  let refused = true;
-  await page.route(`**/api/reports/${reportId}`, async (route) => {
-    if (refused)
-      return route.fulfill({
-        status: 404,
-        json: { detail: "Private target detail" },
-      });
-    return route.fallback();
-  });
-  await page.goto(`/openview?section=reports&report=${reportId}`);
-  await expect(
-    page.getByText("Selected Report could not be loaded. Try again."),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Run now" })).toHaveCount(0);
-  refused = false;
-  await page.getByRole("button", { name: "Retry selected Report" }).click();
-  await expect(page.getByRole("button", { name: "Run now" })).toBeVisible();
-  await expect(page.getByRole("main")).not.toContainText(
-    "Private target detail",
-  );
-});
-
-test("Reports navigation preserves existing module context without inventing an invalid Report selection", async ({
-  page,
-}) => {
-  await installReportsApi(page);
-  await page.goto(`/openview?section=views&module=${moduleId}`);
-  await page.getByRole("link", { name: "Reports", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Reports", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Select a Report", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("This Report link is invalid.")).toHaveCount(0);
-});
-
-test("a notice keeps dirty Report edits on canceled navigation and closes only after accepted navigation", async ({
-  page,
-}) => {
-  await installReportsApi(page);
-  await page.route("**/api/notifications**", async (route) => {
-    const url = new URL(route.request().url());
-    if (url.pathname === "/api/notifications/unread-count")
-      return route.fulfill({ json: { unread_count: 1 } });
-    const notice = {
-      id: scheduleId,
-      kind: "report-run",
-      subject_type: "report_run",
-      subject_id: runId,
-      report_id: reportId,
-      run_id: runId,
-      status: "unread",
-      scheduled_for: timestamp,
-      created_at: timestamp,
-      read_at: null,
-    };
-    await route.fulfill({
-      json: pageOf([notice], {
-        limit: Number(url.searchParams.get("limit")),
-        total: 1,
-      }),
-    });
-  });
-  await page.route(`**/api/reports/${reportId}/runs/${runId}`, (route) =>
-    route.fulfill({ json: run }),
-  );
-  await page.goto(`/openview?section=reports&report=${reportId}`);
-  await page.getByRole("button", { name: "Edit report" }).click();
-  await page
-    .getByRole("textbox", { name: "Report name" })
-    .fill("Unsaved operations review");
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await page.getByRole("button", { name: "Notifications, 1 unread" }).click();
-  const popup = page.getByRole("dialog", {
-    name: "Notifications",
-    exact: true,
-  });
-  await popup.getByRole("link", { name: "Open report" }).click();
-  const guard = page.getByRole("alertdialog", {
-    name: "Discard unsaved Report changes?",
-  });
-  await guard.getByRole("button", { name: "Keep editing" }).click();
-  await expect(popup).toBeVisible();
-  await expect(
-    page.getByRole("heading", {
-      name: "Unsaved operations review",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(`/openview?section=reports&report=${reportId}`);
-  await popup.getByRole("link", { name: "Open report" }).click();
-  await guard.getByRole("button", { name: "Discard and continue" }).click();
-  await expect(page).toHaveURL(
-    `/openview?section=reports&report=${reportId}&run=${runId}`,
-  );
-  await expect(popup).toHaveCount(0);
+  ]);
+  await expect(reportRow(page)).toBeVisible();
+  await expect(reportRow(page, "Copy of Operations review")).toBeVisible();
   await expect(
     page
-      .getByRole("region", { name: "Selected output" })
-      .getByRole("heading", { name: "Operations review" }),
-  ).toBeVisible();
+      .getByRole("list", { name: "Assets reports" })
+      .getByRole("listitem")
+      .filter({ hasText: "Copy of Operations review" }),
+  ).toHaveAttribute("aria-current", "true");
 });
 
-test("Reports review regression: Back from a pristine saved Report restores unselected Reports without creating a copy", async ({
+test("archiving a report offers Undo, and the archived filter restores it", async ({
   page,
 }) => {
-  const api = await installReportsApi(page);
-  await page.goto("/openview?section=reports");
-  await expect(
-    page.getByText("Select a Report", { exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", {
-      name: "Operations review Field operations",
-      exact: true,
-    })
-    .click();
-  await expect(page).toHaveURL(`/openview?section=reports&report=${reportId}`);
-  await expect(page.getByRole("button", { name: "Run now" })).toBeVisible();
-  await page.goBack();
-  await expect(page).toHaveURL("/openview?section=reports");
-  await expect(page.getByRole("button", { name: "Run now" })).toHaveCount(0);
-  await expect
-    .soft(page.getByText("Select a Report", { exact: true }))
-    .toBeVisible();
-
-  // Exercise a stale recipe only if Back erroneously leaves it actionable.
-  const edit = page.getByRole("button", { name: "Edit report", exact: true });
-  const staleRecipeEditable = await edit.isVisible();
-  if (staleRecipeEditable) {
-    await edit.click();
-    await expect(
-      page.getByRole("textbox", { name: "Report name" }),
-    ).toHaveValue("Operations review");
-    await page
-      .getByRole("textbox", { name: "Report name" })
-      .fill("Operations review adjusted");
-    const created = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/reports" &&
-        response.request().method() === "POST",
-    );
-    await page
-      .getByRole("button", { name: "Create Report", exact: true })
-      .click();
-    await (await created).finished();
-  }
-  const observed = {
-    staleRecipeEditable,
-    reportCreates: api.reportCreates(),
-    reportUpdates: api.reportUpdates(),
-    createdReports: api.createdReports(),
-    finalUrl: page.url(),
-  };
-  console.info("Reports Back regression observation", JSON.stringify(observed));
-  await test.info().attach("reports-back-observation", {
-    body: JSON.stringify(observed, null, 2),
-    contentType: "application/json",
+  const api = await installModuleReportsApi(page, {
+    reports: [
+      wireReport(),
+      wireReport({ id: ids.otherReport, name: "Spare parts" }),
+    ],
   });
-  expect(api.reportCreates()).toBe(0);
-  expect(api.reportUpdates()).toBe(0);
+  await page.goto(modulePage("reports"));
+  await page.getByRole("button", { name: "More report actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive" }).click();
+  await expect(page.getByText("Report archived.")).toBeVisible();
+  await expect(reportRow(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(reportRow(page)).toBeVisible();
+  expect(api.state.reports[0]).toMatchObject({
+    is_deleted: false,
+    revision: 3,
+  });
+
+  await page.getByRole("button", { name: "More report actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive" }).click();
+  await expect(reportRow(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "Show: Active" }).click();
+  await page.getByRole("menuitemradio", { name: "Archived" }).click();
+  await reportRow(page).click();
   await expect(
-    page.getByRole("button", { name: "Edit report", exact: true }),
+    main(page).getByText("Restore this report to make or open its copies."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Make a copy now" }),
   ).toHaveCount(0);
-});
-
-for (const operation of ["template", "create"] as const) {
-  test(`Reports review regression: a held old-account ${operation} result cannot navigate the new account away from Search`, async ({
-    page,
-  }) => {
-    const api = await installReportsApi(page);
-    const accountB = "00000000-0000-4000-8000-000000000901";
-    let account = userId;
-    await page.route("**/api/auth/session", (route) =>
-      route.fulfill({
-        json: {
-          authenticated: true,
-          user_id: account,
-          setup_required: false,
-          default_organization_blocked: null,
-        },
-      }),
-    );
-    await page.route("**/api/auth/me", (route) =>
-      route.fulfill({
-        json: authMeBody({
-          id: account,
-          role: "admin",
-          access: [],
-          default_organization_blocked: null,
-        }),
-      }),
-    );
-    let hold = false;
-    const held = gate();
-    const heldPath =
-      operation === "template" ? `/api/reports/${reportId}` : "/api/reports";
-    const heldMethod = operation === "template" ? "GET" : "POST";
-    await page.route("**/api/reports**", async (route) => {
-      const request = route.request();
-      const url = new URL(request.url());
-      const requestedAccount = account;
-      if (
-        hold &&
-        requestedAccount === userId &&
-        url.pathname === heldPath &&
-        request.method() === heldMethod
-      ) {
-        hold = false;
-        held.signalStarted();
-        await held.wait;
-        return route.fallback();
-      }
-      if (requestedAccount === accountB && request.method() === "GET") {
-        if (url.pathname === "/api/reports")
-          return route.fulfill({
-            json: pageOf([], {
-              limit: Number(url.searchParams.get("limit") ?? 25),
-              offset: Number(url.searchParams.get("offset") ?? 0),
-            }),
-          });
-        if (
-          url.pathname === `/api/reports/${reportId}` ||
-          url.pathname === `/api/reports/${duplicateReportId}`
-        )
-          return route.fulfill({
-            status: 404,
-            json: { detail: "Report not found" },
-          });
-      }
-      return route.fallback();
-    });
-    await page.goto("/openview?section=reports");
-    await page.getByLabel("Start from saved Report").selectOption(reportId);
-    if (operation === "template") hold = true;
-    await page
-      .getByRole("button", { name: "Start from saved Report", exact: true })
-      .click();
-    if (operation === "create") {
-      await expect(
-        page.getByRole("textbox", { name: "Report name" }),
-      ).toHaveValue("Copy of Operations review");
-      hold = true;
-      await page
-        .getByRole("button", { name: "Create Report", exact: true })
-        .click();
-    }
-    await held.started;
-    try {
-      account = accountB;
-      await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-      await expect(
-        page.getByText("No saved Reports", { exact: true }),
-      ).toBeVisible();
-      await page
-        .getByRole("link", { name: "Search workspace", exact: true })
-        .click();
-      const search = page.getByRole("searchbox", {
-        name: "Search workspace",
-        exact: true,
-      });
-      await expect(search).toBeVisible();
-      await expect(page).toHaveURL("/platform");
-      const completed = page.waitForResponse(
-        (response) =>
-          new URL(response.url()).pathname === heldPath &&
-          response.request().method() === heldMethod,
-      );
-      held.release();
-      await (await completed).finished();
-      await page.evaluate(
-        () =>
-          new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-          ),
-      );
-      const observed = {
-        operation,
-        account,
-        urlAfterRelease: page.url(),
-        reportCreates: api.reportCreates(),
-      };
-      console.info(
-        "Reports late-action regression observation",
-        JSON.stringify(observed),
-      );
-      await test.info().attach(`reports-late-${operation}-observation`, {
-        body: JSON.stringify(observed, null, 2),
-        contentType: "application/json",
-      });
-      await expect(page).toHaveURL("/platform");
-      await expect(search).toBeVisible();
-      await expect(
-        page.getByRole("textbox", { name: "Report name" }),
-      ).toHaveCount(0);
-    } finally {
-      held.release();
-    }
-  });
-}
-
-for (const operation of ["new", "template"] as const) {
-  test(`Reports correction preserves an intentional ${operation} draft through same-account verification`, async ({
-    page,
-  }) => {
-    const api = await installReportsApi(page);
-    let holdSession = false;
-    const session = gate();
-    await page.route("**/api/auth/session", async (route) => {
-      if (holdSession) {
-        holdSession = false;
-        session.signalStarted();
-        await session.wait;
-      }
-      return route.fulfill({
-        json: {
-          authenticated: true,
-          user_id: userId,
-          setup_required: false,
-          default_organization_blocked: null,
-        },
-      });
-    });
-    await page.goto("/openview?section=reports");
-    await page.getByRole("button", { name: "Operations review" }).click();
-    await expect(page.getByRole("button", { name: "Run now" })).toBeVisible();
-    if (operation === "new") {
-      await page
-        .getByRole("button", { name: "New Report", exact: true })
-        .click();
-      await page
-        .getByLabel("Data source", { exact: true })
-        .selectOption(moduleId);
-      await page.getByRole("tab", { name: "Columns", exact: true }).click();
-      await page.getByRole("checkbox", { name: "Asset", exact: true }).check();
-      await page.getByRole("tab", { name: "Basics", exact: true }).click();
-    } else {
-      await page.getByLabel("Start from saved Report").selectOption(reportId);
-      await page
-        .getByRole("button", { name: "Start from saved Report", exact: true })
-        .click();
-      await expect(
-        page.getByRole("textbox", { name: "Report name" }),
-      ).toHaveValue("Copy of Operations review");
-    }
-    const editor = page.getByRole("dialog", {
-      name: "New report",
-      exact: true,
-    });
-    const name = `Pause-safe ${operation} Report`;
-    await editor.getByLabel("Report name", { exact: true }).fill(name);
-    await expect(page).toHaveURL("/openview?section=reports");
-    holdSession = true;
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await session.started;
-    try {
-      await expect(
-        page.getByRole("dialog", { name: "Session verification" }),
-      ).toBeHidden();
-    } finally {
-      session.release();
-    }
-    await expect(
-      page.getByRole("dialog", { name: "Session verification" }),
-    ).toBeHidden();
-    await expect(editor).toBeVisible();
-    await expect(editor.getByLabel("Report name", { exact: true })).toHaveValue(
-      name,
-    );
-    await expect(editor.getByLabel("Data source", { exact: true })).toHaveValue(
-      moduleId,
-    );
-    await editor.getByRole("tab", { name: "Columns", exact: true }).click();
-    await expect(
-      editor.getByRole("checkbox", { name: "Asset", exact: true }),
-    ).toBeChecked();
-    expect(api.reportCreates()).toBe(0);
-    await editor
-      .getByRole("button", { name: "Close editor", exact: true })
-      .click();
-    await expect(
-      page.getByRole("heading", { name, exact: true }),
-    ).toBeVisible();
-    await expect(page).toHaveURL("/openview?section=reports");
-  });
-}
-
-test("Reports correction: a held template cannot restore Reports after same-account SPA Back to Search", async ({
-  page,
-}) => {
-  await installReportsApi(page);
-  await page.goto("/openview?section=reports");
+  await page.getByRole("button", { name: "More report actions" }).click();
+  await page.getByRole("menuitem", { name: "Restore" }).click();
+  await expect(page.getByText("Report restored.")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Operations review" }),
+    page.getByRole("button", { name: "Show: Active" }),
   ).toBeVisible();
-  await page
-    .getByRole("link", { name: "Search workspace", exact: true })
-    .click();
-  await expect(
-    page.getByRole("searchbox", { name: "Search workspace", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("link", { name: "Reports", exact: true })
-    .click();
-  await expect(page).toHaveURL("/openview?section=reports");
-  const held = gate();
-  await page.route(`**/api/reports/${reportId}`, async (route) => {
-    held.signalStarted();
-    await held.wait;
-    return route.fallback();
-  });
-  await page.getByLabel("Start from saved Report").selectOption(reportId);
-  await page
-    .getByRole("button", { name: "Start from saved Report", exact: true })
-    .click();
-  await held.started;
-  try {
-    await page.goBack();
-    await expect(page).toHaveURL("/platform");
-    const search = page.getByRole("searchbox", {
-      name: "Search workspace",
-      exact: true,
-    });
-    await expect(search).toBeVisible();
-    const completed = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === `/api/reports/${reportId}`,
-    );
-    held.release();
-    await (await completed).finished();
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        ),
-    );
-    await expect(page).toHaveURL("/platform");
-    await expect(search).toBeVisible();
-  } finally {
-    held.release();
-  }
+  await expect(reportRow(page)).toBeVisible();
 });
 
 async function installArchivedReportPurge(
   page: Page,
-  role: "admin" | "member" = "admin",
+  role: "admin" | "member",
   failure = false,
 ) {
-  await installReportsApi(
-    page,
-    false,
-    { ...report, is_deleted: true },
-    { role },
-  );
+  const api = await installModuleReportsApi(page, {
+    role,
+    reports: [wireReport({ is_deleted: true })],
+  });
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       json: {
@@ -1956,32 +854,30 @@ async function installArchivedReportPurge(
   );
   const impact = {
     target_type: "report",
-    target_id: reportId,
+    target_id: ids.report,
     operation: "purge",
-    actor_id: userId,
+    actor_id: ids.user,
     rows: [],
     external_impacts: [],
     key_strips: [],
     blockers: [],
     impact_digest: "a".repeat(64),
   };
-  let purges = 0;
-  let removed = false;
-  await page.route(`**/api/reports/${reportId}/purge**`, (route) => {
+  await page.route(`**/api/reports/${ids.report}/purge**`, (route) => {
     if (route.request().url().endsWith("/preview"))
       return route.fulfill({
         json: {
           impact,
           token: "owned-report-preview",
           expires_at: "2026-09-26T00:00:00Z",
-          confirmation_name: report.name,
+          confirmation_name: "Operations review",
           last_successful_backup_at: "2026-09-24T00:00:00Z",
         },
       });
-    purges += 1;
+    api.state.purges += 1;
     expect(route.request().postDataJSON()).toEqual({
       token: "owned-report-preview",
-      confirmation_name: report.name,
+      confirmation_name: "Operations review",
       password: "synthetic-report-password",
     });
     if (failure)
@@ -1994,204 +890,299 @@ async function installArchivedReportPurge(
           },
         },
       });
-    removed = true;
+    api.state.reports = [];
     return route.fulfill({ json: { impact, operation_id: null } });
   });
-  await page.route(`**/api/reports/${reportId}`, (route) =>
-    removed
-      ? route.fulfill({ status: 404, json: { detail: "Report not found" } })
-      : route.fallback(),
-  );
-  await page.route("**/api/reports?**", (route) =>
-    removed
-      ? route.fulfill({ json: pageOf([], { limit: 25 }) })
-      : route.fallback(),
-  );
-  return {
-    get purges() {
-      return purges;
-    },
-  };
+  return api;
 }
 
 for (const failure of [false, true]) {
-  test(`archived Report purge ${failure ? "keeps its target and offers a fresh review for an unavailable challenge" : "confirms exact name and clears only its deleted selection"}`, async ({
+  test(`Delete forever ${failure ? "keeps the archived report and offers a fresh review for an unavailable challenge" : "confirms the exact name and leaves the module's Reports view"}`, async ({
     page,
   }) => {
     const api = await installArchivedReportPurge(page, "admin", failure);
-    await page.goto(`/openview?section=reports&report=${reportId}`);
-    await page.getByRole("button", { name: "Report options" }).click();
+    await page.goto(modulePage("reports", ids.report));
+    await page.getByRole("button", { name: "More report actions" }).click();
     await page
-      .getByRole("menuitem", { name: "Permanently delete Report", exact: true })
+      .getByRole("menuitem", { name: "Delete forever…", exact: true })
       .click();
     const review = page.getByRole("dialog", {
-      name: "Permanently delete Report?",
+      name: "Delete report forever?",
     });
     await expect(review.getByText(/Last successful backup:/)).toBeVisible();
-    await review
-      .getByLabel("Type the Report name")
-      .fill(report.name.toLowerCase());
+    await review.getByLabel("Type the report name").fill("operations review");
     await review
       .getByLabel("Administrator password")
       .fill("synthetic-report-password");
-    await expect(
-      review.getByRole("button", {
-        name: "Confirm permanent deletion",
-        exact: true,
-      }),
-    ).toBeDisabled();
-    expect(api.purges).toBe(0);
-    await review.getByLabel("Type the Report name").fill(report.name);
-    await review
-      .getByRole("button", { name: "Confirm permanent deletion", exact: true })
-      .click();
+    const confirm = review.getByRole("button", { name: "Delete forever" });
+    await expect(confirm).toBeDisabled();
+    expect(api.state.purges).toBe(0);
+    await review.getByLabel("Type the report name").fill("Operations review");
+    await confirm.click();
     if (failure) {
       await expect(
         review.getByText("The review is unavailable. Request a new review."),
       ).toBeVisible();
       await expect(review.getByLabel("Administrator password")).toHaveCount(0);
-      await review
-        .getByRole("button", { name: "Review again", exact: true })
-        .click();
+      await review.getByRole("button", { name: "Review again" }).click();
       await expect(review.getByLabel("Administrator password")).toHaveValue("");
-      await review.getByRole("button", { name: "Cancel", exact: true }).click();
-      await page.getByRole("button", { name: "Report options" }).click();
+      await review.getByRole("button", { name: "Cancel" }).click();
+      await page.getByRole("button", { name: "More report actions" }).click();
       await expect(
-        page.getByRole("menuitem", { name: "Restore Report", exact: true }),
+        page.getByRole("menuitem", { name: "Restore", exact: true }),
       ).toBeVisible();
     } else {
       await expect(review).toBeHidden();
-      await expect(page).toHaveURL(/section=reports$/);
-      await expect(
-        page.getByText("Report permanently deleted.", { exact: true }),
-      ).toBeVisible();
+      await expect(page).toHaveURL(modulePage("reports"));
+      await expect(page.getByText("Report deleted forever.")).toBeVisible();
     }
-    expect(api.purges).toBe(1);
+    expect(api.state.purges).toBe(1);
     await expect(page.getByText("private report internals")).toHaveCount(0);
   });
 }
 
-test("member may restore an archived Report but cannot permanently delete it", async ({
+test("a manager who is not an administrator may restore an archived report but not delete it forever", async ({
   page,
 }) => {
   const api = await installArchivedReportPurge(page, "member");
-  await page.goto(`/openview?section=reports&report=${reportId}`);
-  await page.getByRole("button", { name: "Report options" }).click();
+  await page.goto(modulePage("reports", ids.report));
+  await page.getByRole("button", { name: "More report actions" }).click();
   await expect(
-    page.getByRole("menuitem", { name: "Restore Report", exact: true }),
+    page.getByRole("menuitem", { name: "Restore", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("menuitem", {
-      name: "Permanently delete Report",
-      exact: true,
-    }),
+    page.getByRole("menuitem", { name: "Delete forever…" }),
   ).toHaveCount(0);
-  expect(api.purges).toBe(0);
+  expect(api.state.purges).toBe(0);
 });
 
-test.describe("Report last-run summary", () => {
-  test.use({ timezoneId: "America/Los_Angeles" });
-  for (const { state, theme } of [
-    { state: "none", theme: null },
-    { state: "failed", theme: "light" },
-    { state: "failed", theme: "dark" },
-    { state: "running", theme: null },
-  ] as const) {
-    test(`${state} last run is server-authored, regional and preserves schedule policy${theme === "dark" ? " (dark)" : ""}`, async ({
-      page,
-    }) => {
-      if (theme) {
-        await page.setViewportSize({ width: 1440, height: 900 });
-        await page.emulateMedia({
-          colorScheme: theme,
-          reducedMotion: "reduce",
-        });
-        await page.route("**/api/users/*/preferences", (route) =>
-          route.fulfill({
+test("a copy that cannot be read and a blocked print window each say what went wrong", async ({
+  page,
+}) => {
+  const api = await installModuleReportsApi(page);
+  let failRead = true;
+  await page.route(
+    `**/api/reports/${ids.report}/runs/${ids.run}/csv`,
+    (route) =>
+      failRead
+        ? route.fulfill({
+            status: 500,
             json: {
-              user_id: userId,
-              theme,
-              appearance: { motion: "reduce", keyboard_shortcuts: true },
+              detail: "Your browser blocked private report database detail",
             },
-          }),
-        );
-      }
-      const reader = state === "failed";
-      const api = await installReportsApi(page, false, report, {
-        savedSchedule: true,
-        level: reader ? "read" : "manage",
-        lastRun:
-          state === "none"
-            ? null
-            : {
-                state,
-                finished_at: state === "failed" ? timestamp : null,
-                failure_label: state === "failed" ? "Source unavailable" : null,
-              },
-      });
-      await page.goto("/openview?section=reports");
-      await page
-        .getByRole("button", {
-          name: /^Operations review(?: Field operations)?$/,
-        })
-        .click();
-      await page.getByRole("tab", { name: "Schedule", exact: true }).click();
-      if (state === "none")
-        await expect(
-          page.getByText("Last run: No runs yet", { exact: true }),
-        ).toBeVisible();
-      else {
-        const summary = page.getByRole("status", {
-          name: "Last scheduled run",
-          exact: true,
-        });
-        await expect(summary).toContainText(
-          state === "failed" ? "Failed" : "Running",
-        );
-        if (state === "failed") {
-          await expect(summary).toContainText(/Sep 24, 2026.*8:00\sAM/);
-          await expect(summary).toContainText("Source unavailable");
-          await expect(
-            page.getByRole("button", { name: "Save schedule", exact: true }),
-          ).toHaveCount(0);
-        } else await expect(summary).toContainText("Finish time not recorded");
-      }
-      if (!reader) {
-        await page.getByLabel("Local time").fill("16:25");
-        await page
-          .getByRole("tab", { name: "Saved outputs", exact: true })
-          .click();
-        await page.getByRole("tab", { name: "Schedule", exact: true }).click();
-        await expect(page.getByLabel("Local time")).toHaveValue("16:25");
-      }
-      expect(api.counts().scheduleWrites).toBe(0);
-      if (state === "failed") {
-        const originalViewport = page.viewportSize();
-        const originalScrollY = await page.evaluate(() => window.scrollY);
-        await page.evaluate(() => window.scrollTo(0, 0));
-        for (const viewport of [
-          { width: 1440, height: 900 },
-          { width: 390, height: 844 },
-        ]) {
-          await page.setViewportSize(viewport);
-          await hideDevOverlay(page);
-          await page.evaluate(async () => {
-            await document.fonts.ready;
-            await new Promise<void>((resolve) =>
-              requestAnimationFrame(() =>
-                requestAnimationFrame(() => resolve()),
-              ),
-            );
-          });
-          expect(
-            await page.evaluate(
-              () => document.documentElement.scrollWidth <= window.innerWidth,
-            ),
-          ).toBe(true);
-        }
-        if (originalViewport) await page.setViewportSize(originalViewport);
-        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
-      }
+          })
+        : route.fallback(),
+  );
+  await page.goto(modulePage("reports"));
+  const failure = copy(page).getByRole("alert");
+  await expect(failure).toContainText(
+    "The copy could not be opened. Try again.",
+  );
+  await expect(failure).toHaveAttribute("data-variant", "destructive");
+  await expect(page.getByText(/private report database detail/)).toHaveCount(0);
+
+  failRead = false;
+  await failure.getByRole("button", { name: "Retry" }).click();
+  await expect(
+    copy(page).getByRole("table", { name: /^Copy of / }),
+  ).toContainText("Forklift");
+  const reads = api.state.csvReads;
+  await page.evaluate(() => {
+    window.open = () => null;
+  });
+  await copy(page).getByRole("button", { name: "Print" }).click();
+  await expect(
+    copy(page).getByRole("alert").filter({
+      hasText:
+        "Your browser blocked the print window. Allow pop-ups and try again.",
+    }),
+  ).toBeVisible();
+  expect(api.state.csvReads).toBe(reads);
+
+  // Print lays the copy out as a table, not raw CSV.
+  await page.evaluate(() => {
+    const printed = document.implementation.createHTMLDocument("");
+    window.open = () =>
+      ({
+        document: printed,
+        opener: null,
+        focus: () => undefined,
+        close: () => undefined,
+        print: () => {
+          (window as Window & { __printed?: string }).__printed =
+            printed.body.innerHTML;
+        },
+      }) as unknown as Window;
+  });
+  await copy(page).getByRole("button", { name: "Print" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as Window & { __printed?: string }).__printed ?? "",
+      ),
+    )
+    .toMatch(
+      /<table>[\s\S]*<th[^>]*>Asset<\/th>[\s\S]*<td[^>]*>Forklift<\/td>/,
+    );
+  expect(
+    await page.evaluate(
+      () => (window as Window & { __printed?: string }).__printed,
+    ),
+  ).not.toContain("<pre");
+});
+
+test("old report links open the report and its copy on the module page, or say the report is not available", async ({
+  page,
+}) => {
+  const runs = Array.from({ length: 30 }, (_, index) =>
+    wireRun({
+      id: `00000000-0000-4000-8000-${String(700 + index).padStart(12, "0")}`,
+      created_at: `2026-09-${String(30 - index).padStart(2, "0")}T00:00:00Z`,
+    }),
+  );
+  const api = await installModuleReportsApi(page, {
+    otherModule: true,
+    runs: { [ids.report]: runs, [ids.otherReport]: [] },
+    reports: [
+      wireReport(),
+      wireReport({
+        id: ids.otherReport,
+        module_id: ids.otherModule,
+        name: "Invoice review",
+      }),
+    ],
+  });
+  // A notification link names a copy past the latest page (DC8).
+  await page.goto(
+    `/openview?section=reports&report=${ids.report}&run=${runs[29]!.id}`,
+  );
+  await expect(page).toHaveURL(modulePage("reports", ids.report, runs[29]!.id));
+  await expect(copy(page)).toContainText("Copy of Tue, Sep 1 at 8:00 AM");
+  await expect(
+    page
+      .getByRole("list", { name: "Assets reports" })
+      .getByRole("listitem")
+      .filter({ hasText: "Operations review" }),
+  ).toHaveAttribute("aria-current", "true");
+
+  // A report of another module opens on that module's page.
+  await page.goto(`/openview?section=reports&report=${ids.otherReport}`);
+  await expect(page).toHaveURL(
+    new RegExp(
+      `module=${ids.otherModule}&tab=reports&report=${ids.otherReport}$`,
+    ),
+  );
+  await expect(
+    main(page).getByRole("heading", { level: 2, name: "Invoice review" }),
+  ).toBeVisible();
+
+  // A gone report lands on the first readable module with one line.
+  await page.goto(`/openview?section=reports&report=${ids.goneReport}`);
+  await expect(page).toHaveURL(modulePage("reports", ids.goneReport));
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "This report is not available." }),
+  ).toBeVisible();
+  expect(
+    api.state.reportReads.filter((read) => read === ids.goneReport),
+  ).not.toHaveLength(0);
+
+  // The old Reports page address opens the first module's Reports view, and
+  // the sidebar and breadcrumb follow the module it names.
+  await page.goto("/openview?section=reports");
+  await expect(page).toHaveURL(modulePage("reports"));
+  await expect(reportRow(page)).toBeVisible();
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await expect(
+    nav
+      .getByRole("list", { name: "Field operations pages" })
+      .getByRole("link", { name: "Assets", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page
+      .getByRole("navigation", { name: "breadcrumb" })
+      .locator('[aria-current="page"]'),
+  ).toHaveText("Assets");
+
+  // A module the person cannot read gives way to the first readable one,
+  // with the Reports view, report and copy kept (DC26).
+  await page.goto(
+    `/openview?section=views&module=${ids.goneReport}&tab=reports&report=${ids.report}`,
+  );
+  await expect(page).toHaveURL(modulePage("reports", ids.report));
+  await expect(
+    nav
+      .getByRole("list", { name: "Field operations pages" })
+      .getByRole("link", { name: "Assets", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+});
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the list and the report are separate screens, and a copy opens full screen", async ({
+    page,
+  }) => {
+    await installModuleReportsApi(page, {
+      csv: "Asset,Status\r\nForklift — hydraulic pump and spare seal kit,In service\r\n",
     });
-  }
+    await page.goto(modulePage("reports"));
+    // Records and Reports sit under the title.
+    const title = page.getByRole("heading", { level: 1, name: "Assets" });
+    const pages = reportsView(page);
+    const titleBox = await title.boundingBox();
+    const pagesBox = await pages.boundingBox();
+    expect(pagesBox!.y).toBeGreaterThan(titleBox!.y + titleBox!.height);
+    await expect(steps(page)).toBeHidden();
+
+    await reportRow(page).click();
+    await expect(page).toHaveURL(modulePage("reports", ids.report));
+    await expect(reportRow(page)).toBeHidden();
+    await expect(steps(page)).toBeVisible();
+    await page.getByRole("button", { name: "Open copy" }).click();
+    const full = page.getByRole("dialog", { name: "Operations review" });
+    // On a phone each copied row reads as label and value lines, so the copy
+    // never scrolls sideways (EXIT-C5).
+    const rows = full.getByRole("list", { name: /^Copy of / });
+    await expect(rows.getByRole("listitem")).toHaveText([
+      /^Asset\s*Forklift — hydraulic pump and spare seal kit\s*Status\s*In service$/,
+    ]);
+    await expect(full.getByRole("table")).toHaveCount(0);
+    expect(
+      await full.evaluate((sheet) =>
+        [sheet, ...sheet.querySelectorAll("*")].every(
+          (element) => element.scrollWidth <= element.clientWidth + 1,
+        ),
+      ),
+    ).toBe(true);
+    // The sheet slides in, then covers the whole screen.
+    await expect
+      .poll(async () => {
+        const box = await full.boundingBox();
+        return box && [box.x, box.y, box.width, box.height];
+      })
+      .toEqual([0, 0, 390, 844]);
+    await full.getByRole("button", { name: "Close copy" }).click();
+
+    // EXIT-C5: every target is at least 44px and nothing scrolls sideways.
+    const small = await page.evaluate(
+      () =>
+        [...document.querySelectorAll("#main-content :is(a, button)")]
+          .map((element) => element.getBoundingClientRect())
+          .filter(
+            (rect) => rect.width > 0 && (rect.height < 44 || rect.width < 44),
+          ).length,
+    );
+    expect(small).toBe(0);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+
+    await page.getByRole("button", { name: "Back to reports" }).click();
+    await expect(page).toHaveURL(modulePage("reports"));
+    await expect(reportRow(page)).toBeVisible();
+  });
 });

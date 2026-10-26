@@ -13,7 +13,14 @@ import {
   ShieldCheck,
   Workflow,
 } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   accessNavigationFor,
@@ -53,6 +60,14 @@ import {
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
+import { DepartmentMark } from "@/components/sandbox/department-mark";
+import { useDepartmentNavigation } from "@/components/department-navigation";
+import {
+  currentDashboardDepartmentId,
+  currentModuleId,
+  dashboardHref,
+  moduleHref,
+} from "@/components/department-navigation-model";
 
 const groupIcons = {
   sandbox: Workflow,
@@ -171,6 +186,12 @@ export function AppNavigation({
     jobsAdmitted,
     installationOwnerFor(identity.data),
     (auditDepartmentsFor(identity.data)?.length ?? 0) > 0,
+  );
+  const departments = useDepartmentNavigation(pathname, searchParams);
+  const moduleId = currentModuleId(pathname, searchParams);
+  const dashboardDepartmentId = currentDashboardDepartmentId(
+    pathname,
+    searchParams,
   );
   const search = searchParams.toString();
   const activeGroupId = groups.find((group) =>
@@ -303,6 +324,121 @@ export function AppNavigation({
     if (!accepted) event.preventDefault();
   }
 
+  function renderGroup(group: {
+    key: string;
+    label: string;
+    description?: string;
+    icon: ReactNode;
+    active: boolean;
+    listLabel?: string;
+    items: { id: string; label: string; href: string; active: boolean }[];
+  }) {
+    const open = !collapsed && (expanded[group.key] ?? group.active);
+    const showDescription = Boolean(
+      surface === "drawer" && group.description && !open,
+    );
+    const descriptionId = `${descriptionIdPrefix}-${group.key}-description`;
+    return (
+      <Collapsible
+        key={group.key}
+        render={<SidebarMenuItem />}
+        open={open}
+        onOpenChange={(nextOpen) =>
+          setExpanded((current) => ({ ...current, [group.key]: nextOpen }))
+        }
+      >
+        <CollapsibleTrigger
+          render={
+            <SidebarMenuButton
+              isActive={group.active}
+              aria-label={group.label}
+              aria-describedby={showDescription ? descriptionId : undefined}
+              // The sidebar row is one line; its description is the
+              // tooltip and the accessible description.
+              aria-description={
+                surface === "sidebar"
+                  ? group.description || undefined
+                  : undefined
+              }
+              title={
+                surface === "drawer"
+                  ? undefined
+                  : collapsed
+                    ? group.description
+                      ? `${group.label} — ${group.description}`
+                      : group.label
+                    : group.description || undefined
+              }
+              className={cn(
+                navigationRowSize(surface),
+                navigationIconStroke,
+                showDescription && "h-auto py-1.5",
+              )}
+            />
+          }
+          onClick={() => {
+            if (collapsed) onExpandSidebar?.();
+          }}
+        >
+          {group.icon}
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate">{group.label}</span>
+            {showDescription ? (
+              <span
+                id={descriptionId}
+                className="text-sidebar-muted truncate text-xs font-normal"
+              >
+                {group.description}
+              </span>
+            ) : null}
+          </span>
+          <ChevronRight
+            aria-hidden="true"
+            className={cn(
+              "ml-auto size-4 transition-transform duration-(--motion-base) ease-(--ease-out) motion-reduce:transition-none",
+              open && "rotate-90",
+            )}
+          />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--motion-base) ease-(--ease-out) data-ending-style:h-0 data-starting-style:h-0 motion-reduce:transition-none">
+          <SidebarMenuSub
+            className="mr-0 gap-0.5 pr-0"
+            aria-label={group.listLabel}
+          >
+            {group.items.map((item) => (
+              <SidebarMenuSubItem key={item.id}>
+                <SidebarMenuSubButton
+                  render={
+                    <Link
+                      href={item.href as Route}
+                      prefetch={false}
+                      onNavigate={(event) => navigate(item.href, event)}
+                      onPointerEnter={() => schedulePrefetch(item.href)}
+                      onPointerLeave={() => cancelPrefetch(item.href)}
+                      onFocus={() => schedulePrefetch(item.href)}
+                      onBlur={() => cancelPrefetch(item.href)}
+                    />
+                  }
+                  isActive={item.active}
+                  aria-current={item.active ? "page" : undefined}
+                  // The active fill is the nav's indicator, so it can
+                  // glide from item to item.
+                  className={cn(
+                    surface === "drawer" ? "min-h-11" : "min-h-11 xl:min-h-8",
+                    navigationActiveInk,
+                    "data-active:bg-transparent",
+                  )}
+                >
+                  <span className="truncate">{item.label}</span>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            ))}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </Collapsible>
+    );
+  }
+
   return (
     <SidebarGroup className="p-0">
       <nav
@@ -316,132 +452,105 @@ export function AppNavigation({
           data-slot="sidebar-active-indicator"
           className="bg-sidebar-accent pointer-events-none absolute top-0 left-0 -z-10 rounded-md opacity-0 data-ready:transition-[transform,width,height,opacity] data-ready:duration-(--motion-base) data-ready:ease-(--ease-out) motion-reduce:transition-none"
         />
+        {departments.length > 0 && collapsed ? (
+          // One rail button for every department (DA6); it opens the sidebar.
+          <SidebarMenu className="gap-0.5">
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                aria-label="Departments"
+                title="Departments"
+                isActive={moduleId !== null || dashboardDepartmentId !== null}
+                className={cn(navigationRowSize(surface), navigationIconStroke)}
+                onClick={() => {
+                  onExpandSidebar?.();
+                  // This button leaves with the rail; focus moves to the
+                  // current department, or the first one.
+                  requestAnimationFrame(() => {
+                    const list = navRef.current?.querySelector(
+                      `[aria-labelledby="${descriptionIdPrefix}-departments"]`,
+                    );
+                    list
+                      ?.querySelector<HTMLElement>(
+                        'button[data-active="true"], button',
+                      )
+                      ?.focus();
+                  });
+                }}
+              >
+                <BarChart3 aria-hidden="true" />
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        ) : departments.length > 0 ? (
+          <>
+            <div
+              id={`${descriptionIdPrefix}-departments`}
+              className="text-sidebar-muted px-2 pb-1 text-xs font-medium"
+            >
+              Departments
+            </div>
+            <SidebarMenu
+              className="gap-0.5"
+              aria-labelledby={`${descriptionIdPrefix}-departments`}
+            >
+              {departments.map((department) =>
+                renderGroup({
+                  key: `department:${department.id}`,
+                  label: department.name,
+                  icon: (
+                    <span className="grid size-4 place-items-center">
+                      <DepartmentMark departmentIndex={department.index} />
+                    </span>
+                  ),
+                  active:
+                    department.id === dashboardDepartmentId ||
+                    department.modules.some((module) => module.id === moduleId),
+                  listLabel: `${department.name} pages`,
+                  // The department's home dashboard comes first (BD1).
+                  items: [
+                    {
+                      id: "dashboard",
+                      label: "Dashboard",
+                      href: dashboardHref(department.id),
+                      active: department.id === dashboardDepartmentId,
+                    },
+                    ...department.modules.map((module) => ({
+                      id: module.id,
+                      label: module.name,
+                      href: moduleHref(module.id),
+                      active: module.id === moduleId,
+                    })),
+                  ],
+                }),
+              )}
+            </SidebarMenu>
+            <div className="text-sidebar-muted px-2 pt-3 pb-1 text-xs font-medium">
+              Tools
+            </div>
+          </>
+        ) : null}
         <SidebarMenu className="gap-0.5">
           {groups.map((group) => {
             const Icon = groupIcons[group.id as keyof typeof groupIcons];
-            const active = isWorkspaceNavigationGroupActive(group, pathname);
-            const open = !collapsed && (expanded[group.id] ?? active);
-            const showDescription = Boolean(
-              surface === "drawer" && group.description && !open,
-            );
-            const descriptionId = `${descriptionIdPrefix}-${group.id}-description`;
-
-            return (
-              <Collapsible
-                key={group.id}
-                render={<SidebarMenuItem />}
-                open={open}
-                onOpenChange={(nextOpen) =>
-                  setExpanded((current) => ({
-                    ...current,
-                    [group.id]: nextOpen,
-                  }))
-                }
-              >
-                <CollapsibleTrigger
-                  render={
-                    <SidebarMenuButton
-                      isActive={active}
-                      aria-label={group.label}
-                      aria-describedby={
-                        showDescription ? descriptionId : undefined
-                      }
-                      // The sidebar row is one line; its description is the
-                      // tooltip and the accessible description.
-                      aria-description={
-                        surface === "sidebar"
-                          ? group.description || undefined
-                          : undefined
-                      }
-                      title={
-                        surface === "drawer"
-                          ? undefined
-                          : collapsed
-                            ? group.description
-                              ? `${group.label} — ${group.description}`
-                              : group.label
-                            : group.description || undefined
-                      }
-                      className={cn(
-                        navigationRowSize(surface),
-                        navigationIconStroke,
-                        showDescription && "h-auto py-1.5",
-                      )}
-                    />
-                  }
-                  onClick={() => {
-                    if (collapsed) onExpandSidebar?.();
-                  }}
-                >
-                  <Icon aria-hidden="true" />
-                  <span className="flex min-w-0 flex-col">
-                    <span className="truncate">{group.label}</span>
-                    {showDescription ? (
-                      <span
-                        id={descriptionId}
-                        className="text-sidebar-muted truncate text-xs font-normal"
-                      >
-                        {group.description}
-                      </span>
-                    ) : null}
-                  </span>
-                  <ChevronRight
-                    aria-hidden="true"
-                    className={cn(
-                      "ml-auto size-4 transition-transform duration-(--motion-base) ease-(--ease-out) motion-reduce:transition-none",
-                      open && "rotate-90",
-                    )}
-                  />
-                </CollapsibleTrigger>
-                <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--motion-base) ease-(--ease-out) data-ending-style:h-0 data-starting-style:h-0 motion-reduce:transition-none">
-                  <SidebarMenuSub className="mr-0 gap-0.5 pr-0">
-                    {group.items.map((item) => {
-                      const itemActive = isWorkspaceNavigationItemActive(
-                        group.id,
-                        item.id,
-                        pathname,
-                        searchParams,
-                        hash,
-                      );
-                      return (
-                        <SidebarMenuSubItem key={item.id}>
-                          <SidebarMenuSubButton
-                            render={
-                              <Link
-                                href={item.href as Route}
-                                prefetch={false}
-                                onNavigate={(event) =>
-                                  navigate(item.href, event)
-                                }
-                                onPointerEnter={() =>
-                                  schedulePrefetch(item.href)
-                                }
-                                onPointerLeave={() => cancelPrefetch(item.href)}
-                                onFocus={() => schedulePrefetch(item.href)}
-                                onBlur={() => cancelPrefetch(item.href)}
-                              />
-                            }
-                            isActive={itemActive}
-                            aria-current={itemActive ? "page" : undefined}
-                            // The active fill is the nav's indicator, so it
-                            // can glide from item to item.
-                            className={cn(
-                              surface === "drawer"
-                                ? "min-h-11"
-                                : "min-h-11 xl:min-h-8",
-                              navigationActiveInk,
-                              "data-active:bg-transparent",
-                            )}
-                          >
-                            <span>{item.label}</span>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                      );
-                    })}
-                  </SidebarMenuSub>
-                </CollapsibleContent>
-              </Collapsible>
-            );
+            return renderGroup({
+              key: group.id,
+              label: group.label,
+              description: group.description,
+              icon: <Icon aria-hidden="true" />,
+              active: isWorkspaceNavigationGroupActive(group, pathname),
+              items: group.items.map((item) => ({
+                id: item.id,
+                label: item.label,
+                href: item.href,
+                active: isWorkspaceNavigationItemActive(
+                  group.id,
+                  item.id,
+                  pathname,
+                  searchParams,
+                  hash,
+                ),
+              })),
+            });
           })}
         </SidebarMenu>
       </nav>

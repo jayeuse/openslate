@@ -14,6 +14,11 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { pageOf, wirePagination } from "../helpers/pagination";
+import {
+  installModuleReportsApi,
+  modulePage,
+  reportIds,
+} from "./helpers/openview-reports-api";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const notificationId = "00000000-0000-4000-8000-000000000102";
@@ -112,6 +117,41 @@ test("connected Report notifications show reference status and refetch after mar
   // The command writes nothing to the cache (notification-items.tsx), so the
   // Read label can come only from the refetched list.
   await expect(connected.getByText("Read", { exact: true })).toBeVisible();
+});
+
+test("Open report follows a report notification to its module page with the copy open", async ({
+  page,
+}) => {
+  await fakeEventSource(page);
+  await installModuleReportsApi(page, { role: "admin" });
+  await notificationRoute(page, (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            ...notification("unread"),
+            subject_id: reportIds.run,
+            report_id: reportIds.report,
+            run_id: reportIds.run,
+          },
+        ],
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
+      },
+    }),
+  );
+  await page.goto("/platform?section=notifications");
+  await page
+    .getByRole("region", { name: "Notifications" })
+    .getByRole("link", { name: "Open report" })
+    .click();
+  // The Reports page is gone: the link reads the report and opens its
+  // module page's Reports view with the copy (DC8).
+  await expect(page).toHaveURL(
+    modulePage("reports", reportIds.report, reportIds.run),
+  );
+  await expect(
+    page.getByRole("region", { name: /^Copy of / }).getByRole("table"),
+  ).toContainText("Forklift");
 });
 
 test("connected inbox shows Board publication and reminder references without content", async ({

@@ -28,9 +28,15 @@ export type OpenViewUrlState = {
   module?: string;
   view?: string;
   dashboard?: string;
+  /** The department whose dashboard the dashboards section shows (BD1). */
+  department?: string;
   record?: string;
   report?: string;
   run?: string;
+  /** The module page's view: Records (the default) or Reports (DC1). */
+  tab?: "records" | "reports";
+  /** The report copy open in the module page's Reports view (DC5). */
+  copy?: string;
   /** Temporary View changes (`domain/temporary-view.ts`); never saved. */
   changes?: string;
   invalid?: boolean;
@@ -47,9 +53,12 @@ export function parseOpenViewUrl(
   const recordValue = url.searchParams.get("record");
   const viewValue = url.searchParams.get("view");
   const dashboardValue = url.searchParams.get("dashboard");
+  const departmentValue = url.searchParams.get("department");
   const reportValue = url.searchParams.get("report");
   const runValue = url.searchParams.get("run");
   const changesValue = url.searchParams.get("changes");
+  const tabValue = url.searchParams.get("tab");
+  const copyValue = url.searchParams.get("copy");
   const legacyRecordsSection = sectionValue === "records";
   const section = legacyRecordsSection
     ? "views"
@@ -78,6 +87,16 @@ export function parseOpenViewUrl(
     ((reportValue !== null && !report.success) ||
       (runValue !== null && (!run.success || !report.success)));
   if (invalidReportSelection) invalid = true;
+  // The module page names its Reports view, report and copy (DC1).
+  const reportsTab = section === "views" && tabValue === "reports";
+  const copy = z.string().uuid().safeParse(copyValue);
+  if (
+    section === "views" &&
+    ((tabValue !== null && !reportsTab) ||
+      (reportValue !== null && !report.success) ||
+      (copyValue !== null && (!copy.success || !report.success)))
+  )
+    invalid = true;
   const record = safeIdentifier(recordValue);
   const result: ReturnType<typeof parseOpenViewUrl> = {
     section: record ? "views" : section,
@@ -95,10 +114,18 @@ export function parseOpenViewUrl(
   if (view) result.view = view;
   if (dashboard) result.dashboard = dashboard;
   if (invalidReportSelection) result.invalidReportSelection = true;
+  const department = z.string().uuid().safeParse(departmentValue);
+  if (result.section === "dashboards" && department.success)
+    result.department = department.data;
   if (result.section === "reports" && report.success)
     result.report = report.data;
   if (result.section === "reports" && report.success && run.success)
     result.run = run.data;
+  if (reportsTab && result.section === "views") {
+    result.tab = "reports";
+    if (report.success) result.report = report.data;
+    if (report.success && copy.success) result.copy = copy.data;
+  }
   if (changesValue && result.section === "views") result.changes = changesValue;
   return result;
 }
@@ -110,6 +137,11 @@ export function serializeOpenViewUrl(state: OpenViewUrlState): string {
   if (
     state.run &&
     (!state.report || !z.string().uuid().safeParse(state.run).success)
+  )
+    return "/openview";
+  if (
+    state.copy &&
+    (!state.report || !z.string().uuid().safeParse(state.copy).success)
   )
     return "/openview";
   if (state.record && !safeIdentifier(state.record)) return "/openview";
@@ -126,13 +158,24 @@ export function serializeOpenViewUrl(state: OpenViewUrlState): string {
       z.string().uuid().safeParse(state.module).success;
     if (isLegacyModule || isViewsUuid) parameters.set("module", state.module);
   }
+  const reportsTab = state.section === "views" && state.tab === "reports";
+  if (reportsTab) parameters.set("tab", "reports");
   if (state.view) parameters.set("view", state.view);
+  if (
+    state.section === "dashboards" &&
+    state.department &&
+    z.string().uuid().safeParse(state.department).success
+  )
+    parameters.set("department", state.department);
   if (state.dashboard) parameters.set("dashboard", state.dashboard);
   if (state.record) parameters.set("record", state.record);
   if (state.section === "reports" && state.report)
     parameters.set("report", state.report);
   if (state.section === "reports" && state.run)
     parameters.set("run", state.run);
+  if (reportsTab && state.report) parameters.set("report", state.report);
+  if (reportsTab && state.report && state.copy)
+    parameters.set("copy", state.copy);
   if (state.changes && state.section === "views")
     parameters.set("changes", state.changes);
   const query = parameters.toString();

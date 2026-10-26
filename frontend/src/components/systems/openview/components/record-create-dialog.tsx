@@ -18,11 +18,16 @@ import { RecordFormFields } from "./record-form-fields";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
+import { cn } from "@/lib/utils";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 
@@ -104,7 +109,7 @@ function CreateForm({
         void create();
       }}
     >
-      <div className="min-w-0 pt-4">
+      <div className="min-w-0">
         {error ? (
           <Alert role="alert" variant="destructive" className="mb-4">
             {error}
@@ -127,20 +132,22 @@ function CreateForm({
           }}
         />
       </div>
-      <DialogFooter>
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11"
-          disabled={pending}
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
-        <Button type="submit" className="min-h-11" disabled={pending}>
-          {pending ? "Creating…" : `Create ${moduleName} record`}
-        </Button>
-      </DialogFooter>
+      <DialogFrameFooter>
+        <DialogFooter className="mt-0">
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            disabled={pending}
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" className="min-h-11" disabled={pending}>
+            {pending ? "Creating…" : `Create ${moduleName} record`}
+          </Button>
+        </DialogFooter>
+      </DialogFrameFooter>
     </form>
   );
 }
@@ -162,14 +169,18 @@ export function RecordCreateDialog({
   };
   return (
     <Dialog open={open} dismissible={!dirty} onOpenChange={changeOpen}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>New record</DialogTitle>
-          <DialogDescription>
-            Add a record to {moduleName}. Fields left empty use their default
-            value.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className={cn(dialogFrameContentClass, "max-w-2xl")}>
+        <DialogFrameHeader
+          title={<DialogTitle>New record</DialogTitle>}
+          description={
+            <DialogDescription>
+              Add a record to {moduleName}. Fields left empty use their default
+              value.
+            </DialogDescription>
+          }
+          closeLabel="Close without creating"
+          onClose={() => changeOpen(false)}
+        />
         {open ? (
           <CreateForm
             moduleId={moduleId}

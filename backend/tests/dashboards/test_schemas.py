@@ -8,7 +8,9 @@ from uuid6 import uuid7
 from app.systems.openview.dashboards.schemas import (
     DashboardChartConfig,
     DashboardCreate,
+    DashboardListRequest,
     DashboardUpdate,
+    DashboardWidgetResponse,
     DashboardWidgetSpec,
 )
 from app.systems.sandbox.records.query_schemas import (
@@ -17,6 +19,7 @@ from app.systems.sandbox.records.query_schemas import (
 )
 
 DEPARTMENT = uuid7()
+PLACED = {"grid_column": 0, "grid_row": 0, "column_span": 2, "row_span": 2}
 
 
 def _group_widget(*, chart_type: str = "bar") -> dict[str, object]:
@@ -24,6 +27,7 @@ def _group_widget(*, chart_type: str = "bar") -> dict[str, object]:
     dimension_id = uuid7()
     filter_id = uuid7()
     return {
+        **PLACED,
         "widget_type": "chart",
         "config": {
             "version": 1,
@@ -62,6 +66,7 @@ def _date_widget(*, days: int = 366) -> dict[str, object]:
     start = date(2024, 1, 1)
     end = start + timedelta(days=days - 1)
     return {
+        **PLACED,
         "widget_type": "chart",
         "config": {
             "version": 1,
@@ -82,6 +87,7 @@ def _date_widget(*, days: int = 366) -> dict[str, object]:
 
 def _aggregate_widget(widget_type: str) -> dict[str, object]:
     return {
+        **PLACED,
         "widget_type": widget_type,
         "config": {
             "version": 1,
@@ -98,6 +104,7 @@ def _aggregate_widget(widget_type: str) -> dict[str, object]:
 
 def _records_widget() -> dict[str, object]:
     return {
+        **PLACED,
         "widget_type": "records",
         "config": {
             "version": 1,
@@ -213,7 +220,7 @@ def test_dashboard_contract_belongs_to_a_department_and_is_bounded_and_revisione
         )
     with pytest.raises(ValidationError):
         DashboardCreate.model_validate(
-            {"department_id": DEPARTMENT, "name": "Too many", "widgets": [widget] * 13}
+            {"department_id": DEPARTMENT, "name": "Too many", "widgets": [widget] * 21}
         )
 
     assert DashboardUpdate.model_validate({"revision": 2, "widgets": []}).widgets == []
@@ -258,3 +265,67 @@ def test_dashboard_supports_all_live_widget_types_and_persisted_refresh_cadence(
         DashboardCreate.model_validate(
             {"department_id": DEPARTMENT, "name": "Unknown cadence", "refresh_cadence": "hourly"}
         )
+
+
+def test_widget_placement_is_required_whole_cells_inside_the_grid_and_replaces_size():
+    widget = _aggregate_widget("workload")
+    placed = DashboardWidgetSpec.model_validate(
+        {**widget, "grid_column": 2, "grid_row": 3, "column_span": 2, "row_span": 2}
+    )
+    assert (placed.grid_column, placed.grid_row, placed.column_span, placed.row_span) == (
+        2,
+        3,
+        2,
+        2,
+    )
+    assert DashboardWidgetSpec.model_validate(
+        {**widget, "grid_column": 3, "grid_row": 4, "column_span": 4, "row_span": 5}
+    ).row_span == 5
+
+    for missing in PLACED:
+        with pytest.raises(ValidationError):
+            DashboardWidgetSpec.model_validate(
+                {key: value for key, value in widget.items() if key != missing}
+            )
+    for field, value in (
+        ("grid_column", -1),
+        ("grid_column", 4),
+        ("grid_row", 5),
+        ("column_span", 0),
+        ("column_span", 5),
+        ("row_span", 0),
+        ("row_span", 6),
+        ("grid_row", None),
+    ):
+        with pytest.raises(ValidationError):
+            DashboardWidgetSpec.model_validate({**widget, field: value})
+    with pytest.raises(ValidationError):
+        DashboardWidgetSpec.model_validate({**widget, "size": "M"})
+
+    twenty = DashboardCreate.model_validate(
+        {"department_id": DEPARTMENT, "name": "Full grid", "widgets": [widget] * 20}
+    )
+    assert len(twenty.widgets) == 20
+
+
+def test_widget_response_placement_is_all_or_nothing_and_home_filter_parses():
+    common = {
+        "id": uuid7(),
+        "position": 19,
+        "widget_type": "summary",
+        "chart_id": uuid7(),
+        "config": None,
+        "created_at": "2026-10-26T00:00:00Z",
+        "updated_at": "2026-10-26T00:00:00Z",
+    }
+    unplaced = DashboardWidgetResponse.model_validate(
+        {**common, "grid_column": None, "grid_row": None, "column_span": None, "row_span": None}
+    )
+    assert unplaced.grid_column is None and unplaced.row_span is None
+    with pytest.raises(ValidationError):
+        DashboardWidgetResponse.model_validate(
+            {**common, "grid_column": 0, "grid_row": None, "column_span": 1, "row_span": 1}
+        )
+
+    assert DashboardListRequest.model_validate({"home": "true"}).home is True
+    assert DashboardListRequest.model_validate({}).home is None

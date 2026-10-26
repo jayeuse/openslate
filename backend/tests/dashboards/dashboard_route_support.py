@@ -72,11 +72,11 @@ def _module(
     return module, dimension
 
 
-def _chart_config(module: Module, dimension: Field) -> dict[str, object]:
+def _chart_config(module: Module, dimension: Field, chart_type: str = "bar") -> dict[str, object]:
     return DashboardChartConfig.model_validate(
         {
             "version": 1,
-            "chart_type": "bar",
+            "chart_type": chart_type,
             "query": {
                 "module_id": str(module.id),
                 "definition": {"version": 1, "columns": []},
@@ -88,13 +88,29 @@ def _chart_config(module: Module, dimension: Field) -> dict[str, object]:
     ).model_dump(mode="json")
 
 
-def _chart(module: Module, dimension: Field) -> dict[str, object]:
-    return {"widget_type": "chart", "config": _chart_config(module, dimension)}
+Cells = tuple[int, int, int, int]
 
 
-def _aggregate_widget(widget_type: str, module: Module, dimension: Field) -> dict[str, object]:
+def _cells(cells: Cells) -> dict[str, int]:
+    """Grid placement as (column, row, columns, rows)."""
+    column, row, columns, rows = cells
+    return {"grid_column": column, "grid_row": row, "column_span": columns, "row_span": rows}
+
+
+def _chart(
+    module: Module, dimension: Field, at: Cells = (0, 0, 2, 2), chart_type: str = "bar"
+) -> dict[str, object]:
+    config = _chart_config(module, dimension, chart_type)
+    return {"widget_type": "chart", **_cells(at), "config": config}
+
+
+def _aggregate_widget(
+    widget_type: str, module: Module, dimension: Field, at: Cells | None = None
+) -> dict[str, object]:
+    default: Cells = (0, 0, 1, 1) if widget_type == "summary" else (0, 0, 2, 2)
     return {
         "widget_type": widget_type,
+        **_cells(at or default),
         "config": {
             "version": 1,
             "query": {
@@ -108,9 +124,10 @@ def _aggregate_widget(widget_type: str, module: Module, dimension: Field) -> dic
     }
 
 
-def _records_widget(module: Module, field: Field) -> dict[str, object]:
+def _records_widget(module: Module, field: Field, at: Cells = (0, 0, 2, 2)) -> dict[str, object]:
     return {
         "widget_type": "records",
+        **_cells(at),
         "config": {
             "version": 1,
             "query": {

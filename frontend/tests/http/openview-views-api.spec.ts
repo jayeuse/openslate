@@ -1821,10 +1821,9 @@ async function installViewsApi(
 }
 
 async function openFilters(page: Page) {
-  const button = page.getByRole("button", { name: "More filters" });
-  const region = page.getByRole("region", {
-    name: "Search Equipment filters",
-  });
+  // The toolbar's Filters popover (OD3).
+  const button = page.getByRole("button", { name: "Filters", exact: true });
+  const region = page.getByRole("dialog", { name: "Filters" });
   if ((await button.getAttribute("aria-expanded")) !== "true")
     await button.click();
   await expect(region).toBeVisible();
@@ -1833,16 +1832,26 @@ async function openFilters(page: Page) {
 
 async function openLayoutSettings(page: Page) {
   const dialog = page.getByRole("dialog", { name: "Layout settings" });
-  if (!(await dialog.isVisible()))
-    await page.getByRole("button", { name: "Layout settings" }).click();
+  // Layout settings sit at the foot of the Layout menu (OD4).
+  if (!(await dialog.isVisible())) {
+    await page.getByRole("button", { name: /^Layout: / }).click();
+    await page.getByRole("menuitem", { name: "Layout settings…" }).click();
+  }
   await expect(dialog).toBeVisible();
   return dialog;
 }
 
 async function openColumns(page: Page) {
   const dialog = page.getByRole("dialog", { name: "Columns" });
-  if (!(await dialog.isVisible()))
-    await page.getByRole("button", { name: "Columns", exact: true }).click();
+  if (!(await dialog.isVisible())) {
+    const button = page.getByRole("button", { name: "Columns", exact: true });
+    // On a phone Columns is in the view menu.
+    if (await button.isVisible()) await button.click();
+    else {
+      await page.getByRole("button", { name: "More view actions" }).click();
+      await page.getByRole("menuitem", { name: "Columns…" }).click();
+    }
+  }
   await expect(dialog).toBeVisible();
   return dialog;
 }
@@ -1864,8 +1873,26 @@ async function expectLayoutFromSettings(page: Page, layout: SavedViewLayout) {
   await closeDialog(dialog);
 }
 
+/** The saved view the header's view picker shows. */
+function selectedView(page: Page) {
+  return page
+    .getByRole("combobox", { name: "Saved view" })
+    .locator("option:checked");
+}
+
+/** Picks a layout from the Layout menu (OD4). */
+async function chooseLayout(page: Page, name: string) {
+  await page.getByRole("button", { name: /^Layout: / }).click();
+  await page.getByRole("menuitemradio", { name, exact: true }).click();
+}
+
+async function openArchivedViews(page: Page) {
+  await page.getByRole("button", { name: "More view actions" }).click();
+  await page.getByRole("menuitem", { name: /^Archived views/ }).click();
+}
+
 async function openViewAction(page: Page, action: string) {
-  await page.getByRole("button", { name: "View actions" }).click();
+  await page.getByRole("button", { name: "More view actions" }).click();
   await page.getByRole("menuitem", { name: action, exact: true }).click();
 }
 
@@ -1928,7 +1955,7 @@ test("membership View filters select choices by label and submit stable IDs", as
       url.pathname === `/api/views/${viewId}` && request.method() === "PATCH"
     );
   });
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await saveRequestPromise;
   await expect(
     page
@@ -2049,9 +2076,11 @@ test("switching scalar and membership View filters clears incompatible values", 
   await operator.selectOption("eq");
   await expect(value).toHaveValue("");
   await expect(
-    page.getByRole("button", { name: "Save changes" }),
+    page.getByRole("button", { name: "Save view", exact: true }),
   ).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Save view" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Save as new view" }),
+  ).toBeDisabled();
 });
 
 test("changing a Views filter field with the keyboard retains focus", async ({
@@ -2101,9 +2130,11 @@ test("clearing a number View filter stays blank instead of querying zero", async
     ),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Save changes" }),
+    page.getByRole("button", { name: "Save view", exact: true }),
   ).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Save view" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Save as new view" }),
+  ).toBeDisabled();
   expect(
     api.recordQueryRequests
       .slice(requestCountBeforeClear)
@@ -2152,7 +2183,7 @@ test("unsafe integer View filters fail locally without sending a rounded value",
     ).toBe(false);
   }
   await expect(
-    page.getByRole("button", { name: "Save changes" }),
+    page.getByRole("button", { name: "Save view", exact: true }),
   ).toBeDisabled();
 });
 
@@ -2162,15 +2193,18 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   const api = await installViewsApi(page);
 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(page.getByRole("heading", { name: "Views" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Equipment" }),
+  ).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
     viewId,
   );
   await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
+  // The header's meta line names the department (OD1).
+  await expect(page.getByText(/^Field service · /)).toBeVisible();
   await expect(
-    page.getByText("Field service · 12 active fields"),
-  ).toBeVisible();
-  await expect(page.getByText("Search: pump")).toBeVisible();
+    page.getByRole("searchbox", { name: "Search Equipment" }),
+  ).toHaveValue("pump");
   await expect(page.getByText("No active filters")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save view" })).toHaveCount(0);
   await openViewAction(page, "Rename view…");
@@ -2185,7 +2219,8 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await search.fill("panel");
   await expect(page.getByText("Cooling panel 02")).toBeVisible();
   await expect(page.getByText("Centrifugal pump 04")).toHaveCount(0);
-  await page.getByRole("link", { name: "Dashboards" }).click();
+  // The department's Dashboard row leaves the module page (BD1).
+  await page.getByRole("link", { name: "Dashboard", exact: true }).click();
   const discardDialog = page.getByRole("alertdialog", {
     name: "Discard unsaved view changes?",
   });
@@ -2195,7 +2230,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     new RegExp(`module=${moduleId}.*view=${viewId}`),
   );
   const firstSave = api.pauseNextPatch();
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await firstSave.started;
   await search.fill("panel 02");
   firstSave.release();
@@ -2206,7 +2241,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   );
   await expect(search).toHaveValue("panel 02");
   expect(api.saved().definition.search).toBe("panel");
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect(
     page
       .getByRole("status")
@@ -2224,7 +2259,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await page
     .getByRole("searchbox", { name: "Search Equipment" })
     .fill("compressor");
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   const conflictDialog = page.getByRole("dialog", {
     name: "Update saved view",
   });
@@ -2304,19 +2339,19 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await page
     .getByRole("searchbox", { name: "Search Equipment" })
     .fill("draft before restore");
-  await expect(page.getByText("Temporary changes")).toBeVisible();
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
   // The unsaved draft is a temporary change of the same address.
   await expect(page).toHaveURL(
     new RegExp(`/openview\\?section=views&module=${moduleId}&changes=`),
   );
-  await page.getByRole("button", { name: "Archived views" }).click();
+  await openArchivedViews(page);
   const archivedDialog = page.getByRole("dialog", { name: "Archived views" });
   await expect(
     archivedDialog.getByText("Equipment register", { exact: true }),
   ).toBeVisible();
   await archivedDialog.getByRole("button", { name: "Close" }).click();
-  await expect(page.getByText("Temporary changes")).toBeVisible();
-  await page.getByRole("button", { name: "Archived views" }).click();
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await openArchivedViews(page);
   await archivedDialog
     .getByRole("button", { name: "Restore Equipment register" })
     .click();
@@ -2328,7 +2363,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     page.getByLabel("Search Equipment", { exact: true }),
   ).toHaveValue("draft before restore");
   expect(api.saved().is_deleted).toBe(true);
-  await page.getByRole("button", { name: "Archived views" }).click();
+  await openArchivedViews(page);
   await archivedDialog
     .getByRole("button", { name: "Restore Equipment register" })
     .click();
@@ -2360,7 +2395,7 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await expect(
     page.getByRole("status").filter({ hasText: "default" }),
   ).toBeVisible();
-  await expect(page.getByText("Module default", { exact: true })).toBeVisible();
+  await expect(selectedView(page)).toHaveText(/ · default$/);
   expect(api.defaultView()).toBe(viewId);
   expect(
     api.requests.some((request) => request.includes("deleted=include")),
@@ -2503,21 +2538,21 @@ test("resetting changes restores the saved base or clears an unsaved draft", asy
   await expectLayoutFromSettings(page, "table");
   await search.fill("unsaved draft");
   await setLayoutFromSettings(page, "grid");
-  await page.getByRole("button", { name: "Reset changes" }).click();
+  await openViewAction(page, "Reset changes");
   await expect(search).toHaveValue("");
   await expectLayoutFromSettings(page, "table");
-  await expect(page.getByText("Temporary changes")).toHaveCount(0);
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
 
   await page.getByRole("combobox", { name: "Saved view" }).selectOption(viewId);
   await expect(search).toHaveValue("pump");
   await search.fill("saved draft");
   await setLayoutFromSettings(page, "grid");
-  await page.getByRole("button", { name: "Reset changes" }).click();
+  await openViewAction(page, "Reset changes");
 
   await expect(search).toHaveValue("pump");
   await expectLayoutFromSettings(page, "table");
-  await expect(page.getByText("Temporary changes")).toHaveCount(0);
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
     viewId,
   );
@@ -2554,9 +2589,9 @@ test("temporary View changes live in the address, survive reload, and are never 
   await page.reload();
   await expect(search).toHaveValue("valve");
   await expectLayoutFromSettings(page, "grid");
-  await expect(page.getByText("Temporary changes")).toBeVisible();
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
 
-  await page.getByRole("button", { name: "Reset changes" }).click();
+  await openViewAction(page, "Reset changes");
   await expect(search).toHaveValue("pump");
   await expect(page).toHaveURL(viewUrl);
   expect(viewWrites).toEqual([]);
@@ -2588,22 +2623,22 @@ test("a reader keeps temporary View filters in the address without save controls
   await search.fill("valve");
   await expect(page).toHaveURL(/[?&]changes=/);
   await expect(page.getByRole("button", { name: /^Save view/ })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(
-    0,
-  );
-  await expect(page.getByRole("button", { name: "View actions" })).toHaveCount(
-    0,
-  );
   await expect(
-    page.getByRole("button", { name: "Archived views" }),
-  ).toBeVisible();
-  await expect(page.getByText("Temporary changes")).toBeVisible();
+    page.getByRole("button", { name: "Save as new view" }),
+  ).toHaveCount(0);
+  // A reader's view menu holds the link and the archive, no view changes.
+  await page.getByRole("button", { name: "More view actions" }).click();
   await expect(
-    page.getByText(/These changes live in the page address/),
+    page.getByRole("menuitem", { name: "Archive view" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: /^Archived views/ }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
   await page.reload();
   await expect(search).toHaveValue("valve");
-  await expect(page.getByText("Temporary changes")).toBeVisible();
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
 });
 
 test("a module reader can browse archived Views without a Restore action", async ({
@@ -2633,7 +2668,7 @@ test("a module reader can browse archived Views without a Restore action", async
     }),
   );
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await page.getByRole("button", { name: /Archived views/ }).click();
+  await openArchivedViews(page);
   const dialog = page.getByRole("dialog", { name: "Archived views" });
   await expect(dialog.getByText("Old equipment view")).toBeVisible();
   await expect(
@@ -2651,7 +2686,7 @@ test("a malformed temporary View address is ignored and removed", async ({
     page.getByRole("searchbox", { name: "Search Equipment" }),
   ).toHaveValue("pump");
   await expect(page).toHaveURL(viewUrl);
-  await expect(page.getByText("Temporary changes")).toHaveCount(0);
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
 });
 
 test("saved Views send, save, and reload up to three ordered sort rules", async ({
@@ -2682,7 +2717,7 @@ test("saved Views send, save, and reload up to three ordered sort rules", async 
     .poll(() => api.recordQueryRequests.at(-1)?.definition.sort)
     .toEqual(expectedSort);
   await closeDialog(settings);
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "was saved" }),
   ).toBeVisible();
@@ -2717,7 +2752,7 @@ test("saved Views send, save, and reload up to three ordered sort rules", async 
   await expect
     .poll(() => api.recordQueryRequests.at(-1)?.definition.sort)
     .toEqual([]);
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect.poll(() => api.saved().definition.sort).toEqual([]);
 });
 
@@ -2905,7 +2940,8 @@ test("saved table presentation controls persist and drive the rendered table", a
     },
   });
 
-  await page.setViewportSize({ width: 390, height: 844 });
+  // Phones list records as rows; the table's controls show from 768px.
+  await page.setViewportSize({ width: 768, height: 1024 });
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   const table = page.getByRole("table");
   await expect(table.getByRole("columnheader")).toHaveText([
@@ -2955,7 +2991,7 @@ test("saved table presentation controls persist and drive the rendered table", a
   await columnsDialog.getByLabel("Row density").selectOption("compact");
   await columnsDialog.getByRole("checkbox", { name: "Wrap long text" }).click();
   await closeDialog(columnsDialog);
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect(
     page.getByRole("status").filter({
       hasText: "“Equipment register” was saved.",
@@ -3007,6 +3043,8 @@ test("saved table presentation controls persist and drive the rendered table", a
   const scrolled = await table.evaluate((element) => {
     const container = element.parentElement;
     if (!container) return false;
+    // The table fits at 768px; a narrower container makes it scroll.
+    container.style.width = "360px";
     container.scrollLeft = container.scrollWidth;
     return container.scrollLeft > 0;
   });
@@ -3096,7 +3134,7 @@ for (const layout of ["grid", "gallery"] as const) {
       .getByRole("checkbox", { name: "Wrap long text" })
       .click();
     await closeDialog(columnsDialog);
-    await page.getByRole("button", { name: "Save changes" }).click();
+    await page.getByRole("button", { name: "Save view", exact: true }).click();
     await expect(
       page.getByRole("status").filter({
         hasText: "“Equipment register” was saved.",
@@ -3150,18 +3188,16 @@ test("Grid and Gallery use the current server page and save only the selected la
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(
-    page.getByRole("heading", { name: "Equipment register" }),
-  ).toBeVisible();
+  // The view picker names the selected saved view (OD1).
+  await expect(selectedView(page)).toHaveText(/^Equipment register/);
 
-  const layout = page.getByRole("combobox", { name: "Layout" });
-  await expect(layout).toHaveValue("table");
+  const layout = page.getByRole("button", { name: /^Layout: / });
+  await expect(layout).toHaveAccessibleName("Layout: Table");
   await page.getByRole("searchbox", { name: "Search Equipment" }).fill("");
-  await expect(
-    page.getByText("30 matching records · live workspace data"),
-  ).toBeVisible();
-  await layout.selectOption("grid");
-  await page.getByRole("button", { name: "Save changes" }).click();
+  // The header's meta line counts the matching records (OD1).
+  await expect(page.getByText(/ · 30 records$/)).toBeVisible();
+  await chooseLayout(page, "Grid");
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect(
     page
       .getByRole("status")
@@ -3194,8 +3230,8 @@ test("Grid and Gallery use the current server page and save only the selected la
   await expect(page.getByRole("table")).toHaveCount(0);
   await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
 
-  await layout.selectOption("gallery");
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await chooseLayout(page, "Gallery");
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect(
     page
       .getByRole("status")
@@ -3224,6 +3260,98 @@ test("Grid and Gallery use the current server page and save only the selected la
   );
 });
 
+test("the quick filter narrows the view by the first choice field with counts that ignore its own choice", async ({
+  page,
+}) => {
+  const api = await installViewsApi(page, { disableInitialSearch: true });
+  const countRequests: { definition: { filters: unknown[] } }[] = [];
+  await page.route("**/api/records/aggregate-query", async (route) => {
+    const body = route.request().postDataJSON() as {
+      dimension: { field_id: string };
+      definition: { filters: unknown[] };
+      limit: number;
+      offset: number;
+    };
+    countRequests.push(body);
+    expect(body.dimension.field_id).toBe(statusFieldId);
+    await route.fulfill({
+      json: {
+        items: [
+          {
+            key: inServiceChoiceId,
+            label: "In service",
+            value: "20",
+            record_count: 20,
+          },
+          {
+            key: inspectionDueChoiceId,
+            label: "Inspection due",
+            value: "10",
+            record_count: 10,
+          },
+        ],
+        pagination: {
+          limit: body.limit,
+          offset: body.offset,
+          count: 2,
+          total: 2,
+          has_more: false,
+        },
+      },
+    });
+  });
+  await page.goto(
+    "/openview?section=views&module=" + moduleId + "&view=" + viewId,
+  );
+  const strip = page.getByRole("group", { name: "Status" });
+  await expect(
+    strip.getByRole("button", { name: /^All\s*30$/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await strip.getByRole("button", { name: /^Inspection due\s*10$/ }).click();
+  await expect
+    .poll(() =>
+      api.recordQueryRequests.some(({ definition }) =>
+        definition.filters.some(
+          (filter) =>
+            filter.field_id === statusFieldId &&
+            filter.operator === "eq" &&
+            filter.value === inspectionDueChoiceId,
+        ),
+      ),
+    )
+    .toBe(true);
+  // The choice is the strip's, not a chip, and its counts stay put.
+  await expect(page.getByRole("group", { name: "Active filters" })).toHaveCount(
+    0,
+  );
+  expect(countRequests.at(-1)?.definition.filters).toEqual([]);
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await strip.getByRole("button", { name: /^All\s*30$/ }).click();
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+});
+
+test("a click anywhere on a record's row opens it, though its name cell is pinned", async ({
+  page,
+}) => {
+  await installViewsApi(page, { disableInitialSearch: true });
+  // All records: the default draft pins the name column.
+  await page.goto("/openview?section=views&module=" + moduleId);
+  const firstRow = page
+    .getByRole("table")
+    .getByRole("rowgroup")
+    .nth(1)
+    .getByRole("row")
+    .first();
+  // A real click on the second cell, outside the pinned name cell.
+  const cell = await firstRow.getByRole("cell").nth(1).boundingBox();
+  if (!cell) throw new Error("The second cell has no box");
+  await page.mouse.click(cell.x + cell.width / 2, cell.y + cell.height / 2);
+  await expect(page).toHaveURL(/[?&]record=/);
+  await expect(
+    page.getByRole("dialog", { name: "Record details" }),
+  ).toBeVisible();
+});
+
 test("Views exposes its filter, column, and layout editors on demand", async ({
   page,
 }) => {
@@ -3236,6 +3364,8 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
   );
 
   const initialRevision = api.saved().revision;
+  // The Layout menu lists the six layouts (OD4).
+  await page.getByRole("button", { name: /^Layout: / }).click();
   for (const layout of [
     "Table",
     "Grid",
@@ -3245,9 +3375,10 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
     "Timeline",
   ]) {
     await expect(
-      page.getByRole("tab", { name: layout, exact: true }),
+      page.getByRole("menuitemradio", { name: layout, exact: true }),
     ).toBeVisible();
   }
+  await page.keyboard.press("Escape");
   const sort = page.getByRole("combobox", { name: "Sort" });
   await sort.selectOption(statusFieldId + ":desc");
   await expect
@@ -3264,9 +3395,9 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
   await page.getByRole("button", { name: "Columns", exact: true }).click();
   await expect(columnsDialog).toBeVisible();
   await columnsDialog.getByRole("button", { name: "Close" }).click();
-  await expect(
-    page.getByText("Temporary changes", { exact: true }),
-  ).toHaveCount(1);
+  await expect(page.getByText("Unsaved changes", { exact: true })).toHaveCount(
+    1,
+  );
   expect(api.saved().revision).toBe(initialRevision);
 
   const filtersRegion = await openFilters(page);
@@ -3292,11 +3423,12 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
     )
     .toBe(true);
   await expect(
-    page.getByText("Status is Inspection due", { exact: true }),
-  ).toBeVisible();
+    page.getByRole("group", { name: "Active filters" }),
+  ).toContainText("Status: is Inspection due");
   await expect(
-    page.getByRole("button", { name: "More filters" }),
+    page.getByRole("button", { name: "Filters", exact: true }),
   ).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Columns", exact: true }).click();
   await expect(columnsDialog).toBeVisible();
@@ -3305,18 +3437,14 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
     .click();
   await columnsDialog.getByRole("button", { name: "Close" }).click();
 
-  const layoutDialog = page.getByRole("dialog", { name: "Layout settings" });
-  await page
-    .getByRole("button", { name: "Layout settings", exact: true })
-    .click();
-  await expect(layoutDialog).toBeVisible();
+  const layoutDialog = await openLayoutSettings(page);
   await layoutDialog.getByRole("button", { name: "Add sort rule" }).click();
   await layoutDialog.getByLabel("Sort field 2").selectOption(serialFieldId);
   await layoutDialog.getByLabel("Sort direction 2").selectOption("asc");
   await layoutDialog.getByRole("button", { name: "Close" }).click();
 
   expect(api.saved().revision).toBe(1);
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect.poll(() => api.saved().revision).toBe(2);
   expect(api.saved().definition.filters).toEqual([
     {
@@ -3421,7 +3549,9 @@ test("Views inspector follows the filtered page in both directions and reopens s
       },
     });
   });
-  await inspector.getByRole("button", { name: "Copy safe link" }).click();
+  // Copy link is in the record menu of the sheet header (OD7).
+  await inspector.getByRole("button", { name: "More record actions" }).click();
+  await page.getByRole("menuitem", { name: "Copy link" }).click();
   const copiedLink = await page.evaluate(
     () => (window as Window & { copiedSafeLink?: string }).copiedSafeLink,
   );
@@ -3600,11 +3730,6 @@ test("closing record details returns to the page reached through inspector navig
   await expect(
     inspector.getByRole("heading", { name: "Equipment 26" }),
   ).toBeVisible();
-  await expect(
-    inspector.getByText(
-      "Showing this linked record. The saved view query remains unchanged.",
-    ),
-  ).toBeVisible();
   await inspector.getByRole("button", { name: "Close" }).click();
 
   await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
@@ -3661,7 +3786,7 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
     .getByRole("button", { name: "Retry lanes", exact: true })
     .click();
   await expect(page.getByText("Lanes 1–12 of 13").first()).toBeVisible();
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect(
     page
       .getByRole("status")
@@ -3764,11 +3889,6 @@ test("Kanban uses paginated server lane counts and only pages the selected lane"
   await expect(linkedRecord).toBeVisible();
   await expect(
     linkedRecord.getByRole("heading", { name: "In service" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(
-      "Kanban lanes and counts continue to use the saved view query.",
-    ),
   ).toBeVisible();
   expect(api.recordQueryRequests).toHaveLength(1);
   expect(api.groupedQueryRequests).toHaveLength(groupedRequestCount);
@@ -4013,7 +4133,7 @@ test("saved Calendar range and Month/List scale drive and persist the live layou
   await expect
     .poll(() => api.windowQueryRequests.at(-1)?.to_date)
     .toMatch(/^\d{4}-12-31$/);
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect.poll(() => api.saved().presentation.date_range).toBe("year");
   await expect.poll(() => api.saved().presentation.scale).toBe("list");
 
@@ -4036,7 +4156,7 @@ test("saved Calendar range and Month/List scale drive and persist the live layou
   await expect(
     page.getByRole("region", { name: "Calendar", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect.poll(() => api.saved().presentation.scale).toBe("month");
   await page.reload();
   const savedScaleSettings = await openLayoutSettings(page);
@@ -4148,7 +4268,7 @@ test("default invalidation keeps an implicit selected view and its dirty draft a
   await expect(selected).toHaveValue(viewId);
   await expect(search).toHaveValue("compressor");
   await expect(
-    page.getByRole("button", { name: "Save changes" }),
+    page.getByRole("button", { name: "Save view", exact: true }),
   ).toBeEnabled();
   await expect(page).not.toHaveURL(new RegExp(`[?&]view=${secondViewId}`));
 });
@@ -4196,11 +4316,13 @@ for (const localAction of ["revert", "save"] as const) {
     if (localAction === "revert") {
       await search.fill("pump");
     } else {
-      await page.getByRole("button", { name: "Save changes" }).click();
+      await page
+        .getByRole("button", { name: "Save view", exact: true })
+        .click();
       await expect.poll(() => api.saved().definition.search).toBe("compressor");
     }
     await expect(
-      page.getByRole("button", { name: "Save changes" }),
+      page.getByRole("button", { name: "Save view", exact: true }),
     ).toHaveCount(0);
 
     api.changeSavedViewElsewhere("panel");
@@ -4209,12 +4331,9 @@ for (const localAction of ["revert", "save"] as const) {
     await expect(search).toHaveValue("panel");
     await expect(page.getByText("Cooling panel 02")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Save changes" }),
+      page.getByRole("button", { name: "Save view", exact: true }),
     ).toHaveCount(0);
-    await expect(page.getByText("Temporary changes")).toHaveCount(0);
-    await expect(
-      page.getByText(`Revision ${api.saved().revision}`),
-    ).toBeVisible();
+    await expect(page.getByText("Unsaved changes")).toHaveCount(0);
   });
 }
 
@@ -4708,7 +4827,7 @@ test.describe("OpenView workspace regional dates", () => {
         results.getByText("22 sept. 2026", { exact: false }).first(),
       ).toBeVisible();
       await expect(
-        page.getByRole("button", { name: "Save changes", exact: true }),
+        page.getByRole("button", { name: "Save view", exact: true }),
       ).toBeEnabled();
     } finally {
       release();
@@ -4909,9 +5028,7 @@ test("Timeline renders complete intervals and keeps unscheduled records separate
   await openRecord.click();
   await expect(page).toHaveURL(new RegExp(`record=${recordTwoId}`));
   await expect(
-    page
-      .getByRole("dialog", { name: "Record details" })
-      .getByText("Showing this linked record."),
+    page.getByRole("dialog", { name: "Record details" }),
   ).toBeVisible();
 });
 
@@ -4926,7 +5043,7 @@ test("Timeline accepts a DATETIME deadline alongside DATE interval fields", asyn
     name: "Deadline field (optional)",
   });
   await deadlineField.selectOption(timelineTimestampDeadlineFieldId);
-  const save = page.getByRole("button", { name: "Save changes" });
+  const save = page.getByRole("button", { name: "Save view", exact: true });
   await closeDialog(settings);
   await expect(save).toBeEnabled();
   await save.click();
@@ -4951,13 +5068,12 @@ test("stale conflict can reload the authoritative saved version without losing i
   const api = await installViewsApi(page);
 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(
-    page.getByRole("heading", { name: "Equipment register" }),
-  ).toBeVisible();
+  // The view picker names the selected saved view (OD1).
+  await expect(selectedView(page)).toHaveText(/^Equipment register/);
   const search = page.getByRole("searchbox", { name: "Search Equipment" });
   await search.fill("my local edit");
   api.makeNextPatchStale();
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
 
   // The changed-fields text is owned by "server-backed Views preserve edits
   // through save, conflict, archive, restore, and module default changes".
@@ -4972,9 +5088,9 @@ test("stale conflict can reload the authoritative saved version without losing i
 
   await expect(conflictDialog).toBeHidden();
   await expect(search).toHaveValue("external edit");
-  await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("button", { name: "Save view", exact: true }),
+  ).toHaveCount(0);
   expect(api.saved().definition.search).toBe("external edit");
 });
 
@@ -4984,9 +5100,8 @@ test("a saved view beyond the first page loads through its UUID deep link", asyn
   const api = await installViewsApi(page, { deepViewBeyondBound: true });
 
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(
-    page.getByRole("heading", { name: "Equipment register" }),
-  ).toBeVisible();
+  // The view picker names the selected saved view (OD1).
+  await expect(selectedView(page)).toHaveText(/^Equipment register/);
   await expect(page.getByLabel("Saved view")).toHaveValue(viewId);
   await expect(
     page.getByRole("button", { name: "Load more metadata" }),
@@ -5014,7 +5129,7 @@ test("a saved view beyond the first page loads through its UUID deep link", asyn
   expect(api.saved().is_deleted).toBe(true);
 
   await expect(page).toHaveURL((url) => !url.searchParams.has("view"));
-  await page.getByRole("button", { name: "Archived views" }).click();
+  await openArchivedViews(page);
   const archivedDialog = page.getByRole("dialog", { name: "Archived views" });
   await expect(
     archivedDialog.getByText("Equipment register", { exact: true }),
@@ -5053,7 +5168,7 @@ test("changing saved views resets record pagination", async ({ page }) => {
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
   await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
   await page.getByRole("searchbox", { name: "Search Equipment" }).fill("");
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
   await expect(
     page
       .getByRole("status")
@@ -5073,11 +5188,15 @@ test("invalid UUID view links recover to the first active catalog source", async
   await installViewsApi(page);
 
   await page.goto("/openview?section=views&module=bad-module&view=bad-view");
-  await expect(page.getByRole("heading", { name: "Views" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Equipment" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("alert").filter({ hasText: "unavailable" }),
   ).toBeVisible();
-  await expect(page.getByLabel("Data source")).toHaveValue(moduleId);
+  await expect(
+    page.getByRole("searchbox", { name: "Search Equipment" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Return to workspace" }).click();
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
   await expect(
@@ -5112,7 +5231,13 @@ test("a legacy sample Board URL cannot create a local OpenView record link", asy
   await expect(page).toHaveURL(
     "/boards?board=sample-board-organization&section=overview",
   );
-  expect(api.requests).toHaveLength(0);
+  // The sidebar's Departments section reads the catalog on every page; no
+  // other OpenView read may start from the legacy link.
+  expect(
+    api.requests.filter(
+      (request) => !/\/api\/views\/data-sources(\?|$)/.test(request),
+    ),
+  ).toHaveLength(0);
 });
 
 test("Dashboard section loads the live Dashboard API without fetching saved Views", async ({
@@ -5125,8 +5250,15 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
-          items: [],
-          pagination: wirePagination({ limit: 100, count: 0, total: 0 }),
+          items: [
+            {
+              id: moduleId,
+              name: "Equipment",
+              department_id: departmentId,
+              title_field_id: null,
+            },
+          ],
+          pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
         }),
       });
     }
@@ -5173,15 +5305,8 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
   });
   await page.goto("/openview?section=dashboards");
   await expect(
-    page.getByRole("heading", { level: 1, name: "Dashboards" }),
+    page.getByRole("heading", { name: "Set up the Field service dashboard" }),
   ).toBeVisible();
-  await expect(
-    page.getByText("No Dashboards yet.", { exact: false }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "New Dashboard" }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Dashboard name" }),
-  ).toHaveValue("");
   expect(dashboardListRequests).toBeGreaterThan(0);
   expect(savedViewRequests).toBe(0);
 });
@@ -5489,7 +5614,11 @@ async function installRecordCommands(page: Page) {
   await page.route("**/api/records**", async (route: Route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
-    if (/\/api\/records\/(query|grouped-query|window-query)$/.test(path))
+    if (
+      /\/api\/records\/(query|grouped-query|window-query|aggregate-query)$/.test(
+        path,
+      )
+    )
       return route.fallback();
     const body = request.postData()
       ? (request.postDataJSON() as Record<string, unknown>)
@@ -5591,14 +5720,19 @@ test("record details delete only after confirmation", async ({ page }) => {
     `/openview?section=views&module=${moduleId}&view=${viewId}&record=${recordOneId}`,
   );
   const details = page.getByRole("dialog", { name: "Record details" });
-  await details.getByRole("button", { name: "Delete record" }).click();
+  // Delete is in the record menu of the sheet header (OD7).
+  const openRecordMenu = () =>
+    details.getByRole("button", { name: "More record actions" }).click();
+  await openRecordMenu();
+  await page.getByRole("menuitem", { name: "Delete record" }).click();
   const confirm = page.getByRole("alertdialog", {
     name: "Delete this record?",
   });
   await confirm.getByRole("button", { name: "Cancel" }).click();
   expect(commands.calls.some((call) => call.method === "DELETE")).toBe(false);
 
-  await details.getByRole("button", { name: "Delete record" }).click();
+  await openRecordMenu();
+  await page.getByRole("menuitem", { name: "Delete record" }).click();
   await confirm.getByRole("button", { name: "Delete record" }).click();
   await expect(page.getByText(/^Record deleted\./)).toBeVisible();
   expect(commands.calls.find((call) => call.method === "DELETE")?.path).toBe(
@@ -6007,13 +6141,6 @@ for (const current of [
     url: `/openview?section=views&module=${moduleId}&view=${viewId}`,
     detail: "Private database routing detail",
   },
-  {
-    section: "Charts",
-    url: "/openview?section=charts",
-    detail: "Private chart data-source detail",
-    // The failure stays visible with the Chart filters open.
-    openFilters: true,
-  },
 ]) {
   test(`${current.section} request failures use safe destructive feedback without server detail and keep Retry visible`, async ({
     page,
@@ -6023,10 +6150,6 @@ for (const current of [
       route.fulfill({ status: 503, json: { detail: current.detail } }),
     );
     await page.goto(current.url);
-    if ("openFilters" in current)
-      await page
-        .getByRole("button", { name: "Filters (0)", exact: true })
-        .click();
     const failure = page
       .getByRole("alert")
       .filter({ hasText: "temporarily unavailable" });
@@ -6069,17 +6192,17 @@ for (const layout of ["table", "kanban"] as const) {
         name: "Saved view",
         exact: true,
       });
-      const archived = page.getByRole("button", {
-        name: "Archived views",
+      const more = page.getByRole("button", {
+        name: "More view actions",
         exact: true,
       });
       await expect(saved).toHaveValue(viewId);
       await expect(saved).toBeEnabled();
-      await expect(archived).toBeEnabled();
+      await expect(more).toBeEnabled();
       for (const control of [
         saved,
-        archived,
-        page.getByText("Saved view", { exact: true }),
+        more,
+        page.locator('label[for="openview-saved-view"]'),
       ]) {
         const box = await control.boundingBox();
         if (!box) throw new Error("Saved view control geometry unavailable");
@@ -6089,7 +6212,8 @@ for (const layout of ["table", "kanban"] as const) {
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(390);
-      await archived.click();
+      await more.click();
+      await page.getByRole("menuitem", { name: /^Archived views/ }).click();
       await expect(
         page.getByRole("dialog", { name: "Archived views", exact: true }),
       ).toBeVisible();
@@ -6293,7 +6417,7 @@ test.describe("export journeys", () => {
       await expect(page).toHaveURL(/[?&]changes=/);
       const address = page.url();
       await expect(
-        page.getByRole("button", { name: "View actions" }),
+        page.getByRole("button", { name: "Save view", exact: true }),
       ).toHaveCount(0);
       const dialog = await openS16Export(page);
       await expect(
@@ -6353,7 +6477,7 @@ test.describe("export journeys", () => {
       await expect(search).toHaveValue("valve");
       await expect(page).toHaveURL(address);
       await expect(
-        page.getByText("Temporary changes", { exact: true }),
+        page.getByText("Unsaved changes", { exact: true }),
       ).toBeVisible();
       expect(api.writes).toEqual([]);
     });
@@ -6644,6 +6768,9 @@ test.describe("export journeys", () => {
         `/openview?section=views&module=${moduleId}&view=${viewId}`,
       );
       const opener = page.getByRole("button", { name: "Export", exact: true });
+      // The header shows Export at once, disabled until the view is ready;
+      // a disabled button cannot take focus.
+      await expect(opener).toBeEnabled();
       await opener.focus();
       await page.keyboard.press("Enter");
       const dialog = page.getByRole("dialog", { name: "Export records" });
@@ -6670,7 +6797,10 @@ test.describe("export journeys", () => {
         });
         await cancel.scrollIntoViewIfNeeded();
         const control = await cancel.boundingBox();
-        expect(control!.height).toBeGreaterThanOrEqual(44);
+        // Slim controls are 32px from 1280px; phones keep the 44px floor.
+        expect(control!.height).toBeGreaterThanOrEqual(
+          page.viewportSize()!.width >= 1280 ? 32 : 44,
+        );
         expect(control!.y + control!.height).toBeLessThanOrEqual(
           page.viewportSize()!.height,
         );

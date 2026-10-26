@@ -57,7 +57,10 @@ test("a cold Comms load sends each shell read once and repeats only by design", 
     "GET /api/notifications/unread-count": 2,
     // Brand, read again on the stream's resync; then the calendar once.
     "GET /api/workspace": 3,
-    "GET /api/departments": 1,
+    // Comms reads the departments once; the sidebar's Departments section
+    // reads them in Sandbox order and reads the module catalog (DA2).
+    "GET /api/departments": 2,
+    "GET /api/views/data-sources": 1,
     "GET /api/comms/bootstrap": 2,
     "GET /api/comms/preferences": 2,
     "GET /api/comms/capabilities/channel-creation": 2,
@@ -98,7 +101,8 @@ test("a cold Comms load sends each shell read once and repeats only by design", 
     await expect.poll(counts).toEqual(expected);
     await settleReact(page);
     expect(counts()).toEqual(expected);
-    expect(calls).toHaveLength(49);
+    // 49 Comms and shell reads, and the sidebar's two (DA2).
+    expect(calls).toHaveLength(51);
   } finally {
     token.release();
     heartbeat.release();

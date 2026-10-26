@@ -43,13 +43,15 @@ export function listOpenViewDepartments(
     limit?: number;
     offset?: number;
     search?: string;
+    /** "created" is the Sandbox order: department ids are time-ordered. */
+    order?: "name" | "created";
     signal?: AbortSignal;
   } = {},
 ) {
   const query = new URLSearchParams({
     limit: String(options.limit ?? 100),
     offset: String(options.offset ?? 0),
-    sort_by: "department_name",
+    sort_by: options.order === "created" ? "created_at" : "department_name",
     sort_order: "asc",
     deleted: "exclude",
   });

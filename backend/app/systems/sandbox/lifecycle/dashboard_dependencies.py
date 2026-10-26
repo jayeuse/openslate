@@ -139,7 +139,10 @@ def load_dashboard_purge_dependencies(
                 "widget_type": widget.widget_type,
                 "config": widget.config,
                 "chart_id": widget.chart_id,
-                "size": widget.size,
+                "grid_column": widget.grid_column,
+                "grid_row": widget.grid_row,
+                "column_span": widget.column_span,
+                "row_span": widget.row_span,
             }
         )
         rows.append(state)

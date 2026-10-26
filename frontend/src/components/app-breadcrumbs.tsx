@@ -10,7 +10,19 @@ import {
   getWorkspaceLocation,
 } from "@/components/workspace-navigation";
 import { cn } from "@/lib/utils";
-import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
+import {
+  authMeOptions,
+  catalogFirstPageOptions,
+} from "@/components/systems/openview/adapters/openview-queries";
+import { departmentNavigationOptions } from "@/components/department-navigation";
+import {
+  currentDashboardDepartmentId,
+  currentModuleId,
+  departmentNavigation,
+  isModulePage,
+  isRefusal,
+  moduleLocation,
+} from "@/components/department-navigation-model";
 import {
   useAdmittedWorkspaceScope,
   useVerifiedWorkspaceUserId,
@@ -68,7 +80,31 @@ export function AppBreadcrumbs() {
     hash,
     accessNavigationFor(identity.data),
   );
-  const current = location?.section ?? routeLabels[pathname] ?? "Workspace";
+  // OpenView has no sidebar group now: without a module or department its
+  // page is the records landing, or the dashboard landing.
+  const openViewLabel =
+    pathname === "/openview"
+      ? isModulePage(pathname, new URLSearchParams(searchParams.toString()))
+        ? "Records"
+        : "Dashboard"
+      : undefined;
+  const current =
+    location?.section ?? openViewLabel ?? routeLabels[pathname] ?? "Workspace";
+  const moduleId = currentModuleId(
+    pathname,
+    new URLSearchParams(searchParams.toString()),
+  );
+  const dashboardDepartmentId = currentDashboardDepartmentId(
+    pathname,
+    new URLSearchParams(searchParams.toString()),
+  );
+  if (moduleId || dashboardDepartmentId)
+    return (
+      <ModuleCrumbs
+        moduleId={moduleId}
+        dashboardDepartmentId={dashboardDepartmentId}
+      />
+    );
   return (
     <Breadcrumb
       className={cn("min-w-0", titledInPage.has(pathname) && "max-md:hidden")}
@@ -135,4 +171,60 @@ function ProfileCrumb() {
   return read.data && "displayName" in read.data
     ? read.data.displayName
     : "Profile";
+}
+
+/**
+ * "Sales › Contacts" on a module page (DA8) and "Sales › Dashboard" on a
+ * department dashboard (BD1). It reads the cache the sidebar fills, so the
+ * header adds no read; it shows "Records" or "Dashboard" until that lands.
+ * It observes with the real reads, disabled: a skipToken observer would leave
+ * the shared queries without a read when they refresh.
+ */
+function ModuleCrumbs({
+  moduleId,
+  dashboardDepartmentId,
+}: {
+  moduleId: string | null;
+  dashboardDepartmentId: string | null;
+}) {
+  const departments = useQuery({
+    ...departmentNavigationOptions(),
+    enabled: false,
+  });
+  const modules = useQuery({ ...catalogFirstPageOptions(), enabled: false });
+  const readable =
+    departments.data &&
+    modules.data &&
+    !isRefusal(departments.error) &&
+    !isRefusal(modules.error)
+      ? departmentNavigation(departments.data.items, modules.data.items)
+      : null;
+  const department = readable?.find(
+    (entry) => entry.id === dashboardDepartmentId,
+  );
+  const place = department
+    ? { department, module: { name: "Dashboard" } }
+    : readable
+      ? moduleLocation(readable, moduleId)
+      : null;
+  return (
+    <Breadcrumb className="min-w-0">
+      <BreadcrumbList className="flex-nowrap">
+        {place ? (
+          <>
+            <BreadcrumbItem className="shrink-0 max-sm:hidden">
+              {place.department.name}
+            </BreadcrumbItem>
+            <BreadcrumbSeparator className="max-sm:hidden" />
+          </>
+        ) : null}
+        <BreadcrumbItem className="min-w-0">
+          <BreadcrumbPage className="block min-h-6 truncate leading-6">
+            {place?.module.name ??
+              (dashboardDepartmentId ? "Dashboard" : "Records")}
+          </BreadcrumbPage>
+        </BreadcrumbItem>
+      </BreadcrumbList>
+    </Breadcrumb>
+  );
 }

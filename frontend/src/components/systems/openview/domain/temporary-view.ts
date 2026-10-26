@@ -99,6 +99,18 @@ export function encodeTemporaryView(
   return encoded.length > MAX_ENCODED_LENGTH ? null : encoded;
 }
 
+/**
+ * The address value for definition changes made outside a View, such as a
+ * dashboard widget's filters opened on its module page (BD5). It merges onto
+ * the module's starting View like any other temporary change.
+ */
+export function encodeTemporaryDefinition(
+  changes: Partial<OpenViewQueryDefinition>,
+): string | null {
+  const encoded = toBase64Url(JSON.stringify({ d: changes }));
+  return encoded.length > MAX_ENCODED_LENGTH ? null : encoded;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

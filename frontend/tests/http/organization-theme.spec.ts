@@ -620,6 +620,50 @@ test("Organization keeps a trusted background role refresh interactive and a ret
 }) => {
   const api = await installApi(page);
   await seedCache(page, "slate");
+  // One readable module, so the sidebar lists its department (OpenView
+  // part A); its page link's intent reads the role.
+  const departmentId = "00000000-0000-4000-8000-0000000000d1";
+  const sidebarPage = (items: unknown[]) => ({
+    items,
+    pagination: {
+      limit: 100,
+      offset: 0,
+      count: items.length,
+      total: items.length,
+      has_more: false,
+    },
+  });
+  await page.route(
+    (url) => url.pathname === "/api/departments",
+    (route) =>
+      route.fulfill({
+        json: sidebarPage([
+          {
+            id: departmentId,
+            department_name: "Operations",
+            created_at: "2026-10-01T00:00:00Z",
+            updated_at: "2026-10-01T00:00:00Z",
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ]),
+      }),
+  );
+  await page.route(
+    (url) => url.pathname === "/api/views/data-sources",
+    (route) =>
+      route.fulfill({
+        json: sidebarPage([
+          {
+            id: "00000000-0000-4000-8000-0000000000d2",
+            name: "Assets",
+            department_id: departmentId,
+            title_field_id: null,
+          },
+        ]),
+      }),
+  );
   await page.goto("/manage?view=organization");
   await choose(page, "Stockroom");
   const oldRead = heldResponse();
@@ -641,30 +685,27 @@ test("Organization keeps a trusted background role refresh interactive and a ret
       .catch(() => {});
     if (old) oldAnswered.release();
   });
-  await page.route(
-    /\/api\/(views\/data-sources|reports(\/shared-runs)?)\?/,
-    (route) => {
-      const params = new URL(route.request().url()).searchParams;
-      return route.fulfill({
-        json: {
-          items: [],
-          pagination: {
-            limit: Number(params.get("limit") ?? 25),
-            offset: Number(params.get("offset") ?? 0),
-            count: 0,
-            total: 0,
-            has_more: false,
-          },
+  await page.route(/\/api\/reports(\/shared-runs)?\?/, (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    return route.fulfill({
+      json: {
+        items: [],
+        pagination: {
+          limit: Number(params.get("limit") ?? 25),
+          offset: Number(params.get("offset") ?? 0),
+          count: 0,
+          total: 0,
+          has_more: false,
         },
-      });
-    },
-  );
+      },
+    });
+  });
   try {
     const navigation = page.getByRole("navigation", {
       name: "Main navigation",
     });
     await navigation
-      .getByRole("button", { name: "OpenView", exact: true })
+      .getByRole("button", { name: "Operations", exact: true })
       .click();
     await expect(radio(page, "Stockroom")).toBeEnabled();
     // Keyboard focus retains navigation intent while the sidebar moves. The
@@ -673,7 +714,7 @@ test("Organization keeps a trusted background role refresh interactive and a ret
     await page.clock.install();
     await page.clock.fastForward(60_000);
     const reports = navigation.getByRole("link", {
-      name: "Reports",
+      name: "Assets",
       exact: true,
     });
     await reports.focus();

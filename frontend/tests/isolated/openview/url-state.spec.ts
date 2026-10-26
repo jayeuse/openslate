@@ -69,3 +69,38 @@ for (const target of [
     });
   });
 }
+
+test("a module page's Reports view keeps its report and copy in the address", () => {
+  const moduleId = "00000000-0000-4000-8000-000000000103";
+  const reportId = "00000000-0000-4000-8000-000000000105";
+  const copyId = "00000000-0000-4000-8000-000000000106";
+  const address = `/openview?section=views&module=${moduleId}&tab=reports&report=${reportId}&copy=${copyId}`;
+
+  expect(parseOpenViewUrl(address)).toEqual({
+    section: "views",
+    module: moduleId,
+    tab: "reports",
+    report: reportId,
+    copy: copyId,
+    invalid: false,
+  });
+  expect(serializeOpenViewUrl(parseOpenViewUrl(address))).toBe(address);
+  // Records is the page's first view, so it needs no tab.
+  expect(
+    serializeOpenViewUrl({
+      section: "views",
+      module: moduleId,
+      tab: "records",
+    }),
+  ).toBe(`/openview?section=views&module=${moduleId}`);
+  // A copy needs its report, and both are report ids.
+  for (const query of [
+    `tab=reports&copy=${copyId}`,
+    "tab=reports&report=weekly",
+    "tab=elsewhere",
+  ])
+    expect(
+      parseOpenViewUrl(`/openview?section=views&module=${moduleId}&${query}`)
+        .invalid,
+    ).toBe(true);
+});

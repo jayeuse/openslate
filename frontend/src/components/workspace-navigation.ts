@@ -75,8 +75,6 @@ const workspaceNavigationDefinitions = [
     defaultItem: "views",
     items: [
       { id: "views", label: "Views" },
-      { id: "dashboards", label: "Dashboards" },
-      { id: "charts", label: "Charts" },
       { id: "reports", label: "Reports" },
     ],
   },
@@ -206,6 +204,10 @@ function visibleItems(
   auditManager: boolean,
 ): readonly { id: string; label: string }[] {
   const items = definition.items;
+  // Module pages, dashboards and reports live under the departments (DA5,
+  // BD1, DC9), so the sidebar has no OpenView item. Its definition stays for
+  // the navigation keys and the help guide of /openview.
+  if (definition.id === "openview") return [];
   // Every Sandbox API requires an administrator (`require_admin`).
   if (definition.id === "sandbox") return access === "all" ? items : [];
   if (definition.id === "manage")
@@ -291,24 +293,6 @@ function paramsFor(
       if (itemId === "people") {
         const user = searchParams.get("user");
         if (user) params.set("user", user);
-      }
-    }
-    if (definition.id === "openview") {
-      const moduleId = searchParams.get("module");
-      if (moduleId) params.set("module", moduleId);
-      if (itemId === "views") {
-        const view = searchParams.get("view");
-        if (view) params.set("view", view);
-      }
-      if (itemId === "reports") {
-        for (const key of ["report", "run"]) {
-          const value = searchParams.get(key);
-          if (value) params.set(key, value);
-        }
-      }
-      if (itemId === "dashboards") {
-        const dashboard = searchParams.get("dashboard");
-        if (dashboard) params.set("dashboard", dashboard);
       }
     }
   }
@@ -439,7 +423,17 @@ export function currentNavigationKey(
     (candidate) => candidate.pathname === pathname,
   );
   if (!definition) return null;
-  return `${definition.id}:${sectionFor(definition, searchParams, hash)}`;
+  const section = sectionFor(definition, searchParams, hash);
+  // Each module page and dashboard is its own place, so the fill glides;
+  // the "openview" prefix keeps OpenView's help guide.
+  if (
+    definition.id === "openview" &&
+    searchParams.get("section") === "dashboards"
+  )
+    return `openview:dashboard:${searchParams.get("department") ?? ""}`;
+  if (definition.id === "openview" && section === "views")
+    return `openview:module:${searchParams.get("module") ?? ""}`;
+  return `${definition.id}:${section}`;
 }
 
 /**

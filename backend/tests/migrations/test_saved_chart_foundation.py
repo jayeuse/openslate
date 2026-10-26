@@ -40,8 +40,8 @@ def test_saved_chart_catalog_roles_and_runtime_crud(chart_migration: ChartMigrat
         for table in ("board_widgets", "dashboard_widgets"):
             assert columns[table, "config"]["is_nullable"] == "YES"
             assert columns[table, "chart_id"]["udt_name"] == "uuid"
-            assert columns[table, "size"]["is_nullable"] == "NO"
-            assert "'M'" in columns[table, "size"]["column_default"]
+        assert columns["board_widgets", "size"]["is_nullable"] == "NO"
+        assert "'M'" in columns["board_widgets", "size"]["column_default"]
         constraints = {
             row["conname"]: row
             for row in connection.execute(
@@ -54,7 +54,7 @@ def test_saved_chart_catalog_roles_and_runtime_crud(chart_migration: ChartMigrat
         }
         for name in (
             "ck_charts_name_nonempty", "ck_charts_revision_positive", "ck_charts_type",
-            "ck_board_widgets_size", "ck_dashboard_widgets_size",
+            "ck_board_widgets_size", "ck_dashboard_widgets_placement",
             "ck_board_widgets_query_source", "ck_dashboard_widgets_query_source",
         ):
             assert constraints[name]["contype"] == "c"
@@ -154,14 +154,19 @@ def test_widget_query_source_and_size_constraints(chart_migration, table, invali
         elif invalid == "missing-chart":
             common["chart"] = uuid7()
         else:
+            # Board widgets keep S/M/L; Dashboard widgets cover cells of the 4 x 5 grid.
             common["size"] = "Z"
+            common["span"] = 5
         board = table == "board_widgets"
-        fields = "board_id, module_id, name" if board else "dashboard_id"
-        values = ":parent, :module, 'Tile'" if board else ":parent"
+        fields = "board_id, module_id, name, size" if board else (
+            "dashboard_id, grid_column, grid_row, column_span, row_span"
+        )
+        values = ":parent, :module, 'Tile', :size" if board else ":parent, 0, 0, :span, 1"
+        common.setdefault("span", 1)
         with pytest.raises(IntegrityError), connection.begin_nested():
             connection.execute(text(f"""INSERT INTO public.{table}
-                (id, org_id, {fields}, position, widget_type, config, chart_id, size)
-                VALUES (:id, :org, {values}, 0, 'summary', CAST(:config AS jsonb), :chart, :size)
+                (id, org_id, {fields}, position, widget_type, config, chart_id)
+                VALUES (:id, :org, {values}, 0, 'summary', CAST(:config AS jsonb), :chart)
             """), common)
 
 
@@ -193,15 +198,15 @@ def test_orm_sql_null_references_fk_restrict_and_actor_set_null(chart_migration)
                 text(f"SELECT bool_and(config IS NULL) FROM public.{table} WHERE chart_id = :id"),
                 {"id": fixture.ids["chart"]},
             ) is True
-            for size in ("S", "M", "L"):
-                connection.execute(
-                    text(f"UPDATE public.{table} SET size = :size WHERE chart_id = :id"),
-                    {"id": fixture.ids["chart"], "size": size},
-                )
-                assert connection.scalar(
-                    text(f"SELECT size FROM public.{table} WHERE chart_id = :id"),
-                    {"id": fixture.ids["chart"]},
-                ) == size
+        for size in ("S", "M", "L"):
+            connection.execute(
+                text("UPDATE public.board_widgets SET size = :size WHERE chart_id = :id"),
+                {"id": fixture.ids["chart"], "size": size},
+            )
+            assert connection.scalar(
+                text("SELECT size FROM public.board_widgets WHERE chart_id = :id"),
+                {"id": fixture.ids["chart"]},
+            ) == size
         for table, identifier in (
             ("charts", fixture.ids["chart"]), ("modules", fixture.ids["module"]),
         ):

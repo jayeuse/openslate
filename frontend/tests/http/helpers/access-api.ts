@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, type Route } from "@playwright/test";
-import { authMeBody, isEventStream } from "./test";
+import { authMeBody, isEventStream, isSidebarDepartmentRead } from "./test";
 import { pageOf } from "../../helpers/pagination";
 import type { AccessSecurityEvent } from "../../../src/components/systems/access/adapters/security-events-api";
 import type { AccessAdminSession } from "../../../src/components/systems/access/adapters/security-api";
@@ -416,7 +416,8 @@ export async function mockAccessApi(
       body = request.postData();
     }
     const call = { method, path, body };
-    calls.push(call);
+    // The sidebar's department read is the shell's, not Access's.
+    if (!isSidebarDepartmentRead(url)) calls.push(call);
     // A one-row read with no ID list is a count (Overview cards, the People
     // status filters); directory pages and ID lookups stay in listReads.
     if (method === "GET" && path === "/api/users")

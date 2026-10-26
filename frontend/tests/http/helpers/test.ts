@@ -115,6 +115,14 @@ export const defaultSignedInIdentity = authMeBody({
 
 /** Matches the event stream with or without its `org` parameter. */
 export const eventStreamUrl = (url: URL) => url.pathname === "/api/events";
+/**
+ * The sidebar's department read (OpenView part A, DA2): every signed-in page
+ * reads the departments in Sandbox order for the Departments section. Specs
+ * that count a page's own department reads leave it out.
+ */
+export const isSidebarDepartmentRead = (url: URL) =>
+  url.pathname === "/api/departments" &&
+  url.searchParams.get("sort_by") === "created_at";
 /** Matches the public look read with or without its `org` parameter. */
 export const appearanceUrl = (url: URL) =>
   url.pathname === "/api/workspace/appearance";
@@ -312,6 +320,53 @@ export const test = base.extend({
           : route.fallback();
       },
     );
+    // The sidebar's Departments section reads these on every signed-in route
+    // (docs/specs/openview-department-pages.md). By default the person reads
+    // no module, so the section stays hidden; journeys that show departments
+    // or open a module page route them at page level.
+    const emptyPage = (url: URL) => ({
+      items: [],
+      pagination: {
+        limit: Number(url.searchParams.get("limit") ?? 100),
+        offset: Number(url.searchParams.get("offset") ?? 0),
+        count: 0,
+        total: 0,
+        has_more: false,
+      },
+    });
+    await context.route(
+      (url) =>
+        url.pathname === "/api/departments" ||
+        url.pathname === "/api/views/data-sources",
+      (route) =>
+        route.request().method() === "GET"
+          ? route.fulfill({ json: emptyPage(new URL(route.request().url())) })
+          : route.fallback(),
+    );
+    // The module page's quick filter counts its first choice field (OD14);
+    // by default there are no counts, so the strip stays hidden.
+    await context.route("**/api/records/aggregate-query", (route) => {
+      const page = new URL(route.request().frame().url());
+      const section = page.searchParams.get("section");
+      if (page.pathname !== "/openview" || (section && section !== "views"))
+        return route.fallback();
+      const body = route.request().postDataJSON() as {
+        limit?: number;
+        offset?: number;
+      };
+      return route.fulfill({
+        json: {
+          items: [],
+          pagination: {
+            limit: body.limit ?? 12,
+            offset: body.offset ?? 0,
+            count: 0,
+            total: 0,
+            has_more: false,
+          },
+        },
+      });
+    });
     // Only off Comms: there an unmocked bootstrap selects the sample runtime.
     await context.route("**/api/comms/bootstrap", (route) =>
       new URL(route.request().frame().url()).pathname.startsWith("/comms")

@@ -8,6 +8,7 @@ import {
   test,
   type Page,
   type Route,
+  isSidebarDepartmentRead,
 } from "./helpers/test";
 import {
   installOpenViewEventSource,
@@ -258,8 +259,10 @@ async function installLibrary(
     return failure(route, 403);
   });
   await page.route("**/api/departments?*", (route) => {
-    const parameters = new URL(route.request().url()).searchParams;
-    state.catalogReads.push(parameters);
+    const url = new URL(route.request().url());
+    const parameters = url.searchParams;
+    // The sidebar's department read is the shell's, not the picker's.
+    if (!isSidebarDepartmentRead(url)) state.catalogReads.push(parameters);
     if (state.departmentStatus !== 200)
       return failure(route, state.departmentStatus);
     const needle = (parameters.get("search") ?? "").toLowerCase();

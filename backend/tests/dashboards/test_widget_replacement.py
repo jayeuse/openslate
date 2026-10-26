@@ -112,7 +112,7 @@ def test_invalid_field_reference_rejects_full_widget_replacement_without_partial
     audit_ids_before = {row.id for row in _dashboard_audit_rows(db, dashboard.id)}
 
     replacement = _chart(module, active_dimension)
-    invalid = _chart(module, deleted_dimension)
+    invalid = _chart(module, deleted_dimension, (2, 0, 2, 2))
     with _client(db, owner) as client:
         response = client.patch(
             f"/api/dashboards/{dashboard.id}",
@@ -155,6 +155,10 @@ def test_replacing_dashboard_widget_removes_module_purge_blocker_and_preserves_o
         position=0,
         widget_type="chart",
         config=_chart_config(module_b, dimension_b),
+        grid_column=0,
+        grid_row=0,
+        column_span=2,
+        row_span=2,
     )
     removed = DashboardWidget(
         org_id=dashboard.org_id,
@@ -162,6 +166,10 @@ def test_replacing_dashboard_widget_removes_module_purge_blocker_and_preserves_o
         position=1,
         widget_type="chart",
         config=_chart_config(module_a, dimension_a),
+        grid_column=2,
+        grid_row=0,
+        column_span=2,
+        row_span=2,
     )
     db.add_all([untouched, removed])
     db.flush()

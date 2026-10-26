@@ -147,11 +147,21 @@ def _dashboard_widgets(
         "measure": None,
         "dimension": dimension,
     }
+    # The 4 x 5 grid places these as the grid migration places four size-M widgets.
     return [
-        {"widget_type": "summary", "config": {"version": 1, "query": query}},
-        {"widget_type": "workload", "config": {"version": 1, "query": query}},
+        {
+            "widget_type": "summary",
+            **_cells(0, 0, 2, 1),
+            "config": {"version": 1, "query": query},
+        },
+        {
+            "widget_type": "workload",
+            **_cells(2, 0, 2, 2),
+            "config": {"version": 1, "query": query},
+        },
         {
             "widget_type": "records",
+            **_cells(0, 1, 2, 2),
             "config": {
                 "version": 1,
                 "query": {"module_id": module_id, "definition": definition},
@@ -159,9 +169,14 @@ def _dashboard_widgets(
         },
         {
             "widget_type": "chart",
+            **_cells(2, 2, 2, 2),
             "config": {"version": 1, "chart_type": "bar", "query": query},
         },
     ]
+
+
+def _cells(column: int, row: int, columns: int, rows: int) -> dict[str, int]:
+    return {"grid_column": column, "grid_row": row, "column_span": columns, "row_span": rows}
 
 
 def create_report_run_and_disabled_schedule(

@@ -6,6 +6,7 @@ import {
   test,
   type Locator,
   type Page,
+  isSidebarDepartmentRead,
 } from "./helpers/test";
 import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
 import {
@@ -48,7 +49,8 @@ async function membershipsFixture(page: Page, count: number) {
     const url = new URL(request.url());
     if (
       request.method() === "GET" &&
-      ["/api/access/groups", "/api/departments"].includes(url.pathname)
+      ["/api/access/groups", "/api/departments"].includes(url.pathname) &&
+      !isSidebarDepartmentRead(url)
     )
       reads.push(url);
   });

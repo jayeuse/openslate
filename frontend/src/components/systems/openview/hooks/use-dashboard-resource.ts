@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect } from "react";
 import {
   useQuery,
   useQueryClient,
@@ -14,91 +14,35 @@ import {
   dashboardKeys,
   dashboardListOptions,
 } from "../adapters/dashboard-queries";
-import {
-  listOpenViewDashboards,
-  type OpenViewDashboard,
-} from "../adapters/dashboards-api";
-import {
-  extendsRead,
-  invalidatesRecords,
-  readStamp,
-} from "../adapters/openview-queries";
-import { DASHBOARD_PAGE_SIZE } from "../domain/dashboard-draft";
+import type { OpenViewDashboard } from "../adapters/dashboards-api";
+import { invalidatesRecords } from "../adapters/openview-queries";
 
-type Extension = {
-  readAt: number;
-  items: OpenViewDashboard[];
-  hasMore: boolean;
-  nextOffset: number;
-};
-
-export function useDashboardResource(
-  archived: boolean,
-  id: string | undefined,
-  routeClearPending: boolean,
+/**
+ * One department's dashboards (BD3): the home, the others by position, and a
+ * dashboard named in the address. The list carries each dashboard whole, so
+ * the home needs no second read; a dashboard outside the list (archived, or
+ * a link from another department) is read on its own.
+ */
+export function useDepartmentDashboards(
+  departmentId: string | undefined,
+  dashboardId: string | undefined,
 ) {
   const client = useQueryClient();
-  const list = useQuery(dashboardListOptions(archived));
+  const list = useQuery(dashboardListOptions(departmentId ?? "", false));
+  const dashboards = list.data?.items ?? [];
+  const listed = dashboardId
+    ? dashboards.find((dashboard) => dashboard.id === dashboardId)
+    : undefined;
   const detail = useQuery({
-    ...dashboardDetailOptions(id ?? ""),
-    enabled: Boolean(id) && !routeClearPending,
+    ...dashboardDetailOptions(dashboardId ?? ""),
+    enabled:
+      Boolean(dashboardId) && (!departmentId || (list.isFetched && !listed)),
   });
-  const [extension, setExtension] = useState<Extension | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [pageError, setPageError] = useState("");
-  const generation = useRef(0);
-  useEffect(() => {
-    generation.current += 1;
-    setLoadingMore(false);
-    setPageError("");
-  }, [archived, list.dataUpdatedAt]);
-  const readAt = readStamp(list);
-  const more =
-    extension && extendsRead(extension.readAt, list) ? extension : null;
-  const dashboards = useMemo(
-    () => [...(list.data?.items ?? []), ...(more?.items ?? [])],
-    [list.data, more],
-  );
-  const hasMore = more?.hasMore ?? list.data?.pagination.hasMore ?? false;
-
-  const refreshList = useCallback(() => {
-    generation.current += 1;
-    setLoadingMore(false);
-    setPageError("");
-    void client.invalidateQueries({ queryKey: dashboardKeys.lists });
-  }, [client]);
-
-  const loadMore = async () => {
-    const base = list.data;
-    if (!base || !readAt || !hasMore || loadingMore) return;
-    const started = generation.current;
-    const offset = more?.nextOffset ?? base.pagination.count;
-    setLoadingMore(true);
-    setPageError("");
-    try {
-      const page = await listOpenViewDashboards({
-        limit: DASHBOARD_PAGE_SIZE,
-        offset,
-        sortBy: "position",
-        sortOrder: "asc",
-        deleted: archived ? "only" : "exclude",
-      });
-      if (generation.current !== started) return;
-      setExtension({
-        readAt,
-        items: [...(more?.items ?? []), ...page.items],
-        hasMore: page.pagination.hasMore,
-        nextOffset: offset + page.pagination.count,
-      });
-    } catch (error) {
-      if (generation.current === started)
-        setPageError(
-          apiErrorMessage(error, "More Dashboards could not be loaded."),
-        );
-    } finally {
-      if (generation.current === started) setLoadingMore(false);
-    }
-  };
+  const home =
+    dashboards.find((dashboard) => dashboard.isHome) ?? dashboards[0] ?? null;
+  const shown: OpenViewDashboard | null = dashboardId
+    ? (listed ?? (detail.data?.id === dashboardId ? detail.data : null))
+    : home;
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -175,31 +119,35 @@ export function useDashboardResource(
     };
   }, [client]);
 
+  /** Keep a confirmed write; an older read must not replace it. */
   const remember = (dashboard: OpenViewDashboard) => {
-    // An older read must not replace a mutation response we just accepted.
     void client.cancelQueries({ queryKey: dashboardKeys.detail(dashboard.id) });
     client.setQueryData(dashboardKeys.detail(dashboard.id), dashboard);
+    void client.invalidateQueries({ queryKey: dashboardKeys.lists });
   };
-  const reload = async (dashboardId: string) => {
-    await client.invalidateQueries({
-      queryKey: dashboardKeys.detail(dashboardId),
-      refetchType: "none",
-    });
-    return client.fetchQuery(dashboardDetailOptions(dashboardId));
+  const reload = async () => {
+    await client.invalidateQueries({ queryKey: dashboardKeys.lists });
+    if (dashboardId)
+      await client.invalidateQueries({
+        queryKey: dashboardKeys.detail(dashboardId),
+      });
   };
+  const error = list.error ?? (dashboardId && !listed ? detail.error : null);
   return {
+    list,
     dashboards,
-    hasMore,
-    loading: list.isPending,
-    loadingMore,
+    home,
+    shown,
+    others: dashboards.filter((dashboard) => dashboard.id !== home?.id),
+    loading:
+      Boolean(departmentId) && list.isPending
+        ? true
+        : Boolean(dashboardId) && !shown && !detail.error && !list.error,
     error:
-      pageError ||
-      (list.error && !list.isFetching
-        ? apiErrorMessage(list.error, "Dashboards could not be loaded.")
-        : ""),
-    detail,
-    refreshList,
-    loadMore,
+      error && !(list.isFetching || detail.isFetching)
+        ? apiErrorMessage(error, "This dashboard could not be loaded.")
+        : "",
+    errorObject: error,
     remember,
     reload,
   };

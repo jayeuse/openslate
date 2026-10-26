@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import httpx
 
+from app.systems.openview.dashboards.schemas import DashboardCreate
 from operations.sample.client import SampleClient
 from operations.sample.population.openview import populate_openview
 
@@ -181,6 +182,18 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
     }
     assert all(body["definition"]["columns"] for body in view_bodies)
     assert all(len(body["widgets"]) == 4 for body in dashboard_bodies)
+    for body in dashboard_bodies:
+        DashboardCreate.model_validate(body)
+        assert [
+            (widget["widget_type"], widget["grid_column"], widget["grid_row"])
+            + (widget["column_span"], widget["row_span"])
+            for widget in body["widgets"]
+        ] == [
+            ("summary", 0, 0, 2, 1),
+            ("workload", 2, 0, 2, 2),
+            ("records", 0, 1, 2, 2),
+            ("chart", 2, 2, 2, 2),
+        ]
     assert len(report_bodies) == len(run_requests) == len(schedule_bodies) == 12
     assert len({request.headers["idempotency-key"] for request in run_requests}) == 12
     assert {body["cadence"] for body in schedule_bodies} == {"daily", "weekly"}

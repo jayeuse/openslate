@@ -1,23 +1,33 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Plus, Trash2, X } from "lucide-react";
-import {
-  type Dispatch,
-  type FormEvent,
-  type SetStateAction,
-  useState,
-} from "react";
-import { useQuery } from "@tanstack/react-query";
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiErrorMessage } from "@/lib/api-errors";
 import { Alert } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogHeader,
+  DialogFooter,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DialogFrameFooter,
+  DialogFrameHeader,
+  dialogFrameContentClass,
+} from "@/components/ui/dialog-frame";
 import {
   Field,
   FieldDescription,
@@ -28,17 +38,40 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { assignableUsersOptions } from "../adapters/openview-queries";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type {
-  OpenViewReport,
-  OpenViewReportRecipe,
+import { cn } from "@/lib/utils";
+import {
+  assignableUsersOptions,
+  CATALOG_PAGE_SIZE,
+  fieldsFirstPageOptions,
+  isAuthorizationDenied,
+  moduleFieldKeys,
+  readStamp,
+  recordPageDenial,
+} from "../adapters/openview-queries";
+import { useOpenViewAccessDenied } from "../adapters/openview-access";
+import {
+  createOpenViewReport,
+  getOpenViewReport,
+  getOpenViewReportConflict,
+  updateOpenViewReport,
+  type OpenViewReport,
+  type OpenViewReportRecipe,
 } from "../adapters/reports-api";
-import type {
-  OpenViewDataSource,
-  OpenViewDataSourceField,
+import {
+  listOpenViewDataSourceFields,
+  type OpenViewDataSourceField,
 } from "../adapters/views-api";
-import type { ReportDraft, ReportFilterDraft } from "./report-draft";
+import {
+  emptyReportDraft,
+  reportDraftFrom,
+  reportDraftFromView,
+  reportDraftSignature,
+  reportRecipeFromDraft,
+  ReportDraftError,
+  type ReportDraft,
+  type ReportFilterDraft,
+  type ReportViewSource,
+} from "./report-draft";
 
 type FilterOperator = ReportFilterDraft["operator"];
 const VALUELESS = new Set<FilterOperator>([
@@ -109,203 +142,335 @@ function operatorsFor(type: OpenViewDataSourceField["type"]): FilterOperator[] {
   return base;
 }
 
+/**
+ * What the report dialog opens on: a new draft, the view on the page (a
+ * `ReportViewSource` snapshot, DC7), or a saved report.
+ */
+export type ReportDialogTarget =
+  | { kind: "new"; draft: ReportDraft }
+  | { kind: "view"; snapshot: string }
+  | { kind: "edit"; report: OpenViewReport };
+
+function draftFor(moduleId: string, target: ReportDialogTarget): ReportDraft {
+  if (target.kind === "edit") return reportDraftFrom(target.report);
+  if (target.kind === "view")
+    return reportDraftFromView(
+      moduleId,
+      JSON.parse(target.snapshot) as ReportViewSource,
+    );
+  return target.draft;
+}
+
 export type ReportRecipeEditorProps = {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  baselineReport: OpenViewReport | null;
-  draft: ReportDraft;
-  setDraft: Dispatch<SetStateAction<ReportDraft>>;
-  dirty: boolean;
-  actionPending: string;
-  error: string;
-  notice: string;
-  stale: boolean;
-  sources: OpenViewDataSource[];
-  sourcesHasMore: boolean;
-  sourcesLoading: boolean;
-  sourcesError: string;
-  fields: OpenViewDataSourceField[];
-  fieldsForModule: string;
-  fieldsHasMore: boolean;
-  fieldsLoading: boolean;
-  fieldsError: string;
-  onRetrySources: () => void;
-  onRetryFields: () => void;
-  loadMoreSources: () => Promise<void>;
-  loadMoreFields: () => Promise<void>;
-  saveReport: (event: FormEvent<HTMLFormElement>) => Promise<void>;
-  reloadLatest: () => Promise<void>;
-  changeModule: (moduleId: string) => void;
-  updateFilter: (key: string, change: Partial<ReportFilterDraft>) => void;
-  resetDraft: () => void;
+  moduleId: string;
+  moduleName: string;
+  target: ReportDialogTarget;
+  onClose: () => void;
+  /** A confirmed save; `created` is true for a new report. */
+  onSaved: (report: OpenViewReport, created: boolean) => void;
 };
 
+type FieldPages = {
+  moduleId: string;
+  readAt: number;
+  items: OpenViewDataSourceField[];
+  hasMore: boolean;
+  nextOffset: number;
+};
+
+/**
+ * New report and Edit (DC6) on the shared dialog frame. The module is the
+ * page's module, so there is no module picker. Basics, Columns, then Filters
+ * and order; Cancel and Create (or Save) stay pinned in the footer.
+ */
 export function ReportRecipeEditor({
-  open,
-  onOpenChange,
-  baselineReport,
-  draft,
-  setDraft,
-  dirty,
-  actionPending,
-  error,
-  notice,
-  stale,
-  sources,
-  sourcesHasMore,
-  sourcesLoading,
-  sourcesError,
-  fields,
-  fieldsForModule,
-  fieldsHasMore,
-  fieldsLoading,
-  fieldsError,
-  onRetrySources,
-  onRetryFields,
-  loadMoreSources,
-  loadMoreFields,
-  saveReport,
-  reloadLatest,
-  changeModule,
-  updateFilter,
-  resetDraft,
+  moduleId,
+  moduleName,
+  target,
+  onClose,
+  onSaved,
 }: ReportRecipeEditorProps) {
-  const [activeTab, setActiveTab] = useState("basics");
+  const queryClient = useQueryClient();
+  const accessDenied = useOpenViewAccessDenied();
+  const [baselineReport, setBaselineReport] = useState<OpenViewReport | null>(
+    target.kind === "edit" ? target.report : null,
+  );
+  const [baselineDraft, setBaselineDraft] = useState<ReportDraft>(() =>
+    target.kind === "edit"
+      ? reportDraftFrom(target.report)
+      : emptyReportDraft(moduleId),
+  );
+  const [draft, setDraft] = useState<ReportDraft>(() =>
+    draftFor(moduleId, target),
+  );
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [stale, setStale] = useState(false);
   const [userSearch, setUserSearch] = useState("");
-  const canEdit = !baselineReport?.isDeleted && !actionPending;
-  const moduleFields = fieldsForModule === draft.moduleId ? fields : [];
+  const dirty =
+    reportDraftSignature(draft) !== reportDraftSignature(baselineDraft);
+  const canEdit = !pending;
+
+  // The module's fields: the cached first page, then pages loaded on request.
+  const fieldsQuery = useQuery(fieldsFirstPageOptions(moduleId));
+  const fieldsDenied = accessDenied || isAuthorizationDenied(fieldsQuery.error);
+  const fieldsBase = fieldsDenied ? undefined : fieldsQuery.data;
+  const fieldsReadAt = fieldsBase ? readStamp(fieldsQuery) : 0;
+  const [extension, setExtension] = useState<FieldPages | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreFailed, setMoreFailed] = useState(false);
+  const more =
+    extension &&
+    extension.moduleId === moduleId &&
+    extension.readAt === fieldsReadAt
+      ? extension
+      : null;
+  const moduleFields: OpenViewDataSourceField[] = [
+    ...(fieldsBase?.items ?? []),
+    ...(more?.items ?? []),
+  ];
+  const fieldsHasMore = more
+    ? more.hasMore
+    : (fieldsBase?.pagination.hasMore ?? false);
+  const fieldsLoading = fieldsQuery.isFetching || loadingMore;
+  const fieldsError = moreFailed
+    ? "More fields could not be loaded. Try again."
+    : fieldsQuery.isError && !fieldsQuery.isFetching
+      ? "Fields could not be loaded. Try again."
+      : "";
+  function onRetryFields(): void {
+    setExtension(null);
+    setMoreFailed(false);
+    void fieldsQuery.refetch();
+  }
+  async function loadMoreFields(): Promise<void> {
+    if (fieldsLoading || !fieldsHasMore || !fieldsBase) return;
+    const offset = more ? more.nextOffset : fieldsBase.pagination.count;
+    const loaded = more?.items ?? [];
+    const readAt = fieldsReadAt;
+    setLoadingMore(true);
+    setMoreFailed(false);
+    try {
+      const page = await listOpenViewDataSourceFields(moduleId, {
+        limit: CATALOG_PAGE_SIZE,
+        offset,
+      });
+      setExtension({
+        moduleId,
+        readAt,
+        items: [...loaded, ...page.items],
+        hasMore: page.pagination.hasMore,
+        nextOffset: offset + page.pagination.count,
+      });
+    } catch (failure) {
+      if (isAuthorizationDenied(failure))
+        void recordPageDenial(queryClient, moduleFieldKeys(moduleId), failure);
+      else setMoreFailed(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
   const hasValuedUserFilter = draft.filters.some(
     (filter) =>
       filter.expectedType === "user" && !VALUELESS.has(filter.operator),
   );
   const assignableUsers = useQuery(
-    assignableUsersOptions(
-      draft.moduleId,
-      userSearch,
-      open && hasValuedUserFilter,
-    ),
+    assignableUsersOptions(moduleId, userSearch, hasValuedUserFilter),
   );
   const eligiblePeople =
     assignableUsers.isSuccess && !assignableUsers.isFetching
       ? assignableUsers.data.items
       : [];
-  const selectedSource = sources.find((source) => source.id === draft.moduleId);
+
+  function updateFilter(key: string, change: Partial<ReportFilterDraft>): void {
+    setDraft((current) => ({
+      ...current,
+      filters: current.filters.map((filter) =>
+        filter.key === key
+          ? {
+              ...filter,
+              ...change,
+              ...("fieldId" in change || "operator" in change
+                ? { originalValue: undefined, originalText: undefined }
+                : {}),
+            }
+          : filter,
+      ),
+    }));
+  }
+
+  // Chosen columns in report order, then the module's other fields.
+  const orderedFields = [
+    ...draft.fields.flatMap((entry) => {
+      const field = moduleFields.find((item) => item.id === entry.fieldId);
+      return field ? [field] : [];
+    }),
+    ...moduleFields.filter(
+      (field) => !draft.fields.some((entry) => entry.fieldId === field.id),
+    ),
+  ];
+  const [moveNotice, setMoveNotice] = useState("");
+
+  function moveColumn(
+    field: OpenViewDataSourceField,
+    position: number,
+    step: -1 | 1,
+  ): void {
+    const target = position + step;
+    if (target < 0 || target >= draft.fields.length) return;
+    setDraft((current) => {
+      const entries = [...current.fields];
+      [entries[position], entries[target]] = [
+        entries[target]!,
+        entries[position]!,
+      ];
+      return { ...current, fields: entries };
+    });
+    setMoveNotice(`${field.name} moved to column ${target + 1}`);
+    // Focus stays on the moved column's arrow, or its other arrow at an end.
+    const atEnd = target === 0 || target === draft.fields.length - 1;
+    const direction = step < 0 ? "up" : "down";
+    const other = step < 0 ? "down" : "up";
+    requestAnimationFrame(() =>
+      document
+        .getElementById(`report-move-${atEnd ? other : direction}-${field.id}`)
+        ?.focus(),
+    );
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (pending) return;
+    setPending(true);
+    setError("");
+    try {
+      if (!draft.name.trim()) throw new ReportDraftError("Enter a report name");
+      const recipe = reportRecipeFromDraft(draft);
+      const input = {
+        moduleId,
+        name: draft.name.trim(),
+        subtitle: draft.subtitle.trim() || null,
+        recipe,
+      };
+      const saved = baselineReport
+        ? await updateOpenViewReport({
+            id: baselineReport.id,
+            revision: baselineReport.revision,
+            ...input,
+          })
+        : await createOpenViewReport(input);
+      onSaved(saved, !baselineReport);
+    } catch (reason) {
+      const conflict = getOpenViewReportConflict(reason);
+      setStale(Boolean(conflict));
+      setError(
+        conflict?.message ??
+          (reason instanceof ReportDraftError
+            ? reason.message
+            : apiErrorMessage(
+                reason,
+                "The report could not be saved. Your changes are still here.",
+              )),
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function reloadLatest(): Promise<void> {
+    if (!baselineReport || pending) return;
+    if (
+      dirty &&
+      !window.confirm("Replace your changes with the latest saved report?")
+    )
+      return;
+    setPending(true);
+    try {
+      const latest = await getOpenViewReport(baselineReport.id);
+      const next = reportDraftFrom(latest);
+      setBaselineReport(latest);
+      setBaselineDraft(next);
+      setDraft(next);
+      setStale(false);
+      setError("");
+    } catch (reason) {
+      setError(
+        apiErrorMessage(
+          reason,
+          "The latest report could not be loaded. Try again.",
+        ),
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  // Leaving with changes asks first (Keep editing, Discard).
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  function close(): void {
+    if (pending) return;
+    if (dirty) setConfirmDiscard(true);
+    else onClose();
+  }
+
+  const title = baselineReport ? "Edit report" : "New report";
+  // A save that cannot run says why (the Four Moments Rule).
+  const saveBlocked = fieldsError
+    ? "Fields could not be loaded"
+    : fieldsLoading
+      ? "Fields are loading"
+      : baselineReport && !dirty
+        ? "No changes to save"
+        : null;
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl gap-0 p-0">
-        <DialogHeader className="border-border bg-card sticky top-0 z-10 flex-row items-start justify-between gap-4 border-b p-5">
-          <div className="min-w-0">
-            <DialogTitle>
-              {baselineReport ? "Edit report" : "New report"}
-            </DialogTitle>
-            <DialogDescription className="mt-1">
-              Choose one data source, then shape the saved output and who can
-              open it.
-            </DialogDescription>
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="min-h-11 min-w-11 shrink-0"
-            aria-label="Close editor"
-            onClick={() => onOpenChange(false)}
+    <>
+      <Dialog
+        open
+        dismissible={!dirty && !pending}
+        onOpenChange={(next) => {
+          if (!next) close();
+        }}
+      >
+        <DialogContent className={cn(dialogFrameContentClass, "max-w-3xl")}>
+          <DialogFrameHeader
+            title={<DialogTitle>{title}</DialogTitle>}
+            description={
+              <DialogDescription>
+                {baselineReport
+                  ? `${baselineReport.name} · ${moduleName}`
+                  : moduleName}
+              </DialogDescription>
+            }
+            closeLabel={`Close ${title.toLowerCase()}`}
+            closeDisabled={pending}
+            onClose={close}
+          />
+          <form
+            noValidate
+            onSubmit={(event) => void save(event)}
+            className="flex min-h-0 flex-col gap-6"
           >
-            <X aria-hidden="true" />
-          </Button>
-        </DialogHeader>
-        <form
-          onSubmit={(event) => void saveReport(event)}
-          className="flex flex-col gap-5 p-5"
-        >
-          {error ? (
-            <Alert role="alert" variant="destructive">
-              {error}
-              {stale ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="ml-3 min-h-11"
-                  onClick={() => void reloadLatest()}
-                >
-                  Reload latest
-                </Button>
-              ) : null}
-            </Alert>
-          ) : null}
-          {notice ? <Alert variant="success">{notice}</Alert> : null}
-          <Tabs
-            value={activeTab}
-            onValueChange={setActiveTab}
-            className="min-w-0"
-          >
-            <TabsList
-              aria-label="Report recipe sections"
-              className="grid w-full grid-cols-2 sm:grid-cols-4"
-            >
-              <TabsTrigger value="basics" className="min-h-11">
-                Basics
-              </TabsTrigger>
-              <TabsTrigger value="columns" className="min-h-11">
-                Columns
-              </TabsTrigger>
-              <TabsTrigger value="advanced" className="min-h-11">
-                Advanced
-              </TabsTrigger>
-            </TabsList>
-            <TabsContent value="basics" keepMounted className="mt-4">
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="report-source">Data source</FieldLabel>
-                  <Select
-                    id="report-source"
-                    className="min-h-11"
-                    value={draft.moduleId}
-                    onValueChange={changeModule}
-                    disabled={
-                      !canEdit || (sourcesLoading && sources.length === 0)
-                    }
-                  >
-                    <option value="">Choose a data source</option>
-                    {draft.moduleId && !selectedSource ? (
-                      <option value={draft.moduleId}>Current source</option>
-                    ) : null}
-                    {sources.map((source) => (
-                      <option key={source.id} value={source.id}>
-                        {source.name}
-                      </option>
-                    ))}
-                  </Select>
-                  <FieldDescription>
-                    Reports use records from one source.
-                  </FieldDescription>
-                </Field>
-                {sourcesError ? (
-                  <Alert role="alert" variant="destructive">
-                    {sourcesError}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="ml-3 min-h-11"
-                      onClick={onRetrySources}
-                    >
-                      Retry
-                    </Button>
-                  </Alert>
-                ) : null}
-                {sourcesHasMore ? (
+            {error ? (
+              <Alert role="alert" variant="destructive">
+                {error}
+                {stale ? (
                   <Button
                     type="button"
                     variant="outline"
-                    className="min-h-11 self-start"
-                    disabled={sourcesLoading}
-                    onClick={() => void loadMoreSources()}
+                    className="ml-3 min-h-11"
+                    onClick={() => void reloadLatest()}
                   >
-                    Load more data sources
+                    Reload latest
                   </Button>
                 ) : null}
+              </Alert>
+            ) : null}
+            <FieldSet>
+              <FieldLegend>Basics</FieldLegend>
+              <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="report-name">Report name</FieldLabel>
+                  <FieldLabel htmlFor="report-name">Name</FieldLabel>
                   <Input
                     id="report-name"
                     className="min-h-11"
@@ -335,18 +500,12 @@ export function ReportRecipeEditor({
                       }))
                     }
                   />
-                  <FieldDescription>
-                    Optional context for readers.
-                  </FieldDescription>
                 </Field>
               </FieldGroup>
-            </TabsContent>
-            <TabsContent value="columns" keepMounted className="mt-4">
+            </FieldSet>
+            <div className="contents">
               <FieldSet>
                 <FieldLegend>Columns</FieldLegend>
-                <p className="text-muted-foreground text-sm">
-                  Select at least one field. Use the arrows to set output order.
-                </p>
                 {fieldsError ? (
                   <Alert role="alert" variant="destructive">
                     {fieldsError}
@@ -373,15 +532,17 @@ export function ReportRecipeEditor({
                     No available fields for this source.
                   </p>
                 ) : null}
-                <FieldGroup>
-                  {moduleFields.map((field) => {
+                {/* Chosen columns first, in report order, then the rest:
+                  the rows show the order the arrows change (DC6). */}
+                <div className="flex flex-col">
+                  {orderedFields.map((field) => {
                     const position = draft.fields.findIndex(
                       (entry) => entry.fieldId === field.id,
                     );
                     return (
                       <Field
                         key={field.id}
-                        className="min-h-11 flex-row items-center gap-3"
+                        className="min-h-11 flex-row items-center gap-3 xl:min-h-9"
                       >
                         <Checkbox
                           id={`report-field-${field.id}`}
@@ -404,44 +565,28 @@ export function ReportRecipeEditor({
                         {position >= 0 ? (
                           <span className="ml-auto flex gap-1">
                             <Button
+                              id={`report-move-up-${field.id}`}
                               type="button"
                               variant="ghost"
                               size="icon"
-                              className="min-h-11 min-w-11"
+                              className="size-11 xl:size-8"
                               aria-label={`Move ${field.name} up`}
                               disabled={!canEdit || position === 0}
-                              onClick={() =>
-                                setDraft((current) => {
-                                  const entries = [...current.fields];
-                                  [entries[position - 1], entries[position]] = [
-                                    entries[position]!,
-                                    entries[position - 1]!,
-                                  ];
-                                  return { ...current, fields: entries };
-                                })
-                              }
+                              onClick={() => moveColumn(field, position, -1)}
                             >
                               <ArrowUp />
                             </Button>
                             <Button
+                              id={`report-move-down-${field.id}`}
                               type="button"
                               variant="ghost"
                               size="icon"
-                              className="min-h-11 min-w-11"
+                              className="size-11 xl:size-8"
                               aria-label={`Move ${field.name} down`}
                               disabled={
                                 !canEdit || position === draft.fields.length - 1
                               }
-                              onClick={() =>
-                                setDraft((current) => {
-                                  const entries = [...current.fields];
-                                  [entries[position], entries[position + 1]] = [
-                                    entries[position + 1]!,
-                                    entries[position]!,
-                                  ];
-                                  return { ...current, fields: entries };
-                                })
-                              }
+                              onClick={() => moveColumn(field, position, 1)}
                             >
                               <ArrowDown />
                             </Button>
@@ -450,7 +595,10 @@ export function ReportRecipeEditor({
                       </Field>
                     );
                   })}
-                </FieldGroup>
+                </div>
+                <p role="status" className="sr-only">
+                  {moveNotice}
+                </p>
                 {draft.fields.some(
                   (entry) =>
                     !moduleFields.some((field) => field.id === entry.fieldId),
@@ -472,17 +620,21 @@ export function ReportRecipeEditor({
                   </Button>
                 ) : null}
               </FieldSet>
-            </TabsContent>
-            <TabsContent value="advanced" keepMounted className="mt-4">
+            </div>
+            <section
+              aria-labelledby="report-filters-heading"
+              className="flex flex-col gap-5"
+            >
+              <h3
+                id="report-filters-heading"
+                data-slot="section-title"
+                className="text-sm font-semibold"
+              >
+                Filters and order
+              </h3>
               <div className="flex flex-col gap-5">
-                <h3 data-slot="section-title" className="text-sm font-semibold">
-                  Filters, sorting, and grouping
-                </h3>
                 <FieldSet>
                   <FieldLegend>Filters</FieldLegend>
-                  <p className="text-muted-foreground text-sm">
-                    Keep only matching records. Add up to 10 conditions.
-                  </p>
                   {hasValuedUserFilter ? (
                     <div className="grid max-w-xl gap-2">
                       <Field>
@@ -1086,47 +1238,61 @@ export function ReportRecipeEditor({
                   </FieldLabel>
                 </Field>
               </div>
-            </TabsContent>
-          </Tabs>
-          <div className="border-border bg-card sticky bottom-0 z-10 flex flex-wrap items-center gap-2 border-t py-3">
+            </section>
+            <DialogFrameFooter>
+              <DialogFooter className="mt-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={pending}
+                  onClick={close}
+                >
+                  Cancel
+                </Button>
+                <DisabledReason reason={saveBlocked} stable>
+                  <Button type="submit" className="min-h-11" disabled={pending}>
+                    {pending
+                      ? "Saving…"
+                      : baselineReport
+                        ? "Save report"
+                        : "Create report"}
+                  </Button>
+                </DisabledReason>
+              </DialogFooter>
+            </DialogFrameFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
+        <AlertDialogContent className="slim-ui">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard your report changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The report stays as it was saved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
             <Button
-              type="submit"
-              className="min-h-11"
-              disabled={
-                !canEdit || !dirty || fieldsLoading || Boolean(fieldsError)
-              }
-            >
-              {actionPending === "save"
-                ? "Saving…"
-                : baselineReport
-                  ? "Save changes"
-                  : "Create Report"}
-            </Button>
-            <Button
-              type="button"
               variant="outline"
               className="min-h-11"
-              disabled={!canEdit || !dirty}
-              onClick={resetDraft}
+              onClick={() => setConfirmDiscard(false)}
             >
-              Reset draft
+              Keep editing
             </Button>
             <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 sm:ml-auto"
-              onClick={() => onOpenChange(false)}
+              variant="destructive"
+              className="min-h-11"
+              onClick={() => {
+                setConfirmDiscard(false);
+                onClose();
+              }}
             >
-              Close
+              Discard
             </Button>
-          </div>
-          {dirty ? (
-            <p role="status" className="text-muted-foreground text-sm">
-              Unsaved changes. Save or reset before running or archiving.
-            </p>
-          ) : null}
-        </form>
-      </DialogContent>
-    </Dialog>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
