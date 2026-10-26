@@ -6768,6 +6768,9 @@ test.describe("export journeys", () => {
         `/openview?section=views&module=${moduleId}&view=${viewId}`,
       );
       const opener = page.getByRole("button", { name: "Export", exact: true });
+      // The header shows Export at once, disabled until the view is ready;
+      // a disabled button cannot take focus.
+      await expect(opener).toBeEnabled();
       await opener.focus();
       await page.keyboard.press("Enter");
       const dialog = page.getByRole("dialog", { name: "Export records" });
