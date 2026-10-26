@@ -5505,7 +5505,7 @@
       },
       "DashboardCreate": {
         "additionalProperties": false,
-        "description": "Create a department Dashboard with up to twelve live widgets.",
+        "description": "Create a department Dashboard; its widgets must fit the grid without overlap.",
         "properties": {
           "department_id": {
             "format": "uuid",
@@ -5539,7 +5539,7 @@
             "items": {
               "$ref": "#/components/schemas/DashboardWidgetSpec"
             },
-            "maxItems": 12,
+            "maxItems": 20,
             "title": "Widgets",
             "type": "array"
           }
@@ -5614,6 +5614,10 @@
             "title": "Is Deleted",
             "type": "boolean"
           },
+          "is_home": {
+            "title": "Is Home",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -5646,7 +5650,7 @@
             "items": {
               "$ref": "#/components/schemas/DashboardWidgetResponse"
             },
-            "maxItems": 12,
+            "maxItems": 20,
             "title": "Widgets",
             "type": "array"
           }
@@ -5658,6 +5662,7 @@
           "name",
           "refresh_cadence",
           "revision",
+          "is_home",
           "is_deleted",
           "created_at",
           "updated_at",
@@ -5749,7 +5754,7 @@
                 "items": {
                   "$ref": "#/components/schemas/DashboardWidgetSpec"
                 },
-                "maxItems": 12,
+                "maxItems": 20,
                 "type": "array"
               },
               {
@@ -5767,7 +5772,7 @@
       },
       "DashboardWidgetResponse": {
         "additionalProperties": false,
-        "description": "One persisted live widget without a materialized data snapshot.",
+        "description": "One persisted live widget without a materialized data snapshot.\n\nA widget the grid migration could not place has no placement (all four null).",
         "properties": {
           "chart_id": {
             "anyOf": [
@@ -5780,6 +5785,19 @@
               }
             ],
             "title": "Chart Id"
+          },
+          "column_span": {
+            "anyOf": [
+              {
+                "maximum": 4.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column Span"
           },
           "config": {
             "anyOf": [
@@ -5803,25 +5821,55 @@
             "title": "Created At",
             "type": "string"
           },
+          "grid_column": {
+            "anyOf": [
+              {
+                "maximum": 3.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid Column"
+          },
+          "grid_row": {
+            "anyOf": [
+              {
+                "maximum": 4.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid Row"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
           },
           "position": {
-            "exclusiveMaximum": 12.0,
+            "exclusiveMaximum": 20.0,
             "minimum": 0.0,
             "title": "Position",
             "type": "integer"
           },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L"
+          "row_span": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Size",
-            "type": "string"
+            "title": "Row Span"
           },
           "updated_at": {
             "format": "date-time",
@@ -5843,7 +5891,10 @@
           "id",
           "position",
           "widget_type",
-          "size",
+          "grid_column",
+          "grid_row",
+          "column_span",
+          "row_span",
           "chart_id",
           "config",
           "created_at",
@@ -5854,7 +5905,7 @@
       },
       "DashboardWidgetSpec": {
         "additionalProperties": false,
-        "description": "One live widget; list order supplies its persisted position.",
+        "description": "One live widget at whole grid cells; list order supplies its persisted position.",
         "properties": {
           "chart_id": {
             "anyOf": [
@@ -5867,6 +5918,12 @@
               }
             ],
             "title": "Chart Id"
+          },
+          "column_span": {
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Column Span",
+            "type": "integer"
           },
           "config": {
             "anyOf": [
@@ -5885,15 +5942,23 @@
             ],
             "title": "Config"
           },
-          "size": {
-            "default": "M",
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
+          "grid_column": {
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Grid Column",
+            "type": "integer"
+          },
+          "grid_row": {
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "title": "Grid Row",
+            "type": "integer"
+          },
+          "row_span": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Row Span",
+            "type": "integer"
           },
           "widget_type": {
             "enum": [
@@ -5907,7 +5972,11 @@
           }
         },
         "required": [
-          "widget_type"
+          "widget_type",
+          "grid_column",
+          "grid_row",
+          "column_span",
+          "row_span"
         ],
         "title": "DashboardWidgetSpec",
         "type": "object"
@@ -47249,6 +47318,22 @@
                 }
               ],
               "title": "Department Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "home",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Home"
             }
           },
           {
