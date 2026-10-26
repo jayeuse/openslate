@@ -185,7 +185,7 @@ Caution: do not run either migration on an installation without a backup. The de
 ### C. What the new Kanban adds to purge and reset (BE7)
 
 - A board purge deletes its stages, cards, labels, checklist items, and card files and links.
-- A record or module purge **lists and removes** the record cards that point at it, as `sandbox/lifecycle/board_record_link_dependencies.py` does for record links. It never blocks: the widgets' `RESTRICT` keys blocked purges, and this spec does not repeat that.
+- A record or module purge **lists and removes** the record cards that point at it (`sandbox/lifecycle/board_card_dependencies.py`). It never blocks: the widgets' `RESTRICT` keys blocked purges, and this spec does not repeat that. (Correction found in P0: `board_record_link_dependencies.py` does block a source purge today, and record links keep that behavior.)
 - Reset lists the new tables (`operations/reset/models.py`); the table-parity test checks them.
 
 ## Fix-now rows (land in P0)

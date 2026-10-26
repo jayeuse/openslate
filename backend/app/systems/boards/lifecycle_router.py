@@ -17,6 +17,13 @@ from app.systems.boards.attachment_models import (
     BoardPostRevisionAttachment,
 )
 from app.systems.boards.event_models import BoardEvent
+from app.systems.boards.kanban_models import (
+    BoardCard,
+    BoardCardChecklistItem,
+    BoardCardLabel,
+    BoardLabel,
+    BoardStage,
+)
 from app.systems.boards.models import Board, BoardGroup, BoardScope, BoardStatus
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.post_work import delete_post_work
@@ -68,8 +75,14 @@ _CHILD_MODELS = (
     BoardPost,
     BoardAttachment,
     BoardRecordLink,
+    BoardStage,
+    BoardLabel,
+    BoardCard,
+    BoardCardLabel,
+    BoardCardChecklistItem,
     File,
 )
+_CARD_CHILDREN = (BoardCardLabel, BoardCardChecklistItem)
 
 
 def _error(exc: LifecycleError) -> HTTPException:
@@ -338,12 +351,13 @@ def purge_board(
                     BoardPostRevisionRecordLink,
                     BoardAttachment,
                     BoardRecordLink,
+                    *_CARD_CHILDREN,
                 ),
             ):
                 db.delete(child)
         db.flush()
         for child in children:
-            if isinstance(child, BoardPostRevision):
+            if isinstance(child, (BoardPostRevision, BoardCard)):
                 db.delete(child)
         db.flush()
         for child in children:
@@ -357,6 +371,8 @@ def purge_board(
                     BoardRecordLink,
                     File,
                     BoardEventReminder,
+                    BoardCard,
+                    *_CARD_CHILDREN,
                 ),
             ):
                 db.delete(child)

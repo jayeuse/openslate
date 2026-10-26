@@ -15,6 +15,9 @@ from app.systems.platform.files.models import File
 from app.systems.sandbox.lifecycle.access_dependencies import (
     load_group_access_purge_dependencies,
 )
+from app.systems.sandbox.lifecycle.board_card_dependencies import (
+    load_board_card_purge_dependencies,
+)
 from app.systems.sandbox.lifecycle.board_record_link_dependencies import (
     load_board_record_link_purge_dependencies,
 )
@@ -132,6 +135,9 @@ def load_purge_dependencies(
     record_link_blockers = [
         blocker for blocker in record_link_blockers if blocker.entity_id not in cascade_link_ids
     ]
+    card_rows, card_ids, card_board_ids = load_board_card_purge_dependencies(
+        db, record_ids, module_ids, department_board_ids["boards"], fingerprint
+    )
     report_rows, report_blockers, report_ids = load_report_purge_dependencies(
         db, module_ids, record_ids, fingerprint
     )
@@ -291,7 +297,7 @@ def load_purge_dependencies(
         else []
     )
     rows = access_rows + board_rows
-    rows += record_link_rows + report_rows + chart_rows
+    rows += record_link_rows + card_rows + report_rows + chart_rows
     blockers = board_blockers + record_link_blockers
     blockers += _comms_reference_blockers(db, record_ids, module_ids)
     blockers += report_blockers + chart_blockers
@@ -407,7 +413,15 @@ def load_purge_dependencies(
         {
             "group_access": group_access_ids,
             **department_board_ids,
-            "boards": tuple(sorted(set(department_board_ids["boards"]) | record_link_board_ids)),
+            "boards": tuple(
+                sorted(
+                    set(department_board_ids["boards"]) | record_link_board_ids | card_board_ids
+                )
+            ),
+            **{
+                key: tuple(sorted(set(department_board_ids[key]) | set(card_ids[key])))
+                for key in card_ids
+            },
             **record_link_ids,
             "board_record_links": tuple(
                 sorted(

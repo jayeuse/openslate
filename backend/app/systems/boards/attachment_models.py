@@ -39,15 +39,19 @@ class BoardAttachment(BaseModel):
             ["org_id", "post_id"], ["board_posts.org_id", "board_posts.id"],
             name="fk_board_attachments_post_id_board_posts", ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["org_id", "card_id"], ["board_cards.org_id", "board_cards.id"],
+            name="fk_board_attachments_card_id_board_cards", ondelete="RESTRICT",
+        ),
         CheckConstraint(
-            "(event_id IS NOT NULL AND post_id IS NULL) OR "
-            "(event_id IS NULL AND post_id IS NOT NULL)",
+            "num_nonnulls(event_id, post_id, card_id) = 1",
             name="ck_board_attachments_one_owner",
         ),
         UniqueConstraint("file_id", name="uq_board_attachments_file"),
         Index("ix_board_attachments_board_id", "board_id"),
         Index("ix_board_attachments_event_id", "event_id"),
         Index("ix_board_attachments_post_id", "post_id"),
+        Index("ix_board_attachments_card_id", "card_id"),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset()
 
@@ -58,6 +62,7 @@ class BoardAttachment(BaseModel):
     file_id: Mapped[UUID] = mapped_column(nullable=False)
     event_id: Mapped[UUID | None] = mapped_column(nullable=True)
     post_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    card_id: Mapped[UUID | None] = mapped_column(nullable=True)
     is_linked: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )

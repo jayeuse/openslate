@@ -9,6 +9,13 @@ from sqlalchemy.orm import Session
 
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
 from app.systems.boards.event_models import BoardEvent
+from app.systems.boards.kanban_models import (
+    BoardCard,
+    BoardCardChecklistItem,
+    BoardCardLabel,
+    BoardLabel,
+    BoardStage,
+)
 from app.systems.boards.models import Board, BoardGroup
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
@@ -33,6 +40,11 @@ _DIRECT_CHILDREN: tuple[tuple[str, type[Any]], ...] = (
     ("board_posts", BoardPost),
     ("board_attachments", BoardAttachment),
     ("board_record_links", BoardRecordLink),
+    ("board_stages", BoardStage),
+    ("board_labels", BoardLabel),
+    ("board_cards", BoardCard),
+    ("board_card_labels", BoardCardLabel),
+    ("board_card_checklist_items", BoardCardChecklistItem),
     ("files", File),
 )
 
@@ -46,6 +58,11 @@ _EMPTY_IDS = {
         "board_posts",
         "board_attachments",
         "board_record_links",
+        "board_stages",
+        "board_labels",
+        "board_cards",
+        "board_card_labels",
+        "board_card_checklist_items",
         "board_files",
         "scheduled_work",
         "in_app_notifications",
@@ -226,6 +243,13 @@ def load_department_board_purge_dependencies(
         "board_posts": post_ids,
         "board_attachments": tuple(row.id for row in children["board_attachments"]),
         "board_record_links": tuple(row.id for row in children["board_record_links"]),
+        **{
+            key: tuple(row.id for row in children[key])
+            for key in (
+                "board_stages", "board_labels", "board_cards", "board_card_labels",
+                "board_card_checklist_items",
+            )
+        },
         "board_files": tuple(row.id for row in children["files"]),
         "scheduled_work": work_ids,
         "in_app_notifications": tuple(row.id for row in notifications),

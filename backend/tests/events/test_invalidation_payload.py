@@ -42,6 +42,11 @@ BOARD_CHILDREN = [
     "board_post_revision_record_links",
     "board_attachments",
     "board_record_links",
+    "board_stages",
+    "board_cards",
+    "board_labels",
+    "board_card_labels",
+    "board_card_checklist_items",
 ]
 
 

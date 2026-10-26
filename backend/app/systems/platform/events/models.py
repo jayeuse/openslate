@@ -21,6 +21,8 @@ _PRIVATE_INVALIDATION_ENTITIES = frozenset(
         "board_post_revision_record_links",
         "board_attachments",
         "board_record_links",
+        "board_card_labels",
+        "board_card_checklist_items",
         "dashboard_widgets",
         "comms_capability_grants",
         "comms_categories",
@@ -80,7 +82,9 @@ _ENTITY_ONLY_ENTITIES = frozenset(
 MODULE_SCOPED_ENTITIES = frozenset(
     {"charts", "fields", "modules", "records", "relationship_edges", "saved_views"}
 )
-BOARD_SCOPED_ENTITIES = frozenset({"boards", "board_posts", "board_events"})
+BOARD_SCOPED_ENTITIES = frozenset(
+    {"boards", "board_posts", "board_events", "board_stages", "board_cards", "board_labels"}
+)
 
 
 @dataclass(frozen=True, slots=True)
