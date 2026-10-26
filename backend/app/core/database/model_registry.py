@@ -11,6 +11,7 @@ from app.systems.boards.attachment_models import (  # noqa: F401
     BoardAttachment,
     BoardPostRevisionAttachment,
 )
+from app.systems.boards.calendar_source_models import BoardCalendarSource  # noqa: F401
 from app.systems.boards.event_models import BoardEvent  # noqa: F401
 from app.systems.boards.kanban_models import (  # noqa: F401
     BoardCard,

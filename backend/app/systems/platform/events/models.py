@@ -83,7 +83,16 @@ MODULE_SCOPED_ENTITIES = frozenset(
     {"charts", "fields", "modules", "records", "relationship_edges", "saved_views"}
 )
 BOARD_SCOPED_ENTITIES = frozenset(
-    {"boards", "board_posts", "board_events", "board_stages", "board_cards", "board_labels"}
+    {
+        "boards",
+        "board_posts",
+        "board_events",
+        "board_stages",
+        "board_cards",
+        "board_labels",
+        # A personal source has no Board, so it publishes nothing (a private row).
+        "board_calendar_sources",
+    }
 )
 
 

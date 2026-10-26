@@ -134,6 +134,26 @@ def test_a_record_card_needs_record_read_and_one_active_card_per_record(
     assert titled.json()["detail"]["code"] == "record_card_fields"
 
 
+def test_a_record_card_has_no_checklist(integration_owner_db: Session) -> None:
+    db = integration_owner_db
+    writer = member(db)
+    board = project_board(db)
+    grant(db, board, [writer], AccessLevel.WRITE)
+    source = record_source(db, writer)
+    card = add_record_card(db, board, add_stage(db, board), source.record, 1024)
+    db.commit()
+
+    added = kanban(db, writer).post(
+        f"/api/boards/{board.id}/cards/{card.id}/checklist", json={"text": "Call back"}
+    )
+
+    assert added.status_code == 409, added.text
+    assert added.json()["detail"]["code"] == "checklist_objectives_only"
+    assert db.scalar(
+        select(BoardCardChecklistItem.id).where(BoardCardChecklistItem.card_id == card.id)
+    ) is None
+
+
 def test_writers_move_and_archive_a_locked_card_and_change_nothing_else(
     integration_owner_db: Session,
 ) -> None:

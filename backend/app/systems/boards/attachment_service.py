@@ -1,4 +1,8 @@
-"""Board-scoped file links on posts and events."""
+"""Board-scoped file links on posts, events and objective cards.
+
+A card owns files only when it is an objective: a record card's files belong to its
+Record. Cards have no author, so any writer of the Board changes a card's files.
+"""
 
 from datetime import UTC, datetime
 from uuid import UUID
@@ -6,7 +10,8 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.systems.access.users.models import User
 from app.systems.boards.attachment_models import (
@@ -14,6 +19,7 @@ from app.systems.boards.attachment_models import (
     BoardPostRevisionAttachment,
 )
 from app.systems.boards.event_models import BoardEvent
+from app.systems.boards.kanban_models import BoardCard
 from app.systems.boards.models import Board
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.post_service import displayed_revision, manager
@@ -21,9 +27,23 @@ from app.systems.boards.post_work import cancel_post_work
 from app.systems.platform.files.access import authorize_board_file, error, load
 from app.systems.platform.files.models import File
 
+Content = BoardEvent | BoardPost | BoardCard
+OWNER_COLUMNS = {"event": "event_id", "post": "post_id", "card": "card_id"}
+
 
 def _hidden() -> HTTPException:
     return error("file_not_found", "File not found", 404)
+
+
+def owners(kind: str, content_id: UUID) -> dict[str, UUID | None]:
+    """The three owner columns of a link row: ``content_id`` in ``kind``'s column."""
+
+    return {column: content_id if key == kind else None for key, column in OWNER_COLUMNS.items()}
+
+
+def _owned_by(kind: str, content_id: UUID) -> ColumnElement[bool]:
+    column: InstrumentedAttribute[UUID | None] = getattr(BoardAttachment, OWNER_COLUMNS[kind])
+    return column == content_id
 
 
 def _content(
@@ -35,7 +55,7 @@ def _content(
     *,
     write: bool,
     lock: bool = False,
-) -> tuple[Board, BoardEvent | BoardPost]:
+) -> tuple[Board, Content]:
     board = authorize_board_file(db, actor, board_id, write=write, lock=lock)
     if kind == "event":
         event_statement = select(BoardEvent).where(
@@ -48,7 +68,7 @@ def _content(
             event_statement = event_statement.with_for_update().execution_options(
                 populate_existing=True
             )
-        item: BoardEvent | BoardPost | None = db.scalar(event_statement)
+        item: Content | None = db.scalar(event_statement)
     elif kind == "post":
         post_statement = select(BoardPost).where(
             BoardPost.id == content_id,
@@ -61,10 +81,27 @@ def _content(
                 populate_existing=True
             )
         item = db.scalar(post_statement)
+    elif kind == "card":
+        card_statement = select(BoardCard).where(
+            BoardCard.id == content_id,
+            BoardCard.board_id == board_id,
+            BoardCard.is_deleted.is_(False),
+        )
+        if lock:
+            card_statement = card_statement.with_for_update().execution_options(
+                populate_existing=True
+            )
+        item = db.scalar(card_statement)
     else:
         raise _hidden()
     if item is None:
         raise _hidden()
+    if isinstance(item, BoardCard):
+        if item.kind != "objective":
+            raise error("card_objectives_only", "Only objectives have files and linked records")
+        if write and item.archived_at is not None:
+            raise error("card_archived", "Restore the card before changing it")
+        return board, item
     if write:
         if isinstance(item, BoardEvent) and item.archived:
             raise error("event_archived", "Restore the event before attaching files")
@@ -133,9 +170,7 @@ def attachment_files(
         links = select(BoardAttachment.file_id).where(
             BoardAttachment.board_id == board_id,
             BoardAttachment.is_linked.is_(True),
-            BoardAttachment.event_id == content_id
-            if kind == "event"
-            else BoardAttachment.post_id == content_id,
+            _owned_by(kind, content_id),
         )
     return list(
         db.scalars(
@@ -191,9 +226,7 @@ def visible_file(
                 BoardAttachment.board_id == board_id,
                 BoardAttachment.is_linked.is_(True),
                 BoardAttachment.file_id == file_id,
-                BoardAttachment.event_id == content_id
-                if kind == "event"
-                else BoardAttachment.post_id == content_id,
+                _owned_by(kind, content_id),
             )
         )
     if link is None:
@@ -239,10 +272,9 @@ def link_file(
         .execution_options(populate_existing=True)
     )
     if existing is not None:
-        if (
-            existing.board_id != board_id
-            or existing.event_id != (content_id if kind == "event" else None)
-            or existing.post_id != (content_id if kind == "post" else None)
+        if existing.board_id != board_id or any(
+            getattr(existing, column) != value
+            for column, value in owners(kind, content_id).items()
         ):
             raise error("file_already_owned", "File already belongs to another content item")
         if existing.is_linked:
@@ -254,8 +286,7 @@ def link_file(
                 org_id=file.org_id,
                 board_id=board_id,
                 file_id=file_id,
-                event_id=content_id if kind == "event" else None,
-                post_id=content_id if kind == "post" else None,
+                **owners(kind, content_id),
             )
         )
     _content_changed(db, board, item)
@@ -286,9 +317,7 @@ def unlink_file(
         .where(
             BoardAttachment.board_id == board_id,
             BoardAttachment.file_id == file_id,
-            BoardAttachment.event_id == content_id
-            if kind == "event"
-            else BoardAttachment.post_id == content_id,
+            _owned_by(kind, content_id),
         )
         .with_for_update()
         .execution_options(populate_existing=True)
@@ -300,7 +329,7 @@ def unlink_file(
     db.commit()
 
 
-def _content_changed(db: Session, board: Board, item: BoardEvent | BoardPost) -> None:
+def _content_changed(db: Session, board: Board, item: Content) -> None:
     item.revision += 1
     board.revision += 1
     if isinstance(item, BoardPost):

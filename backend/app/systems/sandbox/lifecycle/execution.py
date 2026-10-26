@@ -11,6 +11,7 @@ from uuid6 import uuid7
 from app.core.base_model import utc_now
 from app.systems.access.policy.models import GroupAccess
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
+from app.systems.boards.calendar_source_models import BoardCalendarSource
 from app.systems.boards.department_boards import sync_department_board
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.kanban_models import BoardLabel, BoardStage
@@ -69,6 +70,7 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("board_attachments", BoardAttachment),
     ("board_record_links", BoardRecordLink),
     *CARD_ROW_MODELS[::-1],
+    ("board_calendar_sources", BoardCalendarSource),
     ("board_stages", BoardStage),
     ("board_labels", BoardLabel),
     ("board_files", File),
@@ -172,9 +174,11 @@ def _delete_rows(
 def _delete_department_board_children(db: Session, plan: LifecyclePlan) -> None:
     """Remove every inventoried child of a Department Board before its sources.
 
-    Other purges remove only the record cards that point at their Records.
+    Other purges remove only the record cards that point at their Records. Every
+    purge removes the calendar sources it lists (its fields, modules or Boards).
     """
 
+    _delete_rows(db, plan, (("board_calendar_sources", BoardCalendarSource),))
     if plan.target_type is not LifecycleTargetType.DEPARTMENT:
         _delete_rows(db, plan, CARD_ROW_MODELS)
         return

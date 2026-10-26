@@ -10,6 +10,7 @@ from operations.sample.board_text import project_board
 from operations.sample.client import SampleClient, SampleClientError
 from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.registry import default_pack
+from operations.sample.population.board_kanban import KANBAN_KEYS, verify_kanban
 from operations.sample.population.content import (
     SampleContentError,
     _attachment_count,
@@ -233,6 +234,7 @@ def verify_boards(
         "project_group_grants": 0,
         "post_publications": 0,
         "publication_revisions": 0,
+        **dict.fromkeys(KANBAN_KEYS, 0),
         "read_failures": 0,
     }
     try:
@@ -259,6 +261,10 @@ def verify_boards(
             continue
         counts["posts"] += len(posts)
         counts["events"] += len(events)
+        kanban, failed = verify_kanban(admin, board_id)
+        for key, value in kanban.items():
+            counts[key] += value
+        counts["read_failures"] += failed
         for post in posts:
             post_id = _id(post)
             status = post.get("status")

@@ -9,8 +9,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 from app.systems.boards import lifecycle_router
+from app.systems.boards.attachment_models import BoardAttachment
+from app.systems.boards.calendar_source_models import BoardCalendarSource
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.kanban_models import (
     BoardCard,
@@ -21,6 +24,7 @@ from app.systems.boards.kanban_models import (
 )
 from app.systems.boards.models import Board, BoardStatus
 from app.systems.boards.record_link_models import BoardRecordLink
+from app.systems.platform.files.models import File
 from app.systems.sandbox.lifecycle.execution import execute_lifecycle
 from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleOperation, LifecycleTargetType
@@ -80,25 +84,74 @@ def test_project_board_purge_removes_its_kanban_and_card_owned_links(
     db.flush()
     source = record_source(db)
     rows = _kanban(db, board, source)
-    db.add(BoardRecordLink(org_id=board.org_id, board_id=board.id,
+    link = BoardRecordLink(org_id=board.org_id, board_id=board.id,
                            card_id=rows["objective"].id, record_id=source.record.id,
-                           module_id=source.module.id))
+                           module_id=source.module.id)
+    file = File(org_id=board.org_id, purpose="board_attachment", board_id=board.id,
+                record_id=None, creator_id=admin.id, filename="plan.pdf", expected_size=3,
+                object_key=uuid7().hex, state="awaiting_upload")
+    db.add_all((link, file))
+    db.flush()
+    attachment = BoardAttachment(org_id=board.org_id, board_id=board.id, file_id=file.id,
+                                 card_id=rows["objective"].id)
+    calendar_source = BoardCalendarSource(
+        org_id=board.org_id, board_id=board.id, module_id=source.module.id,
+        date_field_id=source.fields["Quoted on"].id, position=0, created_by=admin.id,
+    )
+    db.add_all((attachment, calendar_source))
     db.commit()
     _enabled(monkeypatch, True)
     path = f"/api/boards/{board.id}/purge"
     with board_client(db, admin, lifecycle_router.router) as api:
+        # The card's file blocks until its bytes are purged, as a post's file does.
+        assert api.post(f"{path}/preview").status_code == 409
+        attachment.is_linked = False
+        file.state, file.is_deleted, file.deleted_at = "purged", True, datetime.now(UTC)
+        db.commit()
         preview = api.post(f"{path}/preview")
         assert preview.status_code == 200, preview.text
         types = {row["entity_type"] for row in preview.json()["impact"]["rows"]}
         assert {"board_stages", "board_labels", "board_cards", "board_card_labels",
-                "board_card_checklist_items", "board_record_links"} <= types
+                "board_card_checklist_items", "board_record_links", "board_attachments",
+                "files", "board_calendar_sources"} <= types
         executed = api.post(path, json={"token": preview.json()["token"],
                                         "confirmation_name": board.name,
                                         "password": password})
         assert executed.status_code == 200, executed.text
     assert db.get(Board, board.id) is None
     assert [_count(db, model, board.id) for model in KANBAN] == [0, 0, 0, 0, 0]
+    assert db.get(BoardRecordLink, link.id) is None
+    assert db.get(BoardAttachment, attachment.id) is None
+    assert db.get(File, file.id) is None
+    assert db.get(BoardCalendarSource, calendar_source.id) is None
     assert db.get(Record, source.record.id) is not None
+
+
+def test_an_objectives_record_link_blocks_its_source_record_purge(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    create_document(db, organization(db))
+    source = record_source(db)
+    board = project_board(db)
+    rows = _kanban(db, board, source)
+    link = BoardRecordLink(org_id=board.org_id, board_id=board.id,
+                           card_id=rows["objective"].id, record_id=source.record.id,
+                           module_id=source.module.id)
+    db.add(link)
+    source.record.is_deleted, source.record.deleted_at = True, datetime.now(UTC)
+    db.commit()
+
+    plan = plan_lifecycle(db, LifecycleTargetType.RECORD, source.record.id,
+                          LifecycleOperation.PURGE, None)
+
+    assert [(blocker.entity_type, blocker.entity_id) for blocker in plan.blockers] == [
+        ("board_record_links", link.id)
+    ]
+    # The record card itself is listed for removal, never a blocker.
+    assert ("board_cards", rows["record_card"].id) in {
+        (row.entity_type, row.entity_id) for row in plan.rows
+    }
 
 
 @pytest.mark.parametrize(

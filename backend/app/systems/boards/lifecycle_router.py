@@ -16,6 +16,7 @@ from app.systems.boards.attachment_models import (
     BoardAttachment,
     BoardPostRevisionAttachment,
 )
+from app.systems.boards.calendar_source_models import BoardCalendarSource
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.kanban_models import (
     BoardCard,
@@ -80,9 +81,10 @@ _CHILD_MODELS = (
     BoardCard,
     BoardCardLabel,
     BoardCardChecklistItem,
+    BoardCalendarSource,
     File,
 )
-_CARD_CHILDREN = (BoardCardLabel, BoardCardChecklistItem)
+_CARD_CHILDREN = (BoardCardLabel, BoardCardChecklistItem, BoardCalendarSource)
 
 
 def _error(exc: LifecycleError) -> HTTPException:

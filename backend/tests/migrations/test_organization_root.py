@@ -52,6 +52,7 @@ ORGANIZATION_TABLES = (
         "board_cards",
         "board_card_labels",
         "board_card_checklist_items",
+        "board_calendar_sources",
     }
 )
 MIXED_TABLES = frozenset({"audit_logs", "files", "security_events", "in_app_notifications"})

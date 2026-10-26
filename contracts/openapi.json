@@ -2980,6 +2980,99 @@
         "title": "BootstrapResponse",
         "type": "object"
       },
+      "CalendarSourceCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "date_field_id": {
+            "format": "uuid",
+            "title": "Date Field Id",
+            "type": "string"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "module_id",
+          "date_field_id"
+        ],
+        "title": "CalendarSourceCreate",
+        "type": "object"
+      },
+      "CalendarSourceList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CalendarSourceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CalendarSourceList",
+        "type": "object"
+      },
+      "CalendarSourceResponse": {
+        "properties": {
+          "date_field_id": {
+            "format": "uuid",
+            "title": "Date Field Id",
+            "type": "string"
+          },
+          "department_id": {
+            "format": "uuid",
+            "title": "Department Id",
+            "type": "string"
+          },
+          "field_name": {
+            "title": "Field Name",
+            "type": "string"
+          },
+          "field_type": {
+            "enum": [
+              "date",
+              "datetime"
+            ],
+            "title": "Field Type",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          },
+          "module_name": {
+            "title": "Module Name",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "module_id",
+          "module_name",
+          "department_id",
+          "date_field_id",
+          "field_name",
+          "field_type",
+          "position"
+        ],
+        "title": "CalendarSourceResponse",
+        "type": "object"
+      },
       "CapabilityCheck": {
         "additionalProperties": false,
         "properties": {
@@ -7698,6 +7791,179 @@
           "issues"
         ],
         "title": "DocumentResponse",
+        "type": "object"
+      },
+      "DueCardListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DueCardResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "DueCardListResponse",
+        "type": "object"
+      },
+      "DueCardResponse": {
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "board": {
+            "$ref": "#/components/schemas/OccurrenceBoard"
+          },
+          "board_id": {
+            "format": "uuid",
+            "title": "Board Id",
+            "type": "string"
+          },
+          "checklist": {
+            "$ref": "#/components/schemas/ChecklistProgress"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "objective",
+              "record"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Label Ids",
+            "type": "array"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "record": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordSummary"
+              },
+              {
+                "$ref": "#/components/schemas/LockedRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "stage_id": {
+            "format": "uuid",
+            "title": "Stage Id",
+            "type": "string"
+          },
+          "start_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start On"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "board_id",
+          "stage_id",
+          "kind",
+          "title",
+          "rank",
+          "assignee_id",
+          "start_on",
+          "due_on",
+          "label_ids",
+          "checklist",
+          "archived_at",
+          "revision",
+          "created_at",
+          "updated_at",
+          "record",
+          "board"
+        ],
+        "title": "DueCardResponse",
         "type": "object"
       },
       "DuplicateRequest": {
@@ -28837,6 +29103,117 @@
         ]
       }
     },
+    "/api/boards/cards/due": {
+      "get": {
+        "description": "Sorted by due date, Board, rank and ID; one page of the merged list.",
+        "operationId": "list_my_due_cards_api_boards_cards_due_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "assignee",
+            "required": false,
+            "schema": {
+              "const": "me",
+              "default": "me",
+              "title": "Assignee",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DueCardListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List My Due Cards",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
     "/api/boards/occurrences": {
       "get": {
         "operationId": "list_cross_board_occurrences_api_boards_occurrences_get",
@@ -29399,6 +29776,215 @@
         "summary": "Archive Board",
         "tags": [
           "boards"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/calendar-sources": {
+      "get": {
+        "operationId": "list_board_calendar_sources_api_boards__board_id__calendar_sources_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarSourceList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Board Calendar Sources",
+        "tags": [
+          "calendar sources"
+        ]
+      },
+      "post": {
+        "operationId": "add_board_calendar_source_api_boards__board_id__calendar_sources_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarSourceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarSourceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Board Calendar Source",
+        "tags": [
+          "calendar sources"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/calendar-sources/{source_id}": {
+      "delete": {
+        "operationId": "remove_board_calendar_source_api_boards__board_id__calendar_sources__source_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Board Calendar Source",
+        "tags": [
+          "calendar sources"
         ]
       }
     },
@@ -30201,6 +30787,364 @@
         ]
       }
     },
+    "/api/boards/{board_id}/cards/{card_id}/attachments": {
+      "get": {
+        "description": "An objective card's files; an archived card keeps and lists them.",
+        "operationId": "list_card_attachments_api_boards__board_id__cards__card_id__attachments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Card Attachments",
+        "tags": [
+          "board attachments"
+        ]
+      },
+      "post": {
+        "description": "``content_revision`` is the card's revision; any writer of the Board may attach.",
+        "operationId": "attach_card_file_api_boards__board_id__cards__card_id__attachments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachmentLink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Attach Card File",
+        "tags": [
+          "board attachments"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/attachments/{file_id}": {
+      "delete": {
+        "operationId": "detach_card_file_api_boards__board_id__cards__card_id__attachments__file_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "File Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachmentRevision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Detach Card File",
+        "tags": [
+          "board attachments"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/attachments/{file_id}/content": {
+      "get": {
+        "operationId": "download_card_file_api_boards__board_id__cards__card_id__attachments__file_id__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "File Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Download Card File",
+        "tags": [
+          "board attachments"
+        ]
+      }
+    },
     "/api/boards/{board_id}/cards/{card_id}/checklist": {
       "post": {
         "operationId": "add_checklist_item_api_boards__board_id__cards__card_id__checklist_post",
@@ -30371,6 +31315,280 @@
         "summary": "Order Checklist",
         "tags": [
           "board kanban"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/record-links": {
+      "get": {
+        "description": "An objective card's linked records; a record card refuses (409).",
+        "operationId": "list_card_record_links_api_boards__board_id__cards__card_id__record_links_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordLinkList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Card Record Links",
+        "tags": [
+          "board record links"
+        ]
+      },
+      "post": {
+        "description": "``content_revision`` is the card's revision; any writer of the Board may link.",
+        "operationId": "create_card_record_link_api_boards__board_id__cards__card_id__record_links_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordLinkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordLinkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Card Record Link",
+        "tags": [
+          "board record links"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/record-links/{link_id}": {
+      "delete": {
+        "operationId": "delete_card_record_link_api_boards__board_id__cards__card_id__record_links__link_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordLinkRevision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Card Record Link",
+        "tags": [
+          "board record links"
         ]
       }
     },
@@ -52320,6 +53538,185 @@
         "summary": "Retry Job",
         "tags": [
           "jobs"
+        ]
+      }
+    },
+    "/api/me/calendar-sources": {
+      "get": {
+        "operationId": "list_my_calendar_sources_api_me_calendar_sources_get",
+        "parameters": [
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarSourceList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List My Calendar Sources",
+        "tags": [
+          "calendar sources"
+        ]
+      },
+      "post": {
+        "operationId": "add_my_calendar_source_api_me_calendar_sources_post",
+        "parameters": [
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarSourceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarSourceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add My Calendar Source",
+        "tags": [
+          "calendar sources"
+        ]
+      }
+    },
+    "/api/me/calendar-sources/{source_id}": {
+      "delete": {
+        "operationId": "remove_my_calendar_source_api_me_calendar_sources__source_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove My Calendar Source",
+        "tags": [
+          "calendar sources"
         ]
       }
     },

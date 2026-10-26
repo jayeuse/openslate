@@ -28,6 +28,10 @@ EXPECTED_CONTENT = {
     "project_group_grants": 15,
     "post_publications": 70,
     "publication_revisions": 2,
+    "kanban_stages": 5,
+    "kanban_labels": 3,
+    "kanban_cards": 12,
+    "kanban_checklist_items": 7,
     "views": 36,
     "dashboards": 6,
     "dashboard_widgets": 24,
@@ -45,6 +49,7 @@ EXPECTED_CONTENT = {
         "project_group_grants",
         "post_publications",
         "publication_revisions",
+        "kanban_cards",
         "disabled_schedules",
     ),
 )
@@ -67,6 +72,10 @@ def test_content_readback_rejects_each_missing_required_outcome(
         "project_group_grants",
         "post_publications",
         "publication_revisions",
+        "kanban_stages",
+        "kanban_labels",
+        "kanban_cards",
+        "kanban_checklist_items",
         "read_failures",
     }
     monkeypatch.setattr(
@@ -146,6 +155,9 @@ def test_project_board_grants_require_exact_intended_groups_and_levels(
         if request.url.path in {
             f"/api/boards/{BOARD_ID}/posts",
             f"/api/boards/{BOARD_ID}/events",
+            f"/api/boards/{BOARD_ID}/stages",
+            f"/api/boards/{BOARD_ID}/labels",
+            f"/api/boards/{BOARD_ID}/cards",
         }:
             return httpx.Response(200, json=_page([]))
         raise AssertionError(f"Unexpected GET {request.url.path}")

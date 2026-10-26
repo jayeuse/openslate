@@ -8,6 +8,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
+from app.systems.boards.calendar_source_models import BoardCalendarSource
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.kanban_models import (
     BoardCard,
@@ -45,6 +46,7 @@ _DIRECT_CHILDREN: tuple[tuple[str, type[Any]], ...] = (
     ("board_cards", BoardCard),
     ("board_card_labels", BoardCardLabel),
     ("board_card_checklist_items", BoardCardChecklistItem),
+    ("board_calendar_sources", BoardCalendarSource),
     ("files", File),
 )
 
@@ -63,6 +65,7 @@ _EMPTY_IDS = {
         "board_cards",
         "board_card_labels",
         "board_card_checklist_items",
+        "board_calendar_sources",
         "board_files",
         "scheduled_work",
         "in_app_notifications",
@@ -247,7 +250,7 @@ def load_department_board_purge_dependencies(
             key: tuple(row.id for row in children[key])
             for key in (
                 "board_stages", "board_labels", "board_cards", "board_card_labels",
-                "board_card_checklist_items",
+                "board_card_checklist_items", "board_calendar_sources",
             )
         },
         "board_files": tuple(row.id for row in children["files"]),

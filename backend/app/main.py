@@ -49,6 +49,7 @@ from app.systems.access.policy.configuration_router import router as access_poli
 from app.systems.boards.access_preview_router import router as board_access_preview_router
 from app.systems.boards.activity_router import router as board_activity_router
 from app.systems.boards.attachment_router import router as board_attachments_router
+from app.systems.boards.calendar_source_router import router as calendar_sources_router
 from app.systems.boards.card_activity_router import router as board_card_activity_router
 from app.systems.boards.card_batch_router import router as board_card_batch_router
 from app.systems.boards.card_router import router as board_cards_router
@@ -56,6 +57,7 @@ from app.systems.boards.checklist_router import router as board_checklist_router
 from app.systems.boards.cross_board_occurrence_router import (
     router as board_occurrences_router,
 )
+from app.systems.boards.due_card_router import router as board_due_cards_router
 from app.systems.boards.event_author_router import router as board_event_authors_router
 from app.systems.boards.event_router import router as board_events_router
 from app.systems.boards.group_router import router as board_groups_router
@@ -385,6 +387,8 @@ def create_app() -> FastAPI:
     app.include_router(board_lifecycle_router, prefix="/api")
     app.include_router(board_event_authors_router, prefix="/api")
     app.include_router(board_occurrences_router, prefix="/api")
+    app.include_router(board_due_cards_router, prefix="/api")
+    app.include_router(calendar_sources_router, prefix="/api")
     app.include_router(board_events_router, prefix="/api")
     app.include_router(board_record_links_router, prefix="/api")
     app.include_router(board_stages_router, prefix="/api")

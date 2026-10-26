@@ -47,6 +47,7 @@ BOARD_CHILDREN = [
     "board_labels",
     "board_card_labels",
     "board_card_checklist_items",
+    "board_calendar_sources",
 ]
 
 

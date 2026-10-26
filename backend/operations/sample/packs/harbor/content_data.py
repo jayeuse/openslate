@@ -6,6 +6,8 @@ from operations.sample.packs.content_types import (
     BoardFileSpec,
     BoardLinkSpec,
     ContentSpec,
+    KanbanCardSpec,
+    KanbanSpec,
     MoneySpec,
 )
 from operations.sample.packs.harbor import content_text as text
@@ -71,6 +73,39 @@ _BOARD_FILES = tuple(
     )
 )
 
+# The Sales department Board's demo Kanban: 5 stages, 3 labels, 12 cards (4 record cards).
+_KANBAN = KanbanSpec(
+    board="department:sales",
+    stages=(
+        ("Leads", "chart-1"),
+        ("Qualified", "chart-2"),
+        ("Quoted", "chart-3"),
+        ("Negotiating", "chart-4"),
+        ("Won", "chart-5"),
+    ),
+    labels=(("Priority", "chart-1"), ("Renewal", "chart-2"), ("New account", "chart-3")),
+    cards=(
+        KanbanCardSpec(0, "Call the cold-storage co-op", labels=(2,), due_in_days=3),
+        KanbanCardSpec(0, "Follow up on the trade show list", due_in_days=6),
+        KanbanCardSpec(0, record="customers:000003", labels=(2,)),
+        KanbanCardSpec(1, "Confirm fleet size with the port authority", labels=(0,),
+                       due_in_days=2,
+                       checklist=("Ask for the vessel list", "Check crane access")),
+        KanbanCardSpec(1, record="customers:000001", labels=(1,), due_in_days=9),
+        KanbanCardSpec(2, record="quotes:000001", labels=(0,), due_in_days=4),
+        KanbanCardSpec(2, "Price the winter maintenance bundle", labels=(1,),
+                       description="Bundle the inspection visits with spare parts.",
+                       checklist=("Collect last year's visits", "Draft the price",
+                                  "Review with Finance")),
+        KanbanCardSpec(3, record="quotes:000002", labels=(0, 1), due_in_days=7),
+        KanbanCardSpec(3, "Agree payment terms with the fisheries group", due_in_days=12),
+        KanbanCardSpec(4, "Hand over the renewal to Service", labels=(1,),
+                       checklist=("Send the signed terms", "Book the kickoff call")),
+        KanbanCardSpec(4, "Log the new account in Finance", labels=(2,)),
+        KanbanCardSpec(4, "Thank the referral partner"),
+    ),
+)
+
 
 def content_spec() -> ContentSpec:
     return ContentSpec(
@@ -132,4 +167,5 @@ def content_spec() -> ContentSpec:
         view_name=text.view_name,
         dashboard_name=text.dashboard_name,
         report_names=text.report_names,
+        kanban=_KANBAN,
     )

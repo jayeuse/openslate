@@ -393,6 +393,15 @@ The analysis holds the full text. "Refined" and "superseded" name the later deci
 
 **Around it.** New live entities `board_stages`, `board_cards`, `board_labels` in `BOARD_SCOPED_ENTITIES`; `AuditSession` on every mutation (card activity reads it, BR81); board purge and record or module purge as in data safety C; reset lists; sample packs seed a demo Kanban on Sales announcements (5 stages, about 12 cards, 3 labels) with pack counts.
 
+### Recorded during P0 (2026-10-26)
+
+- **Migrations:** `4e015d0fb2ab` (widgets removed), `b7e2c4a9d1f3` (Kanban), `c3f8d2e6a1b7` (calendar sources).
+- **Kanban writes lock the board row but do not bump `board_revision`.** A drag must not make a post or event editor stale. Card files and record links reuse the post attachment routes, which bump both revisions, so the client refetches the card after a file or link change.
+- **Record card summary:** the module's title field; the first live choice field as the status; the first two plain-text fields with a value. A locked card returns `{locked: true}` with no record or module id.
+- **Files and record links belong to objectives only** (`card_objectives_only`); a record card's files and links are its record's.
+- **Sources cap:** the 5-source limit counts sources the viewer cannot see, so a manager may be refused below 5 visible sources. The refusal names no module. Personal sources publish no live event.
+- **`GET /api/boards/occurrences` pages at 100** (the shared pagination cap), so My calendar pages through a busy month.
+
 ## Comps
 
 Comps draw the novel parts only, in Slate dark with Harbor content and the sidebar's Announcements rows. Serve them over HTTP from `.impeccable/mocks/boards/` (`python3 -m http.server <port>`). They reuse the OpenView comp kit (`openview.css` as a symlink, the icon sprite with calendar, Kanban, and Gantt icons, and the `_next`/`app-out` links to the app's tokens). New classes start with `bd-`.

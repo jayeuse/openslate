@@ -1,4 +1,4 @@
-"""Record shortcuts scoped to a visible Board Event or Post."""
+"""Record shortcuts scoped to a visible Board Event, Post or objective card."""
 
 from typing import Annotated, Literal
 from uuid import UUID
@@ -241,6 +241,68 @@ def delete_post_record_link(
         board_id,
         "post",
         post_id,
+        link_id,
+        board_revision=payload.board_revision,
+        content_revision=payload.content_revision,
+    )
+
+
+@router.get("/{board_id}/cards/{card_id}/record-links", response_model=RecordLinkList)
+def list_card_record_links(
+    board_id: UUID,
+    card_id: UUID,
+    actor: Reader,
+    db: Database,
+    limit: Annotated[int, Query(ge=1, le=20)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> RecordLinkList:
+    """An objective card's linked records; a record card refuses (409)."""
+
+    return _list(db, actor, board_id, "card", card_id, view="current", limit=limit, offset=offset)
+
+
+@router.post(
+    "/{board_id}/cards/{card_id}/record-links", response_model=RecordLinkResponse, status_code=201
+)
+def create_card_record_link(
+    board_id: UUID,
+    card_id: UUID,
+    payload: RecordLinkCreate,
+    actor: Writer,
+    db: Database,
+    response: Response,
+) -> RecordLinkResponse:
+    """``content_revision`` is the card's revision; any writer of the Board may link."""
+
+    link, title = link_record(
+        db,
+        fresh_user(db, actor.id),
+        board_id,
+        "card",
+        card_id,
+        payload.record_id,
+        board_revision=payload.board_revision,
+        content_revision=payload.content_revision,
+    )
+    response.headers["Location"] = f"/api/boards/{board_id}/cards/{card_id}/record-links/{link.id}"
+    return _response(link, {link.record_id: (link.module_id, title)})
+
+
+@router.delete("/{board_id}/cards/{card_id}/record-links/{link_id}", status_code=204)
+def delete_card_record_link(
+    board_id: UUID,
+    card_id: UUID,
+    link_id: UUID,
+    payload: RecordLinkRevision,
+    actor: Writer,
+    db: Database,
+) -> None:
+    unlink_record(
+        db,
+        fresh_user(db, actor.id),
+        board_id,
+        "card",
+        card_id,
         link_id,
         board_revision=payload.board_revision,
         content_revision=payload.content_revision,

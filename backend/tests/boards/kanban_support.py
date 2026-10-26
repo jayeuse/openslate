@@ -77,7 +77,7 @@ def record_source(db: Session, *readers: User, level: str = AccessLevel.READ) ->
     """
 
     department = Department(org_id=organization(db).id,
-                            department_name=f"Kanban source {uuid7().hex[:10]}")
+                            department_name=f"Kanban source {uuid7().hex[-12:]}")
     db.add(department)
     db.flush()
     module = Module(org_id=department.org_id, department_id=department.id,
