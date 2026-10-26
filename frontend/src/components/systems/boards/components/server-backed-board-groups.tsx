@@ -19,12 +19,12 @@ import {
 } from "../adapters/board-management-api";
 
 const LEVELS: { value: BoardAccessLevel; label: string; hint: string }[] = [
-  { value: "read", label: "Read", hint: "sees posts, events and widgets" },
+  { value: "read", label: "Read", hint: "sees posts and events" },
   { value: "write", label: "Write", hint: "also adds posts and events" },
   {
     value: "manage",
     label: "Manage",
-    hint: "also pins posts, changes widgets and other people's posts",
+    hint: "also pins posts and changes other people's posts",
   },
 ];
 

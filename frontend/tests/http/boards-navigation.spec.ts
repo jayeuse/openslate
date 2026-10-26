@@ -58,7 +58,7 @@ test("legacy sample Board URL cannot reveal browser-local Board content", async 
   page,
 }) => {
   await installServerBoards(page);
-  await page.goto("/boards?board=sample-board-organization&section=overview");
+  await page.goto("/boards?board=sample-board-organization&section=posts");
 
   await expect(
     page.getByText(
@@ -176,7 +176,7 @@ test("a slow Board list shows its skeleton only after 300ms, and for at least 30
     )
     .toBe(1);
   await expect(
-    region.getByRole("region", { name: "Record summaries" }),
+    region.getByRole("heading", { name: "Posts", exact: true }),
   ).toBeVisible();
   await expect(label).toHaveCount(0);
 });

@@ -20,7 +20,6 @@ export const PAGE_GUIDES = {
       "Choose a board to see the team information you can access. Company boards are shared with everyone in the organization.",
       "Posts holds updates and their history. Open a post to read it; editing controls depend on your access.",
       "Calendar shows the board's events. Open an event to see its details and available actions.",
-      "Overview brings the board's information together. You can only open linked records and files that you are allowed to read.",
     ],
   },
   comms: {

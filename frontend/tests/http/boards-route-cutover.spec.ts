@@ -29,7 +29,7 @@ test("Board menu keeps administration reachable without crowding the section", a
       json: pageOf([], { limit: 25 }),
     }),
   );
-  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "New project Board", exact: true })
@@ -50,7 +50,6 @@ test("Board menu keeps administration reachable without crowding the section", a
     "Preview access",
     "View activity",
     "New project Board",
-    "Configurations",
   ]);
   await page
     .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
@@ -59,17 +58,6 @@ test("Board menu keeps administration reachable without crowding the section", a
   await expect(manage).toBeVisible();
   await expect(
     manage.getByText("No groups yet. Only administrators open this Board."),
-  ).toBeVisible();
-  await manage
-    .getByRole("button", { name: "Close", exact: true })
-    .first()
-    .click();
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
-  await page
-    .getByRole("menuitem", { name: "Configurations", exact: true })
-    .click();
-  await expect(
-    page.getByRole("dialog", { name: "Board configurations" }),
   ).toBeVisible();
 });
 
@@ -94,14 +82,82 @@ test("a member reading a Board sees no Board menu and no manager actions", async
   await page.route(`**/api/boards/${boardId}/my-access`, (route) =>
     route.fulfill({ json: readerAccess }),
   );
-  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Board menu", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Manage widgets" }),
+    page.getByRole("button", { name: "Manage posts", exact: true }),
   ).toHaveCount(0);
+});
+
+test("a cold /boards opens Posts for a member reader without widget, record or field reads", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true, readerAccess);
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: authMeBody({
+        id: userId,
+        role: "member",
+        access: [],
+        default_organization_blocked: null,
+      }),
+    }),
+  );
+  const published = "2026-09-24T00:00:00Z";
+  const post = {
+    id: "00000000-0000-4000-8000-000000000021",
+    board_id: boardId,
+    author_id: userId,
+    title: "Dock rota for Friday",
+    body: "Shifts start at 7.",
+    links: [],
+    status: "published",
+    publish_at: published,
+    expires_at: null,
+    pinned: false,
+    post_revision: null,
+    board_revision: 1,
+    publication_number: 1,
+    published_at: published,
+    edited: false,
+    created_at: published,
+    updated_at: published,
+  };
+  await page.route(`**/api/boards/${boardId}/posts?**`, (route) => {
+    const view = new URL(route.request().url()).searchParams.get("view");
+    return route.fulfill({
+      json: {
+        ...pageOf(view === "published" ? [post] : [], { limit: 25 }),
+        board_revision: 1,
+      },
+    });
+  });
+  const retired: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      /\/widgets(\/|$)/.test(path) ||
+      path === "/api/records/query" ||
+      path.startsWith("/api/fields/")
+    )
+      retired.push(path);
+  });
+
+  await page.goto("/boards");
+
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("board") === boardId &&
+      url.searchParams.get("section") === "posts",
+  );
+  await expect(
+    page.getByRole("heading", { name: "Posts", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(post.title)).toBeVisible();
+  expect(retired).toEqual([]);
 });
 
 test("read-only Boards viewers cannot open the post editor", async ({
@@ -132,7 +188,7 @@ test("visible Boards route opens authorized server Board and keeps section URL",
   page,
 }) => {
   await installBoardApi(page, () => true);
-  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
 
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
   await expect(page.getByText(board.description)).toBeVisible();
@@ -155,7 +211,7 @@ test("visible Boards route clears the last Board when access is revoked", async 
 }) => {
   let allowed = true;
   await installBoardApi(page, () => allowed);
-  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
 
   allowed = false;
@@ -171,7 +227,7 @@ test("the Board type filter asks the server for that scope", async ({
   page,
 }) => {
   await installBoardApi(page, () => true);
-  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
   await page.getByRole("button", { name: "Switch board" }).click();
   const listed = page.waitForRequest(
@@ -192,7 +248,7 @@ test("unsaved Event draft asks before changing Board or section", async ({
   await page.getByRole("button", { name: "New event" }).click();
   await expect(page.getByRole("heading", { name: "New event" })).toBeVisible();
 
-  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await page.getByRole("link", { name: "Posts", exact: true }).click();
   await expect(page).toHaveURL(`/boards?board=${boardId}&section=calendar`);
   await expect(
     page.getByRole("alertdialog", { name: "Discard unsaved Board changes?" }),
@@ -208,9 +264,7 @@ test("unsaved Event draft asks before changing Board or section", async ({
     page.getByRole("alertdialog", { name: "Discard unsaved Board changes?" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Discard changes" }).click();
-  await expect(page).toHaveURL(
-    `/boards?board=${otherBoard.id}&section=overview`,
-  );
+  await expect(page).toHaveURL(`/boards?board=${otherBoard.id}&section=posts`);
   await expect(page.getByRole("heading", { name: "New event" })).toHaveCount(0);
 });
 
@@ -572,9 +626,7 @@ test("post editor retains a canceled close and discards only on confirmation", a
   await page.getByRole("button", { name: "Switch board" }).click();
   await page.getByRole("combobox", { name: "Board", exact: true }).click();
   await page.getByRole("option", { name: /Second live board/ }).click();
-  await expect(page).toHaveURL(
-    `/boards?board=${otherBoard.id}&section=overview`,
-  );
+  await expect(page).toHaveURL(`/boards?board=${otherBoard.id}&section=posts`);
 });
 
 test("a live refresh keeps an open post draft mounted and editable", async ({
@@ -1048,110 +1100,6 @@ test("Board Record link labels refresh after linked module invalidations", async
   await expect(
     page.getByRole("link", { name: "Cooling manifold updated", exact: true }),
   ).toHaveCount(0);
-});
-
-test("Board record widgets refresh user labels after eligibility invalidation", async ({
-  page,
-}) => {
-  const moduleId = "00000000-0000-4000-8000-000000000061";
-  const widgetId = "00000000-0000-4000-8000-000000000062";
-  const assigneeFieldId = "00000000-0000-4000-8000-000000000063";
-  const assigneeId = "00000000-0000-4000-8000-000000000064";
-  await installBoardApi(page, () => true, readerAccess);
-  await installOpenViewEventSource(page);
-  let assigneeLabel = "Alex Reader";
-  let recordQueries = 0;
-
-  await page.route(`**/api/boards/${boardId}/widgets**`, (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        ...pageOf(
-          [
-            {
-              id: widgetId,
-              board_id: boardId,
-              name: "Assignment queue",
-              widget_type: "records",
-              module_id: moduleId,
-              position: 0,
-              size: "M",
-              pinned: false,
-              chart_id: null,
-              config: {
-                version: 1,
-                fields: [{ field_id: assigneeFieldId, expected_type: "user" }],
-                filters: [],
-                logic: "and",
-                metric: null,
-                visualization: "bar",
-                refresh: "manual",
-              },
-              created_at: "2026-09-25T00:00:00Z",
-              updated_at: "2026-09-25T00:00:00Z",
-            },
-          ],
-          { limit: 12 },
-        ),
-        board_revision: 1,
-      }),
-    }),
-  );
-  await page.route(`**/api/fields/${assigneeFieldId}`, (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        id: assigneeFieldId,
-        module_id: moduleId,
-        name: "Assignee",
-        type: "user",
-        required: false,
-        position: 0,
-        config: { kind: "user" },
-        is_deleted: false,
-      }),
-    }),
-  );
-  await page.route("**/api/records/query", (route) => {
-    recordQueries += 1;
-    return route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify(
-        pageOf(
-          [
-            wireRecord({
-              id: "00000000-0000-4000-8000-000000000065",
-              module_id: moduleId,
-              data: { [assigneeFieldId]: assigneeId },
-              display_values: { [assigneeFieldId]: assigneeLabel },
-              created_at: "2026-09-25T00:00:00Z",
-              updated_at: "2026-09-25T00:00:00Z",
-              performed_by: userId,
-            }),
-          ],
-          { limit: 5 },
-        ),
-      ),
-    });
-  });
-
-  await page.goto(`/boards?board=${boardId}&section=overview`);
-  await expect(page.getByText("Alex Reader", { exact: true })).toBeVisible();
-  const beforeInvalidation = recordQueries;
-  await expect(page.getByText(assigneeId, { exact: true })).toHaveCount(0);
-
-  assigneeLabel = "Unavailable user";
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "group_access",
-    module_id: moduleId,
-  });
-
-  await expect.poll(() => recordQueries).toBeGreaterThan(beforeInvalidation);
-  await expect(
-    page.getByText("Unavailable user", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Alex Reader", { exact: true })).toHaveCount(0);
-  await expect(page.getByText(assigneeId, { exact: true })).toHaveCount(0);
 });
 
 test("an author can archive their own editable post with current revisions", async ({

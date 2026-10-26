@@ -252,7 +252,7 @@ export async function restoreOpenViewChart(id: string, revision: number) {
 
 const usageItemSchema = z
   .object({
-    kind: z.enum(["board", "dashboard"]),
+    kind: z.literal("dashboard"),
     id: uuid,
     name: z.string().min(1),
   })

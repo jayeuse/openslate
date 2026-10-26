@@ -15,7 +15,7 @@ import {
 } from "../adapters/board-management-api";
 
 const uuidSchema = z.string().uuid();
-const SECTIONS = ["overview", "calendar", "posts"] as const;
+const SECTIONS = ["posts", "calendar"] as const;
 const invalidatesBoardList = (event: WorkspaceInvalidation) =>
   event.type === "invalidate" && event.entity === "boards";
 export type BoardSection = (typeof SECTIONS)[number];
@@ -64,7 +64,7 @@ export function chooseBoardCandidate(
 }
 
 export function resolveBoardSection(route: BoardRoute): BoardSection {
-  return route.section ?? "overview";
+  return route.section ?? "posts";
 }
 
 export function boardUrl(boardId: string, section: BoardSection): Route {

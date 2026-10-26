@@ -109,7 +109,7 @@ class ChartUsageRequest(StandardListRequest[ChartUsageSort]):
 class ChartUsageItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["board", "dashboard"]
+    kind: Literal["dashboard"]
     id: UUID
     name: str
 

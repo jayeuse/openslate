@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardWidget
+from app.systems.boards.models import Board, BoardGroup
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
@@ -28,7 +28,6 @@ from app.systems.sandbox.lifecycle.schemas import (
 
 _DIRECT_CHILDREN: tuple[tuple[str, type[Any]], ...] = (
     ("board_groups", BoardGroup),
-    ("board_widgets", BoardWidget),
     ("board_events", BoardEvent),
     ("board_event_reminders", BoardEventReminder),
     ("board_posts", BoardPost),
@@ -42,7 +41,6 @@ _EMPTY_IDS = {
     for key in (
         "boards",
         "board_groups",
-        "board_widgets",
         "board_events",
         "board_event_reminders",
         "board_posts",
@@ -223,7 +221,6 @@ def load_department_board_purge_dependencies(
     ids: dict[str, tuple[UUID, ...]] = {
         "boards": board_ids,
         "board_groups": tuple(row.id for row in children["board_groups"]),
-        "board_widgets": tuple(row.id for row in children["board_widgets"]),
         "board_events": tuple(row.id for row in children["board_events"]),
         "board_event_reminders": reminder_ids,
         "board_posts": post_ids,

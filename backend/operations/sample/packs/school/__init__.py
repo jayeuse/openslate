@@ -181,7 +181,6 @@ PACK = OrganizationPack(
             "built_in_account_roles_preserved": 3,
             "groups": len(people.GROUP_ACCESS),
             "boards": 11,
-            "widgets": 44,
             "posts": 88,
             "events": 132,
             "reminders": 22,

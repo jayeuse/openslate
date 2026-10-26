@@ -76,7 +76,7 @@ in-memory Comms engine survives only as a test fake under
 `frontend/tests/support/comms-memory/`.
 
 SSE consumers treat events as cache invalidations and never as row data.
-OpenView Views, Dashboards, Charts, saved-chart management/source editors, and Reports consume invalidations; Boards widgets/record
+OpenView Views, Dashboards, Charts, saved-chart management/source editors, and Reports consume invalidations; Boards record
 links, Manage audit/jobs/maintenance and workspace branding, Platform Files, and open Help contacts also use the
 [shared authenticated stream](../../frontend/src/components/systems/shared/adapters/invalidation-events.ts).
 The persistent shell's [notification bell](../../frontend/src/components/systems/platform/components/notification-bell.tsx)

@@ -46,7 +46,7 @@ const activitySchema = z
   .object({
     id: uuidSchema,
     created_at: z.iso.datetime({ offset: true }),
-    kind: z.enum(["board", "group", "widget"]),
+    kind: z.enum(["board", "group"]),
     action: z.enum(["create", "update", "delete"]),
     summary: z.string().min(1).max(100),
     actor_label: z.string().min(1).max(100).nullable(),

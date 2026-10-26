@@ -1,4 +1,4 @@
-"""Exact Chart request receipts, retained consumer provenance and fresh final state."""
+"""Exact Chart request receipts, retained Dashboard provenance and fresh final state."""
 
 import json
 from collections.abc import Mapping, Sequence
@@ -8,7 +8,6 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.common.listing import PaginationMetadata
-from app.systems.boards.portability_schemas import PortableBoardBundle
 from app.systems.openview.charts.schemas import ChartResponse
 from app.systems.openview.dashboards.schemas import DashboardResponse
 from operations.sample.blueprint import SampleDataset
@@ -16,39 +15,6 @@ from operations.sample.client import SampleClient, SampleClientError
 from operations.sample.controls.charts_consumers import _dashboard_specs
 from operations.sample.controls.charts_receipts import _facts, _uuid
 from operations.sample.packs.phase_types import PhaseAction
-
-
-def verify_chart_export(
-    dataset: SampleDataset, action: PhaseAction, chart: ChartResponse, bundle: PortableBoardBundle
-) -> None:
-    """Validate the control reference's lossless named instructions before import."""
-    query = chart.query.model_dump(mode="json", exclude={"module_id"})
-    module = next(
-        row
-        for row in dataset.organization.catalog.modules
-        if row.key == action.values["module_key"]
-    )
-    title = next(row for row in module.fields if row.key == "name")
-    query["dimension"] = {"name": title.name, "expected_type": query["dimension"]["expected_type"]}
-    wanted = {
-        "name": "Chart control reference",
-        "widget_type": "chart",
-        "source": {
-            "department_name": dict(dataset.organization.catalog.departments)[module.department],
-            "module_name": module.name,
-        },
-        "config": {
-            "version": 1,
-            "query": query,
-            "size": "S",
-            "pinned": True,
-            "refresh": "manual",
-            "chart_type": "bar",
-        },
-    }
-    widgets = bundle.model_dump(mode="json")["configuration"]["widgets"]
-    if not widgets or widgets[-1] != wanted:
-        raise ValueError("Portable Chart semantics differ")
 
 
 def verify_chart_list(
@@ -121,39 +87,13 @@ def _write_contract(facts: Mapping[str, Any]) -> list[tuple[str, str, str, int, 
     return [
         ("create_chart", "POST", "/api/charts", 201, actor),
         ("edit_chart", "PATCH", root, 200, actor),
-        (
-            "duplicate_board",
-            "POST",
-            f"/api/boards/{ids['source_board_id']}/duplicate",
-            201,
-            "admin",
-        ),
-        ("attach_board_chart", "POST", f"/api/boards/{ids['board_id']}/widgets", 201, "admin"),
         ("create_chart_dashboard", "POST", "/api/dashboards", 201, "admin"),
         ("attach_dashboard_chart", "PATCH", dashboard, 200, "admin"),
         ("archive_in_use_chart", "DELETE", root, 409, actor),
-        ("import_board", "POST", "/api/boards/import", 201, "admin"),
-        (
-            "delete_board_chart",
-            "DELETE",
-            f"/api/boards/{ids['board_id']}/widgets/"
-            + facts["single"]["attach_board_chart"]["response"]["widget"]["id"],
-            204,
-            "admin",
-        ),
         ("clear_chart_dashboard", "PATCH", dashboard, 200, "admin"),
         ("archive_chart", "DELETE", root, 204, actor),
         ("restore_chart", "POST", root + "/restore", 200, actor),
         ("final_archive_chart", "DELETE", root, 204, actor),
-        *[
-            (step, "POST", f"/api/boards/{ids[key]}" + suffix, 200, "admin")
-            for key in ("board_id", "import_id")
-            for step, suffix in [
-                ("archive_control_board", "/archive"),
-                ("preview_control_board_purge", "/purge/preview"),
-                ("purge_control_board", "/purge"),
-            ]
-        ],
         ("archive_chart_dashboard", "DELETE", dashboard, 204, "admin"),
     ]
 
@@ -225,33 +165,6 @@ def verify_chart_evidence(
                     "dashboards",
                     facts["ids"]["dashboard_id"],
                     "create" if step == "create_chart_dashboard" else "update",
-                )
-            elif step in {"attach_board_chart", "delete_board_chart"}:
-                entity, identifier, mutation = (
-                    "board_widgets",
-                    facts["single"]["attach_board_chart"]["response"]["widget"]["id"],
-                    "create" if step == "attach_board_chart" else "delete",
-                )
-            elif step in {
-                "duplicate_board",
-                "import_board",
-                "archive_control_board",
-                "purge_control_board",
-            }:
-                entity, identifier, mutation = (
-                    "boards",
-                    (
-                        facts["ids"]["board_id"]
-                        if step == "duplicate_board"
-                        else facts["ids"]["import_id"]
-                        if step == "import_board"
-                        else path.split("/")[3]
-                    ),
-                    "create"
-                    if step in {"duplicate_board", "import_board"}
-                    else "delete"
-                    if step == "purge_control_board"
-                    else "update",
                 )
             else:
                 entity, identifier, mutation = None, None, None
@@ -344,48 +257,26 @@ def verify_chart_controls(
         )
         if issues:
             return {}, issues
-        # Later controls (field close/reopen) may bump the source Board revision;
-        # source preservation means unchanged content, not an unchanged revision.
-        volatile = {
-            "source_board": {"revision", "updated_at"},
-            "source_widgets": {"board_revision"},
-        }
-        for path, step, wanted in [
-            (f"/api/charts/{facts['ids']['chart_id']}", "chart", facts["chart"]),
-            (f"/api/dashboards/{facts['ids']['dashboard_id']}", "dashboard", facts["dashboard"]),
-            (
-                f"/api/boards/{facts['ids']['source_board_id']}",
-                "source_board",
-                facts["source_board"],
-            ),
+        for path, wanted in [
+            (f"/api/charts/{facts['ids']['chart_id']}", facts["chart"]),
+            (f"/api/dashboards/{facts['ids']['dashboard_id']}", facts["dashboard"]),
             *[
-                (f"/api/charts/{identifier}", "source_chart", source)
+                (f"/api/charts/{identifier}", source)
                 for identifier, source in facts["source_charts"].items()
             ],
             (
-                f"/api/boards/{facts['ids']['source_board_id']}/widgets",
-                "source_widgets",
-                facts["source_widgets"],
-            ),
-            (
                 f"/api/dashboards/{facts['ids']['source_dashboard_id']}",
-                "source_dashboard",
                 facts["source_dashboard"],
             ),
         ]:
             response = client.request("GET", path)
             parsed = type(wanted).model_validate_json(response.content, strict=True)
-            ignored = volatile.get(step, set())
             if (
                 response.status_code != 200
-                or parsed.model_dump(exclude=ignored) != wanted.model_dump(exclude=ignored)
+                or parsed != wanted
                 or _uuid(response.headers.get("X-Request-ID")) is None
             ):
                 raise ValueError("Fresh Chart/source state differs")
-        for key in ("board_id", "import_id"):
-            response = client.request("GET", f"/api/boards/{facts['ids'][key]}")
-            if response.status_code != 404:
-                raise ValueError("Owned Chart Board survives purge")
         return {"charts_archived": 1, "chart_sources_preserved": 1}, issues
     except (KeyError, TypeError, ValueError, ValidationError, IndexError, SampleClientError):
         return {}, ["Chart final source/owned state could not be certified"]

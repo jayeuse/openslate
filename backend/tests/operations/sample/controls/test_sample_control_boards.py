@@ -77,8 +77,7 @@ def test_board_control_plan_covers_ui_controls_from_pack_data(pack_key: str) -> 
     assert actions == plan_board_controls(dataset)
     operations = [action.values.get("operation") for action in actions]
     required = {
-        "board_duplicate",
-        "board_import",
+        "board_create",
         "board_share",
         "board_patch",
         "post_create",
@@ -96,18 +95,13 @@ def test_board_control_plan_covers_ui_controls_from_pack_data(pack_key: str) -> 
         "post_record_link_delete",
         "event_record_link_create",
         "event_record_link_delete",
-        "widget_patch",
-        "widget_duplicate",
-        "widget_order",
-        "widget_delete",
-        "purge_duplicate",
-        "purge_import",
+        "purge_board",
     }
     assert required <= set(operations)
     assert "event_delete" not in operations
     purge = next(action for action in actions if action.values["operation"] == "event_purge")
     assert purge.actor_key == "admin" and purge.expected_status == 200
-    assert purge.values["board_key"] == "control:duplicate"
+    assert purge.values["board_key"] == "control:board"
     assert purge.target_key == "control:event" and purge.expected_end_state == {"deleted": True}
     assert all(action.kind == "board_controls" for action in actions)
     assert all(action.phase == "reorganization" for action in actions)
@@ -135,8 +129,7 @@ def test_board_control_plan_covers_ui_controls_from_pack_data(pack_key: str) -> 
     share = next(action for action in actions if action.values["operation"] == "board_share")
     assert share.values["groups"] == expected_grants
     assert {("PATCH", "/api/boards/{board_id}")} <= CONTROL_ROUTES
-    assert {("POST", "/api/boards/{board_id}/duplicate")} <= CONTROL_ROUTES
-    assert {("POST", "/api/boards/import")} <= CONTROL_ROUTES
+    assert {("POST", "/api/boards")} <= CONTROL_ROUTES
     assert {("DELETE", "/api/boards/{board_id}/events/{event_id}/record-links/{link_id}")} <= (
         CONTROL_ROUTES
     )

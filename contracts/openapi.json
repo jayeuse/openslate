@@ -2486,8 +2486,7 @@
       "BoardActivityKind": {
         "enum": [
           "board",
-          "group",
-          "widget"
+          "group"
         ],
         "title": "BoardActivityKind",
         "type": "string"
@@ -2728,6 +2727,58 @@
         "title": "BoardListResponse",
         "type": "object"
       },
+      "BoardOccurrenceState": {
+        "description": "One requested or readable Board; a refused Board says only ``unavailable``.",
+        "properties": {
+          "board_id": {
+            "format": "uuid",
+            "title": "Board Id",
+            "type": "string"
+          },
+          "next_occurrence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OccurrenceSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BoardOccurrenceStatus"
+          }
+        },
+        "required": [
+          "board_id",
+          "revision",
+          "status",
+          "next_occurrence"
+        ],
+        "title": "BoardOccurrenceState",
+        "type": "object"
+      },
+      "BoardOccurrenceStatus": {
+        "enum": [
+          "ok",
+          "candidate_limit",
+          "occurrence_limit",
+          "unavailable"
+        ],
+        "title": "BoardOccurrenceStatus",
+        "type": "string"
+      },
       "BoardResponse": {
         "description": "A Board and the reader's own level on it.",
         "properties": {
@@ -2890,411 +2941,6 @@
           "revision"
         ],
         "title": "BoardUpdate",
-        "type": "object"
-      },
-      "BoardWidgetConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "aggregation": {
-            "default": "count",
-            "enum": [
-              "count",
-              "sum",
-              "average",
-              "min",
-              "max",
-              "distinct"
-            ],
-            "title": "Aggregation",
-            "type": "string"
-          },
-          "fields": {
-            "items": {
-              "$ref": "#/components/schemas/app__systems__sandbox__records__query_schemas__FieldReference"
-            },
-            "maxItems": 24,
-            "title": "Fields",
-            "type": "array"
-          },
-          "filters": {
-            "items": {
-              "$ref": "#/components/schemas/QueryFilter"
-            },
-            "maxItems": 8,
-            "title": "Filters",
-            "type": "array"
-          },
-          "logic": {
-            "default": "and",
-            "enum": [
-              "and",
-              "or"
-            ],
-            "title": "Logic",
-            "type": "string"
-          },
-          "metric": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/app__systems__sandbox__records__query_schemas__FieldReference"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "refresh": {
-            "default": "manual",
-            "enum": [
-              "manual",
-              "one-minute",
-              "five-minutes"
-            ],
-            "title": "Refresh",
-            "type": "string"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          },
-          "visualization": {
-            "default": "bar",
-            "enum": [
-              "bar",
-              "line",
-              "pie"
-            ],
-            "title": "Visualization",
-            "type": "string"
-          }
-        },
-        "title": "BoardWidgetConfig",
-        "type": "object"
-      },
-      "BoardWidgetListResponse": {
-        "properties": {
-          "board_revision": {
-            "title": "Board Revision",
-            "type": "integer"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/BoardWidgetResponse"
-            },
-            "maxItems": 12,
-            "title": "Items",
-            "type": "array"
-          },
-          "pagination": {
-            "$ref": "#/components/schemas/PaginationMetadata"
-          }
-        },
-        "required": [
-          "items",
-          "pagination",
-          "board_revision"
-        ],
-        "title": "BoardWidgetListResponse",
-        "type": "object"
-      },
-      "BoardWidgetMutationResponse": {
-        "properties": {
-          "board_revision": {
-            "title": "Board Revision",
-            "type": "integer"
-          },
-          "widget": {
-            "$ref": "#/components/schemas/BoardWidgetResponse"
-          }
-        },
-        "required": [
-          "widget",
-          "board_revision"
-        ],
-        "title": "BoardWidgetMutationResponse",
-        "type": "object"
-      },
-      "BoardWidgetOrder": {
-        "additionalProperties": false,
-        "properties": {
-          "revision": {
-            "minimum": 1.0,
-            "title": "Revision",
-            "type": "integer"
-          },
-          "widget_ids": {
-            "items": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "maxItems": 12,
-            "minItems": 1,
-            "title": "Widget Ids",
-            "type": "array"
-          }
-        },
-        "required": [
-          "revision",
-          "widget_ids"
-        ],
-        "title": "BoardWidgetOrder",
-        "type": "object"
-      },
-      "BoardWidgetOrderResponse": {
-        "properties": {
-          "board_revision": {
-            "title": "Board Revision",
-            "type": "integer"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/BoardWidgetResponse"
-            },
-            "maxItems": 12,
-            "title": "Items",
-            "type": "array"
-          }
-        },
-        "required": [
-          "items",
-          "board_revision"
-        ],
-        "title": "BoardWidgetOrderResponse",
-        "type": "object"
-      },
-      "BoardWidgetResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "board_id": {
-            "format": "uuid",
-            "title": "Board Id",
-            "type": "string"
-          },
-          "chart_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Chart Id"
-          },
-          "config": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BoardWidgetConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardChartConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardAggregateConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardRecordsConfig"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Config"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "module_id": {
-            "format": "uuid",
-            "title": "Module Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "pinned": {
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "position": {
-            "exclusiveMaximum": 12.0,
-            "minimum": 0.0,
-            "title": "Position",
-            "type": "integer"
-          },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          },
-          "widget_type": {
-            "enum": [
-              "summary",
-              "workload",
-              "records",
-              "chart"
-            ],
-            "title": "Widget Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "board_id",
-          "name",
-          "widget_type",
-          "module_id",
-          "position",
-          "size",
-          "pinned",
-          "chart_id",
-          "config",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "BoardWidgetResponse",
-        "type": "object"
-      },
-      "BoardWidgetRevision": {
-        "additionalProperties": false,
-        "properties": {
-          "revision": {
-            "minimum": 1.0,
-            "title": "Revision",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "revision"
-        ],
-        "title": "BoardWidgetRevision",
-        "type": "object"
-      },
-      "BoardWidgetSort": {
-        "enum": [
-          "position",
-          "created_at"
-        ],
-        "title": "BoardWidgetSort",
-        "type": "string"
-      },
-      "BoardWidgetSpec": {
-        "additionalProperties": false,
-        "properties": {
-          "chart_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Chart Id"
-          },
-          "config": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BoardWidgetConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardChartConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardAggregateConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardRecordsConfig"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Config"
-          },
-          "module_id": {
-            "format": "uuid",
-            "title": "Module Id",
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 80,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "pinned": {
-            "default": false,
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "size": {
-            "default": "M",
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "widget_type": {
-            "enum": [
-              "summary",
-              "workload",
-              "records",
-              "chart"
-            ],
-            "title": "Widget Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "widget_type",
-          "module_id"
-        ],
-        "title": "BoardWidgetSpec",
-        "type": "object"
-      },
-      "BoardWidgetWrite": {
-        "additionalProperties": false,
-        "properties": {
-          "revision": {
-            "minimum": 1.0,
-            "title": "Revision",
-            "type": "integer"
-          },
-          "widget": {
-            "$ref": "#/components/schemas/BoardWidgetSpec"
-          }
-        },
-        "required": [
-          "revision",
-          "widget"
-        ],
-        "title": "BoardWidgetWrite",
         "type": "object"
       },
       "BootstrapResponse": {
@@ -4151,10 +3797,7 @@
             "type": "string"
           },
           "kind": {
-            "enum": [
-              "board",
-              "dashboard"
-            ],
+            "const": "dashboard",
             "title": "Kind",
             "type": "string"
           },
@@ -5395,6 +5038,75 @@
           "decision"
         ],
         "title": "CreationCheck",
+        "type": "object"
+      },
+      "CrossBoardOccurrenceListResponse": {
+        "properties": {
+          "boards": {
+            "items": {
+              "$ref": "#/components/schemas/BoardOccurrenceState"
+            },
+            "title": "Boards",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CrossBoardOccurrenceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination",
+          "boards"
+        ],
+        "title": "CrossBoardOccurrenceListResponse",
+        "type": "object"
+      },
+      "CrossBoardOccurrenceResponse": {
+        "properties": {
+          "board": {
+            "$ref": "#/components/schemas/OccurrenceBoard"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "event": {
+            "$ref": "#/components/schemas/EventResponse"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event_id",
+          "start",
+          "end",
+          "date",
+          "event",
+          "board"
+        ],
+        "title": "CrossBoardOccurrenceResponse",
         "type": "object"
       },
       "CurrentOrganizationResponse": {
@@ -11738,6 +11450,42 @@
         "title": "NumberFieldConfig",
         "type": "object"
       },
+      "OccurrenceBoard": {
+        "properties": {
+          "department_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/BoardScope"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "scope",
+          "department_id"
+        ],
+        "title": "OccurrenceBoard",
+        "type": "object"
+      },
       "OccurrenceListResponse": {
         "properties": {
           "board_revision": {
@@ -11751,6 +11499,16 @@
             "title": "Items",
             "type": "array"
           },
+          "next_occurrence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OccurrenceSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pagination": {
             "$ref": "#/components/schemas/PaginationMetadata"
           }
@@ -11758,7 +11516,8 @@
         "required": [
           "items",
           "pagination",
-          "board_revision"
+          "board_revision",
+          "next_occurrence"
         ],
         "title": "OccurrenceListResponse",
         "type": "object"
@@ -11798,6 +11557,40 @@
           "event"
         ],
         "title": "OccurrenceResponse",
+        "type": "object"
+      },
+      "OccurrenceSummary": {
+        "description": "One occurrence without its event: the calendar's next-event pointer.",
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event_id",
+          "start",
+          "end",
+          "date"
+        ],
+        "title": "OccurrenceSummary",
         "type": "object"
       },
       "OrganizationChannel": {
@@ -12514,109 +12307,6 @@
         "title": "PinRequest",
         "type": "object"
       },
-      "PortableAggregateConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "pinned": {
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "query": {
-            "$ref": "#/components/schemas/PortableGroupedQuery"
-          },
-          "refresh": {
-            "const": "manual",
-            "title": "Refresh",
-            "type": "string"
-          },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "size",
-          "refresh",
-          "pinned",
-          "query"
-        ],
-        "title": "PortableAggregateConfig",
-        "type": "object"
-      },
-      "PortableBoardBundle": {
-        "additionalProperties": false,
-        "properties": {
-          "configuration": {
-            "$ref": "#/components/schemas/PortableBoardConfiguration"
-          },
-          "kind": {
-            "const": "openslate-board",
-            "title": "Kind",
-            "type": "string"
-          },
-          "version": {
-            "const": 3,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "kind",
-          "version",
-          "configuration"
-        ],
-        "title": "PortableBoardBundle",
-        "type": "object"
-      },
-      "PortableBoardConfiguration": {
-        "additionalProperties": false,
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "maxLength": 240,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "name": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "widgets": {
-            "items": {
-              "$ref": "#/components/schemas/PortableWidget"
-            },
-            "maxItems": 12,
-            "title": "Widgets",
-            "type": "array"
-          }
-        },
-        "required": [
-          "name",
-          "description",
-          "widgets"
-        ],
-        "title": "PortableBoardConfiguration",
-        "type": "object"
-      },
       "PortableBundle": {
         "additionalProperties": false,
         "properties": {
@@ -12670,476 +12360,6 @@
           "schemaVersion"
         ],
         "title": "PortableBundle",
-        "type": "object"
-      },
-      "PortableChartConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "chart_type": {
-            "enum": [
-              "bar",
-              "line",
-              "pie"
-            ],
-            "title": "Chart Type",
-            "type": "string"
-          },
-          "pinned": {
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "query": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableGroupedQuery"
-              },
-              {
-                "$ref": "#/components/schemas/PortableDateQuery"
-              }
-            ],
-            "title": "Query"
-          },
-          "refresh": {
-            "const": "manual",
-            "title": "Refresh",
-            "type": "string"
-          },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "size",
-          "refresh",
-          "pinned",
-          "chart_type",
-          "query"
-        ],
-        "title": "PortableChartConfig",
-        "type": "object"
-      },
-      "PortableDateQuery": {
-        "additionalProperties": false,
-        "properties": {
-          "aggregation": {
-            "default": "count",
-            "enum": [
-              "count",
-              "sum",
-              "average",
-              "min",
-              "max",
-              "distinct"
-            ],
-            "title": "Aggregation",
-            "type": "string"
-          },
-          "bucket": {
-            "default": "day",
-            "enum": [
-              "day",
-              "week",
-              "month",
-              "quarter",
-              "year"
-            ],
-            "title": "Bucket",
-            "type": "string"
-          },
-          "date_field": {
-            "$ref": "#/components/schemas/PortableFieldReference"
-          },
-          "definition": {
-            "$ref": "#/components/schemas/PortableQueryDefinition"
-          },
-          "from_date": {
-            "format": "date",
-            "title": "From Date",
-            "type": "string"
-          },
-          "measure": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableFieldReference"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "mode": {
-            "const": "date_series",
-            "title": "Mode",
-            "type": "string"
-          },
-          "to_date": {
-            "format": "date",
-            "title": "To Date",
-            "type": "string"
-          }
-        },
-        "required": [
-          "definition",
-          "mode",
-          "date_field",
-          "from_date",
-          "to_date"
-        ],
-        "title": "PortableDateQuery",
-        "type": "object"
-      },
-      "PortableFieldReference": {
-        "additionalProperties": false,
-        "properties": {
-          "expected_type": {
-            "$ref": "#/components/schemas/FieldType"
-          },
-          "name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "expected_type"
-        ],
-        "title": "PortableFieldReference",
-        "type": "object"
-      },
-      "PortableGroupedQuery": {
-        "additionalProperties": false,
-        "properties": {
-          "aggregation": {
-            "default": "count",
-            "enum": [
-              "count",
-              "sum",
-              "average",
-              "min",
-              "max",
-              "distinct"
-            ],
-            "title": "Aggregation",
-            "type": "string"
-          },
-          "date_field": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableFieldReference"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "definition": {
-            "$ref": "#/components/schemas/PortableQueryDefinition"
-          },
-          "dimension": {
-            "$ref": "#/components/schemas/PortableFieldReference"
-          },
-          "from_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "From Date"
-          },
-          "measure": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableFieldReference"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "mode": {
-            "const": "groups",
-            "title": "Mode",
-            "type": "string"
-          },
-          "to_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "To Date"
-          }
-        },
-        "required": [
-          "definition",
-          "mode",
-          "dimension"
-        ],
-        "title": "PortableGroupedQuery",
-        "type": "object"
-      },
-      "PortableQueryDefinition": {
-        "additionalProperties": false,
-        "properties": {
-          "columns": {
-            "items": {
-              "$ref": "#/components/schemas/PortableFieldReference"
-            },
-            "maxItems": 100,
-            "title": "Columns",
-            "type": "array"
-          },
-          "deleted": {
-            "default": "exclude",
-            "enum": [
-              "exclude",
-              "include",
-              "only"
-            ],
-            "title": "Deleted",
-            "type": "string"
-          },
-          "filters": {
-            "items": {
-              "$ref": "#/components/schemas/PortableQueryFilter"
-            },
-            "maxItems": 10,
-            "title": "Filters",
-            "type": "array"
-          },
-          "logic": {
-            "default": "and",
-            "enum": [
-              "and",
-              "or"
-            ],
-            "title": "Logic",
-            "type": "string"
-          },
-          "search": {
-            "anyOf": [
-              {
-                "maxLength": 240,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Search"
-          },
-          "search_fields": {
-            "items": {
-              "$ref": "#/components/schemas/PortableFieldReference"
-            },
-            "maxItems": 100,
-            "title": "Search Fields",
-            "type": "array"
-          },
-          "sort": {
-            "items": {
-              "$ref": "#/components/schemas/PortableQuerySort"
-            },
-            "maxItems": 3,
-            "title": "Sort",
-            "type": "array"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "title": "PortableQueryDefinition",
-        "type": "object"
-      },
-      "PortableQueryFilter": {
-        "additionalProperties": false,
-        "properties": {
-          "expected_type": {
-            "$ref": "#/components/schemas/FieldType"
-          },
-          "name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "operator": {
-            "enum": [
-              "eq",
-              "neq",
-              "lt",
-              "lte",
-              "gt",
-              "gte",
-              "contains",
-              "prefix",
-              "suffix",
-              "in",
-              "empty",
-              "not_empty",
-              "blank",
-              "not_blank"
-            ],
-            "title": "Operator",
-            "type": "string"
-          },
-          "value": {
-            "anyOf": [
-              {
-                "maxLength": 4000,
-                "type": "string"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "integer"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "items": {
-                  "anyOf": [
-                    {
-                      "maxLength": 4000,
-                      "type": "string"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ]
-                },
-                "maxItems": 100,
-                "minItems": 1,
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value"
-          }
-        },
-        "required": [
-          "name",
-          "expected_type",
-          "operator"
-        ],
-        "title": "PortableQueryFilter",
-        "type": "object"
-      },
-      "PortableQuerySort": {
-        "additionalProperties": false,
-        "properties": {
-          "direction": {
-            "default": "asc",
-            "enum": [
-              "asc",
-              "desc"
-            ],
-            "title": "Direction",
-            "type": "string"
-          },
-          "expected_type": {
-            "$ref": "#/components/schemas/FieldType"
-          },
-          "name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "expected_type"
-        ],
-        "title": "PortableQuerySort",
-        "type": "object"
-      },
-      "PortableRecordsConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "pinned": {
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "query": {
-            "$ref": "#/components/schemas/PortableRecordsQuery"
-          },
-          "refresh": {
-            "const": "manual",
-            "title": "Refresh",
-            "type": "string"
-          },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "size",
-          "refresh",
-          "pinned",
-          "query"
-        ],
-        "title": "PortableRecordsConfig",
-        "type": "object"
-      },
-      "PortableRecordsQuery": {
-        "additionalProperties": false,
-        "properties": {
-          "definition": {
-            "$ref": "#/components/schemas/PortableQueryDefinition"
-          }
-        },
-        "required": [
-          "definition"
-        ],
-        "title": "PortableRecordsQuery",
         "type": "object"
       },
       "PortableVersion": {
@@ -13201,175 +12421,6 @@
           "date"
         ],
         "title": "PortableVersion",
-        "type": "object"
-      },
-      "PortableWidget": {
-        "additionalProperties": false,
-        "properties": {
-          "config": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableWidgetConfig"
-              },
-              {
-                "$ref": "#/components/schemas/PortableChartConfig"
-              },
-              {
-                "$ref": "#/components/schemas/PortableAggregateConfig"
-              },
-              {
-                "$ref": "#/components/schemas/PortableRecordsConfig"
-              }
-            ],
-            "title": "Config"
-          },
-          "name": {
-            "maxLength": 80,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "source": {
-            "$ref": "#/components/schemas/PortableWidgetSource"
-          },
-          "widget_type": {
-            "enum": [
-              "summary",
-              "workload",
-              "records",
-              "chart"
-            ],
-            "title": "Widget Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "widget_type",
-          "source",
-          "config"
-        ],
-        "title": "PortableWidget",
-        "type": "object"
-      },
-      "PortableWidgetConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "aggregation": {
-            "default": "count",
-            "enum": [
-              "count",
-              "sum",
-              "average",
-              "min",
-              "max",
-              "distinct"
-            ],
-            "title": "Aggregation",
-            "type": "string"
-          },
-          "fields": {
-            "items": {
-              "$ref": "#/components/schemas/PortableFieldReference"
-            },
-            "maxItems": 24,
-            "title": "Fields",
-            "type": "array"
-          },
-          "filters": {
-            "items": {
-              "$ref": "#/components/schemas/PortableQueryFilter"
-            },
-            "maxItems": 8,
-            "title": "Filters",
-            "type": "array"
-          },
-          "logic": {
-            "enum": [
-              "and",
-              "or"
-            ],
-            "title": "Logic",
-            "type": "string"
-          },
-          "metric": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableFieldReference"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "pinned": {
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "refresh": {
-            "enum": [
-              "manual",
-              "one-minute",
-              "five-minutes"
-            ],
-            "title": "Refresh",
-            "type": "string"
-          },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L",
-              "half",
-              "full"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "visualization": {
-            "enum": [
-              "bar",
-              "line",
-              "pie"
-            ],
-            "title": "Visualization",
-            "type": "string"
-          }
-        },
-        "required": [
-          "fields",
-          "filters",
-          "logic",
-          "metric",
-          "visualization",
-          "size",
-          "refresh",
-          "pinned"
-        ],
-        "title": "PortableWidgetConfig",
-        "type": "object"
-      },
-      "PortableWidgetSource": {
-        "additionalProperties": false,
-        "properties": {
-          "department_name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Department Name",
-            "type": "string"
-          },
-          "module_name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Module Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "department_name",
-          "module_name"
-        ],
-        "title": "PortableWidgetSource",
         "type": "object"
       },
       "PostAuthorChoice": {
@@ -28107,10 +27158,85 @@
         ]
       }
     },
-    "/api/boards/import": {
-      "post": {
-        "operationId": "import_board_configuration_api_boards_import_post",
+    "/api/boards/occurrences": {
+      "get": {
+        "operationId": "list_cross_board_occurrences_api_boards_occurrences_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "window_start",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Window Start",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window_end",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Window End",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "board_id",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "title": "Board Id",
+              "type": "array"
+            }
+          },
           {
             "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
             "in": "header",
@@ -28130,24 +27256,12 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/octet-stream": {
-              "schema": {
-                "contentMediaType": "application/octet-stream",
-                "title": "Raw",
-                "type": "string"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
-          "201": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BoardResponse"
+                  "$ref": "#/components/schemas/CrossBoardOccurrenceListResponse"
                 }
               }
             },
@@ -28169,7 +27283,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Import Board Configuration",
+        "summary": "List Cross Board Occurrences",
         "tags": [
           "boards"
         ]
@@ -28604,138 +27718,6 @@
           }
         ],
         "summary": "Archive Board",
-        "tags": [
-          "boards"
-        ]
-      }
-    },
-    "/api/boards/{board_id}/configuration": {
-      "get": {
-        "operationId": "export_board_configuration_api_boards__board_id__configuration_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-            "in": "header",
-            "name": "X-Org",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-              "title": "X-Org"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PortableBoardBundle"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Export Board Configuration",
-        "tags": [
-          "boards"
-        ]
-      }
-    },
-    "/api/boards/{board_id}/duplicate": {
-      "post": {
-        "operationId": "duplicate_board_api_boards__board_id__duplicate_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-            "in": "header",
-            "name": "X-Org",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-              "title": "X-Org"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BoardResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Duplicate Board",
         "tags": [
           "boards"
         ]
@@ -33690,545 +32672,6 @@
           }
         ],
         "summary": "Restore Board",
-        "tags": [
-          "boards"
-        ]
-      }
-    },
-    "/api/boards/{board_id}/widgets": {
-      "get": {
-        "operationId": "list_board_widgets_api_boards__board_id__widgets_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 25,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "default": 0,
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "sort_by",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/BoardWidgetSort"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Sort By"
-            }
-          },
-          {
-            "in": "query",
-            "name": "sort_order",
-            "required": false,
-            "schema": {
-              "$ref": "#/components/schemas/SortOrder",
-              "default": "asc"
-            }
-          },
-          {
-            "in": "query",
-            "name": "search",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 100,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Search"
-            }
-          },
-          {
-            "in": "query",
-            "name": "deleted",
-            "required": false,
-            "schema": {
-              "$ref": "#/components/schemas/DeletedFilter",
-              "default": "exclude"
-            }
-          },
-          {
-            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-            "in": "header",
-            "name": "X-Org",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-              "title": "X-Org"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BoardWidgetListResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Board Widgets",
-        "tags": [
-          "boards"
-        ]
-      },
-      "post": {
-        "operationId": "create_board_widget_api_boards__board_id__widgets_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-            "in": "header",
-            "name": "X-Org",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-              "title": "X-Org"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BoardWidgetWrite"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BoardWidgetMutationResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create Board Widget",
-        "tags": [
-          "boards"
-        ]
-      }
-    },
-    "/api/boards/{board_id}/widgets/order": {
-      "put": {
-        "operationId": "reorder_board_widgets_api_boards__board_id__widgets_order_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-            "in": "header",
-            "name": "X-Org",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-              "title": "X-Org"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BoardWidgetOrder"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BoardWidgetOrderResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Reorder Board Widgets",
-        "tags": [
-          "boards"
-        ]
-      }
-    },
-    "/api/boards/{board_id}/widgets/{widget_id}": {
-      "delete": {
-        "operationId": "delete_board_widget_api_boards__board_id__widgets__widget_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "widget_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Widget Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "revision",
-            "required": true,
-            "schema": {
-              "minimum": 1,
-              "title": "Revision",
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-            "in": "header",
-            "name": "X-Org",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-              "title": "X-Org"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Delete Board Widget",
-        "tags": [
-          "boards"
-        ]
-      },
-      "patch": {
-        "operationId": "update_board_widget_api_boards__board_id__widgets__widget_id__patch",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "widget_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Widget Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-            "in": "header",
-            "name": "X-Org",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-              "title": "X-Org"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BoardWidgetWrite"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BoardWidgetMutationResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Update Board Widget",
-        "tags": [
-          "boards"
-        ]
-      }
-    },
-    "/api/boards/{board_id}/widgets/{widget_id}/duplicate": {
-      "post": {
-        "operationId": "duplicate_board_widget_api_boards__board_id__widgets__widget_id__duplicate_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "widget_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Widget Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-            "in": "header",
-            "name": "X-Org",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-              "title": "X-Org"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BoardWidgetRevision"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BoardWidgetMutationResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Duplicate Board Widget",
         "tags": [
           "boards"
         ]

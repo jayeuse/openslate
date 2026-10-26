@@ -13,7 +13,10 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.event_occurrences import expand_board_event_occurrences
+from app.systems.boards.event_occurrences import (
+    expand_board_event_occurrences,
+    first_occurrence_after,
+)
 from tests.property_support import PROPERTY
 
 _DEFAULT_EVENT_ID = UUID(int=1)
@@ -640,3 +643,98 @@ def test_daily_and_weekly_dates_are_whole_steps_from_the_anchor_with_no_gaps(
         assert (last_allowed - dates[-1]).days < step
     else:
         assert window_start > last_allowed or (last_allowed - window_start).days + 1 < step
+
+
+def test_next_occurrence_starts_after_the_window_within_366_days() -> None:
+    window_end = date(2026, 9, 30)
+    last_lookahead_day = window_end + timedelta(days=366)
+    at_lookahead_end = _event(start_date=last_lookahead_day, end_date=last_lookahead_day)
+    past_lookahead = _event(
+        start_date=last_lookahead_day + timedelta(days=1),
+        end_date=last_lookahead_day + timedelta(days=1),
+    )
+    # Starts inside the window and runs past its end: a window item, not the next one.
+    spanning = _event(start_date=date(2026, 9, 29), end_date=date(2026, 10, 3))
+    spanning_series = _event(
+        start_date=date(2026, 9, 2),
+        end_date=date(2026, 9, 5),
+        recurrence="weekly",
+        repeat_until=date(2026, 12, 31),
+    )
+
+    found = first_occurrence_after(at_lookahead_end, window_end)
+    assert found is not None
+    assert found.date == last_lookahead_day.isoformat()
+    assert first_occurrence_after(past_lookahead, window_end) is None
+    assert first_occurrence_after(spanning, window_end) is None
+    series = first_occurrence_after(spanning_series, window_end)
+    assert series is not None
+    assert (series.date, series.end) == ("2026-10-07", "2026-10-10")
+    assert first_occurrence_after(_event(), date.max) is None
+
+
+def test_next_occurrence_of_a_dense_daily_series_is_its_first_later_start() -> None:
+    # 366 lookahead starts exceed the 100-occurrence cap; the first later start is kept.
+    daily = _event(
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 1),
+        recurrence="daily",
+        repeat_until=date(2028, 12, 31),
+    )
+    # A 58-day span is the longest a daily series may have without the save count bound,
+    # so 57 earlier starts still overlap the lookahead when it begins.
+    long_span = _event(
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 2, 27),
+        recurrence="daily",
+        repeat_until=date(2028, 12, 31),
+    )
+    # 23:30 in New York is already the next UTC day; the date stays the local one.
+    timed = _timed_event(
+        "2026-09-01T03:30:00Z",
+        "2026-09-01T04:00:00Z",
+        timezone_name="America/New_York",
+        recurrence="daily",
+        repeat_until=date(2026, 12, 31),
+    )
+
+    assert expand_board_event_occurrences(
+        daily, date(2026, 10, 1), date(2027, 9, 30)
+    ).truncated
+    found = first_occurrence_after(daily, date(2026, 9, 30))
+    spanned = first_occurrence_after(long_span, date(2026, 9, 30))
+    local = first_occurrence_after(timed, date(2026, 9, 30))
+    assert found is not None and spanned is not None and local is not None
+    assert (found.id, found.date) == (f"{_DEFAULT_EVENT_ID}:2026-10-01", "2026-10-01")
+    assert (spanned.date, spanned.end) == ("2026-10-01", "2026-11-27")
+    assert (local.date, local.start) == ("2026-10-01", "2026-10-02T03:30:00Z")
+
+
+@PROPERTY
+@given(
+    weekly=st.booleans(),
+    span_days=st.integers(min_value=1, max_value=58),
+    after_offset=st.integers(min_value=-30, max_value=800),
+    until_offset=st.integers(min_value=0, max_value=900),
+)
+def test_next_occurrence_matches_the_first_series_start_after_the_window(
+    weekly: bool, span_days: int, after_offset: int, until_offset: int
+) -> None:
+    step = 7 if weekly else 1
+    anchor = date(2026, 1, 1)
+    after = anchor + timedelta(days=after_offset)
+    repeat_until = anchor + timedelta(days=until_offset)
+    event = _event(
+        start_date=anchor,
+        end_date=anchor + timedelta(days=span_days - 1),
+        recurrence="weekly" if weekly else "daily",
+        repeat_until=repeat_until,
+    )
+    starts = (anchor + timedelta(days=index * step) for index in range(until_offset // step + 1))
+    expected = next(
+        (day for day in starts if after < day <= after + timedelta(days=366)), None
+    )
+
+    found = first_occurrence_after(event, after)
+
+    assert (None if found is None else date.fromisoformat(found.date)) == expected

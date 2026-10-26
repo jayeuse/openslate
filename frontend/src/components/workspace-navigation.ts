@@ -45,9 +45,8 @@ const workspaceNavigationDefinitions = [
     description: "Team pages and events",
     pathname: "/boards",
     queryKey: "section",
-    defaultItem: "overview",
+    defaultItem: "posts",
     items: [
-      { id: "overview", label: "Overview" },
       { id: "posts", label: "Posts" },
       { id: "calendar", label: "Calendar" },
     ],

@@ -392,7 +392,6 @@ def test_plan_summary_reports_exact_profile_counts_and_fixed_supporting_catalogu
         "built_in_account_roles_preserved": 3,
         "groups": 9,
         "boards": 12,
-        "widgets": 48,
         "posts": 96,
         "events": 144,
         "reminders": 24,

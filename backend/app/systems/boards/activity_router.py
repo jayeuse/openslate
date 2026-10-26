@@ -1,4 +1,4 @@
-"""Board-scoped activity summaries of metadata, groups and tiles."""
+"""Board-scoped activity summaries of metadata and groups."""
 
 from typing import Annotated, Any, cast
 from uuid import UUID
@@ -22,7 +22,7 @@ from app.systems.boards.activity_schemas import (
     BoardActivityResponse,
     BoardActivitySort,
 )
-from app.systems.boards.models import BoardGroup, BoardWidget
+from app.systems.boards.models import BoardGroup
 from app.systems.boards.router import _board_with_access
 from app.systems.manage.audit.models import AuditAction, AuditLog
 
@@ -42,7 +42,6 @@ ACTIVITY_LIST_SPEC = ListQuerySpec(
 _KIND = {
     "boards": BoardActivityKind.BOARD,
     "board_groups": BoardActivityKind.GROUP,
-    "board_widgets": BoardActivityKind.WIDGET,
 }
 _SUMMARY = {
     BoardActivityKind.BOARD: {
@@ -54,11 +53,6 @@ _SUMMARY = {
         AuditAction.CREATE: "Board groups changed",
         AuditAction.UPDATE: "Board groups changed",
         AuditAction.DELETE: "Board groups changed",
-    },
-    BoardActivityKind.WIDGET: {
-        AuditAction.CREATE: "Board widget added",
-        AuditAction.UPDATE: "Board widget updated",
-        AuditAction.DELETE: "Board widget removed",
     },
 }
 _BOARD_METADATA_FIELDS = (
@@ -127,20 +121,9 @@ def list_board_activity(
             _snapshot_board_matches(board.id),
         ),
     )
-    widget_event = and_(
-        AuditLog.entity_type == "board_widgets",
-        exists(
-            select(BoardWidget.id).where(
-                BoardWidget.id == AuditLog.entity_id,
-                BoardWidget.board_id == board.id,
-                BoardWidget.is_deleted.is_(False),
-                BoardWidget.deleted_at.is_(None),
-            )
-        ),
-    )
     result = execute_standard_list(
         db,
-        select(AuditLog).where(or_(board_event, group_event, widget_event)),
+        select(AuditLog).where(or_(board_event, group_event)),
         params,
         ACTIVITY_LIST_SPEC,
     )

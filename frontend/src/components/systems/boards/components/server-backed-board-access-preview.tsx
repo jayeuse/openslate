@@ -43,7 +43,7 @@ export function BoardAccessPreviewResult({
         className:
           "border-border mt-4 grid gap-x-4 gap-y-2 border-t pt-4 text-sm sm:grid-cols-[1fr_auto]",
       },
-      createElement("dt", null, "Can read posts, events and widgets"),
+      createElement("dt", null, "Can read posts and events"),
       createElement(
         "dd",
         { className: "font-medium sm:text-right" },
@@ -55,7 +55,7 @@ export function BoardAccessPreviewResult({
         { className: "font-medium sm:text-right" },
         access.edit ? "Yes" : "No",
       ),
-      createElement("dt", null, "Can manage posts, events and widgets"),
+      createElement("dt", null, "Can manage posts and events"),
       createElement(
         "dd",
         { className: "font-medium sm:text-right" },

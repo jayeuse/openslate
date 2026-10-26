@@ -20,7 +20,6 @@ OTHER_GROUP = "00000000-0000-7000-8000-000000000105"
 
 EXPECTED_CONTENT = {
     "boards": 12,
-    "widgets": 48,
     "posts": 96,
     "events": 144,
     "reminders": 24,
@@ -60,7 +59,6 @@ def test_content_readback_rejects_each_missing_required_outcome(
     observed[missing_key] -= 1
     board_keys = {
         "boards",
-        "widgets",
         "posts",
         "events",
         "reminders",
@@ -146,7 +144,6 @@ def test_project_board_grants_require_exact_intended_groups_and_levels(
         if request.url.path == f"/api/boards/{BOARD_ID}/groups":
             return httpx.Response(200, json={"board_id": BOARD_ID, "revision": 3, "groups": grants})
         if request.url.path in {
-            f"/api/boards/{BOARD_ID}/widgets",
             f"/api/boards/{BOARD_ID}/posts",
             f"/api/boards/{BOARD_ID}/events",
         }:

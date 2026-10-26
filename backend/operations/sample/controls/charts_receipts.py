@@ -1,20 +1,15 @@
-"""Concrete Chart result/source/portable DTO and step-specific receipt bindings."""
+"""Concrete Chart result/source DTO and step-specific receipt bindings."""
 
-import hashlib
 import json
 from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
-from app.systems.boards.portability import parse_portable_board
-from app.systems.boards.schemas import BoardResponse
-from app.systems.boards.widget_schemas import BoardWidgetListResponse
 from app.systems.openview.charts.schemas import ChartResponse, ChartUsageResponse
 from app.systems.openview.dashboards.schemas import DashboardResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.controls import charts_consumers
 from operations.sample.controls.charts import CONTROL_KEY, plan_chart_control
-from operations.sample.controls.charts_consumers import _board_specs, inline_board_specs
 from operations.sample.packs.phase_types import PhaseAction
 
 
@@ -60,32 +55,19 @@ def _facts(
         raise ValueError("Chart attribution or outcome differs")
     ids = {
         key: _uuid(result[key])
-        for key in (
-            "chart_id",
-            "board_id",
-            "dashboard_id",
-            "import_id",
-            "source_board_id",
-            "source_dashboard_id",
-        )
+        for key in ("chart_id", "dashboard_id", "source_dashboard_id")
     }
     if len(set(ids.values())) != len(ids):
         raise ValueError("Chart owned identities alias a source or one another")
     if (
-        ids["source_board_id"] != mappings["boards"][action.values["source_board_key"]]
-        or ids["source_dashboard_id"]
-        != mappings["dashboards"][action.values["source_dashboard_key"]]
+        ids["source_dashboard_id"] != mappings["dashboards"][action.values["source_dashboard_key"]]
         or ids["dashboard_id"] != mappings["control_dashboards"][CONTROL_KEY]
         or ids["chart_id"] != mappings["control_charts"][CONTROL_KEY]
-        or ids["board_id"] != mappings["control_boards"][CONTROL_KEY + ":board"]
-        or ids["import_id"] != mappings["control_boards"][CONTROL_KEY + ":import"]
     ):
         raise ValueError("Chart owned mappings differ from creation")
     owned = {
         ("control_charts", CONTROL_KEY): ids["chart_id"],
         ("control_dashboards", CONTROL_KEY): ids["dashboard_id"],
-        ("control_boards", CONTROL_KEY + ":board"): ids["board_id"],
-        ("control_boards", CONTROL_KEY + ":import"): ids["import_id"],
     }
     for target, identifier in owned.items():
         if any(
@@ -111,8 +93,6 @@ def _facts(
         seen.add(identifier)
         grouped.setdefault(row["step"], []).append(row)
     required = [
-        "read_authored_board",
-        "read_authored_widgets",
         "read_authored_dashboard",
         "create_chart",
         "read_created_chart",
@@ -121,14 +101,8 @@ def _facts(
         "create_chart_dashboard",
         "attach_dashboard_chart",
         "read_populated_dashboard",
-        "attach_board_chart",
-        "read_chart_board",
-        "read_chart_board_widgets",
-        "export_board_configuration",
         "read_cleared_dashboard",
         "read_archived_dashboard",
-        "final_authored_board",
-        "final_authored_widgets",
         "final_authored_dashboard",
         "usage_manager",
         "usage_admin",
@@ -142,35 +116,21 @@ def _facts(
     if any(len(grouped.get(step, [])) != 1 for step in required):
         raise ValueError("Chart required complete read/mutation receipts are missing or duplicated")
     single = {step: grouped[step][0] for step in required}
-    source_board = BoardResponse.model_validate_json(
-        json.dumps(single["read_authored_board"]["response"]), strict=True
-    )
-    source_widgets = BoardWidgetListResponse.model_validate_json(
-        json.dumps(single["read_authored_widgets"]["response"]), strict=True
-    )
     source_dashboard = DashboardResponse.model_validate_json(
         json.dumps(single["read_authored_dashboard"]["response"]), strict=True
     )
     if (
-        str(source_board.id) != ids["source_board_id"]
-        or str(source_dashboard.id) != ids["source_dashboard_id"]
+        str(source_dashboard.id) != ids["source_dashboard_id"]
         or str(source_dashboard.department_id)
         != mappings["departments"][action.values["department_key"]]
-        or source_widgets.pagination.has_more
-        or source_widgets.pagination.total != len(source_widgets.items)
-        or any(str(row.board_id) != ids["source_board_id"] for row in source_widgets.items)
     ):
         raise ValueError("Chart original source binding differs")
-    for initial, final in [
-        ("read_authored_board", "final_authored_board"),
-        ("read_authored_widgets", "final_authored_widgets"),
-        ("read_authored_dashboard", "final_authored_dashboard"),
+    if single["read_authored_dashboard"]["response"] != single["final_authored_dashboard"][
+        "response"
     ]:
-        if single[initial]["response"] != single[final]["response"]:
-            raise ValueError("Chart authored source survival differs")
+        raise ValueError("Chart authored source survival differs")
     source_charts = {}
-    referenced_ids = {str(row.chart_id) for row in source_widgets.items if row.chart_id is not None}
-    referenced_ids |= {
+    referenced_ids = {
         str(row.chart_id) for row in source_dashboard.widgets if row.chart_id is not None
     }
     for identifier in referenced_ids:
@@ -238,21 +198,11 @@ def _facts(
             raise ValueError("Chart lifecycle independent readback differs")
     if single["restore_chart"]["response"] != single["read_restore_chart"]["response"]:
         raise ValueError("Full restore response differs from its expected current state")
-    board_name = BoardResponse.model_validate_json(
-        json.dumps(single["read_chart_board"]["response"]), strict=True
-    ).name
     dashboard_name = single["create_chart_dashboard"]["response"]["name"]
-    for step, wanted, restricted in [
-        ("usage_manager", {("dashboard", ids["dashboard_id"], dashboard_name)}, True),
-        (
-            "usage_admin",
-            {
-                ("board", ids["board_id"], board_name),
-                ("dashboard", ids["dashboard_id"], dashboard_name),
-            },
-            False,
-        ),
-        ("usage_empty", set(), False),
+    for step, wanted in [
+        ("usage_manager", {("dashboard", ids["dashboard_id"], dashboard_name)}),
+        ("usage_admin", {("dashboard", ids["dashboard_id"], dashboard_name)}),
+        ("usage_empty", set()),
     ]:
         usage = ChartUsageResponse.model_validate_json(
             json.dumps(single[step]["response"]), strict=True
@@ -260,7 +210,7 @@ def _facts(
         if (
             {(row.kind, str(row.id), row.name) for row in usage.items} != wanted
             or len(usage.items) != len(wanted)
-            or usage.has_restricted_usage != restricted
+            or usage.has_restricted_usage
             or (
                 usage.pagination.total,
                 usage.pagination.count,
@@ -286,28 +236,7 @@ def _facts(
         or single["read_cleared_dashboard"]["response"]["revision"] != 3
     ):
         raise ValueError("Owned retained Dashboard is not the original empty archived copy")
-    raw = result["portable_bytes"].encode("utf-8")
-    bundle = parse_portable_board(raw)
-    if (
-        hashlib.sha256(raw).hexdigest() != result["portable_sha256"]
-        or hashlib.sha256(raw).hexdigest()
-        != single["export_board_configuration"]["response_sha256"]
-        or json.loads(raw) != single["export_board_configuration"]["response"]
-        or bundle.model_dump(mode="json") != result["portable_bundle"]
-    ):
-        raise ValueError("Chart portable bytes/grammar binding differs")
-    _bind_steps(
-        dataset,
-        action,
-        result,
-        ids,
-        actors,
-        single,
-        receipts,
-        created,
-        source_dashboard,
-        source_charts,
-    )
+    _bind_steps(action, ids, actors, single, receipts, created, source_dashboard, source_charts)
     return {
         "action": action,
         "result": result,
@@ -316,8 +245,6 @@ def _facts(
         "single": single,
         "chart": chart,
         "dashboard": dashboard,
-        "source_board": source_board,
-        "source_widgets": source_widgets,
         "source_dashboard": source_dashboard,
         "source_charts": source_charts,
         "actors": actors,
@@ -326,9 +253,7 @@ def _facts(
 
 
 def _bind_steps(
-    dataset: SampleDataset,
     action: PhaseAction,
-    result: Mapping[str, Any],
     ids: Mapping[str, str],
     actors: Mapping[str, str],
     single: Mapping[str, Mapping[str, Any]],
@@ -341,13 +266,6 @@ def _bind_steps(
     dashboard = f"/api/dashboards/{ids['dashboard_id']}"
     manager = action.actor_key
     routes = {
-        "read_authored_board": ("GET", f"/api/boards/{ids['source_board_id']}", 200, "admin"),
-        "read_authored_widgets": (
-            "GET",
-            f"/api/boards/{ids['source_board_id']}/widgets",
-            200,
-            "admin",
-        ),
         "read_authored_dashboard": (
             "GET",
             f"/api/dashboards/{ids['source_dashboard_id']}",
@@ -366,45 +284,18 @@ def _bind_steps(
         "usage_admin": ("GET", root + "/usage", 200, "admin"),
         "usage_empty": ("GET", root + "/usage", 200, "admin"),
         "archive_in_use_chart": ("DELETE", root, 409, manager),
-        "read_chart_board": ("GET", f"/api/boards/{ids['board_id']}", 200, "admin"),
-        "read_chart_board_widgets": ("GET", f"/api/boards/{ids['board_id']}/widgets", 200, "admin"),
-        "export_board_configuration": (
-            "GET",
-            f"/api/boards/{ids['board_id']}/configuration",
-            200,
-            "admin",
-        ),
-        "attach_board_chart": ("POST", f"/api/boards/{ids['board_id']}/widgets", 201, "admin"),
         "create_chart_dashboard": ("POST", "/api/dashboards", 201, "admin"),
         "attach_dashboard_chart": ("PATCH", dashboard, 200, "admin"),
         "read_populated_dashboard": ("GET", dashboard, 200, "admin"),
-        "delete_board_chart": (
-            "DELETE",
-            f"/api/boards/{ids['board_id']}/widgets/"
-            + single["attach_board_chart"]["response"]["widget"]["id"],
-            204,
-            "admin",
-        ),
         "clear_chart_dashboard": ("PATCH", dashboard, 200, "admin"),
         "read_cleared_dashboard": ("GET", dashboard, 200, "admin"),
         "archive_chart_dashboard": ("DELETE", dashboard, 204, "admin"),
         "read_archived_dashboard": ("GET", dashboard, 200, "admin"),
-        "read_imported_chart_widgets": (
-            "GET",
-            f"/api/boards/{ids['import_id']}/widgets",
-            200,
-            "admin",
-        ),
         "archive_chart": ("DELETE", root, 204, manager),
         "restore_chart": ("POST", root + "/restore", 200, manager),
         "final_archive_chart": ("DELETE", root, 204, manager),
     }
-    for initial, final in [
-        ("read_authored_board", "final_authored_board"),
-        ("read_authored_widgets", "final_authored_widgets"),
-        ("read_authored_dashboard", "final_authored_dashboard"),
-    ]:
-        routes[final] = routes[initial]
+    routes["final_authored_dashboard"] = routes["read_authored_dashboard"]
     required = set(routes)
     for row in receipts:
         step = row["step"]
@@ -415,13 +306,6 @@ def _bind_steps(
             if identifier not in source_charts:
                 raise ValueError("Authored saved Chart source is unbound")
             wanted = ("GET", f"/api/charts/{identifier}", 200, "admin")
-        elif step == "read_absent_board":
-            if row["path"] not in {
-                f"/api/boards/{ids['board_id']}",
-                f"/api/boards/{ids['import_id']}",
-            }:
-                raise ValueError("Absent Board read target differs")
-            wanted = ("GET", row["path"], 404, "admin")
         else:
             wanted = routes[step]
             required.discard(step)
@@ -468,32 +352,3 @@ def _bind_steps(
     }
     if single["attach_dashboard_chart"]["request_body"] != expected_append:
         raise ValueError("Original Dashboard append query or layout differs")
-    bundle = parse_portable_board(result["portable_bytes"].encode())
-    imports = BoardWidgetListResponse.model_validate_json(
-        json.dumps(
-            next(
-                row["response"] for row in receipts if row["step"] == "read_imported_chart_widgets"
-            )
-        ),
-        strict=True,
-    )
-    matches = imports.items[-1:]
-    if (
-        len(matches) != 1
-        or str(matches[0].board_id) != ids["import_id"]
-        or matches[0].chart_id is not None
-        or matches[0].config is None
-        or matches[0].size != "S"
-        or matches[0].pinned is not True
-        or matches[0].config.model_dump(mode="json")
-        != {"version": 1, "chart_type": "bar", "query": created.query.model_dump(mode="json")}
-    ):
-        raise ValueError("Imported Chart query or layout differs")
-    copied = BoardWidgetListResponse.model_validate_json(
-        json.dumps(single["read_chart_board_widgets"]["response"]), strict=True
-    )
-    if _board_specs(imports)[:-1] != inline_board_specs(copied, source_charts):
-        raise ValueError("Imported incumbent query or layout differs")
-    from operations.sample.controls.charts_verification import verify_chart_export
-
-    verify_chart_export(dataset, action, created, bundle)

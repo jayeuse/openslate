@@ -17,7 +17,7 @@ from app.systems.boards.attachment_models import (
     BoardPostRevisionAttachment,
 )
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardScope, BoardStatus, BoardWidget
+from app.systems.boards.models import Board, BoardGroup, BoardScope, BoardStatus
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.post_work import delete_post_work
 from app.systems.boards.record_link_models import (
@@ -63,7 +63,6 @@ Database = Annotated[Session, Depends(get_db)]
 
 _CHILD_MODELS = (
     BoardGroup,
-    BoardWidget,
     BoardEvent,
     BoardEventReminder,
     BoardPost,

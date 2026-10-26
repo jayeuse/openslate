@@ -2,19 +2,6 @@ import { z } from "zod";
 import { ApiError, apiFetch, type ApiRequestInit } from "@/lib/api";
 
 const safeCodes: Record<string, { status: number; message: string }> = {
-  board_bundle_too_large: {
-    status: 413,
-    message: "Board configuration is too large",
-  },
-  board_bundle_invalid: {
-    status: 422,
-    message: "Board configuration is invalid",
-  },
-  board_source_unavailable: {
-    status: 409,
-    message: "A Board source is unavailable",
-  },
-  board_import_conflict: { status: 409, message: "Unable to create Board" },
   board_archived: {
     status: 409,
     message: "Restore the Board before continuing",

@@ -1,7 +1,8 @@
 """Board event series, their author-set reminders, and bounded occurrence listing."""
 
-from dataclasses import asdict
-from datetime import UTC, datetime
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, cast
 from uuid import UUID
 
@@ -23,7 +24,11 @@ from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.boards.access import has_level
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.event_occurrences import expand_board_event_occurrences
+from app.systems.boards.event_occurrences import (
+    BoardEventOccurrence,
+    expand_board_event_occurrences,
+    first_occurrence_after,
+)
 from app.systems.boards.event_purge_router import router as purge_router
 from app.systems.boards.event_schemas import (
     EventArchiveFilter,
@@ -39,6 +44,7 @@ from app.systems.boards.event_schemas import (
     OccurrenceListResponse,
     OccurrenceRequest,
     OccurrenceResponse,
+    OccurrenceSummary,
 )
 from app.systems.boards.models import Board, BoardStatus
 from app.systems.boards.reminder_service import (
@@ -211,6 +217,50 @@ def event_responses(
     return [_response(event, board_revision, reminders[event.id]) for event in events]
 
 
+@dataclass(frozen=True, slots=True)
+class ExpandedBoard:
+    occurrences: list[tuple[BoardEventOccurrence, EventResponse]]
+    next_occurrence: BoardEventOccurrence | None
+
+
+def occurrence_order(item: BoardEventOccurrence) -> tuple[str, str, str, str]:
+    return (item.date, item.start, item.event_id, item.id)
+
+
+def expand_candidates(
+    candidates: list[BoardEvent],
+    reminders: Mapping[UUID, list[str]],
+    board_revision: int,
+    window_start: date,
+    window_end: date,
+) -> ExpandedBoard | None:
+    """Expand one Board's candidate events over the window and find its next start.
+
+    None means an event exceeds the window's occurrence limit. A stored event that is
+    invalid raises the ``event_invalid`` conflict before any expansion.
+    """
+
+    responses = [_response(event, board_revision, reminders[event.id]) for event in candidates]
+    found: list[tuple[BoardEventOccurrence, EventResponse]] = []
+    upcoming: BoardEventOccurrence | None = None
+    for event, event_response in zip(candidates, responses, strict=True):
+        source = BoardEvent(id=event.id, **_definition(event).model_dump())
+        expanded = expand_board_event_occurrences(source, window_start, window_end)
+        if expanded.truncated:
+            return None
+        found.extend((item, event_response) for item in expanded.occurrences)
+        following = first_occurrence_after(source, window_end)
+        if following is not None and (
+            upcoming is None or occurrence_order(following) < occurrence_order(upcoming)
+        ):
+            upcoming = following
+    return ExpandedBoard(found, upcoming)
+
+
+def summary(item: BoardEventOccurrence | None) -> OccurrenceSummary | None:
+    return None if item is None else OccurrenceSummary(**asdict(item))
+
+
 @router.get("/{board_id}/events/occurrences", response_model=OccurrenceListResponse)
 def list_event_occurrences(
     board_id: UUID, actor: Reader, db: Database, params: Annotated[OccurrenceRequest, Query()]
@@ -229,25 +279,26 @@ def list_event_occurrences(
     )
     if len(candidates) > MAX_SERIES_CANDIDATES:
         raise _conflict("event_candidate_limit", "Too many visible event series; archive events")
-    items: list[OccurrenceResponse] = []
-    for event, event_response in zip(
-        candidates, event_responses(db, candidates, board.revision), strict=True
-    ):
-        definition = _definition(event)
-        source = BoardEvent(id=event.id, **definition.model_dump())
-        expanded = expand_board_event_occurrences(source, params.window_start, params.window_end)
-        if expanded.truncated:
-            raise _conflict("event_occurrence_limit", "Event occurrences exceed the window limit")
-        items.extend(
-            OccurrenceResponse(**asdict(item), event=event_response)
-            for item in expanded.occurrences
-        )
+    expanded = expand_candidates(
+        candidates,
+        timings_by_event(db, (event.id for event in candidates)),
+        board.revision,
+        params.window_start,
+        params.window_end,
+    )
+    if expanded is None:
+        raise _conflict("event_occurrence_limit", "Event occurrences exceed the window limit")
+    items = [
+        OccurrenceResponse(**asdict(item), event=event_response)
+        for item, event_response in expanded.occurrences
+    ]
     items.sort(key=lambda item: (item.date, item.start, item.event_id, item.id))
     total = len(items)
     page = items[params.offset : params.offset + params.limit]
     return OccurrenceListResponse(
         items=page,
         board_revision=board.revision,
+        next_occurrence=summary(expanded.next_occurrence),
         pagination=PaginationMetadata(
             limit=params.limit,
             offset=params.offset,

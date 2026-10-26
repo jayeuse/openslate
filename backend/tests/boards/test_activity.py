@@ -1,7 +1,5 @@
 """Board activity is a reader-safe projection, not the administrator audit API."""
 
-from uuid import UUID
-
 import pytest
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -9,30 +7,15 @@ from uuid6 import uuid7
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.boards.activity_router import router
-from app.systems.boards.models import BoardWidget
 from app.systems.manage.audit.context import set_audit_actor
+from app.systems.manage.audit.models import AuditAction, AuditLog
 from tests.boards.support import board_group, client, member, project_board
 from tests.conftest import membership_of
-from tests.rbac.support import add_department, add_module
 
 pytestmark = pytest.mark.integration
 
 
-def _widget(
-    board_id: UUID, module_id: UUID, name: str, position: int, *, org_id: UUID,
-) -> BoardWidget:
-    return BoardWidget(
-        org_id=org_id,
-        board_id=board_id,
-        module_id=module_id,
-        name=name,
-        position=position,
-        widget_type="records",
-        config={"private_note": f"{name.upper()} CONFIG"},
-    )
-
-
-def test_board_activity_lists_metadata_groups_and_tiles_without_content(
+def test_board_activity_lists_metadata_and_groups_without_content(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
@@ -40,13 +23,19 @@ def test_board_activity_lists_metadata_groups_and_tiles_without_content(
     reader, outsider = member(db), member(db)
     set_audit_actor(db, manager.id)
     board = project_board(db, description="PRIVATE BOARD NOTES")
-    module = add_module(db, add_department(db))
     group_row = board_group(db, board, [reader], AccessLevel.READ)
-    first, second = (
-        _widget(board.id, module.id, "First tile", 0, org_id=board.org_id),
-        _widget(board.id, module.id, "Second tile", 1, org_id=board.org_id),
+    # Board widgets are gone; their past audit rows stay in Manage > Audit only.
+    past_widget = uuid7()
+    past_row = AuditLog(
+        org_id=board.org_id,
+        performed_by=manager.id,
+        action=AuditAction.CREATE,
+        entity_type="board_widgets",
+        entity_id=past_widget,
+        after={"board_id": str(board.id), "name": "PAST WIDGET"},
     )
-    db.add_all([first, second])
+    object.__setattr__(past_row, "_audit_internal", True)
+    db.add(past_row)
     db.flush()
     board.revision += 1  # A content change also moves the Board revision; it is not activity.
     db.commit()
@@ -57,8 +46,8 @@ def test_board_activity_lists_metadata_groups_and_tiles_without_content(
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "private, no-store"
     result = response.json()
-    assert {item["kind"] for item in result["items"]} == {"board", "group", "widget"}
-    assert result["pagination"]["total"] == 4
+    assert {item["kind"] for item in result["items"]} == {"board", "group"}
+    assert result["pagination"]["total"] == 2
     assert {frozenset(item) for item in result["items"]} == {
         frozenset({"id", "created_at", "kind", "action", "summary", "actor_label"})
     }
@@ -66,19 +55,17 @@ def test_board_activity_lists_metadata_groups_and_tiles_without_content(
     for secret in (
         str(reader.id),
         str(group_row.group_id),
-        str(first.id),
+        str(past_widget),
         "PRIVATE BOARD NOTES",
-        "FIRST TILE CONFIG",
-        "Second tile",
-        "private_note",
+        "PAST WIDGET",
         "before",
         "after",
     ):
         assert secret not in response.text
 
-    page = reader_client.get(f"{root}?limit=2&offset=2").json()
+    page = reader_client.get(f"{root}?limit=1&offset=1").json()
     assert page["pagination"] == {
-        "limit": 2, "offset": 2, "count": 2, "total": 4, "has_more": False
+        "limit": 1, "offset": 1, "count": 1, "total": 2, "has_more": False
     }
     assert client(db, outsider, router).get(root).status_code == 404
     assert reader_client.get(f"/api/boards/{uuid7()}/activity").json() == {
@@ -87,15 +74,11 @@ def test_board_activity_lists_metadata_groups_and_tiles_without_content(
 
     # A removed group row stays Board-scoped only through its audit snapshot.
     db.delete(group_row)
-    db.delete(second)
     db.commit()
     board_group(db, board, [reader], AccessLevel.READ)
     db.commit()
     after = client(db, reader, router).get(root)
     assert ("group", "delete") in {(item["kind"], item["action"]) for item in after.json()["items"]}
-    assert all(
-        item["kind"] != "widget" or item["action"] != "delete" for item in after.json()["items"]
-    )
 
 
 @pytest.mark.parametrize("actor_state", ["disabled", "unaccepted"])

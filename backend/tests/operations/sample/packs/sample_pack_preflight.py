@@ -306,8 +306,6 @@ def _journal_ids(
             add("posts", f"{board.logical_id}:post:{index + 1:02d}")
         for index in range(pack.content.data.events_per_board):
             add("events", f"{board.logical_id}:event:{index + 1:02d}")
-        for index in range(4):
-            add("widgets", f"{board.logical_id}:widget:{index + 1:02d}")
     for department, _name in pack.catalog.departments:
         add("dashboards", f"department:{department}:dashboard")
         for index in range(4):

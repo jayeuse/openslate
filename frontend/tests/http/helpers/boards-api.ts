@@ -4,7 +4,7 @@ import { wirePagination } from "../../helpers/pagination";
 import { wireBoard } from "../../helpers/wire";
 
 // The Board shell's API, mocked for HTTP specs: an authorized administrator,
-// two Boards, and empty posts, events and widgets. A spec registers its own
+// two Boards, and empty posts and events. A spec registers its own
 // narrower `page.route` after this one; later routes win.
 
 export const boardId = "00000000-0000-4000-8000-000000000011";
@@ -131,12 +131,6 @@ export async function installBoardApi(
       return reply(200, {
         items: [],
         pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
-      });
-    if (path === `/api/boards/${boardId}/widgets`)
-      return reply(200, {
-        items: [],
-        pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
-        board_revision: 1,
       });
     if (path === `/api/boards/${boardId}`)
       return isAllowed()

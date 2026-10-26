@@ -14,7 +14,6 @@ import {
 import {
   boardSearchEmptyCopy,
   isSelectedBoardPostManagerOpen,
-  isSelectedBoardWidgetManagerOpen,
 } from "../../../src/components/systems/boards/components/server-backed-boards";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
@@ -81,18 +80,12 @@ test("an empty later Board page with positive total points to Previous, not no m
   expect(boardSearchEmptyCopy(null, 0, 3).title).toBe("No Boards on this page");
 });
 
-test("widget manager stays open across same-Board refresh and closes on Board switch", () => {
-  expect(isSelectedBoardWidgetManagerOpen(boardId, boardId)).toBe(true);
-  expect(isSelectedBoardWidgetManagerOpen(boardId, archivedId)).toBe(false);
-  expect(isSelectedBoardWidgetManagerOpen(boardId, null)).toBe(false);
-});
-
 test("post manager stays open across same-Board refresh but closes outside that section", () => {
   expect(isSelectedBoardPostManagerOpen(boardId, boardId, "posts")).toBe(true);
   expect(isSelectedBoardPostManagerOpen(boardId, archivedId, "posts")).toBe(
     false,
   );
-  expect(isSelectedBoardPostManagerOpen(boardId, boardId, "overview")).toBe(
+  expect(isSelectedBoardPostManagerOpen(boardId, boardId, "calendar")).toBe(
     false,
   );
   expect(isSelectedBoardPostManagerOpen(boardId, null, "posts")).toBe(false);
@@ -114,15 +107,15 @@ test("explicit Board URL retains its UUID outside the page and fails closed on i
     source: "explicit",
   });
   const invalid = parseBoardRoute(
-    "?board=sample-board-organization&section=overview",
+    "?board=sample-board-organization&section=calendar",
   );
-  expect(invalid).toEqual({ kind: "invalid-board", section: "overview" });
+  expect(invalid).toEqual({ kind: "invalid-board", section: "calendar" });
   expect(
     chooseBoardCandidate(invalid, [
       { id: boardId, scope: "company", status: "active" },
     ]),
   ).toBeNull();
-  expect(parseBoardRoute("?board=&section=overview").kind).toBe(
+  expect(parseBoardRoute("?board=&section=calendar").kind).toBe(
     "invalid-board",
   );
   expect(parseBoardRoute(`?board=${boardId}&board=${homeId}`).kind).toBe(

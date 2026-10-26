@@ -1,9 +1,9 @@
-"""Sample Board structures, project access, and live widgets."""
+"""Sample Board structures and project access."""
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
 from operations.sample.board_text import project_board
@@ -18,11 +18,6 @@ from operations.sample.population.content import (
     _link_count,
     _pages,
 )
-
-_DATE_TYPES = {"date", "datetime"}
-_NUMBER_TYPES = {"number", "decimal", "int"}
-_TEXT_TYPES = {"text", "long_text", "email", "url"}
-_PRIMITIVE_TYPES = _DATE_TYPES | _NUMBER_TYPES | _TEXT_TYPES | {"boolean", "select", "user"}
 
 
 def project_board_logical_id(department_key: str, name: str) -> str:
@@ -59,57 +54,6 @@ def replace_project_board_groups(
     return response
 
 
-def _kind(field: Mapping[str, Any]) -> str:
-    return str(field.get("type", field.get("field_type", ""))).lower().replace("integer", "int")
-
-
-def _field_set(
-    module_key: str,
-    module_id: str,
-    fields: Mapping[str, list[Mapping[str, Any]]],
-) -> list[dict[str, Any]]:
-    return sorted(
-        [
-            dict(field)
-            for field in fields.get(module_key, [])
-            if field.get("module_id", module_id) == module_id
-            and not field.get("is_deleted", False)
-            and _kind(field) in _PRIMITIVE_TYPES
-        ],
-        key=lambda field: (int(field.get("position", 0)), str(field.get("name", ""))),
-    )
-
-
-def _ref(field: Mapping[str, Any]) -> dict[str, str]:
-    return {"field_id": _id(field), "expected_type": _kind(field)}
-
-
-def _module_for_department(
-    department_key: str,
-    department_id: str,
-    modules: Mapping[str, Mapping[str, Any]],
-    fields: Mapping[str, list[Mapping[str, Any]]],
-) -> tuple[str, Mapping[str, Any], list[dict[str, Any]]]:
-    choices = []
-    for key, module in modules.items():
-        if module.get("department_id") != department_id:
-            continue
-        active = _field_set(key, _id(module), fields)
-        kinds = {_kind(field) for field in active}
-        score = int(bool(kinds & _DATE_TYPES)) * 4 + int(bool(kinds & _NUMBER_TYPES)) * 3
-        score += int("select" in kinds) * 2 + int(bool(kinds & _TEXT_TYPES))
-        if active:
-            choices.append((score, key, module, active))
-    if not choices:
-        raise SampleContentError(f"No readable module fields are available for {department_key}")
-    _, key, module, active = max(choices, key=lambda entry: (entry[0], entry[1]))
-    return key, module, active
-
-
-def _refs(fields: Sequence[Mapping[str, Any]], limit: int = 8) -> list[dict[str, str]]:
-    return [_ref(field) for field in fields[:limit]]
-
-
 def _authors(
     admin: SampleClient,
     clients: Mapping[str, SampleClient],
@@ -134,79 +78,6 @@ def _authors(
         admin.record_mapping("content_fallback", str(board["logical_id"]), _id(board["board"]))
         return ("admin",)
     return tuple(authors)
-
-
-def _board_sources(
-    board: Mapping[str, Any],
-    department_key: str | None,
-    departments: Mapping[str, Mapping[str, Any]],
-    modules: Mapping[str, Mapping[str, Any]],
-    fields: Mapping[str, list[Mapping[str, Any]]],
-    organization: OrganizationPack,
-) -> tuple[str, Mapping[str, Any], list[dict[str, Any]]]:
-    if department_key is None:
-        department_key = organization.content.data.company_source_department
-    department = departments.get(department_key)
-    if department is None:
-        raise SampleContentError(f"Department module source is unavailable: {department_key}")
-    return _module_for_department(department_key, _id(department), modules, fields)
-
-
-def _make_widgets(
-    admin: SampleClient,
-    board_specs: list[dict[str, Any]],
-    departments: Mapping[str, Mapping[str, Any]],
-    modules: Mapping[str, Mapping[str, Any]],
-    fields: Mapping[str, list[Mapping[str, Any]]],
-    organization: OrganizationPack,
-) -> int:
-    created = 0
-    types = (
-        ("summary", "Operations snapshot"),
-        ("workload", "Status breakdown"),
-        ("records", "Recent records"),
-        ("chart", "Trend chart"),
-    )
-    for board in board_specs:
-        _, module, active = _board_sources(
-            board["board"], board["department_key"], departments, modules, fields, organization
-        )
-        refs = _refs(active, 8)
-        numeric = next((_ref(field) for field in active if _kind(field) in _NUMBER_TYPES), None)
-        for index, (widget_type, name) in enumerate(types):
-            current = _json(admin, "GET", f"/api/boards/{board['id']}")
-            widget = {
-                "name": name,
-                "widget_type": widget_type,
-                "module_id": _id(module),
-                "size": "L" if widget_type == "records" else "M",
-                "pinned": False,
-                "chart_id": None,
-                "config": {
-                    "version": 1,
-                    "fields": refs,
-                    "filters": [],
-                    "logic": "and",
-                    "aggregation": "sum" if widget_type == "chart" and numeric else "count",
-                    "metric": numeric if widget_type == "chart" else None,
-                    "visualization": "bar" if widget_type != "chart" else "line",
-                    "refresh": "manual",
-                },
-            }
-            saved = _json(
-                admin,
-                "POST",
-                f"/api/boards/{board['id']}/widgets",
-                body={"revision": current.get("revision"), "widget": widget},
-                expected=(201,),
-            )
-            row = saved.get("widget")
-            if not isinstance(row, dict) or row.get("board_id") != board["id"]:
-                raise SampleContentError("Board widget response did not match its Board")
-            logical = f"{board['logical_id']}:widget:{index + 1:02d}"
-            admin.record_mapping("widgets", logical, _id(row))
-            created += 1
-    return created
 
 
 def _create_project_boards(
@@ -254,11 +125,10 @@ def prepare_boards(
     clients: Mapping[str, SampleClient],
     departments: Mapping[str, Mapping[str, Any]],
     modules: Mapping[str, Mapping[str, Any]],
-    fields: Mapping[str, list[Mapping[str, Any]]],
     groups: Mapping[str, str],
     organization: OrganizationPack | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Set up Boards before people work: project Boards, their access, and widgets."""
+    """Set up Boards before people work: project Boards and their access."""
     pack = organization or default_pack()
     spec = pack.content.data
     required_groups = {
@@ -332,12 +202,10 @@ def prepare_boards(
     board_specs.extend(_create_project_boards(admin, departments, groups, pack))
     for board in board_specs:
         board["authors"] = _authors(admin, clients, board, pack)
-    widget_count = _make_widgets(admin, board_specs, departments, modules, fields, pack)
     return board_specs, {
         "boards": len(board_specs),
         "project_boards": len(spec.projects),
         "project_group_grants": sum(len(spec.project_groups) + 1 for _ in spec.projects),
-        "widgets": widget_count,
     }
 
 
@@ -357,7 +225,6 @@ def verify_boards(
     group_ids = mappings.get("group", {})
     counts = {
         "boards": 0,
-        "widgets": 0,
         "posts": 0,
         "events": 0,
         "reminders": 0,
@@ -384,14 +251,12 @@ def verify_boards(
             continue
         base = f"/api/boards/{board_id}"
         try:
-            widgets = _pages(admin, f"{base}/widgets", {"sort_by": "position", "sort_order": "asc"})
             posts = _pages(admin, f"{base}/posts", {"view": "editable"})
             posts.extend(_pages(admin, f"{base}/posts", {"view": "archive"}))
             events = _pages(admin, f"{base}/events", {"archived": "all"})
         except (SampleClientError, SampleContentError):
             counts["read_failures"] += 1
             continue
-        counts["widgets"] += len(widgets)
         counts["posts"] += len(posts)
         counts["events"] += len(events)
         for post in posts:

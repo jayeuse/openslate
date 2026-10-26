@@ -229,7 +229,6 @@ PACK = OrganizationPack(
             "built_in_account_roles_preserved": 3,
             "groups": 9,
             "boards": 12,
-            "widgets": 48,
             "posts": 96,
             "events": 144,
             "reminders": 24,

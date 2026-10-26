@@ -38,7 +38,6 @@ from operations.sample.verification.rejections import RejectionContext, run_reje
 
 _CONTENT_KEYS = (
     "boards",
-    "widgets",
     "posts",
     "events",
     "reminders",

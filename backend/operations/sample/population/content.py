@@ -153,7 +153,6 @@ def assert_empty_content(admin: SampleClient, boards: list[Mapping[str, Any]]) -
     for view in ("editable", "archive"):
         _empty(admin, f"{base}/posts", {"view": view})
     _empty(admin, f"{base}/events", {"archived": "all"})
-    _empty(admin, f"{base}/widgets")
     _empty(admin, f"{base}/files")
     _empty(admin, "/api/views", {"deleted": "include"})
     _empty(admin, "/api/dashboards", {"deleted": "include"})
@@ -181,7 +180,6 @@ def prepare_content(
         clients=clients,
         departments=departments,
         modules=modules,
-        fields=fields,
         groups=groups,
         organization=organization,
     )
@@ -260,7 +258,6 @@ def verify_content(
     expected = run_manifest.get("expected", {})
     content_keys = (
         "boards",
-        "widgets",
         "posts",
         "events",
         "reminders",

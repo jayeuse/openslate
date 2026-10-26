@@ -13,7 +13,7 @@ from app.systems.access.policy.models import GroupAccess
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
 from app.systems.boards.department_boards import sync_department_board
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardWidget
+from app.systems.boards.models import Board, BoardGroup
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
@@ -61,7 +61,6 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("group_access", GroupAccess),
     ("boards", Board),
     ("board_groups", BoardGroup),
-    ("board_widgets", BoardWidget),
     ("board_events", BoardEvent),
     ("board_event_reminders", BoardEventReminder),
     ("board_posts", BoardPost),
@@ -165,7 +164,6 @@ def _delete_department_board_children(db: Session, plan: LifecyclePlan) -> None:
         ("board_record_links", BoardRecordLink),
         ("board_post_revisions", BoardPostRevision),
         ("board_groups", BoardGroup),
-        ("board_widgets", BoardWidget),
         ("board_event_reminders", BoardEventReminder),
         ("board_events", BoardEvent),
         ("board_posts", BoardPost),

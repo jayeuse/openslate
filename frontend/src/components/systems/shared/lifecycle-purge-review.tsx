@@ -11,7 +11,6 @@ const entityLabels: Record<string, readonly [string, string]> = {
   board_posts: ["post", "posts"],
   board_post_revisions: ["post revision", "post revisions"],
   board_groups: ["group assignment", "group assignments"],
-  board_widgets: ["widget", "widgets"],
   board_events: ["event", "events"],
   board_event_reminders: ["event reminder", "event reminders"],
   board_attachments: ["attachment", "attachments"],

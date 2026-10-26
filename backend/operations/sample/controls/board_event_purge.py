@@ -30,11 +30,11 @@ def execute_event_purge(
     on_substep: PhaseSubstep | None,
 ) -> dict[str, object]:
     evidence: list[dict[str, object]] = []
-    if action.actor_key != "admin" or action.values.get("board_key") != "control:duplicate":
+    if action.actor_key != "admin" or action.values.get("board_key") != "control:board":
         raise SamplePhaseActionError(
             "Event purge requires the owned admin control", step=action.key
         )
-    board_id = _mapped_id(context, "control_boards", "control:duplicate", step=action.key)
+    board_id = _mapped_id(context, "control_boards", "control:board", step=action.key)
     event_id = _mapped_id(context, "control_events", action.target_key, step=action.key)
     board_path, path = f"/api/boards/{board_id}", f"/api/boards/{board_id}/events/{event_id}"
     board = _request_object(

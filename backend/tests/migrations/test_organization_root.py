@@ -21,7 +21,7 @@ ORGANIZATION_TABLES = (
     frozenset(
         "audit_logs board_attachments board_event_reminders board_events board_groups "
         "board_post_revision_attachments board_post_revision_record_links board_post_revisions "
-        "board_posts board_record_links board_widgets boards charts dashboard_widgets dashboards "
+        "board_posts board_record_links boards charts dashboard_widgets dashboards "
         "departments fields files group_access group_members groups in_app_notifications "
         "lifecycle_confirmation_challenges lifecycle_rate_limit_buckets "
         "lifecycle_rate_limit_failures memberships modules record_trigger_actions "

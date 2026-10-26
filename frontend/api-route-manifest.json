@@ -294,18 +294,6 @@
     "path": "/api/users/{param}"
   },
   {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-configuration-api.ts",
-    "function": "downloadBoardConfiguration",
-    "method": "GET",
-    "path": "/api/boards/{param}/configuration"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-configuration-api.ts",
-    "function": "importBoardConfiguration",
-    "method": "POST",
-    "path": "/api/boards/import"
-  },
-  {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "archiveBoardEvent",
     "method": "POST",
@@ -460,12 +448,6 @@
     "function": "createBoard",
     "method": "POST",
     "path": "/api/boards"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
-    "function": "duplicateBoardStructure",
-    "method": "POST",
-    "path": "/api/boards/{param}/duplicate"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
@@ -658,42 +640,6 @@
     "function": "listBoardPreviewUsers",
     "method": "GET",
     "path": "/api/boards/{param}/preview-users"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "createBoardWidget",
-    "method": "POST",
-    "path": "/api/boards/{param}/widgets"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "deleteBoardWidget",
-    "method": "DELETE",
-    "path": "/api/boards/{param}/widgets/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "duplicateBoardWidget",
-    "method": "POST",
-    "path": "/api/boards/{param}/widgets/{param}/duplicate"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "listBoardWidgets",
-    "method": "GET",
-    "path": "/api/boards/{param}/widgets"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "reorderBoardWidgets",
-    "method": "PUT",
-    "path": "/api/boards/{param}/widgets/order"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "updateBoardWidget",
-    "method": "PATCH",
-    "path": "/api/boards/{param}/widgets/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-workspace-date-api.ts",

@@ -143,9 +143,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     const api = await installArchivedBoard(page);
     api.workspace.purge_enabled = state === "unknown" ? undefined : false;
     api.failWorkspaceRead(state === "unavailable");
-    await page.goto(
-      `/boards?board=${boardId}&section=overview&status=archived`,
-    );
+    await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
     await page.getByRole("button", { name: "Board menu", exact: true }).click();
     await page
       .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
@@ -240,7 +238,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
       },
     });
   });
-  await page.goto(`/boards?board=${boardId}&section=overview&status=archived`);
+  await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
@@ -338,7 +336,7 @@ test("Board creation closes its form and confirms the created Board", async ({
       json: { level: "manage", read: true, write: true, manage: true },
     }),
   );
-  await page.goto(`/boards?board=${boardId}&section=overview&status=archived`);
+  await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "New project Board", exact: true })
@@ -373,7 +371,7 @@ test("Board permanent deletion closes its review and confirms completion", async
           },
         }),
   );
-  await page.goto(`/boards?board=${boardId}&section=overview&status=archived`);
+  await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
@@ -451,7 +449,7 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
       }),
     });
   });
-  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
@@ -707,7 +705,7 @@ test("live unattached-file list and Board metadata retain the management draft",
   page,
 }) => {
   const api = await installFileManagement(page);
-  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
@@ -764,7 +762,7 @@ for (const changed of [false, true]) {
           return route.fallback();
         },
       );
-    await page.goto(`/boards?board=${boardId}&section=overview`);
+    await page.goto(`/boards?board=${boardId}&section=posts`);
     await page.getByRole("button", { name: "Board menu", exact: true }).click();
     await page
       .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
@@ -844,7 +842,7 @@ for (const startArchived of [false, true]) {
   }) => {
     const api = await installFileManagement(page, startArchived);
     await page.goto(
-      `/boards?board=${boardId}&section=overview${startArchived ? "&status=archived" : ""}`,
+      `/boards?board=${boardId}&section=posts${startArchived ? "&status=archived" : ""}`,
     );
     await page.getByRole("button", { name: "Board menu", exact: true }).click();
     await page
@@ -1027,7 +1025,7 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
     return route.fallback();
   });
   try {
-    await page.goto(`/boards?board=${boardId}&section=overview`);
+    await page.goto(`/boards?board=${boardId}&section=posts`);
     await expect(
       page.getByRole("heading", { name: board.name, exact: true }),
     ).toBeVisible();

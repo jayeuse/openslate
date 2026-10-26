@@ -111,7 +111,7 @@ test("MFA gate stays accessible over an alert dialog and restores its typed conf
     });
   });
   const state = await mockMfa(page, { verified: true, aal2: true });
-  await page.goto(`/boards?board=${id}&section=overview`);
+  await page.goto(`/boards?board=${id}&section=posts`);
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "Manage Board and groups", exact: true })

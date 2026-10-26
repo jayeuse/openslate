@@ -94,7 +94,7 @@ def verify_board_controls(
     if not isinstance(board_mappings, Mapping):
         issues.append("Board control Board mappings are missing")
         board_mappings = {}
-    for key in ("control:duplicate", "control:import"):
+    for key in ("control:board",):
         try:
             board_id = str(UUID(str(board_mappings.get(key))))
         except (TypeError, ValueError):

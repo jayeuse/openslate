@@ -1,11 +1,10 @@
-"""Scoped Boards, the groups of project Boards, and Board widgets."""
+"""Scoped Boards and the groups of project Boards."""
 
 from enum import StrEnum
 from typing import ClassVar
 from uuid import UUID
 
 from sqlalchemy import (
-    Boolean,
     CheckConstraint,
     ForeignKey,
     ForeignKeyConstraint,
@@ -16,7 +15,6 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import BaseModel
@@ -127,60 +125,3 @@ class BoardGroup(BaseModel):
     group_id: Mapped[UUID] = mapped_column(nullable=False)
     level: Mapped[str] = mapped_column(String(10), nullable=False)
 
-
-class BoardWidget(BaseModel):
-    """One ordered Board tile; every reader of the Board sees it."""
-
-    __tablename__ = "board_widgets"
-    __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"config"})
-    __table_args__ = (
-        UniqueConstraint("org_id", "id", name="uq_board_widgets_org_id_id"),
-        ForeignKeyConstraint(
-            ["org_id", "board_id"], ["boards.org_id", "boards.id"],
-            name="fk_board_widgets_board_id_boards", ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "module_id"], ["modules.org_id", "modules.id"],
-            name="fk_board_widgets_module_id_modules", ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "chart_id"], ["charts.org_id", "charts.id"],
-            name="fk_board_widgets_chart_id_charts", ondelete="RESTRICT",
-        ),
-        CheckConstraint("length(btrim(name)) > 0", name="ck_board_widgets_name_nonempty"),
-        CheckConstraint(
-            "widget_type IN ('summary', 'workload', 'records', 'chart')",
-            name="ck_board_widgets_type",
-        ),
-        CheckConstraint("position >= 0 AND position < 12", name="ck_board_widgets_position"),
-        CheckConstraint("size IN ('S', 'M', 'L')", name="ck_board_widgets_size"),
-        CheckConstraint(
-            "(config IS NOT NULL) <> (chart_id IS NOT NULL)",
-            name="ck_board_widgets_query_source",
-        ),
-        UniqueConstraint(
-            "board_id", "position", name="uq_board_widgets_board_position",
-            deferrable=True, initially="DEFERRED",
-        ),
-        Index("ix_board_widgets_module_id", "module_id"),
-        Index("ix_board_widgets_chart_id", "chart_id"),
-    )
-
-    org_id: Mapped[UUID] = mapped_column(
-        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
-    )
-    board_id: Mapped[UUID] = mapped_column(nullable=False)
-    module_id: Mapped[UUID] = mapped_column(nullable=False)
-    name: Mapped[str] = mapped_column(String(80), nullable=False)
-    position: Mapped[int] = mapped_column(Integer, nullable=False)
-    widget_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    size: Mapped[str] = mapped_column(
-        String(1), default="M", server_default=text("'M'"), nullable=False
-    )
-    pinned: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=text("false"), nullable=False
-    )
-    chart_id: Mapped[UUID | None] = mapped_column(nullable=True)
-    config: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )

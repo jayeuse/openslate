@@ -21,9 +21,9 @@ const activityId = "00000000-0000-4000-8000-000000000003";
 const entry: BoardActivity = {
   id: activityId,
   createdAt: "2026-09-23T04:00:00Z",
-  kind: "widget",
+  kind: "group",
   action: "update",
-  summary: "Board widget updated",
+  summary: "Board groups changed",
   actorLabel: "Team <script>member</script>",
 };
 const page: BoardToolsPage<BoardActivity> = {
@@ -42,7 +42,7 @@ test("Board Activity renders only sanitized summaries with server totals and a c
   const html = renderToStaticMarkup(
     createElement(ServerBoardActivityDisplay, { page }),
   );
-  expect(html).toContain("Board widget updated");
+  expect(html).toContain("Board groups changed");
   expect(html).toContain("Showing 1–1 of 26");
   expect(html).toContain("Team &lt;script&gt;member&lt;/script&gt;");
   expect(html).not.toContain(activityId);
@@ -57,7 +57,7 @@ test("Board Activity renders only sanitized summaries with server totals and a c
     }),
   );
   expect(empty).toContain("No Board activity yet");
-  expect(empty).not.toContain("Board widget updated");
+  expect(empty).not.toContain("Board groups changed");
 });
 
 test("Board Activity clears denied and switched history and ignores stale completion", () => {
@@ -66,7 +66,7 @@ test("Board Activity clears denied and switched history and ignores stale comple
     transitionBoardActivity(initial, { type: "begin", key, sequence: 1 }),
     { type: "resolve", key, sequence: 1, data: page },
   );
-  expect(ready.data?.items[0]?.summary).toBe("Board widget updated");
+  expect(ready.data?.items[0]?.summary).toBe("Board groups changed");
 
   for (const status of [401, 403, 404]) {
     const denied = transitionBoardActivity(ready, {

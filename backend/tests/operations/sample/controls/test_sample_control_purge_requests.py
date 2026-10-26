@@ -234,12 +234,11 @@ def test_report_purge_never_disposes_or_changes_the_authored_source(
 @pytest.mark.parametrize(
     ("operation", "fault"),
     (
-        ("purge_duplicate", "none"),
-        ("purge_import", "none"),
-        ("purge_duplicate", "empty_name"),
-        ("purge_duplicate", "malformed_name"),
-        ("purge_duplicate", "target"),
-        ("purge_duplicate", "operation"),
+        ("purge_board", "none"),
+        ("purge_board", "empty_name"),
+        ("purge_board", "malformed_name"),
+        ("purge_board", "target"),
+        ("purge_board", "operation"),
     ),
 )
 def test_board_copy_purge_submits_preview_name_and_rejects_unbound_preview(

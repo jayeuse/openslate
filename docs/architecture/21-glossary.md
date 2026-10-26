@@ -64,7 +64,7 @@ Boards are for communication. The Board scope decides who sees the content. Back
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
-| Board | `Board`, `BoardScope` | A shared page of posts, events, and widgets. The scope is `company`, `department`, or `project`. | Customer |
+| Board | `Board`, `BoardScope` | A shared page of posts and events. The scope is `company`, `department`, or `project`. | Customer |
 | Company Board | scope `company` | The one Board for the whole organization. All active accounts read it; only administrators change it. "Company" is the scope name, not a word for the organization. | Customer |
 | Department Board | scope `department` | The one Board for each department. Publish creates it, and it uses the department access level. | Customer |
 | Project Board | scope `project`, `board_groups`, `BoardGroup` | A Board that an administrator creates. Access groups get a level on it through `board_groups` rows. | Customer |
@@ -72,8 +72,8 @@ Boards are for communication. The Board scope decides who sees the content. Back
 | Post revision | `BoardPostRevision`, "Published revision", "Edit history" | An unchangeable copy of a post, made each time it is published. Readers can open earlier revisions. | Customer |
 | Event | `BoardEvent`, "Calendar" | A dated item on a Board calendar. | Customer |
 | Reminder | `event.reminders`, scheduled work kind `event-reminder` | A notification that the event author sets: at the start, 15 minutes before, or 1 day before. | Customer |
-| Widget | `BoardWidget`, `DashboardWidget`, "tile" | A block on a Board overview or a dashboard that shows record data. Use "widget"; "tile" is an older name for the same thing. | Customer |
-| Pin | `pinned` | Keep a post or widget at the top. Pinning needs `manage` on the Board. | Customer |
+| Widget | `DashboardWidget`, "tile" | A block on a dashboard that shows record data. Use "widget"; "tile" is an older name for the same thing. | Customer |
+| Pin | `pinned` | Keep a post at the top. Pinning needs `manage` on the Board. | Customer |
 
 ## OpenView
 
@@ -86,7 +86,7 @@ OpenView is for reading records and reports. Its content belongs to departments 
 | Default view | `defaultViewId`, "Module default" | The one saved view that a module opens with. Making a new default clears the old one. | Customer |
 | Dashboard | `Dashboard` | A page of widgets that belongs to one department. Each widget reads a module of that department. | Customer |
 | Chart | `?section=charts`, `ChartDefinition` | A visualization of a module query. Unsaved editing and preview stay local; Save creates a shared saved chart. | Customer |
-| Saved chart | `Chart`, `/api/charts`, widget `chart_id` | A revisioned query and presentation definition for one source module. Reading requires `read` on that module; creating, editing, archiving and restoring require `manage` on the chart's department plus `read` on its source module. Module-level `manage` alone is insufficient. It owns no materialized Record results; Dashboard and Board consumers recheck current source access. | Customer |
+| Saved chart | `Chart`, `/api/charts`, widget `chart_id` | A revisioned query and presentation definition for one source module. Reading requires `read` on that module; creating, editing, archiving and restoring require `manage` on the chart's department plus `read` on its source module. Module-level `manage` alone is insufficient. It owns no materialized Record results; Dashboard consumers recheck current source access. | Customer |
 | Report | `Report` | A saved query recipe for one module that you run on demand or on a schedule. | Customer |
 | Report run | `ReportRun`, "Run now" | One unchangeable result of a report. | Customer |
 | Eligible readers | `ReportRunEligibleUser` | The module readers at the time of a report run. To open the run, a person must be an eligible reader and still read the module now. | Internal |

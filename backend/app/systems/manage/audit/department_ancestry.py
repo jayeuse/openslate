@@ -11,7 +11,7 @@ from sqlalchemy.orm.base import LoaderCallableStatus
 from app.systems.access.policy.models import GroupAccess
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardScope, BoardWidget
+from app.systems.boards.models import Board, BoardGroup, BoardScope
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
@@ -42,7 +42,6 @@ _MODULE_CHILDREN = (Field, Record, SavedView, Report, Chart)
 _BOARD_CHILDREN = (
     BoardPost,
     BoardEvent,
-    BoardWidget,
     BoardGroup,
     BoardAttachment,
     BoardRecordLink,

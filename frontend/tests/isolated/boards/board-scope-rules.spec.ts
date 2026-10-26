@@ -93,14 +93,19 @@ for (const row of [
     expected: "posts",
   },
   {
-    name: "an unsupported section falls back to Overview",
+    name: "an unsupported section falls back to Posts",
     route: parseBoardRoute("?section=unsupported"),
-    expected: "overview",
+    expected: "posts",
   },
   {
-    name: "no section opens Overview",
+    name: "the retired Overview section opens Posts",
+    route: parseBoardRoute("?section=overview"),
+    expected: "posts",
+  },
+  {
+    name: "no section opens Posts",
     route: { kind: "none", section: null } as const,
-    expected: "overview",
+    expected: "posts",
   },
 ]) {
   test(`Board section: ${row.name}`, () => {

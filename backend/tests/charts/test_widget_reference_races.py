@@ -13,15 +13,11 @@ def _archive(world, client):
     return client.delete(f"/api/charts/{world.charts[0]}?revision=1")
 
 
-@pytest.mark.parametrize("kind", ["board", "dashboard"])
-def test_attachment_wins_then_archive_observes_committed_reference(reference_race_world, kind):
+def test_attachment_wins_then_archive_observes_committed_reference(reference_race_world):
     world = reference_race_world
-    pause = StatementPause(
-        world.runtime,
-        "INSERT INTO " + ("board_widgets" if kind == "board" else "dashboard_widgets"),
-    )
+    pause = StatementPause(world.runtime, "INSERT INTO dashboard_widgets")
     with world.client("member") as writer, world.client("admin") as archiver:
-        first, first_results = start(lambda: world.attachment(writer, kind))
+        first, first_results = start(lambda: world.attachment(writer))
         second = None
         try:
             assert pause.paused.wait(WAIT)
@@ -32,20 +28,19 @@ def test_attachment_wins_then_archive_observes_committed_reference(reference_rac
             attached = join(first, first_results)
             archived = join(second, second_results) if second is not None else None
             pause.remove()
-    assert attached.status_code == (201 if kind == "board" else 200)
+    assert attached.status_code == 200
     assert archived is not None and archived.status_code == 409
     assert archived.json()["detail"]["code"] == "chart_in_use"
 
 
-@pytest.mark.parametrize("kind", ["board", "dashboard"])
-def test_archive_wins_attachment_busy_then_committed_archive_is_invalid(reference_race_world, kind):
+def test_archive_wins_attachment_busy_then_committed_archive_is_invalid(reference_race_world):
     world = reference_race_world
     pause = StatementPause(world.runtime, "UPDATE charts")
     with world.client("admin") as archiver, world.client("member") as writer:
         first, results = start(lambda: _archive(world, archiver))
         try:
             assert pause.paused.wait(WAIT)
-            busy = world.attachment(writer, kind)
+            busy = world.attachment(writer)
             assert busy.status_code == 503
             assert busy.headers["cache-control"] == "private, no-store"
             assert "First" not in busy.text and "SELECT" not in busy.text
@@ -54,19 +49,19 @@ def test_archive_wins_attachment_busy_then_committed_archive_is_invalid(referenc
             archived = join(first, results)
             pause.remove()
         assert archived.status_code == 204
-        committed = world.attachment(writer, kind)
+        committed = world.attachment(writer)
         assert committed.status_code == 409
-    table = "board_widgets" if kind == "board" else "dashboard_widgets"
     with world.owner.connect() as observer:
         assert (
             observer.scalar(
-                text(f"SELECT count(*) FROM {table} WHERE chart_id = :id"), {"id": world.charts[0]}
+                text("SELECT count(*) FROM dashboard_widgets WHERE chart_id = :id"),
+                {"id": world.charts[0]},
             )
             == 0
         )
 
 
-@pytest.mark.parametrize("held", ["module", "chart", "board", "dashboard", "widget"])
+@pytest.mark.parametrize("held", ["module", "chart", "dashboard"])
 def test_nowait_busy_refusal_releases_earlier_locks_without_partial_writes(
     reference_race_world, held
 ):
@@ -74,40 +69,15 @@ def test_nowait_busy_refusal_releases_earlier_locks_without_partial_writes(
     table, identifier = {
         "module": ("modules", world.module_id),
         "chart": ("charts", world.charts[0]),
-        "board": ("boards", world.board_id),
         "dashboard": ("dashboards", world.dashboard_id),
-        "widget": ("board_widgets", None),
     }[held]
     with world.client("member") as client:
-        revision = 1
-        if held == "widget":
-            created = world.attachment(client)
-            assert created.status_code == 201
-            identifier = created.json()["widget"]["id"]
-            revision = 2
         with world.owner.connect() as holder:
             transaction = holder.begin()
             holder.execute(
                 text(f"SELECT id FROM {table} WHERE id = :id FOR UPDATE"), {"id": identifier}
             )
-            if held == "widget":
-                refused = client.patch(
-                    f"/api/boards/{world.board_id}/widgets/{identifier}",
-                    json={
-                        "revision": revision,
-                        "widget": {
-                            "name": "Changed",
-                            "widget_type": "chart",
-                            "module_id": str(world.module_id),
-                            "chart_id": str(world.charts[0]),
-                            "config": None,
-                            "size": "L",
-                            "pinned": False,
-                        },
-                    },
-                )
-            else:
-                refused = world.attachment(client, "dashboard" if held == "dashboard" else "board")
+            refused = world.attachment(client)
             assert refused.status_code == 503
             # Probe all earlier locks while the external holder still owns its one row.
             with world.owner.begin() as observer:
@@ -117,7 +87,6 @@ def test_nowait_busy_refusal_releases_earlier_locks_without_partial_writes(
                     ("identity_sessions", world.sessions["member"]),
                     ("modules", world.module_id),
                     ("charts", world.charts[0]),
-                    ("boards", world.board_id),
                     ("dashboards", world.dashboard_id),
                 ]
                 for probe_table, probe_id in probes:
@@ -128,25 +97,17 @@ def test_nowait_busy_refusal_releases_earlier_locks_without_partial_writes(
                         )
             transaction.rollback()
         with world.owner.connect() as observer:
-            parent = "dashboards" if held == "dashboard" else "boards"
-            parent_id = world.dashboard_id if held == "dashboard" else world.board_id
             assert (
                 observer.scalar(
-                    text(f"SELECT revision FROM {parent} WHERE id = :id"), {"id": parent_id}
+                    text("SELECT revision FROM dashboards WHERE id = :id"),
+                    {"id": world.dashboard_id},
                 )
-                == revision
+                == 1
             )
             assert observer.scalar(
-                text("SELECT count(*) FROM board_widgets WHERE board_id = :id"),
-                {"id": world.board_id},
-            ) == (1 if held == "widget" else 0)
-            if held == "widget":
-                assert (
-                    observer.scalar(
-                        text("SELECT size FROM board_widgets WHERE id = :id"), {"id": identifier}
-                    )
-                    == "S"
-                )
+                text("SELECT count(*) FROM dashboard_widgets WHERE dashboard_id = :id"),
+                {"id": world.dashboard_id},
+            ) == 0
 
 
 def test_source_nowait_breaks_publication_and_board_group_reverse_edges(reference_race_world):
@@ -202,14 +163,15 @@ def test_source_nowait_breaks_publication_and_board_group_reverse_edges(referenc
     with world.owner.connect() as observer:
         assert (
             observer.scalar(
-                text("SELECT revision FROM boards WHERE id = :id"), {"id": world.board_id}
+                text("SELECT revision FROM dashboards WHERE id = :id"),
+                {"id": world.dashboard_id},
             )
             == 1
         )
         assert (
             observer.scalar(
-                text("SELECT count(*) FROM board_widgets WHERE board_id = :id"),
-                {"id": world.board_id},
+                text("SELECT count(*) FROM dashboard_widgets WHERE dashboard_id = :id"),
+                {"id": world.dashboard_id},
             )
             == 0
         )
@@ -232,18 +194,19 @@ def test_module_move_after_unlocked_discovery_refuses_the_source(reference_race_
             request.join(WAIT)
             pause.remove()
         refused = join(request, results)
-    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "widget_invalid"
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "dashboard_invalid"
     with world.owner.connect() as observer:
         assert (
             observer.scalar(
-                text("SELECT count(*) FROM board_widgets WHERE board_id = :id"),
-                {"id": world.board_id},
+                text("SELECT count(*) FROM dashboard_widgets WHERE dashboard_id = :id"),
+                {"id": world.dashboard_id},
             )
             == 0
         )
         assert (
             observer.scalar(
-                text("SELECT revision FROM boards WHERE id = :id"), {"id": world.board_id}
+                text("SELECT revision FROM dashboards WHERE id = :id"),
+                {"id": world.dashboard_id},
             )
             == 1
         )
@@ -263,7 +226,7 @@ def test_opposite_widget_order_uses_the_same_current_chart_lock_order(reference_
     event.listen(world.runtime, "before_cursor_execute", observe)
     try:
         with world.client("member") as client:
-            created = world.attachment(client, "dashboard", list(reversed(world.charts)))
+            created = world.attachment(client, list(reversed(world.charts)))
             assert created.status_code == 200 and created.json()["revision"] == 2
             first = acquired[:]
             acquired.clear()

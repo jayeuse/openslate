@@ -21,64 +21,31 @@ from tests.operations.sample.controls.sample_chart_wire import identity, page
 chart_setup = chart_tests.chart_setup
 
 
-def test_rich_sources_keep_queries_labels_order_windows_and_layout(chart_setup):
+def test_rich_dashboard_sources_keep_queries_windows_and_layout(chart_setup):
     dataset, action, context, wire, _ = rich_setup(chart_setup)
     result = execute_openview_control(action, dataset, context)
-    portable = json.loads(result["portable_bytes"])["configuration"]["widgets"]
-    assert [row["config"]["query"] for row in portable[:3]] == wire.portable_queries
-    assert [row["config"]["size"] for row in portable[:3]] == ["S", "M", "L"]
-    assert [row["config"]["pinned"] for row in portable[:3]] == [True, False, True]
-    assert wire.source_before == (
-        {wire.source_board_id: wire.boards[wire.source_board_id]},
-        {wire.source_board_id: wire.widgets[wire.source_board_id]},
-        {wire.source_dashboard_id: wire.dashboards[wire.source_dashboard_id]},
-    )
-    imported = next(
-        row["response"]["items"]
+    created = next(
+        row["request_body"]["widgets"]
         for row in result["read_receipts"]
-        if row["step"] == "read_imported_chart_widgets"
+        if row["step"] == "create_chart_dashboard"
     )
-    assert [row["config"] for row in imported[:3]] == [
-        row["config"] for row in wire.source_before[1][wire.source_board_id]
-    ]
+    source = wire.source_before[wire.source_dashboard_id]["widgets"]
+    assert [row["config"] for row in created] == [row["config"] for row in source]
+    assert [(row["grid_column"], row["grid_row"]) for row in created] == [(0, 0), (2, 0), (2, 2)]
+    assert wire.source_before == {
+        wire.source_dashboard_id: wire.dashboards[wire.source_dashboard_id]
+    }
 
 
-def test_authored_reference_is_inlined_for_transfer_and_source_survives(chart_setup):
+def test_rich_owned_copy_corruption_stops_before_completion(chart_setup):
     dataset, action, context, wire, _ = rich_setup(chart_setup)
-    wire.add_reference_source()
-    before = deepcopy(wire.source_chart)
-    result = execute_openview_control(action, dataset, context)
-    imported = next(
-        row["response"]["items"]
-        for row in result["read_receipts"]
-        if row["step"] == "read_imported_chart_widgets"
-    )
-    assert imported[3]["chart_id"] is None
-    assert imported[3]["config"] == {"version": 1, "query": before["query"]}
-    assert (imported[3]["size"], imported[3]["pinned"]) == ("L", False)
-    assert wire.source_chart == before
-    assert wire.widgets[wire.source_board_id][3]["chart_id"] == before["id"]
-
-
-@pytest.mark.parametrize("fault", ["dashboard_copy", "board_copy", "import_source"])
-def test_rich_owned_copy_corruption_stops_before_completion(chart_setup, fault):
-    dataset, action, context, wire, _ = rich_setup(chart_setup)
-    wire.corrupt = fault
+    wire.corrupt = "dashboard_copy"
     with pytest.raises(SamplePhaseActionError) as failure:
         execute_openview_control(action, dataset, context)
-    assert (
-        failure.value.step
-        == {
-            "dashboard_copy": "create_chart_dashboard",
-            "board_copy": "read_chart_board_widgets",
-            "import_source": "read_imported_chart_widgets",
-        }[fault]
-    )
-    assert wire.source_before == (
-        {wire.source_board_id: wire.boards[wire.source_board_id]},
-        {wire.source_board_id: wire.widgets[wire.source_board_id]},
-        {wire.source_dashboard_id: wire.dashboards[wire.source_dashboard_id]},
-    )
+    assert failure.value.step == "create_chart_dashboard"
+    assert wire.source_before == {
+        wire.source_dashboard_id: wire.dashboards[wire.source_dashboard_id]
+    }
 
 
 @pytest.mark.parametrize("failure", [500, 401, 409, "transport"])
@@ -112,25 +79,20 @@ def test_chart_create_failure_never_replays_or_returns_completed(chart_setup, fa
     )
 
 
-@pytest.mark.parametrize("fault", ["null_template", "finish_reuse", "status_type", "export_bytes"])
+@pytest.mark.parametrize("fault", ["null_template", "finish_reuse", "status_type"])
 def test_native_chart_provenance_requires_exact_unique_attempts(chart_setup, fault):
     from operations.sample.controls.charts_verification import certify_retained_chart_dashboards
     from tests.operations.sample.controls.test_sample_control_charts import _manifest
 
     dataset, action, context, wire, directory = chart_setup
     result = execute_openview_control(action, dataset, context)
-    if fault == "export_bytes":
-        import hashlib
-
-        result["portable_bytes"] = json.dumps(json.loads(result["portable_bytes"]), indent=2)
-        result["portable_sha256"] = hashlib.sha256(result["portable_bytes"].encode()).hexdigest()
     request_id = next(
         row["request_id"] for row in result["read_receipts"] if row["step"] == "create_chart"
     )
     for path in directory.glob("*.jsonl"):
         events = [json.loads(line) for line in path.read_text().splitlines()]
         finish = next((row for row in events if row.get("request_id") == request_id), None)
-        if finish is not None and fault != "export_bytes":
+        if finish is not None:
             start = next(
                 row
                 for row in events
@@ -154,74 +116,25 @@ def test_native_chart_provenance_requires_exact_unique_attempts(chart_setup, fau
     assert identifiers == () and issues
 
 
-@pytest.mark.parametrize("stage", ["attach", "export", "import", "cleanup"])
+@pytest.mark.parametrize("stage", ["attach", "cleanup"])
 def test_later_failure_stops_owned_journey_without_replay(chart_setup, stage):
     dataset, action, context, wire, _ = chart_setup
-    targets = {
-        "attach": (
-            "PATCH",
-            "/api/dashboards/" + wire.dashboard_id,
-            409,
-            ("GET", f"/api/boards/{wire.board_id}/configuration"),
-        ),
-        "export": (
-            "GET",
-            f"/api/boards/{wire.board_id}/configuration",
-            500,
-            ("POST", "/api/boards/import"),
-        ),
-        "import": (
-            "POST",
-            "/api/boards/import",
-            httpx.ReadError("owned import loss"),
-            ("DELETE", f"/api/boards/{wire.board_id}/widgets/" + identity("copy:reference")),
-        ),
-        "cleanup": (
-            "POST",
-            f"/api/boards/{wire.board_id}/purge",
-            500,
-            ("POST", f"/api/boards/{wire.import_id}/archive"),
-        ),
-    }
-    method, path, failure, dependent = targets[stage]
+    usage = ("GET", f"/api/charts/{identity('chart')}/usage")
+    source = ("GET", f"/api/dashboards/{wire.source_dashboard_id}")
+    # The dependent request comes after the failing one; its count must not grow.
+    method, path, failure, dependent, dependent_count = {
+        "attach": ("PATCH", "/api/dashboards/" + wire.dashboard_id, 409, usage, 0),
+        "cleanup": ("DELETE", "/api/dashboards/" + wire.dashboard_id, 500, source, 1),
+    }[stage]
     wire.fault = ((method, path), failure)
-    expected = (
-        SampleWriteOutcomeUnknown if stage in {"import", "cleanup"} else SamplePhaseActionError
-    )
+    expected = SampleWriteOutcomeUnknown if stage == "cleanup" else SamplePhaseActionError
     with pytest.raises(expected):
         execute_openview_control(action, dataset, context)
     assert wire.seen.count((method, path)) == 1
-    assert dependent not in wire.seen
-    assert wire.source_before == (
-        {wire.source_board_id: wire.boards[wire.source_board_id]},
-        {wire.source_board_id: wire.widgets[wire.source_board_id]},
-        {wire.source_dashboard_id: wire.dashboards[wire.source_dashboard_id]},
-    )
-
-
-def test_corrupt_normalized_export_stops_before_dependent_import(chart_setup):
-    dataset, action, context, wire, _ = chart_setup
-    original = wire.__call__
-
-    def corrupt_export(request):
-        if request.url.path == "/api/boards/import":
-            wire.seen.append((request.method, request.url.path))
-            return httpx.Response(400, headers={"X-Request-ID": identity("refused corrupt import")})
-        response = original(request)
-        if request.url.path.endswith("/configuration"):
-            bundle = response.json()
-            bundle["configuration"]["widgets"][-1]["config"]["query"]["definition"]["deleted"] = (
-                "only"
-            )
-            return httpx.Response(200, headers=response.headers, json=bundle)
-        return response
-
-    for client in context.clients.values():
-        client._client._transport = httpx.MockTransport(corrupt_export)
-    with pytest.raises(SamplePhaseActionError) as failure:
-        execute_openview_control(action, dataset, context)
-    assert ("POST", "/api/boards/import") not in wire.seen
-    assert failure.value.step == "export_board_configuration"
+    assert wire.seen.count(dependent) == dependent_count
+    assert wire.source_before == {
+        wire.source_dashboard_id: wire.dashboards[wire.source_dashboard_id]
+    }
 
 
 @pytest.mark.parametrize(
@@ -289,50 +202,24 @@ def test_chart_list_reads_later_pages_and_refuses_bad_pages(chart_setup, fault):
     assert wire.seen.count(("GET", "/api/charts")) == 2
 
 
-@pytest.mark.parametrize("operation", ["duplicate", "dashboard", "import"])
 @pytest.mark.parametrize("owner", ["authored", "owned"])
-def test_consumer_alias_refuses_all_dependent_writes(chart_setup, operation, owner):
+def test_consumer_alias_refuses_all_dependent_writes(chart_setup, owner):
     dataset, action, context, wire, _ = chart_setup
-    foreign = identity("unrelated " + owner + " " + operation)
-    family = "dashboards" if operation == "dashboard" else "boards"
+    foreign = identity("unrelated " + owner + " dashboard")
     mappings = context.mappings if owner == "authored" else context.runtime_mappings
-    mappings.setdefault(family if owner == "authored" else "control_" + family, {})[
+    mappings.setdefault("dashboards" if owner == "authored" else "control_dashboards", {})[
         "unrelated identity"
     ] = foreign
-    if family == "dashboards":
-        wire.dashboards[foreign] = wire.dashboard(foreign, "Owned Chart control dashboard")
-        before = deepcopy(wire.dashboards[foreign])
-    else:
-        wire.boards[foreign] = wire.board(foreign, "Unrelated authored Board")
-        wire.widgets[foreign] = deepcopy(wire.widgets[wire.source_board_id])
-        for row in wire.widgets[foreign]:
-            row.update(board_id=foreign, id=identity("unrelated inline widget"))
-        if operation == "import":
-            reference = wire.widget(
-                foreign,
-                "unrelated normalized widget",
-                {"version": 1, "chart_type": "bar", "query": deepcopy(wire.query)},
-                None,
-                "S",
-                True,
-                1,
-            )
-            reference.update(widget_type="chart", name="Chart control reference")
-            wire.widgets[foreign].append(reference)
-        before = deepcopy((wire.boards[foreign], wire.widgets[foreign]))
+    wire.dashboards[foreign] = wire.dashboard(foreign, "Owned Chart control dashboard")
+    before = deepcopy(wire.dashboards[foreign])
     original = wire.__call__
 
     def alias(request):
         response = original(request)
-        target = {
-            "duplicate": f"/api/boards/{wire.source_board_id}/duplicate",
-            "dashboard": "/api/dashboards",
-            "import": "/api/boards/import",
-        }[operation]
-        if request.method == "POST" and request.url.path == target:
+        if request.method == "POST" and request.url.path == "/api/dashboards":
             body = response.json()
             body["id"] = foreign
-            headers = {**response.headers, "location": f"/api/{family}/{foreign}"}
+            headers = {**response.headers, "location": f"/api/dashboards/{foreign}"}
             return httpx.Response(201, headers=headers, json=body)
         return response
 
@@ -340,25 +227,13 @@ def test_consumer_alias_refuses_all_dependent_writes(chart_setup, operation, own
         client._client._transport = httpx.MockTransport(alias)
     with pytest.raises(SamplePhaseActionError) as failure:
         execute_openview_control(action, dataset, context)
-    assert (
-        failure.value.step
-        == {
-            "duplicate": "duplicate_board",
-            "dashboard": "create_chart_dashboard",
-            "import": "import_board",
-        }[operation]
-    )
+    assert failure.value.step == "create_chart_dashboard"
     assert not [
         (method, path)
         for method, path in wire.seen
-        if method != "GET" and path.startswith(f"/api/{family}/{foreign}")
+        if method != "GET" and path.startswith(f"/api/dashboards/{foreign}")
     ]
-    current = (
-        wire.dashboards[foreign]
-        if family == "dashboards"
-        else (wire.boards[foreign], wire.widgets[foreign])
-    )
-    assert current == before
+    assert wire.dashboards[foreign] == before
 
 
 @pytest.mark.parametrize(

@@ -81,9 +81,9 @@ test("Board access preview states the person's level and what it allows", () => 
   expect(html).toContain("Alex &lt;script&gt;not markup&lt;/script&gt;");
   expect(html).toContain("Board-level access");
   expect(html).toContain("Level on this Board: write.");
-  expect(html).toContain("Can read posts, events and widgets");
+  expect(html).toContain("Can read posts and events");
   expect(html).toContain("Can add posts and events");
-  expect(html).toContain("Can manage posts, events and widgets");
+  expect(html).toContain("Can manage posts and events");
   expect(html).not.toContain("audience");
   expect(html).not.toContain(userId);
   expect(html).not.toContain("<script>");

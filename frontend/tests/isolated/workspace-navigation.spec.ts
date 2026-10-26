@@ -156,7 +156,7 @@ test("only administrators see the Sandbox in the navigation", () => {
   // Everyone else starts at their first workspace instead.
   expect(
     getWorkspaceNavigation("/sandbox", new URLSearchParams(), "none")[0]?.href,
-  ).toBe("/boards?section=overview");
+  ).toBe("/boards?section=posts");
 });
 
 test("Manage shows each section only to an account whose requests the server admits", () => {
@@ -318,7 +318,7 @@ test("Sandbox uses the simplified sections while legacy links still open the mat
 test("sidebar section links preserve the active board while changing its section", () => {
   const calendar = item(
     "/boards",
-    "board=operations&section=overview",
+    "board=operations&section=posts",
     "boards",
     "calendar",
   );
@@ -365,7 +365,7 @@ test("active parsing recognizes defaults and invalid section values without mark
   expect(
     isWorkspaceNavigationItemActive(
       "boards",
-      "overview",
+      "posts",
       "/boards",
       new URLSearchParams("section=unknown"),
     ),

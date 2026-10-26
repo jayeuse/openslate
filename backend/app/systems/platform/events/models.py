@@ -80,7 +80,7 @@ _ENTITY_ONLY_ENTITIES = frozenset(
 MODULE_SCOPED_ENTITIES = frozenset(
     {"charts", "fields", "modules", "records", "relationship_edges", "saved_views"}
 )
-BOARD_SCOPED_ENTITIES = frozenset({"boards", "board_posts", "board_events", "board_widgets"})
+BOARD_SCOPED_ENTITIES = frozenset({"boards", "board_posts", "board_events"})
 
 
 @dataclass(frozen=True, slots=True)

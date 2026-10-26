@@ -74,9 +74,6 @@ import { ServerBackedBoardPostLifecycle } from "./server-backed-board-post-lifec
 import { ServerBackedBoardPosts } from "./server-backed-board-posts";
 import { ServerBackedBoardCalendar } from "./server-backed-board-calendar";
 import { ServerBackedBoardManagement } from "./server-backed-board-management";
-import { ServerBackedBoardPortability } from "./server-backed-board-portability";
-import { ServerBackedBoardWidgets } from "./server-backed-board-widgets";
-import { ServerBoardWidgetManagement } from "./server-backed-board-widget-management";
 import { BoardEmpty, ConfirmAction } from "./ui";
 import {
   boardListKey,
@@ -123,13 +120,6 @@ export function isSelectedBoardActivityOpen(
     selection.boardId === boardId &&
     selection.detailSequence === detailSequence
   );
-}
-
-export function isSelectedBoardWidgetManagerOpen(
-  selectedBoardId: string | null,
-  currentBoardId: string | null,
-): boolean {
-  return selectedBoardId !== null && selectedBoardId === currentBoardId;
 }
 
 export function isSelectedBoardPostManagerOpen(
@@ -277,7 +267,7 @@ function BoardsLoadingHeader() {
 
 /**
  * Matches the section a loaded Board opens on: the section in the link when
- * there is one, otherwise the overview.
+ * there is one, otherwise Posts.
  */
 function BoardsSkeleton({ section }: { section: BoardSection | null }) {
   return (
@@ -291,15 +281,10 @@ function BoardsSkeleton({ section }: { section: BoardSection | null }) {
       </div>
       {section === "calendar" ? (
         <Skeleton className="h-[28rem] rounded-xl" />
-      ) : section === "posts" ? (
+      ) : (
         <div className="flex min-w-0 flex-col gap-4">
           <Skeleton className="h-32 rounded-xl" />
           <Skeleton className="h-32 rounded-xl" />
-        </div>
-      ) : (
-        <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-          <Skeleton className="h-44 rounded-xl" />
-          <Skeleton className="h-44 rounded-xl" />
         </div>
       )}
     </div>
@@ -334,12 +319,10 @@ function ServerBackedBoardsContent() {
   const [managementMode, setManagementMode] = useState<
     "create" | "manage" | null
   >(null);
-  const [portabilityOpen, setPortabilityOpen] = useState(false);
   const [activitySelection, setActivitySelection] =
     useState<BoardActivitySelection | null>(null);
   const [previewSelection, setPreviewSelection] =
     useState<BoardActivitySelection | null>(null);
-  const [widgetSelection, setWidgetSelection] = useState<string | null>(null);
   const [postManagerSelection, setPostManagerSelection] = useState<
     string | null
   >(null);
@@ -395,10 +378,6 @@ function ServerBackedBoardsContent() {
     board?.id ?? null,
     resource.detail.sequence,
   );
-  const widgetsOpen = isSelectedBoardWidgetManagerOpen(
-    widgetSelection,
-    board?.id ?? null,
-  );
   const postManagerOpen = isSelectedBoardPostManagerOpen(
     postManagerSelection,
     board?.id ?? null,
@@ -406,7 +385,6 @@ function ServerBackedBoardsContent() {
   );
   const closeActivity = useCallback(() => setActivitySelection(null), []);
   const closePreview = useCallback(() => setPreviewSelection(null), []);
-  const closeWidgets = useCallback(() => setWidgetSelection(null), []);
   const closePostManager = useCallback(() => setPostManagerSelection(null), []);
   const section = resolveBoardSection(route);
   const regionActive = board !== null;
@@ -533,10 +511,6 @@ function ServerBackedBoardsContent() {
   }, [previewSelection, previewOpen, closePreview]);
 
   useEffect(() => {
-    if (widgetSelection && !widgetsOpen) closeWidgets();
-  }, [widgetSelection, widgetsOpen, closeWidgets]);
-
-  useEffect(() => {
     if (postManagerSelection && !postManagerOpen) closePostManager();
   }, [postManagerSelection, postManagerOpen, closePostManager]);
 
@@ -579,14 +553,12 @@ function ServerBackedBoardsContent() {
   );
 
   function navigateToBoard(target: BoardManagementBoard) {
-    const href = boardUrl(target.id, "overview");
+    const href = boardUrl(target.id, "posts");
     const resume = () => {
       closeActivity();
       closePreview();
-      closeWidgets();
       closePostManager();
       setManagementMode(null);
-      setPortabilityOpen(false);
       setBrowsing(false);
       router.push(href, { scroll: false });
     };
@@ -874,12 +846,6 @@ function ServerBackedBoardsContent() {
                         >
                           New project Board
                         </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="min-h-11"
-                          onClick={() => setPortabilityOpen(true)}
-                        >
-                          Configurations
-                        </DropdownMenuItem>
                       </DropdownMenuGroup>
                     )}
                   </DropdownMenuContent>
@@ -912,7 +878,6 @@ function ServerBackedBoardsContent() {
           onAccessDenied={() => {
             closeActivity();
             closePreview();
-            closeWidgets();
             closePostManager();
             resource.revokeAccess();
           }}
@@ -921,7 +886,6 @@ function ServerBackedBoardsContent() {
             const resume = () => {
               closeActivity();
               closePreview();
-              closeWidgets();
               closePostManager();
               setBrowsing(false);
               router.push(href, { scroll: false });
@@ -931,43 +895,6 @@ function ServerBackedBoardsContent() {
           }}
         />
       )}
-
-      <Sheet open={portabilityOpen} onOpenChange={setPortabilityOpen}>
-        <SheetContent className="w-full gap-6 overflow-y-auto sm:w-[min(92vw,40rem)]">
-          <SheetHeader className="pr-10">
-            <SheetTitle>Board configurations</SheetTitle>
-            <SheetDescription>
-              Import, export or duplicate a Board’s widgets as a new project
-              Board. Posts, events, files and groups are not copied.
-            </SheetDescription>
-          </SheetHeader>
-          <Button
-            variant="ghost"
-            size="icon"
-            type="button"
-            aria-label="Close Board configurations"
-            className="absolute top-3 right-3 size-11"
-            onClick={() => setPortabilityOpen(false)}
-          >
-            <X />
-          </Button>
-          {portabilityOpen && (
-            <ServerBackedBoardPortability
-              board={board}
-              refreshKey={resource.detail.sequence}
-              onBoardCreated={(created) => {
-                refreshBoard();
-                navigateToBoard(created);
-              }}
-              onAccessDenied={(boardId) => {
-                if (board?.id !== boardId) return;
-                setPortabilityOpen(false);
-                resource.revokeAccess();
-              }}
-            />
-          )}
-        </SheetContent>
-      </Sheet>
 
       <LoadingRegion
         loading={loading}
@@ -1090,7 +1017,7 @@ function ServerBackedBoardsContent() {
                 selectedEventId={searchParams.get("event")}
                 onCloseSelectedEvent={() => selectBoardContent("event", null)}
               />
-            ) : section === "posts" ? (
+            ) : (
               <div className="flex min-w-0 flex-col gap-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -1169,37 +1096,6 @@ function ServerBackedBoardsContent() {
                   </SheetContent>
                 </Sheet>
               </div>
-            ) : (
-              <div className="flex min-w-0 flex-col gap-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2
-                      data-slot="section-title"
-                      className="text-2xl font-semibold tracking-tight"
-                    >
-                      Board overview
-                    </h2>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                      Record summaries and shortcuts for your team.
-                    </p>
-                  </div>
-                  {canManage && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11"
-                      onClick={() => setWidgetSelection(board.id)}
-                    >
-                      Manage widgets
-                    </Button>
-                  )}
-                </div>
-                <ServerBackedBoardWidgets
-                  key={board.id}
-                  boardId={board.id}
-                  refreshKey={manualLiveKey}
-                />
-              </div>
             )}
             <Sheet
               open={activityOpen}
@@ -1211,7 +1107,7 @@ function ServerBackedBoardsContent() {
                 <SheetHeader className="pr-10">
                   <SheetTitle>Board activity</SheetTitle>
                   <SheetDescription>
-                    Changes to this Board, its groups and its widgets.
+                    Changes to this Board and its groups.
                   </SheetDescription>
                 </SheetHeader>
                 <Button
@@ -1264,47 +1160,6 @@ function ServerBackedBoardsContent() {
                     key={board.id}
                     boardId={board.id}
                     refreshKey={resource.detail.sequence}
-                  />
-                )}
-              </SheetContent>
-            </Sheet>
-            <Sheet
-              open={widgetsOpen}
-              onOpenChange={(open) => {
-                if (!open) closeWidgets();
-              }}
-            >
-              <SheetContent className="w-full gap-6 overflow-y-auto sm:w-[min(92vw,44rem)]">
-                <SheetHeader className="pr-10">
-                  <SheetTitle>Manage Board widgets</SheetTitle>
-                  <SheetDescription>
-                    Add and arrange the widgets that everyone who can open this
-                    Board sees.
-                  </SheetDescription>
-                </SheetHeader>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  type="button"
-                  aria-label="Close widget management"
-                  className="absolute top-3 right-3 size-11"
-                  onClick={closeWidgets}
-                >
-                  <X />
-                </Button>
-                {widgetsOpen && (
-                  <ServerBoardWidgetManagement
-                    key={board.id}
-                    boardId={board.id}
-                    boardActive={board.status === "active"}
-                    refreshKey={resource.detail.sequence}
-                    onChanged={refreshBoard}
-                    onBoardRefresh={refreshBoard}
-                    onAccessDenied={(boardId) => {
-                      if (board.id !== boardId) return;
-                      closeWidgets();
-                      resource.revokeAccess();
-                    }}
                   />
                 )}
               </SheetContent>
