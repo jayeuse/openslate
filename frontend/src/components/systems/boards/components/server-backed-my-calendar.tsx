@@ -504,7 +504,7 @@ export function ServerBackedMyCalendar({
     !period.window || !region || !today ? (
       workspaceDateError ? null : (
         <p role="status" className="text-muted-foreground py-8 text-sm">
-          Loading the Workspace date…
+          Loading today’s date…
         </p>
       )
     ) : (
@@ -546,9 +546,11 @@ export function ServerBackedMyCalendar({
           className="mb-3"
           title="My calendar"
           description={
-            data.eventsReady
-              ? `${boards.length} ${boards.length === 1 ? "board" : "boards"}`
-              : " "
+            <span className="max-sm:hidden">
+              {data.eventsReady
+                ? `${boards.length} ${boards.length === 1 ? "board" : "boards"}`
+                : " "}
+            </span>
           }
           actions={<div ref={setPrimarySlot} className="contents" />}
         />
@@ -581,8 +583,8 @@ export function ServerBackedMyCalendar({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
                     {today
-                      ? "The Workspace date could not be refreshed. The last loaded date is still in use."
-                      : "Could not load the Workspace date."}
+                      ? "Today’s date could not be refreshed. The last loaded date is still in use."
+                      : "Could not load today’s date."}
                   </span>
                   <Button
                     type="button"
@@ -590,7 +592,7 @@ export function ServerBackedMyCalendar({
                     className="min-h-11 xl:min-h-8"
                     onClick={onRetryWorkspaceDate}
                   >
-                    Retry Workspace date
+                    Retry date
                   </Button>
                 </div>
               </Alert>

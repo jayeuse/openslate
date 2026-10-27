@@ -172,7 +172,7 @@ export function editorFailure(
     return {
       ...emptyState(state.key, state.boardRevision),
       status: "denied",
-      error: "Post editing is unavailable. Check your Board access.",
+      error: "You cannot post on this board.",
     };
   if (error instanceof ApiError && error.status === 409)
     return {

@@ -447,6 +447,19 @@ Choices the code forced in the Gantt; each is the smallest that fits DESIGN.md.
 | Phones group by stage and hide Group by, as the comp draws them; zoom is kept in the address on every size. | — |
 | "Add dates" opens the card sheet with its first date field (Start, or Card start on a record card) focused. | — |
 
+### Recorded during P6 (2026-10-27)
+
+Choices the brief and comps left open; each is the smallest that fits DESIGN.md.
+
+| Choice | Removes |
+| --- | --- |
+| BR31 on phones: row 1 is the mark, the title and the level chip; the title wraps as many lines as it needs and is never cut. Row 2 is Board settings (44px icon) and the tab's primary. The meta line ("Sales roles read and post", "Every board you can read.", "4 boards") shows from 640px only; a refresh error still shows. The comp's settings icon on row 1 and its cut title are not kept (the brief wins). | A cut title; a third header row on phones |
+| Words: board, record, event, and workspace are lower case inside a sentence; "Boards" (the workspace) and "Board settings" keep their capital because they start a label. The glossary's Term column still writes "Board"; it does not set UI case. | "This Board is archived", "No linked Records." |
+| Purge reads **Delete forever** (BR20, BR27): the Advanced block and its heading, a file row, an archived event; the final buttons name their object ("Delete board forever", "Delete file forever", "Delete event forever"), and the typed name and password stay. The shared purge review (`lifecycle-purge-review.tsx`, used by OpenView and the Sandbox) keeps its own words. The glossary still says "permanently delete" for purge (rows Purge and archive / close / delete); the owner decides whether it follows. | "Permanently delete", "Confirm permanent deletion" |
+| Gantt: the Today chip sits in the month row over its line, so it covers no week label. On the first two or three days of a month it can sit over the start of that month's name. | The chip over W labels |
+| Gantt: "No dates" and the out-of-view hints sit on the card fill above the grid lines. | A line through the text |
+| The card sheet's title field is a plain input in the sheet title's type (18px, weight 600), with an edge only on hover and focus, so the slim field skin does not make it a 32px, 14px field. | The small-field look |
+
 ## Comps
 
 Comps draw the novel parts only, in Slate dark with Harbor content and the sidebar's Announcements rows. Serve them over HTTP from `.impeccable/mocks/boards/` (`python3 -m http.server <port>`). They reuse the OpenView comp kit (`openview.css` as a symlink, the icon sprite with calendar, Kanban, and Gantt icons, and the `_next`/`app-out` links to the app's tokens). New classes start with `bd-`.

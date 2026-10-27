@@ -81,8 +81,8 @@ export function boardPurgeFailureMessage(
     return lifecycleErrorMessage(
       error,
       error instanceof ApiError && error.status === 403
-        ? "Only an administrator can permanently delete a Board."
-        : "A permanent-deletion review could not be prepared. Check the Board and try again.",
+        ? "Only an administrator can delete a board forever."
+        : "The delete review could not be prepared. Check the board and try again.",
     );
   if (error instanceof ApiError && error.status === 403)
     return lifecycleErrorMessage(
@@ -92,11 +92,11 @@ export function boardPurgeFailureMessage(
   if (error instanceof ApiError && error.status === 409)
     return lifecycleErrorMessage(
       error,
-      "The Board or its dependencies changed, or the review expired. Request a new review.",
+      "The board or its dependencies changed, or the review expired. Request a new review.",
     );
   return lifecycleErrorMessage(
     error,
-    "The Board was not permanently deleted. Request a new review and try again.",
+    "The board was not deleted. Request a new review and try again.",
   );
 }
 

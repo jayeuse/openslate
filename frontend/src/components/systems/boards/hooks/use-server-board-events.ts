@@ -163,7 +163,7 @@ export function useServerBoardEvents(
             sequence: request,
             error:
               error instanceof ApiError && error.status < 500
-                ? "Calendar unavailable. Ask a Board manager to check your access, or retry."
+                ? "Calendar unavailable. Ask a board manager to check your access, or retry."
                 : "Could not refresh this calendar. Try again.",
             retain: retainOnFailure(error),
           }),

@@ -719,7 +719,7 @@ async function exerciseConnectedBoard(
     .getByRole("dialog", { name: eventTitle })
     .getByRole("button", { name: "Edit event" })
     .click();
-  const eventEditor = page.getByRole("form", { name: "Edit Board event" });
+  const eventEditor = page.getByRole("form", { name: "Edit event" });
   await expect(
     eventEditor.getByRole("checkbox", { name: "1 day before" }),
   ).toBeChecked();
@@ -793,7 +793,7 @@ async function exerciseConnectedBoard(
           `/api/boards/${boardId}/events/${eventId}/record-links` &&
         response.request().method() === "POST",
     ),
-    eventEditor.getByRole("button", { name: "Link Record" }).click(),
+    eventEditor.getByRole("button", { name: "Link record" }).click(),
   ]);
   expect(eventLink.status()).toBe(201);
   const eventRecordLink = eventEditor.getByRole("link", {
@@ -810,7 +810,7 @@ async function exerciseConnectedBoard(
   const secondTitle = `Supplier follow-up ${runId.slice(0, 8)}`;
   await page.getByRole("button", { name: "New event" }).click();
   const secondEditor = page.getByRole("form", {
-    name: "Create Board event",
+    name: "Create event",
   });
   await secondEditor.getByLabel("Event title").fill(secondTitle);
   const [secondCreated] = await Promise.all([
@@ -828,7 +828,7 @@ async function exerciseConnectedBoard(
     .click();
   const updatedSecondTitle = `${secondTitle} updated`;
   const secondUpdateEditor = page.getByRole("form", {
-    name: "Edit Board event",
+    name: "Edit event",
   });
   await secondUpdateEditor.getByLabel("Event title").fill(updatedSecondTitle);
   const [secondUpdated] = await Promise.all([
@@ -888,7 +888,7 @@ async function exerciseConnectedBoard(
           `/api/boards/${boardId}/posts/${postId}/record-links` &&
         response.request().method() === "POST",
     ),
-    page.getByRole("button", { name: "Link Record" }).click(),
+    page.getByRole("button", { name: "Link record" }).click(),
   ]);
   expect(postLink.status()).toBe(201);
   const [published] = await Promise.all([

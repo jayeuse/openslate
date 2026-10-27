@@ -240,7 +240,7 @@ function invalidateBoardResourceAccess<L, D>(
     sequence: listSequence,
     data: null,
     status: "error",
-    error: "Board access changed. Refresh the Board list.",
+    error: "Board access changed. Refresh the board list.",
   }));
   setters.detail((current) => ({
     ...current,
@@ -334,7 +334,7 @@ export function useServerBoardsResource(route: BoardRoute) {
             type: "reject",
             key: LIST_KEY,
             sequence,
-            error: "Could not refresh Boards. Try again.",
+            error: "Could not refresh boards. Try again.",
             denied,
           }),
         );
@@ -436,7 +436,7 @@ export function useServerBoardsResource(route: BoardRoute) {
                   ...current,
                   data: null,
                   status: "error",
-                  error: "Board access changed. Refresh the Board list.",
+                  error: "Board access changed. Refresh the board list.",
                 }
               : current,
           );
@@ -448,7 +448,7 @@ export function useServerBoardsResource(route: BoardRoute) {
             sequence,
             error: accessDenied(error)
               ? BOARD_UNAVAILABLE
-              : "Could not refresh this Board. Try again.",
+              : "Could not refresh this board. Try again.",
             denied: accessDenied(error),
           }),
         );

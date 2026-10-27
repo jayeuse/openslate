@@ -6,6 +6,12 @@ import {
   type Page,
 } from "./helpers/test";
 import { seedTimeline } from "./helpers/comms-timeline-fixture";
+import {
+  installKanbanApi,
+  kanbanHref,
+  stageIds,
+  wireCard,
+} from "./helpers/board-kanban-api";
 
 async function signIn(page: Page) {
   await signedInAs(page, {
@@ -178,4 +184,83 @@ test("each organization look keeps the same words and structure", async ({
 
   await look.locator("label").filter({ hasText: "Slate" }).click();
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/);
+});
+
+test("the board Kanban keeps its words and structure across looks, framed as the canvas, at the person's text size", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installKanbanApi(page, {
+    level: "write",
+    cards: [wireCard("Book the expo booth crew", stageIds.todo, 1024)],
+  });
+  let theme = "slate";
+  await page.route(appearanceUrl, (route) =>
+    route.fulfill({ json: { theme } }),
+  );
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({
+      json: {
+        display_name: "OpenSlate",
+        mark: "OS",
+        logo_file_id: null,
+        revision: 1,
+        today: "2026-09-25",
+        week_start: "monday",
+        locale: "en-US",
+        timezone: "UTC",
+        purge_enabled: true,
+        theme,
+      },
+    }),
+  );
+  // A person who reads at 125% keeps that size on the board (BR66).
+  await page.addInitScript(() =>
+    window.localStorage.setItem("openslate-text-size", "125"),
+  );
+  const surface = page.locator('[data-skin="board-surface"]');
+  const looks = async () => {
+    await expect(
+      page.getByRole("button", {
+        name: "Card actions for Book the expo booth crew",
+      }),
+    ).toBeVisible();
+    return surface.evaluate((node) => {
+      // A canvas frame beside it, to compare the look's frame.
+      const canvas = document.createElement("div");
+      canvas.dataset.skin = "canvas-frame";
+      canvas.style.position = "relative";
+      document.body.append(canvas);
+      const frame = (element: Element) =>
+        getComputedStyle(element, "::after").boxShadow;
+      const result = {
+        frame: frame(node),
+        canvasFrame: frame(canvas),
+        textSize: getComputedStyle(node).fontSize,
+        pageTextSize: getComputedStyle(document.body).fontSize,
+        canvasTextSize: getComputedStyle(canvas).fontSize,
+        elements: node.querySelectorAll("*").length,
+        text: node.textContent,
+      };
+      canvas.remove();
+      return result;
+    });
+  };
+  await page.goto(kanbanHref());
+  const slate = await looks();
+  expect(slate.frame).toBe("none");
+  expect(slate.textSize).toBe(slate.pageTextSize);
+  expect(slate.textSize).not.toBe(slate.canvasTextSize);
+  for (const look of THEMES) {
+    theme = look.id;
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", look.id);
+    const current = await looks();
+    expect(current.frame, look.id).not.toBe("none");
+    expect(current.frame, look.id).toBe(current.canvasFrame);
+    expect(current.textSize, look.id).toBe(current.pageTextSize);
+    expect({ elements: current.elements, text: current.text }, look.id).toEqual(
+      { elements: slate.elements, text: slate.text },
+    );
+  }
 });

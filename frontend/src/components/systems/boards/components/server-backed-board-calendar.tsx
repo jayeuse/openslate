@@ -416,7 +416,7 @@ export function ServerBackedBoardCalendar({
           setBlockedBoardId(boardId);
           editor.dropDraft();
           lifecycle.closeOnDenial();
-          editor.setEditorError("Event editing is unavailable for this Board.");
+          editor.setEditorError("Event editing is unavailable for this board.");
           invalidateRef.current();
         }
       });
@@ -776,7 +776,7 @@ export function ServerBackedBoardCalendar({
   } else if (!calendarWindow || !region || !workspaceToday) {
     main = workspaceDateError ? null : (
       <p role="status" className="text-muted-foreground py-8 text-sm">
-        Loading the Workspace date…
+        Loading today’s date…
       </p>
     );
   } else if (
@@ -788,7 +788,7 @@ export function ServerBackedBoardCalendar({
     main = (
       <BoardEmpty
         title="Calendar unavailable"
-        description="No events are shown. Retry or ask a Board manager to check your access."
+        description="No events are shown. Retry or ask a board manager to check your access."
       />
     );
   } else {
@@ -852,8 +852,8 @@ export function ServerBackedBoardCalendar({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>
               {workspaceToday
-                ? "The Workspace date could not be refreshed. The last loaded date is still in use."
-                : "Could not load the Workspace date."}
+                ? "Today’s date could not be refreshed. The last loaded date is still in use."
+                : "Could not load today’s date."}
             </span>
             <Button
               type="button"
@@ -861,7 +861,7 @@ export function ServerBackedBoardCalendar({
               className="min-h-11 xl:min-h-8"
               onClick={onRetryWorkspaceDate}
             >
-              Retry Workspace date
+              Retry date
             </Button>
           </div>
         </Alert>

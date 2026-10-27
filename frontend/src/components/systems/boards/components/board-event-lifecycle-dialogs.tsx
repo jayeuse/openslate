@@ -55,8 +55,8 @@ export function BoardEventLifecycleDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             {target?.kind === "archive"
-              ? `Archive “${target.title}” and all its occurrences? It will leave the active calendar and can be restored by a Board manager.`
-              : `Restore “${target?.title ?? "this event"}” and its occurrences to the active calendar?`}
+              ? `Archive “${target.title}”? It leaves the calendar, and a board manager can restore it.`
+              : `Restore “${target?.title ?? "this event"}” to the calendar?`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error ? <Alert variant="destructive">{error}</Alert> : null}
@@ -131,9 +131,9 @@ export function BoardEventPurgeDialog({
     >
       <DialogContent className="slim-ui">
         <DialogHeader>
-          <DialogTitle>Permanently delete event?</DialogTitle>
+          <DialogTitle>Delete event forever?</DialogTitle>
           <DialogDescription>
-            This permanently removes the archived event and its occurrences.
+            This removes the archived event forever.
           </DialogDescription>
         </DialogHeader>
         {pending && !preview ? <p role="status">Preparing review…</p> : null}
@@ -186,7 +186,7 @@ export function BoardEventPurgeDialog({
                     !password
                   }
                 >
-                  Confirm permanent deletion
+                  Delete event forever
                 </Button>
               </form>
             ) : null}

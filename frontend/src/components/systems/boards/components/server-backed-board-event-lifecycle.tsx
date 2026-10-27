@@ -60,7 +60,7 @@ export function ServerArchivedBoardEventsDisplay({
 }) {
   return createElement(
     "section",
-    { "aria-label": "Archived Board events" },
+    { "aria-label": "Archived events" },
     createElement(
       "h3",
       { className: "text-base font-semibold" },
@@ -109,9 +109,9 @@ export function ServerArchivedBoardEventsDisplay({
                       className:
                         "border-destructive text-destructive focus-visible:outline-ring min-h-11 rounded-md border px-4 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2",
                       onClick: () => onPurgeEvent(event),
-                      "aria-label": `Permanently delete ${event.title}`,
+                      "aria-label": `Delete ${event.title} forever`,
                     },
-                    "Permanently delete",
+                    "Delete forever",
                   )
                 : null,
             ),

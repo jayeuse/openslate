@@ -212,7 +212,7 @@ export function useBoardEventEditor({
           setConflict(null);
           invalidateRef.current();
           setEditorError(
-            "This event or Board is no longer available. The editor was closed.",
+            "This event or board is no longer available. The editor was closed.",
           );
         } else {
           setConflict({
@@ -434,9 +434,9 @@ export function useBoardEventEditor({
       setConflict({ eventId: activeDraft.eventId, status: "ready", latest });
       setEditorError(
         !latest.boardActive
-          ? "This Board is archived. Keep a copy of your draft and ask a Board manager to restore it."
+          ? "This board is archived. Keep a copy of your draft and ask a board manager to restore it."
           : latest.event?.archived
-            ? "This event is archived. Keep a copy of your draft and ask a Board manager to restore it."
+            ? "This event is archived. Keep a copy of your draft and ask a board manager to restore it."
             : null,
       );
       retry();
@@ -445,7 +445,7 @@ export function useBoardEventEditor({
         setDraft(null);
         setConflict(null);
         setEditorError(
-          "This event or Board is no longer available. The editor was closed.",
+          "This event or board is no longer available. The editor was closed.",
         );
         invalidate();
       } else {

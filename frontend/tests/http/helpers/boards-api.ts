@@ -1,4 +1,4 @@
-import type { Page } from "./test";
+import type { Locator, Page } from "./test";
 import { isEventStream, signedInAs } from "./test";
 import { wirePagination } from "../../helpers/pagination";
 import { wireBoard } from "../../helpers/wire";
@@ -311,4 +311,72 @@ export async function installBoardDirectory(
     return route.fallback();
   });
   return directory;
+}
+
+// One published post on the `installBoardApi` board, with its reading pane's
+// reads (files and linked records, both empty). Install it after that API.
+export const publishedPostId = "00000000-0000-4000-8000-00000000d701";
+export const publishedPost = {
+  id: publishedPostId,
+  board_id: boardId,
+  author_id: userId,
+  title: "Use the new loading bay",
+  body: "The east gate closes on Monday.",
+  links: [],
+  status: "published",
+  publish_at: "2026-09-23T00:00:00Z",
+  expires_at: null,
+  pinned: false,
+  post_revision: null,
+  board_revision: 1,
+  publication_number: 1,
+  published_at: "2026-09-23T00:00:00Z",
+  edited: false,
+  created_at: "2026-09-23T00:00:00Z",
+  updated_at: "2026-09-23T00:00:00Z",
+};
+
+export async function installPublishedPost(page: Page) {
+  const prefix = `/api/boards/${boardId}/posts`;
+  // Files and linked records answer with the flat page their reads expect.
+  const noItems = (limit: number) => ({
+    items: [],
+    limit,
+    offset: 0,
+    has_more: false,
+  });
+  await page.route(`**${prefix}**`, (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === prefix)
+      return route.fulfill({
+        json: {
+          items:
+            url.searchParams.get("view") === "published" ? [publishedPost] : [],
+          pagination: wirePagination({
+            limit: 25,
+            count: url.searchParams.get("view") === "published" ? 1 : 0,
+            total: url.searchParams.get("view") === "published" ? 1 : 0,
+          }),
+          board_revision: 1,
+        },
+      });
+    if (url.pathname === `${prefix}/${publishedPostId}`)
+      return route.fulfill({ json: publishedPost });
+    if (url.pathname === `${prefix}/${publishedPostId}/attachments`)
+      return route.fulfill({ json: noItems(25) });
+    if (url.pathname === `${prefix}/${publishedPostId}/record-links`)
+      return route.fulfill({ json: noItems(20) });
+    return route.fallback();
+  });
+}
+
+/** Opens the published post and waits for its pane's file and link reads. */
+export async function openPublishedPost(page: Page, row: Locator) {
+  const read = (part: string) =>
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        `/api/boards/${boardId}/posts/${publishedPostId}/${part}`,
+    );
+  await Promise.all([read("attachments"), read("record-links"), row.click()]);
 }

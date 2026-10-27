@@ -50,7 +50,7 @@ function errorText(error: unknown): string {
     if (error.status === 409)
       return "This content changed. Reload the editor and try again.";
     if ([401, 403, 404].includes(error.status))
-      return "This Board, content or Record is no longer available to you.";
+      return "This board, content or record is no longer available to you.";
   }
   return "Record links could not be updated. Try again.";
 }
@@ -303,7 +303,7 @@ export function ServerBoardRecordLinks(props: Props) {
       ) : (
         <h4 className="text-sm font-semibold">Record links</h4>
       )}
-      {listStatus === "loading" && <p role="status">Loading linked Records…</p>}
+      {listStatus === "loading" && <p role="status">Loading linked records…</p>}
       {listStatus === "error" && (
         <Alert variant="destructive">
           Record links could not be loaded.{" "}
@@ -318,7 +318,7 @@ export function ServerBoardRecordLinks(props: Props) {
       )}
       {listStatus === "ready" &&
         (items.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No linked Records.</p>
+          <p className="text-muted-foreground text-sm">No linked records.</p>
         ) : (
           <ul className="space-y-2">
             {items.map((item) => (
@@ -354,7 +354,7 @@ export function ServerBoardRecordLinks(props: Props) {
         ))}
       {editable && !editable.locked && items.length < 20 && (
         <div className="space-y-3 rounded-md border p-3">
-          <p className="text-sm font-medium">Link an existing Record</p>
+          <p className="text-sm font-medium">Link an existing record</p>
           <label className="block space-y-1 text-sm">
             <span>Data source</span>
             <select
@@ -403,7 +403,7 @@ export function ServerBoardRecordLinks(props: Props) {
           {moduleId && (
             <>
               <label className="block space-y-1 text-sm">
-                <span>Search Records</span>
+                <span>Search records</span>
                 <Input
                   className="bg-background text-foreground min-h-11 rounded-md"
                   maxLength={240}
@@ -416,7 +416,7 @@ export function ServerBoardRecordLinks(props: Props) {
                 />
               </label>
               {recordStatus === "loading" && (
-                <p role="status">Loading Records…</p>
+                <p role="status">Loading records…</p>
               )}
               {recordStatus === "error" && (
                 <Alert variant="destructive">
@@ -437,7 +437,7 @@ export function ServerBoardRecordLinks(props: Props) {
                         setRecordId(id);
                       }}
                     >
-                      <option value="">Choose a Record</option>
+                      <option value="">Choose a record</option>
                       {records.map((record) => (
                         <option key={record.id} value={record.id}>
                           {recordTitleForLink(record, titleField)}
@@ -447,7 +447,7 @@ export function ServerBoardRecordLinks(props: Props) {
                   </label>
                   {records.length === 0 && (
                     <p className="text-muted-foreground text-sm">
-                      No Records match on this page.
+                      No records match on this page.
                     </p>
                   )}
                   <div className="flex gap-2">
@@ -459,7 +459,7 @@ export function ServerBoardRecordLinks(props: Props) {
                         setRecordOffset(Math.max(0, recordOffset - 25))
                       }
                     >
-                      Previous Records
+                      Previous records
                     </Button>
                     <Button
                       type="button"
@@ -467,7 +467,7 @@ export function ServerBoardRecordLinks(props: Props) {
                       disabled={!recordHasMore}
                       onClick={() => setRecordOffset(recordOffset + 25)}
                     >
-                      Next Records
+                      Next records
                     </Button>
                   </div>
                 </>
@@ -480,7 +480,7 @@ export function ServerBoardRecordLinks(props: Props) {
             disabled={!selectedRecord || pending}
             onClick={() => void mutate("add")}
           >
-            Link Record
+            Link record
           </Button>
         </div>
       )}

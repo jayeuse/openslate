@@ -2353,7 +2353,7 @@ test("the pane shows Links and Files only when the post has them, at the reading
     reader.getByRole("heading", { name: "Linked records" }),
   ).toHaveCount(0);
   await expect(reader.getByText("No attachments yet.")).toHaveCount(0);
-  await expect(reader.getByText("No linked Records.")).toHaveCount(0);
+  await expect(reader.getByText("No linked records.")).toHaveCount(0);
   const message = reader.getByText(linked.body.trim(), { exact: false });
   const box = await message.boundingBox();
   expect(box?.width ?? 0).toBeLessThanOrEqual(672);

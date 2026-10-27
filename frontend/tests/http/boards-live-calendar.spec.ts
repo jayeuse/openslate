@@ -332,7 +332,7 @@ test("an old live event refusal cannot close a newly created local draft", async
     ).toHaveValue("My new local event");
     await expect(
       browser.getByText(
-        "This event or Board is no longer available. The editor was closed.",
+        "This event or board is no longer available. The editor was closed.",
         { exact: true },
       ),
     ).toHaveCount(0);
@@ -828,17 +828,17 @@ for (const failChallenge of [false, true]) {
       .getByRole("menuitemradio", { name: "Archived", exact: true })
       .click();
     const archived = browser.getByRole("region", {
-      name: "Archived Board events",
+      name: "Archived events",
       exact: true,
     });
     await archived
       .getByRole("button", {
-        name: `Permanently delete ${selectedEventWire.title}`,
+        name: `Delete ${selectedEventWire.title} forever`,
         exact: true,
       })
       .click();
     const review = browser.getByRole("dialog", {
-      name: "Permanently delete event?",
+      name: "Delete event forever?",
     });
     await expect(
       review.getByText(
@@ -853,7 +853,7 @@ for (const failChallenge of [false, true]) {
       .fill("synthetic-event-password");
     await expect(
       review.getByRole("button", {
-        name: "Confirm permanent deletion",
+        name: "Delete event forever",
         exact: true,
       }),
     ).toBeDisabled();
@@ -862,7 +862,7 @@ for (const failChallenge of [false, true]) {
       .getByLabel("Type the event name")
       .fill(selectedEventWire.title);
     await review
-      .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+      .getByRole("button", { name: "Delete event forever", exact: true })
       .click();
     if (failChallenge) {
       await expect(
@@ -885,7 +885,7 @@ for (const failChallenge of [false, true]) {
         archived.getByText(selectedEventWire.title, { exact: true }),
       ).toHaveCount(0);
       await expect(
-        browser.getByText("Event permanently deleted.", { exact: true }),
+        browser.getByText("Event deleted forever.", { exact: true }),
       ).toBeVisible();
     }
     expect(api.purges).toBe(1);
@@ -903,7 +903,7 @@ test("archived event remains restorable by a member without permanent-delete aut
     .getByRole("menuitemradio", { name: "Archived", exact: true })
     .click();
   const archived = browser.getByRole("region", {
-    name: "Archived Board events",
+    name: "Archived events",
     exact: true,
   });
   await expect(
@@ -914,7 +914,7 @@ test("archived event remains restorable by a member without permanent-delete aut
   ).toBeVisible();
   await expect(
     archived.getByRole("button", {
-      name: `Permanently delete ${selectedEventWire.title}`,
+      name: `Delete ${selectedEventWire.title} forever`,
       exact: true,
     }),
   ).toHaveCount(0);
@@ -931,17 +931,17 @@ test("pending event review can recover after purge setting changes without accep
     .getByRole("menuitemradio", { name: "Archived", exact: true })
     .click();
   const archived = browser.getByRole("region", {
-    name: "Archived Board events",
+    name: "Archived events",
     exact: true,
   });
   const begin = archived.getByRole("button", {
-    name: `Permanently delete ${selectedEventWire.title}`,
+    name: `Delete ${selectedEventWire.title} forever`,
     exact: true,
   });
   await begin.click();
   await expect(
     browser
-      .getByRole("dialog", { name: "Permanently delete event?" })
+      .getByRole("dialog", { name: "Delete event forever?" })
       .getByText("Preparing review…"),
   ).toBeVisible();
   api.workspace.purge_enabled = false;
@@ -949,7 +949,7 @@ test("pending event review can recover after purge setting changes without accep
     entity: "workspace_profiles",
   });
   await expect(
-    browser.getByRole("dialog", { name: "Permanently delete event?" }),
+    browser.getByRole("dialog", { name: "Delete event forever?" }),
   ).toBeHidden();
   const released = browser.waitForResponse((response) =>
     response.url().endsWith("/purge/preview"),
@@ -996,7 +996,7 @@ test("admin purges archived-parent event while ordinary lifecycle editing stays 
     .getByRole("menuitemradio", { name: "Archived", exact: true })
     .click();
   const archived = browser.getByRole("region", {
-    name: "Archived Board events",
+    name: "Archived events",
     exact: true,
   });
   await expect(
@@ -1016,19 +1016,19 @@ test("admin purges archived-parent event while ordinary lifecycle editing stays 
   ).toHaveCount(0);
   await archived
     .getByRole("button", {
-      name: `Permanently delete ${selectedEventWire.title}`,
+      name: `Delete ${selectedEventWire.title} forever`,
       exact: true,
     })
     .click();
   const review = browser.getByRole("dialog", {
-    name: "Permanently delete event?",
+    name: "Delete event forever?",
   });
   await review.getByLabel("Type the event name").fill(selectedEventWire.title);
   await review
     .getByLabel("Administrator password")
     .fill("synthetic-event-password");
   await review
-    .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+    .getByRole("button", { name: "Delete event forever", exact: true })
     .click();
   await expect(review).toBeHidden();
   await expect(
@@ -1089,7 +1089,7 @@ test("archived-parent admin retains current-access retry after an event-list fai
   await expect(browser.getByText("Private dependency failure")).toHaveCount(0);
   await expect(
     browser.getByRole("button", {
-      name: `Permanently delete ${selectedEventWire.title}`,
+      name: `Delete ${selectedEventWire.title} forever`,
       exact: true,
     }),
   ).toHaveCount(0);
@@ -1097,7 +1097,7 @@ test("archived-parent admin retains current-access retry after an event-list fai
   await retry.click();
   await expect(
     browser.getByRole("button", {
-      name: `Permanently delete ${selectedEventWire.title}`,
+      name: `Delete ${selectedEventWire.title} forever`,
       exact: true,
     }),
   ).toBeVisible();

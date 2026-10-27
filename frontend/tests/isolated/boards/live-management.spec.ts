@@ -174,7 +174,7 @@ test("revision conflict retains the draft and blocks unreviewed overwrite", () =
   const html = markup({ ...baseView, conflict: true });
   expect(html).toContain("Keep my draft");
   expect(html).toContain("Someone changed this board first.");
-  expect(html).toContain("Refresh latest Board");
+  expect(html).toContain("Refresh board");
   expect(html).toMatch(/disabled=""[^>]*>Save changes/);
 });
 
@@ -302,8 +302,8 @@ test("archived Board permanent-deletion controls are hidden from non-admins", ()
       isAdmin: false,
     } as Parameters<typeof ServerBoardManagementDisplay>[0]),
   );
-  expect(html).not.toContain("Permanent deletion");
-  expect(html).not.toContain("Permanently delete board");
+  expect(html).not.toContain("Delete forever");
+  expect(html).not.toContain("Delete board forever");
   expect(html).toContain("Restore board");
 });
 
@@ -320,22 +320,22 @@ test("Board purge preserves safe lifecycle messages when the server returns thei
     management.boardPurgeFailureMessage(
       new ApiError(
         403,
-        "Permanent delete is turned off for this installation.",
+        "Delete forever is turned off for this installation.",
         undefined,
         "purge_disabled",
       ),
       "preview",
     ),
-  ).toBe("Permanent delete is turned off for this installation.");
+  ).toBe("Delete forever is turned off for this installation.");
   expect(
     management.boardPurgeFailureMessage(
       new ApiError(
         422,
-        "The Board name confirmation did not match",
+        "The board name did not match",
         undefined,
         "confirmation_name_mismatch",
       ),
       "execute",
     ),
-  ).toBe("The Board name confirmation did not match");
+  ).toBe("The board name did not match");
 });

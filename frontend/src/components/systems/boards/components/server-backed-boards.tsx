@@ -133,7 +133,7 @@ function ServerBackedBoardsLoading() {
       <BoardsLoadingHeader />
       <LoadingRegion
         loading
-        label="Loading Boards"
+        label="Loading boards"
         skeleton={<BoardsSkeleton section={null} />}
         className={boardsRegionClass}
       />
@@ -502,8 +502,8 @@ function ServerBackedBoardsContent() {
         />
         <ConfirmAction
           open={pendingNavigation !== null}
-          title="Discard unsaved Board changes?"
-          description="Your unsaved Event or post changes will be lost."
+          title="Discard unsaved board changes?"
+          description="Your unsaved event or post changes will be lost."
           action="Discard changes"
           disabled={currentDraftState?.pending ?? false}
           onCancel={() => setPendingNavigation(null)}
@@ -570,7 +570,7 @@ function ServerBackedBoardsContent() {
 
       <LoadingRegion
         loading={loading}
-        label="Loading Boards"
+        label="Loading boards"
         skeleton={
           <BoardsSkeleton
             section={route.kind === "invalid-board" ? null : route.section}
@@ -588,7 +588,7 @@ function ServerBackedBoardsContent() {
                   : resource.list.error
                     ? "Boards could not be loaded"
                     : noBoards
-                      ? "No active Boards"
+                      ? "No active boards"
                       : BOARD_REFUSED_TITLE
             }
             description={
@@ -597,9 +597,9 @@ function ServerBackedBoardsContent() {
                 : unavailable
                   ? resource.detail.error || "Could not load this board."
                   : resource.list.error
-                    ? "The Board list could not be loaded. Retry to see your Boards."
+                    ? "The board list could not be loaded. Try again."
                     : noBoards
-                      ? "Your account cannot open any active Board. Ask an administrator for access."
+                      ? "You cannot open any active board. Ask an administrator for access."
                       : BOARD_UNAVAILABLE
             }
             icon={<LayoutDashboard aria-hidden="true" />}
@@ -628,7 +628,7 @@ function ServerBackedBoardsContent() {
         ) : (
           <>
             {board.status === "archived" && (
-              <Alert>This Board is archived and read-only.</Alert>
+              <Alert>This board is archived and read-only.</Alert>
             )}
             {section !== "calendar" && workspaceCalendar.isError && (
               <Alert variant="destructive">
@@ -714,11 +714,11 @@ function ServerBackedBoardsContent() {
       </LoadingRegion>
       <ConfirmAction
         open={pendingNavigation !== null}
-        title="Discard unsaved Board changes?"
+        title="Discard unsaved board changes?"
         description={
           currentDraftState?.section === "gantt"
             ? "Your staged date changes on the Gantt will be lost."
-            : "Your unsaved Event or post changes will be lost."
+            : "Your unsaved event or post changes will be lost."
         }
         action="Discard changes"
         disabled={currentDraftState?.pending ?? false}

@@ -17,7 +17,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import {
   Sheet,
   SheetContent,
@@ -516,11 +515,14 @@ function TitleField({ context }: { context: CardFieldContext }) {
       .save("title", { title: text }, draft.revision)
       .finally(() => setDraft(null));
   };
+  // The sheet title in type and place; a field shows only under the pointer
+  // and in focus. A plain input, so the slim field size and skin (a 32px
+  // well at 14px) do not turn the title into a small field.
   return (
-    <Input
+    <input
       aria-label="Card title"
       maxLength={200}
-      className="hover:border-input -mx-2 mt-0.5 h-auto min-h-11 border-transparent bg-transparent px-2 py-1 text-lg leading-tight font-semibold shadow-none xl:min-h-9"
+      className="hover:border-input focus-visible:border-input focus-visible:outline-ring -mx-2 mt-0.5 min-h-11 w-full min-w-0 rounded-[var(--radius)] border border-transparent bg-transparent px-2 py-1 text-lg leading-tight font-semibold wrap-anywhere text-[color:var(--data-ink)] outline-none focus-visible:outline-2 focus-visible:outline-offset-1 disabled:cursor-not-allowed xl:min-h-9"
       value={draft?.text ?? saved}
       disabled={context.model.saving === "title"}
       onChange={(event) => {

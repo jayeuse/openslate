@@ -142,7 +142,9 @@ export function BoardPageHeader({
         }
         description={
           <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="min-w-0 truncate">
+            {/* Phones keep two short rows over the tabs (BR31); the
+                meta line waits for a wider screen. */}
+            <span className="min-w-0 truncate max-sm:hidden">
               {boardAudience(board)}
               {board.description ? ` · ${board.description}` : ""}
             </span>

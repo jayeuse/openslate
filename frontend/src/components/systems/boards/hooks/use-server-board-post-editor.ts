@@ -803,7 +803,7 @@ export function useServerBoardPostEditor({
             ? {
                 ...emptyState(key, previous.boardRevision),
                 status: "denied",
-                error: "Post editing is unavailable. Check your Board access.",
+                error: "You cannot post on this board.",
               }
             : previous,
         );

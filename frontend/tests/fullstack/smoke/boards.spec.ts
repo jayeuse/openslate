@@ -82,15 +82,16 @@ test("A Board calendar shows a seeded event in its month @boards", async ({
     page,
     `/boards?board=${encodeURIComponent(sales.id)}&section=calendar`,
   );
-  const calendar = page.getByRole("region", { name: "Board calendar" });
   const move = page.getByRole("button", {
     name: steps < 0 ? "Previous month" : "Next month",
     exact: true,
   });
   for (let step = 0; step < Math.abs(steps); step += 1) await move.click();
   await expect(
-    calendar.getByRole("heading", { name: target, exact: true }),
+    page.getByRole("heading", { name: target, exact: true }),
   ).toBeVisible();
+  // The month grid is a region named for its month.
+  const calendar = page.getByRole("region", { name: `${target} calendar` });
   // A one-day seeded event is a pill in its day, or behind that day's
   // "+n more" when the day is full.
   await expect(
@@ -145,12 +146,10 @@ test("A seeded Board post shows its attachment and downloads it @boards", async 
   const postsPath = `/boards?board=${encodeURIComponent(found.boardId)}&section=posts`;
   await openWorkspace(page, postsPath);
   await page.goto(`${postsPath}&post=${encodeURIComponent(found.postId)}`);
-  const reader = page.getByRole("dialog", { name: found.title });
+  // The post opens in the reading pane beside the list; its files are listed.
+  const reader = page.getByRole("article", { name: found.title, exact: true });
   await expect(reader).toBeVisible();
-  const attachments = reader.getByRole("region", { name: "Post attachments" });
-  await attachments
-    .getByRole("button", { name: "Attachments", exact: true })
-    .click();
+  const attachments = reader.getByRole("region", { name: "Files" });
   const downloadButton = attachments.getByRole("button", {
     name: `Download ${found.file.filename}`,
     exact: true,

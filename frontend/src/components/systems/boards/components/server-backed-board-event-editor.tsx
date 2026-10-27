@@ -101,7 +101,7 @@ export function prepareBoardEventConflictRetry(
 ): BoardEventDraft {
   if (draft.boardId !== latest.boardId || !latest.boardActive)
     throw new BoardEventDraftError(
-      "This Board is no longer available for event editing.",
+      "This board is no longer available for event editing.",
     );
   if (draft.eventId === null) {
     if (latest.event !== null)
@@ -437,7 +437,7 @@ export function ServerBoardEventEditorForm({
   );
   return (
     <form
-      aria-label={draft.eventId ? "Edit Board event" : "Create Board event"}
+      aria-label={draft.eventId ? "Edit event" : "Create event"}
       className="flex min-w-0 flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();

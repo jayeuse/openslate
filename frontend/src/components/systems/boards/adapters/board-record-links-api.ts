@@ -18,7 +18,7 @@ const linkSchema = z
     if (link.url !== (link.available ? expected : null))
       context.addIssue({
         code: "custom",
-        message: "Invalid Board record link URL",
+        message: "The record link address is not valid",
       });
   })
   .transform(({ record_id, module_id, ...link }) => ({

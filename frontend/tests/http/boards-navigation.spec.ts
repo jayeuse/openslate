@@ -104,7 +104,7 @@ test("Board content sections stay on the authorized UUID and fail closed when co
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
   await expect(
     page.getByText(
-      "No events are shown. Retry or ask a Board manager to check your access.",
+      "No events are shown. Retry or ask a board manager to check your access.",
     ),
   ).toBeVisible();
   await expect(page.getByText("Manager-visible event")).toHaveCount(0);
@@ -151,7 +151,7 @@ async function openBoardsWithHeldList(page: Page) {
   await expect(region).toHaveAttribute("aria-busy", "true");
   return {
     region,
-    label: page.getByRole("status").filter({ hasText: "Loading Boards" }),
+    label: page.getByRole("status").filter({ hasText: "Loading boards" }),
     release,
   };
 }
@@ -389,6 +389,77 @@ test("a Board page has one header: the title, the level, one meta line, tabs and
   await expect(
     page.getByRole("button", { name: "New post", exact: true }),
   ).toHaveCount(0);
+});
+
+test("on a phone a board header is two short rows, the whole title, then the tabs", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installBoardApi(page, () => true);
+  await installBoardDirectory(page);
+  await page.goto(`/boards?board=${directoryIds.fleet}&section=posts`);
+  const title = page.getByRole("heading", { level: 1 });
+  await expect(title).toHaveText("Fleet Reliability announcements");
+  // Row 1: the title wraps instead of cutting, with the level chip beside it.
+  expect(
+    await title.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  const titleBox = (await title.boundingBox())!;
+  expect(titleBox.height).toBeGreaterThan(48);
+  const chip = (await page
+    .getByRole("main")
+    .getByText("Manager", { exact: true })
+    .boundingBox())!;
+  expect(chip.y).toBeGreaterThanOrEqual(titleBox.y);
+  expect(chip.y + chip.height).toBeLessThanOrEqual(
+    titleBox.y + titleBox.height,
+  );
+  // Row 2: Board settings and the tab's primary, side by side, at 44px.
+  const settings = (await page
+    .getByRole("button", { name: "Board settings", exact: true })
+    .boundingBox())!;
+  // The header's primary comes first; the empty list offers it too.
+  const primary = (await page
+    .getByRole("button", { name: "New post", exact: true })
+    .first()
+    .boundingBox())!;
+  expect(settings.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+  expect(Math.abs(primary.y - settings.y)).toBeLessThan(1);
+  expect(settings).toMatchObject({ width: 44, height: 44 });
+  expect(primary.height).toBeGreaterThanOrEqual(44);
+  // Then the tabs; the meta line waits for a wider screen.
+  const tabs = (await page
+    .getByRole("navigation", { name: "Fleet Reliability announcements views" })
+    .boundingBox())!;
+  expect(tabs.y).toBeGreaterThanOrEqual(settings.y + settings.height);
+  await expect(page.getByText("Project groups read and post")).toBeHidden();
+
+  // A department board's mark leads the first row.
+  await page.goto(`/boards?department=${directoryIds.salesDepartment}`);
+  await expect(title).toHaveText("Sales announcements");
+  const mark = (await page
+    .getByRole("main")
+    .locator('[data-sandbox-part="identity"]')
+    .first()
+    .boundingBox())!;
+  const salesTitle = (await title.boundingBox())!;
+  expect(mark.x + mark.width).toBeLessThanOrEqual(salesTitle.x);
+  expect(mark.y).toBeGreaterThanOrEqual(salesTitle.y);
+  expect(mark.y + mark.height).toBeLessThanOrEqual(
+    salesTitle.y + salesTitle.height,
+  );
+
+  // All boards: the title, then its primary.
+  await page.goto("/boards?section=all");
+  const allTitle = page.getByRole("heading", { level: 1, name: "All boards" });
+  await expect(allTitle).toBeVisible();
+  const allBox = (await allTitle.boundingBox())!;
+  const create = (await page
+    .getByRole("button", { name: "New project board", exact: true })
+    .boundingBox())!;
+  expect(create.y).toBeGreaterThanOrEqual(allBox.y + allBox.height);
+  expect(create.y - (allBox.y + allBox.height)).toBeLessThanOrEqual(24);
+  await expect(page.getByText("Every board you can read.")).toBeHidden();
 });
 
 test("All boards lists every readable board with its kind and level, searches, and shows archived boards", async ({

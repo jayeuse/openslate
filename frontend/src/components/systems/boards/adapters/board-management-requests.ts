@@ -4,25 +4,25 @@ import { ApiError, apiFetch, type ApiRequestInit } from "@/lib/api";
 const safeCodes: Record<string, { status: number; message: string }> = {
   board_archived: {
     status: 409,
-    message: "Restore the Board before continuing",
+    message: "Restore the board before continuing",
   },
   board_not_archived: {
     status: 409,
-    message: "The Board is not archived",
+    message: "The board is not archived",
   },
   stale_revision: {
     status: 409,
     message: "Board changed; reload before saving",
   },
-  board_invalid: { status: 409, message: "Unable to save Board" },
+  board_invalid: { status: 409, message: "Unable to save the board" },
   board_scope_fixed: {
     status: 409,
     message:
-      "Company and department Boards follow the workspace and their department",
+      "Company and department boards follow the organization and their department",
   },
   board_name_fixed: {
     status: 409,
-    message: "A department Board has the name of its department",
+    message: "A department board has the name of its department",
   },
   group_unavailable: {
     status: 409,
@@ -38,15 +38,15 @@ const safeCodes: Record<string, { status: number; message: string }> = {
   },
   purge_disabled: {
     status: 403,
-    message: "Permanent delete is turned off for this installation.",
+    message: "Delete forever is turned off for this installation.",
   },
   purge_requires_closed: {
     status: 409,
-    message: "Archive the Board before deletion",
+    message: "Archive the board before deleting it",
   },
   confirmation_name_mismatch: {
     status: 422,
-    message: "The Board name confirmation did not match",
+    message: "The board name did not match",
   },
   challenge_expired: {
     status: 409,

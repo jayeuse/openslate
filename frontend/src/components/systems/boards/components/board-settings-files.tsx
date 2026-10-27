@@ -147,12 +147,12 @@ export function BoardUnattachedFiles({
                       </span>
                       {file.state === "purged" ? (
                         <span className="text-muted-foreground text-sm">
-                          Permanently deleted
+                          Deleted forever
                         </span>
                       ) : file.state === "deleting" ||
                         file.state === "uploading" ? (
                         <span className="text-muted-foreground text-sm">
-                          File operation requires reconciliation.
+                          This file is still changing. Try again later.
                         </span>
                       ) : !file.isDeleted ? (
                         <Button
@@ -170,11 +170,11 @@ export function BoardUnattachedFiles({
                           type="button"
                           variant="ghost"
                           className={`${control} text-danger-text`}
-                          aria-label={`Permanently delete ${file.filename}`}
+                          aria-label={`Delete ${file.filename} forever`}
                           disabled={locked || loading || stale}
                           onClick={() => onPurge(file)}
                         >
-                          Permanently delete
+                          Delete forever
                         </Button>
                       ) : null}
                     </li>
@@ -265,9 +265,9 @@ export function BoardFilePurgeDialog({
     >
       <DialogContent className="slim-ui max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Permanently delete file?</DialogTitle>
+          <DialogTitle>Delete file forever?</DialogTitle>
           <DialogDescription>
-            This permanently removes the archived file. Review its impact before
+            This removes the archived file forever. Review its impact before
             confirming.
           </DialogDescription>
         </DialogHeader>
@@ -318,7 +318,7 @@ export function BoardFilePurgeDialog({
                   type="submit"
                   disabled={confirmDisabled}
                 >
-                  Confirm permanent deletion
+                  Delete file forever
                 </Button>
               </form>
             ) : null}

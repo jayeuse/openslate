@@ -268,7 +268,7 @@ test("a writer links a record they can read to a card", async ({ page }) => {
   await sheet
     .getByRole("combobox", { name: "Record to link" })
     .selectOption({ label: "Q-24112" });
-  await sheet.getByRole("button", { name: "Link Record" }).click();
+  await sheet.getByRole("button", { name: "Link record" }).click();
   await expect(sheet.getByRole("link", { name: "Q-24112" })).toBeVisible();
   expect(
     api.writes.find((write) => write.path.endsWith("/record-links"))?.body,
@@ -555,4 +555,48 @@ test("on a phone the card sheet fills the screen, with Move to stage and 44px ta
   ).toBeInViewport();
   await page.keyboard.press("Escape");
   expect(await documentScrollsAcross(page)).toBe(false);
+});
+
+test("a writer's card title reads as the sheet title, with a field only on hover and focus", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const renewal = wireCard("Renewal terms", stageIds.doing, 1024);
+  await installKanbanApi(page, { level: "read", cards: [renewal] });
+  await page.goto(kanbanHref(`card=${renewal.id}`));
+  const sheet = page.getByRole("dialog", {
+    name: "Renewal terms",
+    exact: true,
+  });
+  const heading = sheet.getByRole("heading", { name: "Renewal terms" });
+  await expect(heading).toBeVisible();
+  const type = (node: Element) => {
+    const style = getComputedStyle(node);
+    return { size: style.fontSize, weight: style.fontWeight };
+  };
+  const readerTitle = await heading.evaluate(type);
+
+  await installKanbanApi(page, { level: "write", cards: [renewal] });
+  await page.reload();
+  const field = sheet.getByRole("textbox", { name: "Card title" });
+  await expect(field).toHaveValue("Renewal terms");
+  expect(await field.evaluate(type)).toEqual(readerTitle);
+  // At rest it is text: no fill and no edge; focus shows the field.
+  const look = () =>
+    field.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        fill: style.backgroundColor,
+        edges: [
+          style.borderTopColor,
+          style.borderRightColor,
+          style.borderBottomColor,
+          style.borderLeftColor,
+        ],
+      };
+    });
+  const none = "rgba(0, 0, 0, 0)";
+  expect(await look()).toEqual({ fill: none, edges: [none, none, none, none] });
+  await field.focus();
+  expect((await look()).edges).not.toContain(none);
 });

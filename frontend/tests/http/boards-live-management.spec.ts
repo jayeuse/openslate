@@ -175,7 +175,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     ).toBeEnabled();
     await expect(
       manage.getByRole("button", {
-        name: "Permanently delete board",
+        name: "Delete forever",
         exact: true,
       }),
     ).toHaveCount(0);
@@ -263,7 +263,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   const manage = await openBoardSettings(page);
   await openAdvanced(manage);
   const begin = manage.getByRole("button", {
-    name: "Permanently delete board",
+    name: "Delete forever",
     exact: true,
   });
   await begin.click();
@@ -291,7 +291,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
     manage.getByText(/Dispatch handoff 24.*Dispatch records.*Operations/),
   ).toBeVisible();
   const confirm = manage.getByRole("button", {
-    name: "Confirm permanent deletion",
+    name: "Delete board forever",
     exact: true,
   });
   const destructiveColor = await confirm.evaluate((element) => {
@@ -389,7 +389,7 @@ test("New project board creates the board and opens its settings on Access", asy
     settings.getByRole("tab", { name: "Access", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(
-    settings.getByText("No groups yet. Only administrators open this Board."),
+    settings.getByText("No groups yet. Only administrators open this board."),
   ).toBeVisible();
   await expect(
     page
@@ -421,25 +421,25 @@ test("Board permanent deletion closes its review and confirms completion", async
   const form = await openBoardSettings(page);
   await openAdvanced(form);
   await form
-    .getByRole("button", { name: "Permanently delete board", exact: true })
+    .getByRole("button", { name: "Delete forever", exact: true })
     .click();
   await form.getByLabel("Type the board name").fill(board.name);
   await form
     .getByLabel("Administrator password")
     .fill("synthetic-owned-passphrase");
   await form
-    .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+    .getByRole("button", { name: "Delete board forever", exact: true })
     .click();
   await expect(form).toBeHidden();
   await expect(
     page
       .getByRole("region", { name: "Status messages", exact: true })
-      .getByText("Board permanently deleted.", { exact: true }),
+      .getByText("Board deleted forever.", { exact: true }),
   ).toBeVisible();
   await expect(
     page
       .getByRole("region", { name: "Status messages", exact: true })
-      .getByText("Board permanently deleted.", { exact: true }),
+      .getByText("Board deleted forever.", { exact: true }),
   ).toHaveCount(1);
 });
 
@@ -800,12 +800,12 @@ for (const changed of [false, true]) {
     await manage.getByLabel("File status").selectOption("only");
     await manage
       .getByRole("button", {
-        name: `Permanently delete ${controlFile.filename}`,
+        name: `Delete ${controlFile.filename} forever`,
         exact: true,
       })
       .click();
     const review = page.getByRole("dialog", {
-      name: "Permanently delete file?",
+      name: "Delete file forever?",
     });
     try {
       if (changed) {
@@ -820,7 +820,7 @@ for (const changed of [false, true]) {
         await sendOpenViewEvent(page, "invalidate", { entity: "files" });
         await read;
         await expect(
-          manage.getByText("Permanently deleted", { exact: true }),
+          manage.getByText("Deleted forever", { exact: true }),
         ).toHaveCount(1);
         await expect(review).toBeHidden();
         release();
@@ -834,7 +834,7 @@ for (const changed of [false, true]) {
           .getByLabel("Administrator password")
           .fill("synthetic-file-password");
         const confirm = review.getByRole("button", {
-          name: "Confirm permanent deletion",
+          name: "Delete file forever",
           exact: true,
         });
         await expect(confirm).toBeEnabled();
@@ -893,12 +893,12 @@ for (const startArchived of [false, true]) {
     await manage.getByLabel("File status").selectOption("only");
     await manage
       .getByRole("button", {
-        name: `Permanently delete ${controlFile.filename}`,
+        name: `Delete ${controlFile.filename} forever`,
         exact: true,
       })
       .click();
     const review = page.getByRole("dialog", {
-      name: "Permanently delete file?",
+      name: "Delete file forever?",
     });
     await expect(
       review.getByText(
@@ -913,18 +913,18 @@ for (const startArchived of [false, true]) {
       .fill("synthetic-file-password");
     await expect(
       review.getByRole("button", {
-        name: "Confirm permanent deletion",
+        name: "Delete file forever",
         exact: true,
       }),
     ).toBeDisabled();
     expect(api.purgeAttempts).toBe(0);
     await review.getByLabel("Type the file name").fill(controlFile.filename);
     await review
-      .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+      .getByRole("button", { name: "Delete file forever", exact: true })
       .click();
     await expect(review).toBeHidden();
     await expect(
-      manage.getByText("Permanently deleted", { exact: true }),
+      manage.getByText("Deleted forever", { exact: true }),
     ).toBeVisible();
     await manage
       .getByRole("button", { name: "Archive board", exact: true })
@@ -934,14 +934,14 @@ for (const startArchived of [false, true]) {
       .getByRole("button", { name: "Archive board", exact: true })
       .click();
     await manage
-      .getByRole("button", { name: "Permanently delete board", exact: true })
+      .getByRole("button", { name: "Delete forever", exact: true })
       .click();
     await manage.getByLabel("Type the board name").fill(board.name);
     await manage
       .getByLabel("Administrator password")
       .fill("synthetic-file-password");
     await manage
-      .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+      .getByRole("button", { name: "Delete board forever", exact: true })
       .click();
     await expect(manage).toBeHidden();
     expect(api.writes).toEqual([
@@ -1068,7 +1068,7 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
     await manage.getByLabel("File status").selectOption("only");
     await manage
       .getByRole("button", {
-        name: `Permanently delete ${controlFile.filename}`,
+        name: `Delete ${controlFile.filename} forever`,
         exact: true,
       })
       .click();
@@ -1083,10 +1083,10 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
       manage.getByText("Restore this board to manage its unattached files."),
     ).toBeVisible();
     await expect(
-      page.getByRole("dialog", { name: "Permanently delete file?" }),
+      page.getByRole("dialog", { name: "Delete file forever?" }),
     ).toBeHidden();
     const begin = manage.getByRole("button", {
-      name: "Permanently delete board",
+      name: "Delete forever",
       exact: true,
     });
     await expect(begin).toBeEnabled();
@@ -1222,7 +1222,7 @@ test("renaming a project board saves with its revision and names a conflict", as
   ).toBeVisible();
   await expect(save).toBeDisabled();
   await sheet
-    .getByRole("button", { name: "Refresh latest Board", exact: true })
+    .getByRole("button", { name: "Refresh board", exact: true })
     .click();
   await sheet
     .getByRole("button", { name: "Retry with my draft", exact: true })

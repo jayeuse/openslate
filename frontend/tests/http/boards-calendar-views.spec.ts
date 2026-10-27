@@ -248,7 +248,7 @@ test("Created by me filters events in the browser, and Archived lists archived e
     .getByRole("menuitemradio", { name: "Archived", exact: true })
     .click();
   await expect(
-    page.getByRole("region", { name: "Archived Board events" }),
+    page.getByRole("region", { name: "Archived events" }),
   ).toBeVisible();
   expect(
     api.eventListReads.some((query) => query.includes("archived=archived")),
@@ -407,7 +407,7 @@ test("an alert above the month keeps its bars at 1280×720, and the page still d
   );
   await page.goto(calendarHref());
   await expect(
-    page.getByText("This Board is archived and read-only."),
+    page.getByText("This board is archived and read-only."),
   ).toBeVisible();
   const month = page.getByRole("region", { name: "November 2026 calendar" });
   // A week row keeps a lane for its bars, so the expo is not "+1 more".

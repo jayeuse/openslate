@@ -392,7 +392,7 @@ export function GanttChart({
               )}
             >
               <span
-                className="text-muted-foreground bg-card sticky px-2 text-xs whitespace-nowrap tabular-nums"
+                className="text-muted-foreground bg-card sticky z-[1] px-2 text-xs whitespace-nowrap tabular-nums"
                 style={away.side === "end" ? { right: 0 } : { left: names }}
               >
                 {away.text}
@@ -588,10 +588,12 @@ export function GanttChart({
                 {date.label}
               </span>
             ))}
+            {/* Today sits in the month row, over its line, so it never
+                covers a week label. */}
             {today !== null ? (
               <span
                 className="absolute z-[1] -translate-x-1/2 rounded-[3px] bg-[var(--ink)] px-[5px] py-px text-[11px] font-semibold whitespace-nowrap text-[var(--background)]"
-                style={{ left: x(today) + day / 2, top: MONTH_ROW + 2 }}
+                style={{ left: x(today) + day / 2, top: 5 }}
               >
                 Today
               </span>
@@ -673,7 +675,7 @@ export function GanttChart({
                       }
                     >
                       <span
-                        className="text-muted-foreground sticky flex h-full w-max items-center gap-2.5 pl-2.5 text-xs"
+                        className="text-muted-foreground bg-card sticky z-[1] flex h-full w-max items-center gap-2.5 pr-2 pl-2.5 text-xs"
                         style={{ left: names }}
                       >
                         <span>No dates</span>

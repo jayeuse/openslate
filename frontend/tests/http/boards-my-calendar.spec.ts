@@ -109,6 +109,17 @@ test("My calendar opens first in the Boards group and shows every board's events
       .getByRole("button", { name: /^Forklift breakdown review,/ }),
   ).toContainText("Fleet Reliability");
   expect((await documentScrolls(page)).across).toBe(false);
+  // The header is the title, then New event; the board count waits for a
+  // wider screen.
+  const title = (await page
+    .getByRole("heading", { level: 1, name: "My calendar" })
+    .boundingBox())!;
+  const create = (await page
+    .getByRole("button", { name: "New event", exact: true })
+    .boundingBox())!;
+  expect(create.y).toBeGreaterThanOrEqual(title.y + title.height);
+  expect(create.y - (title.y + title.height)).toBeLessThanOrEqual(24);
+  await expect(page.getByText("4 boards", { exact: true })).toBeHidden();
 });
 
 test("a board whose events cannot be read shows not loaded in its row while the others show", async ({

@@ -342,7 +342,7 @@ test("arrows move a focused bar a day and Shift+arrows its due date; a live chan
   // Leaving with a staged change asks first.
   await page.getByRole("link", { name: "Kanban", exact: true }).click();
   const leave = page.getByRole("alertdialog", {
-    name: "Discard unsaved Board changes?",
+    name: "Discard unsaved board changes?",
   });
   await expect(
     leave.getByText("Your staged date changes on the Gantt will be lost."),
@@ -610,4 +610,63 @@ test("a board with stages but no cards says where cards are added", async ({
   await expect(gantt(page).getByText("No cards yet")).toBeVisible();
   await gantt(page).getByRole("link", { name: "Open the Kanban" }).click();
   await expect(page).toHaveURL(/section=kanban/);
+});
+
+test("at Quarter the Today chip covers no week label", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installKanbanApi(page, {
+    level: "write",
+    cards: Object.values(boardCards()),
+  });
+  await page.goto(ganttHref("zoom=quarter"));
+  const chip = gantt(page).getByText("Today", { exact: true });
+  await expect(chip).toBeVisible();
+  const covered = await chip.evaluate((node) => {
+    const today = node.getBoundingClientRect();
+    return [...node.parentElement!.querySelectorAll("span")]
+      .filter((label) => /^W\d$/.test(label.textContent ?? ""))
+      .filter((label) => {
+        const box = label.getBoundingClientRect();
+        return (
+          box.left < today.right &&
+          today.left < box.right &&
+          box.top < today.bottom &&
+          today.top < box.bottom
+        );
+      })
+      .map((label) => label.textContent);
+  });
+  expect(covered).toEqual([]);
+});
+
+test("no grid line crosses the Unscheduled row's No dates", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installKanbanApi(page, {
+    level: "write",
+    cards: Object.values(boardCards()),
+  });
+  await page.goto(ganttHref("zoom=quarter"));
+  const hint = gantt(page).getByText("No dates", { exact: true });
+  await expect(hint).toBeVisible();
+  const crossings = await hint.evaluate((node) => {
+    // The lines take no pointer, so hit testing shows what is drawn on top
+    // only once they do.
+    for (const line of document.querySelectorAll<HTMLElement>(
+      '[data-testid="gantt-scroller"] i',
+    )) {
+      line.style.pointerEvents = "auto";
+      line.parentElement!.style.pointerEvents = "auto";
+    }
+    const backing = node.parentElement!;
+    const box = backing.getBoundingClientRect();
+    const middle = box.top + box.height / 2;
+    return [...document.querySelectorAll('[data-testid="gantt-scroller"] i')]
+      .map((line) => line.getBoundingClientRect().left + 0.5)
+      .filter((x) => x > box.left + 1 && x < box.right - 1)
+      .map((x) => backing.contains(document.elementFromPoint(x, middle)));
+  });
+  expect(crossings.length).toBeGreaterThan(0);
+  expect(crossings).not.toContain(false);
 });

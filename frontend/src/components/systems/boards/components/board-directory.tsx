@@ -127,7 +127,9 @@ export function BoardDirectory({
       <PageHeader
         className="mb-3 shrink-0"
         title="All boards"
-        description="Every board you can read."
+        description={
+          <span className="max-sm:hidden">Every board you can read.</span>
+        }
         actions={
           isAdmin ? (
             <Button className="min-h-11 xl:min-h-8" onClick={onCreate}>

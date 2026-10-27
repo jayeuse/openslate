@@ -51,9 +51,9 @@ function saveError(error: unknown): string {
   if (error instanceof ApiError && error.status === 409)
     return error.code === "group_unavailable"
       ? "A chosen group was removed. Reload the groups and try again."
-      : "This Board changed. Reload the groups before you save.";
+      : "This board changed. Reload the groups before you save.";
   if (error instanceof ApiError && error.status === 403)
-    return "Only an administrator can change the groups of a Board.";
+    return "Only an administrator can change a board’s groups.";
   return "The groups could not be saved. Try again.";
 }
 
@@ -253,7 +253,7 @@ export function ServerBackedBoardGroups({
           Groups
         </h3>
         <p className="text-muted-foreground mt-1 text-sm">
-          Members of these groups open this Board. A person in more than one
+          Members of these groups open this board. A person in more than one
           group gets the highest level.
         </p>
       </div>
@@ -279,7 +279,7 @@ export function ServerBackedBoardGroups({
         <>
           {entries.length === 0 ? (
             <p className="text-muted-foreground rounded-md border border-dashed p-4 text-sm">
-              No groups yet. Only administrators open this Board.
+              No groups yet. Only administrators open this board.
             </p>
           ) : (
             <ul aria-label="Board groups" className="divide-border divide-y">

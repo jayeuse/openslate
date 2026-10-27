@@ -171,7 +171,7 @@ export function useBoardEventLifecycle({
           status: "error",
           page: null,
           error: denied
-            ? "Archived events are unavailable. Ask a Board manager to check your access."
+            ? "Archived events are unavailable. Ask a board manager to check your access."
             : "Could not load archived events. Try again.",
         });
         if (denied) {
@@ -288,7 +288,7 @@ export function useBoardEventLifecycle({
       setPurgePreview(null);
       setPurgeName("");
       setPurgePassword("");
-      reportDone("Event permanently deleted.");
+      reportDone("Event deleted forever.");
       invalidate();
       setArchivedState(null);
       setArchivedVersion((value) => value + 1);
@@ -298,7 +298,7 @@ export function useBoardEventLifecycle({
       setPurgeError(
         lifecycleErrorMessage(
           failure,
-          "The event was not permanently deleted. Request a new review.",
+          "The event was not deleted. Request a new review.",
         ),
       );
       setPurgePreview(null);
@@ -422,7 +422,7 @@ export function useBoardEventLifecycle({
         );
       } else if (error instanceof ApiError && error.status === 409) {
         setLifecycleError(
-          "The Board or event changed. Review refreshed events before trying again.",
+          "The board or event changed. Review refreshed events before trying again.",
         );
       } else {
         setLifecycleError(

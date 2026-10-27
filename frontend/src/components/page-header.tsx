@@ -23,7 +23,10 @@ export function PageHeader({
       data-slot="page-title"
       className={cn(
         "text-2xl leading-tight font-bold tracking-[-0.025em] sm:text-[1.875rem]",
-        (leading || badges) && "min-w-0 truncate",
+        // Beside a mark or chips the title shares its line: on phones it
+        // wraps rather than cut a long name (Boards BR31); from 640px the
+        // line has room and truncates.
+        (leading || badges) && "min-w-0 wrap-anywhere sm:truncate",
       )}
     >
       {title}

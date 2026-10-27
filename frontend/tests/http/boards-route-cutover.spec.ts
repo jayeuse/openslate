@@ -54,7 +54,7 @@ test("Board settings holds a board's details, access and activity, and All board
   ]);
   await settings.getByRole("tab", { name: "Access", exact: true }).click();
   await expect(
-    settings.getByText("No groups yet. Only administrators open this Board."),
+    settings.getByText("No groups yet. Only administrators open this board."),
   ).toBeVisible();
 });
 
@@ -586,7 +586,7 @@ test.describe("Boards workspace regional activity", () => {
     today = "2026-09-27";
     await refresh();
     const retry = page.getByRole("button", {
-      name: "Retry Workspace date",
+      name: "Retry date",
       exact: true,
     });
     await expect(retry).toBeVisible();
@@ -715,7 +715,7 @@ test("an author sets reminder timings on a new event", async ({ page }) => {
   });
   await page.goto(`/boards?board=${boardId}&section=calendar`);
   await page.getByRole("button", { name: "New event" }).click();
-  const editor = page.getByRole("form", { name: "Create Board event" });
+  const editor = page.getByRole("form", { name: "Create event" });
   await editor.getByLabel("Event title").fill("Shift handover");
   await expect(editor.getByText("Reminders", { exact: true })).toBeVisible();
   await editor.getByRole("checkbox", { name: "1 day before" }).click();
@@ -1385,13 +1385,13 @@ test("an author links a Record using its off-page title field without crawling t
         .filter({ hasText: "Record links could not be loaded." }),
     )
     .toHaveAttribute("data-variant", "destructive");
-  await expect(links).not.toContainText("No linked Records.");
+  await expect(links).not.toContainText("No linked records.");
   await expect(links).not.toContainText("Private failure canary");
   expect(submitted).toBeNull();
   listUnavailable = false;
   await links.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
-    links.getByText("No linked Records.", { exact: true }),
+    links.getByText("No linked records.", { exact: true }),
   ).toBeVisible();
 
   await links
@@ -1432,17 +1432,17 @@ test("an author links a Record using its off-page title field without crawling t
     .toHaveAttribute("data-variant", "destructive");
   await expect(links).not.toContainText("Private failure canary");
   await expect(
-    links.getByRole("button", { name: "Link Record", exact: true }),
+    links.getByRole("button", { name: "Link record", exact: true }),
   ).toBeDisabled();
   expect(queryColumns).toEqual([]);
   await expect(links).not.toContainText("Private title canary");
   expect(submitted).toBeNull();
   titleUnavailable = false;
-  await links.getByLabel("Search Records", { exact: true }).fill("Request");
+  await links.getByLabel("Search records", { exact: true }).fill("Request");
   await expect.poll(() => queryColumns.length).toBeGreaterThan(0);
   await expect(links).toContainText("Records could not be loaded.");
   recordsUnavailable = false;
-  await links.getByLabel("Search Records", { exact: true }).fill("Request 27");
+  await links.getByLabel("Search records", { exact: true }).fill("Request 27");
   await expect(links.getByLabel("Record to link")).toBeVisible();
   await expect(links.getByText("Records could not be loaded.")).toHaveCount(0);
   await links.getByLabel("Record to link").selectOption(recordId);
@@ -1454,7 +1454,7 @@ test("an author links a Record using its off-page title field without crawling t
       columns.some((column) => column.field_id === fieldId),
     ),
   ).toBe(true);
-  await links.getByRole("button", { name: "Link Record" }).click();
+  await links.getByRole("button", { name: "Link record" }).click();
   await expect(links.getByRole("link", { name: "Request 27" })).toBeVisible();
   await expect(links.getByRole("status")).toHaveText("Record linked.");
   expect(submitted).toEqual({

@@ -63,7 +63,7 @@ const safeCodes = new Map<string, { status: number; message: string }>([
   ],
   [
     "board_archived",
-    { status: 409, message: "Restore the Board before changing events" },
+    { status: 409, message: "Restore the board before changing events" },
   ],
   [
     "event_archived",
@@ -72,7 +72,7 @@ const safeCodes = new Map<string, { status: number; message: string }>([
   ["event_not_archived", { status: 409, message: "Archive the event first" }],
   [
     "event_limit_reached",
-    { status: 409, message: "The Board has too many active events" },
+    { status: 409, message: "The board has too many active events" },
   ],
   [
     "event_candidate_limit",
@@ -82,8 +82,8 @@ const safeCodes = new Map<string, { status: number; message: string }>([
     "event_occurrence_limit",
     { status: 409, message: "Narrow the event window" },
   ],
-  ["event_conflict", { status: 409, message: "Unable to save Board event" }],
-  ["event_invalid", { status: 409, message: "Stored Board event is invalid" }],
+  ["event_conflict", { status: 409, message: "Unable to save the event" }],
+  ["event_invalid", { status: 409, message: "The saved event is not valid" }],
 ]);
 
 function throwSafeEventError(status: number, detail: unknown): never {

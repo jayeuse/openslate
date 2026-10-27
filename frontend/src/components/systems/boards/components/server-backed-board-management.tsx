@@ -495,8 +495,8 @@ function SettingsInstance(props: Props) {
       if (!stillCurrent(request)) return;
       clearPurgeReview();
       setFileRefresh((value) => value + 1);
-      setNotice("File permanently deleted.");
-      reportDone("File permanently deleted.");
+      setNotice("File deleted forever.");
+      reportDone("File deleted forever.");
     } catch (failure) {
       if (!stillCurrent(request)) return;
       if (
@@ -509,7 +509,7 @@ function SettingsInstance(props: Props) {
       setError(
         lifecycleErrorMessage(
           failure,
-          "The file was not permanently deleted. Request a new review.",
+          "The file was not deleted. Request a new review.",
         ),
       );
       setPurgePreview(null);
@@ -592,7 +592,7 @@ function SettingsInstance(props: Props) {
     } catch (failure) {
       if (!stillCurrent(request)) return;
       if (!handleDenied(failure))
-        setError("Latest Board details could not be loaded. Try again.");
+        setError("The latest board details could not be loaded. Try again.");
     } finally {
       pendingRef.current = false;
       if (mountedRef.current) setPending(false);
@@ -766,7 +766,7 @@ function SettingsInstance(props: Props) {
       });
       if (!stillCurrent(request)) return;
       clearPurgeReview();
-      reportDone("Board permanently deleted.");
+      reportDone("Board deleted forever.");
       props.onPurged(purgedId);
     } catch (failure) {
       if (!stillCurrent(request)) return;
@@ -1010,8 +1010,8 @@ function SettingsInstance(props: Props) {
       />
       <ConfirmAction
         open={discardOpen}
-        title="Discard Board changes?"
-        description="Your unsaved Board details will be lost."
+        title="Discard board changes?"
+        description="Your unsaved board details will be lost."
         action="Discard changes"
         onConfirm={() => {
           setDiscardOpen(false);

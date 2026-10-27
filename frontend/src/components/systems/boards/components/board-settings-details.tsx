@@ -168,7 +168,7 @@ export function ServerBoardManagementDisplay({
     files ? "Files" : null,
     project && !archived ? "Archive" : null,
     archived ? "Restore" : null,
-    showPurge ? "Permanently delete" : null,
+    showPurge ? "Delete forever" : null,
   ].filter((part): part is string => part !== null);
 
   return (
@@ -202,7 +202,7 @@ export function ServerBoardManagementDisplay({
                 disabled={view.pending}
                 onClick={onRefreshLatest}
               >
-                Refresh latest Board
+                Refresh board
               </Button>
               {view.latestReady ? (
                 <Button
@@ -374,7 +374,7 @@ export function ServerBoardManagementDisplay({
         {showPurge ? (
           <div className="border-border flex flex-col gap-3 border-t pt-4">
             <h3 data-slot="section-title" className="text-sm font-medium">
-              Permanent deletion
+              Delete forever
             </h3>
             <p className="text-muted-foreground text-sm">
               Removes the board and its content. This cannot be undone.
@@ -390,7 +390,7 @@ export function ServerBoardManagementDisplay({
                 ? "Preparing review…"
                 : purgeReviewAgain
                   ? "Review again"
-                  : "Permanently delete board"}
+                  : "Delete forever"}
             </Button>
             {purgePreview ? (
               <div className="border-border flex flex-col gap-4 rounded-lg border p-4">
@@ -462,9 +462,7 @@ export function ServerBoardManagementDisplay({
                           purgePassword.length === 0
                         }
                       >
-                        {view.pending
-                          ? "Deleting…"
-                          : "Confirm permanent deletion"}
+                        {view.pending ? "Deleting…" : "Delete board forever"}
                       </Button>
                       <Button
                         type="button"
