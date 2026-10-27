@@ -200,6 +200,9 @@ function StageSettings({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const save = async (changes: StageChanges) => {
+    // A save in flight locks the fields, which blurs the one that was
+    // focused: that blur is not a second edit (one PATCH per Enter).
+    if (saving) return;
     setSaving(true);
     setError(null);
     try {

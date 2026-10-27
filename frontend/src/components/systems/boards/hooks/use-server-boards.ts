@@ -391,7 +391,17 @@ export function useServerBoardsResource(route: BoardRoute) {
       event.boardId === candidateId,
     [candidateId],
   );
-  const detailLiveKey = useInvalidationRefresh(candidateId, invalidatesDetail);
+  // A refused board is read once: a resync or a change to it does not read
+  // it again (only Retry, or another address, does).
+  const detailRefused =
+    candidateId !== null &&
+    detail.key === candidateId &&
+    detail.status === "error" &&
+    detail.error === BOARD_UNAVAILABLE;
+  const detailLiveKey = useInvalidationRefresh(
+    detailRefused ? null : candidateId,
+    invalidatesDetail,
+  );
 
   useEffect(() => {
     if (!candidateId) {

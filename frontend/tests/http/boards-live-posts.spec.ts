@@ -4,6 +4,7 @@ import {
   expect,
   expectNoHorizontalScroll,
   expectNoPageScroll,
+  settleReact,
   test,
   type Locator,
   type Page,
@@ -1256,7 +1257,7 @@ test("a transient label refresh retains the current byline and retries its bound
 // S05 uses the existing rendered Board and a stateful client boundary. The
 // editable parent can be scheduled while the independently displayed version
 // remains published; revisions always come from the current server read.
-async function installS05PostApi(page: Page, manage = true) {
+async function installS05PostApi(page: Page, manage = true, timezone = "UTC") {
   await installOpenViewEventSource(page);
   const reader = await installPostBrowserApi(page);
   reader.setViewerId(authorId);
@@ -1265,7 +1266,7 @@ async function installS05PostApi(page: Page, manage = true) {
       json: wireWorkspace({
         id: "00000000-0000-4000-8000-000000000102",
         locale: "en-US",
-        timezone: "UTC",
+        timezone,
         currency: "PHP",
         today: "2035-06-01",
         purge_enabled: false,
@@ -1426,6 +1427,7 @@ async function installS05PostApi(page: Page, manage = true) {
           pinned: false,
           ...working,
           ...body,
+          ...(path.endsWith("/schedule") ? { status: "scheduled" } : {}),
           id: postId,
           board_id: boardId,
           post_revision: Number(working?.post_revision ?? 0) + 1,
@@ -1920,12 +1922,14 @@ for (const phase of ["timer", "read"] as const) {
   });
 }
 
-test.describe("local post expiry", () => {
-  test.use({ timezoneId: "Asia/Manila" });
+// A post's times are typed and shown in the workspace's zone (here Manila),
+// as the list and the pane show them, never in the browser's.
+test.describe("workspace-zone post times", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
   test("manager creates, reloads, edits and clears pin and local expiry", async ({
     page,
   }) => {
-    const api = await installS05PostApi(page);
+    const api = await installS05PostApi(page, true, "Asia/Manila");
     await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
     await page.goto(`/boards?board=${boardId}&section=posts`);
     await page
@@ -1989,7 +1993,7 @@ test.describe("local post expiry", () => {
   test("a writer keeps an existing pin while editing their own post", async ({
     page,
   }) => {
-    const api = await installS05PostApi(page, false);
+    const api = await installS05PostApi(page, false, "Asia/Manila");
     api.setWorking(s05Draft);
     const editor = await editDraft(page, s05Draft.title);
     await openAdvanced(editor);
@@ -2009,7 +2013,7 @@ test.describe("local post expiry", () => {
   });
   for (const failure of [409, 503]) {
     test(`pin and expiry survive save refusal ${failure}`, async ({ page }) => {
-      const api = await installS05PostApi(page);
+      const api = await installS05PostApi(page, true, "Asia/Manila");
       api.setWorking(s05Draft);
       api.setFailure(failure);
       const editor = await editDraft(page, s05Draft.title);
@@ -2036,7 +2040,7 @@ test.describe("local post expiry", () => {
   test("schedule at expiry is refused and a refused publish keeps the draft open", async ({
     page,
   }) => {
-    const api = await installS05PostApi(page);
+    const api = await installS05PostApi(page, true, "Asia/Manila");
     api.setWorking(s05Draft);
     await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
     const editor = await editDraft(page, s05Draft.title);
@@ -2061,14 +2065,43 @@ test.describe("local post expiry", () => {
       0,
     );
   });
+  test("a scheduled time is read and shown in the workspace zone, once", async ({
+    page,
+  }) => {
+    const api = await installS05PostApi(page, true, "Asia/Manila");
+    api.setWorking({ ...s05Draft, expires_at: null });
+    await page.clock.setFixedTime(new Date("2035-06-01T00:00:00Z"));
+    const editor = await editDraft(page, s05Draft.title);
+    await editor
+      .getByRole("button", { name: "Schedule…", exact: true })
+      .click();
+    await editor.getByLabel("Publish at").fill("2035-06-02T09:00");
+    await expect(editor.getByLabel("Publish at")).toHaveAccessibleDescription(
+      "Asia/Manila",
+    );
+    await editor.getByRole("button", { name: "Schedule", exact: true }).click();
+    await expect(
+      editor.getByText("Publishes Sat, Jun 2, 9:00 AM", { exact: true }),
+    ).toBeVisible();
+    expect(api.writes.at(-1)).toMatchObject({
+      path: `/api/boards/${boardId}/posts/${postId}/schedule`,
+      body: { publish_at: "2035-06-02T01:00:00.000Z" },
+    });
+    // Reopened, the field shows the time as it was typed.
+    await expect(editor.getByLabel("Publish at")).toHaveValue(
+      "2035-06-02T09:00",
+    );
+  });
 });
 
-test.describe("unavailable local expiry", () => {
-  test.use({ timezoneId: "America/New_York" });
+test.describe("unavailable workspace-local expiry", () => {
+  // 02:30 on 2035-03-11 does not exist in New York, the workspace's zone;
+  // the browser's zone (UTC) has it.
+  test.use({ timezoneId: "UTC" });
   test("skipped local clock time has a linked error and sends no save", async ({
     page,
   }) => {
-    const api = await installS05PostApi(page);
+    const api = await installS05PostApi(page, true, "America/New_York");
     await page.goto(`/boards?board=${boardId}&section=posts`);
     await page
       .getByRole("button", { name: "New post", exact: true })
@@ -2268,6 +2301,13 @@ test("a reader sees published posts only, a clean pane, and the board's reason w
       json: { level: "read", read: true, write: false, manage: false },
     }),
   );
+  // A reader's menu offers no Delete draft, so it reads no manage state
+  // (which the server refuses with 403).
+  const manageReads: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/manage-state"))
+      manageReads.push(request.url());
+  });
   await page.goto(`/boards?board=${boardId}&section=posts`);
   const reader = postPane(page, browserPost.title);
   await expect(reader).toBeVisible();
@@ -2282,6 +2322,20 @@ test("a reader sees published posts only, a clean pane, and the board's reason w
   ).toBeVisible();
   await reader.getByRole("button", { name: "More post actions" }).click();
   await expect(page.getByRole("menuitem")).toHaveText(["Copy link"]);
+  // Request events can arrive after the menu renders: two polls in a row
+  // see no manage-state read.
+  let previous = -1;
+  await expect
+    .poll(
+      () => {
+        const settled = manageReads.length === previous;
+        previous = manageReads.length;
+        return settled;
+      },
+      { intervals: [250] },
+    )
+    .toBe(true);
+  expect(manageReads).toEqual([]);
   await page.keyboard.press("Escape");
 
   api.setPublishedItems([]);
@@ -2383,6 +2437,18 @@ test("New post publishes from the editor dialog with one consequence line and a 
   await editor
     .getByLabel("Message", { exact: true })
     .fill("Use Dock 4 for all loading.");
+  // Publish saves the draft and publishes it in one step: the draft's Files
+  // and Linked records are not read for a draft that is about to be
+  // published (the read would race the publish and fail with 404).
+  const draftReads: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      /\/(attachments|record-links)$/.test(url.pathname) &&
+      url.searchParams.get("view") === "draft"
+    )
+      draftReads.push(`${url.pathname}${url.search}`);
+  });
   let release = () => {};
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -2399,6 +2465,7 @@ test("New post publishes from the editor dialog with one consequence line and a 
     await expect(
       editor.getByRole("button", { name: "Publishing…", exact: true }),
     ).toBeVisible();
+    await settleReact(page);
     release();
     await expect(
       page.getByText("Post published", { exact: true }),
@@ -2416,6 +2483,7 @@ test("New post publishes from the editor dialog with one consequence line and a 
       url.searchParams.get("post") === postId && !url.searchParams.has("show"),
   );
   await expect(postPane(page, "Dock 3 closes Friday")).toBeVisible();
+  expect(draftReads).toEqual([]);
 });
 
 test("archiving asks once with its consequence; restore acts at once with Undo", async ({

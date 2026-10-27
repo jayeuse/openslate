@@ -149,6 +149,23 @@ test("Calendar Month, Week day list and Upcoming keep 44px targets at 390", asyn
   }
 });
 
+test("the event editor keeps 44px targets at 390, all day or timed", async ({
+  page,
+}) => {
+  await installCalendarApi(page);
+  await page.goto(calendarHref("&view=month"));
+  await page
+    .getByRole("button", { name: "New event", exact: true })
+    .first()
+    .click();
+  const editor = page.getByRole("dialog", { name: "New event", exact: true });
+  await expect(editor.getByLabel("Event title")).toBeVisible();
+  await expectPhoneTargets(page, "Event editor, all day");
+  await editor.getByText("All day", { exact: true }).click();
+  await expect(editor.getByLabel("Starts", { exact: true })).toBeVisible();
+  await expectPhoneTargets(page, "Event editor, timed");
+});
+
 test("My calendar keeps 44px targets at 390", async ({ page }) => {
   await installMyCalendarApi(page);
   await page.goto(myCalendarHref());

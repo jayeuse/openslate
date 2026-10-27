@@ -178,7 +178,12 @@ export function BoardEventSheet({
             <SheetTitle className="text-lg leading-tight font-semibold wrap-anywhere">
               {event?.title ??
                 (state.status === "error"
-                  ? "Event unavailable"
+                  ? // A refusal reads as the Role states say (one wording
+                    // for a board, post, event or card); a failed read
+                    // offers Retry.
+                    state.retryable
+                    ? "Event unavailable"
+                    : "This event is not available."
                   : "Opening event")}
             </SheetTitle>
             <SheetDescription className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">

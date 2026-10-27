@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FileText, Plus, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,7 @@ export function KanbanComposer({
   const [title, setTitle] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const titleRef = useRef<HTMLTextAreaElement>(null);
 
   async function run(action: () => Promise<void>) {
     setPending(true);
@@ -73,8 +74,12 @@ export function KanbanComposer({
   async function addTitle() {
     const next = title.trim();
     if (!next || pending) return;
-    // The composer stays open for the next card.
-    if (await run(() => onAddObjective(next))) setTitle("");
+    // The composer stays open for the next card, with focus in the title
+    // (Add card was clicked, or Enter pressed).
+    if (await run(() => onAddObjective(next))) {
+      setTitle("");
+      titleRef.current?.focus();
+    }
   }
 
   const errorLine = error ? (
@@ -113,12 +118,16 @@ export function KanbanComposer({
       }}
     >
       <Textarea
+        ref={titleRef}
         autoFocus
         aria-label="Card title"
         placeholder="Card title"
         value={title}
         maxLength={200}
-        disabled={pending}
+        // Read-only, not disabled, while a card is added: disabling the
+        // focused title would drop focus to the page, and with it the next
+        // title and Escape.
+        readOnly={pending}
         className="min-h-14 resize-none"
         onChange={(event) => setTitle(event.currentTarget.value)}
         onKeyDown={(event) => {

@@ -574,9 +574,10 @@ export function KanbanLabelsDialog({
             className={control}
             onChange={(event) => setName(event.currentTarget.value)}
           />
+          {/* The name field takes the room; the button keeps its one line. */}
           <Button
             type="submit"
-            className={control}
+            className={cn(control, "shrink-0 whitespace-nowrap")}
             disabled={pending || !name.trim()}
           >
             Add label

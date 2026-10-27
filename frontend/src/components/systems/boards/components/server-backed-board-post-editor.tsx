@@ -17,6 +17,7 @@ import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import { cn } from "@/lib/utils";
 import type { BoardPost } from "../adapters/board-posts-api";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
@@ -40,7 +41,8 @@ export type PostEditorView = {
   dirty: boolean;
   scheduleDirty: boolean;
   scheduleLocal: string;
-  deviceTimeZone: string;
+  /** The zone the editor's times are typed and shown in. */
+  region: WorkspaceRegion | null;
   scheduleError: string | null;
   expiryError: string | null;
   conflict: boolean;
@@ -54,14 +56,15 @@ export type PostEditorStep = "save" | "publish" | "schedule";
 
 const control = "min-h-11 xl:min-h-8";
 
-function scheduledLabel(timestamp: string): string {
-  return new Intl.DateTimeFormat(undefined, {
+/** "Fri, Oct 30, 9:00 AM" in the workspace zone, as the list says it. */
+function scheduledLabel(timestamp: string, region: WorkspaceRegion): string {
+  return formatWorkspaceDateTime(timestamp, region, {
     weekday: "short",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(new Date(timestamp));
+  });
 }
 
 /** Why Publish cannot act yet, or null when it can. */
@@ -119,6 +122,27 @@ export function ServerBoardPostEditorDisplay({
   onRecordLinkBusyChange: (busy: boolean) => void;
   refreshAttachmentVersions: () => Promise<BoardAttachmentVersions>;
 }) {
+  // Files and record links belong to a saved draft; a published post is
+  // saved as a draft first, as today.
+  const selected = view.selected;
+  const savedDraft =
+    selected &&
+    selected.postRevision !== null &&
+    selected.status !== "published"
+      ? selected
+      : null;
+  // Publish saves new text as a draft and publishes it in one step. That
+  // draft's Files and Linked records are not read: the publish replaces it,
+  // so the read would race it and fail. A draft open before Publish keeps
+  // its sections; a failed publish shows them again.
+  const [settledDraftId, setSettledDraftId] = useState<string | null>(null);
+  const savedDraftId = savedDraft?.id ?? null;
+  if (running !== "publish" && settledDraftId !== savedDraftId)
+    setSettledDraftId(savedDraftId);
+  const draftTarget =
+    savedDraft && (running !== "publish" || savedDraftId === settledDraftId)
+      ? savedDraft
+      : null;
   if (!view.active || view.status === "denied")
     return (
       <p className="text-muted-foreground text-sm">
@@ -152,16 +176,7 @@ export function ServerBoardPostEditorDisplay({
     );
   }
   const form = view.form;
-  const selected = view.selected;
   const locked = view.pending || view.conflict;
-  // Files and record links belong to a saved draft; a published post is
-  // saved as a draft first, as today.
-  const draftTarget =
-    selected &&
-    selected.postRevision !== null &&
-    selected.status !== "published"
-      ? selected
-      : null;
   const versions = draftTarget
     ? {
         boardRevision: draftTarget.boardRevision,
@@ -181,8 +196,8 @@ export function ServerBoardPostEditorDisplay({
     ? null
     : view.dirty
       ? "Unsaved changes"
-      : selected?.status === "scheduled" && selected.publishAt
-        ? `Publishes ${scheduledLabel(selected.publishAt)}`
+      : selected?.status === "scheduled" && selected.publishAt && view.region
+        ? `Publishes ${scheduledLabel(selected.publishAt, view.region)}`
         : selected?.status === "draft"
           ? "Draft saved"
           : null;
@@ -476,7 +491,7 @@ export function ServerBoardPostEditorDisplay({
                   id="board-post-schedule-zone"
                   className="text-muted-foreground shrink-0 text-xs"
                 >
-                  {view.deviceTimeZone}
+                  {view.region?.timezone}
                 </span>
               </div>
             </Field>

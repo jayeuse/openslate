@@ -702,7 +702,8 @@ async function exerciseConnectedBoard(
   await page.getByRole("link", { name: "Calendar", exact: true }).click();
   await page.getByRole("button", { name: "New event" }).click();
   await page.getByLabel("Event title").fill(eventTitle);
-  await page.getByRole("checkbox", { name: "1 day before" }).click();
+  // The 44px row is the target; the box inside is drawn, not native.
+  await page.getByText("1 day before", { exact: true }).click();
   const [createdEvent] = await Promise.all([
     page.waitForResponse(
       (response) =>

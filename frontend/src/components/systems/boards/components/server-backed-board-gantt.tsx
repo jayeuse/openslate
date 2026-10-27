@@ -366,7 +366,12 @@ export function ServerBackedBoardGantt({
               variant="ghost"
               className="min-h-11 xl:min-h-8"
               disabled={staging.saving}
-              onClick={staging.discard}
+              onClick={() => {
+                // The result line below speaks now; the staged count
+                // no longer holds.
+                setAnnouncement("");
+                staging.discard();
+              }}
             >
               Discard
             </Button>
@@ -375,7 +380,10 @@ export function ServerBackedBoardGantt({
               className="min-h-11 xl:min-h-8"
               pending={staging.saving}
               pendingLabel="Saving…"
-              onClick={() => void staging.save()}
+              onClick={() => {
+                setAnnouncement("");
+                void staging.save();
+              }}
             >
               Save changes
             </Button>

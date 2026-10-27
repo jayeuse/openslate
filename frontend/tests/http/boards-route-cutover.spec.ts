@@ -723,8 +723,12 @@ test("an author sets reminder timings on a new event", async ({ page }) => {
   const editor = page.getByRole("form", { name: "Create event" });
   await editor.getByLabel("Event title").fill("Shift handover");
   await expect(editor.getByText("Reminders", { exact: true })).toBeVisible();
-  await editor.getByRole("checkbox", { name: "1 day before" }).click();
-  await editor.getByRole("checkbox", { name: "When it starts" }).click();
+  // The 44px row is the target; the box inside is drawn, not native.
+  await editor.getByText("1 day before", { exact: true }).click();
+  await editor.getByText("When it starts", { exact: true }).click();
+  await expect(
+    editor.getByRole("checkbox", { name: "1 day before" }),
+  ).toBeChecked();
   await editor.getByRole("button", { name: "Create event" }).click();
   await expect.poll(() => created).not.toBeNull();
   expect(created).toMatchObject({

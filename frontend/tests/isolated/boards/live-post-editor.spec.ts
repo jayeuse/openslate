@@ -46,7 +46,7 @@ const baseView: PostEditorView = {
   dirty: false,
   scheduleDirty: false,
   scheduleLocal: "2035-06-01T12:30",
-  deviceTimeZone: "Asia/Manila",
+  region: { timezone: "Asia/Manila", locale: "en-US" },
   scheduleError: null,
   expiryError: null,
   conflict: false,
@@ -134,9 +134,17 @@ test("a scheduled post shows when it publishes, with Reschedule and Cancel sched
     publishAt: "2035-06-01T04:30:00Z",
     postRevision: 3,
   };
-  const html = markup({ ...baseView, selected: scheduled }, true);
-  // The time is the device's, like the Publish at field.
-  expect(html).toMatch(/Publishes Fri, Jun 1, \d{1,2}:30 [AP]M/);
+  // The time is the workspace zone's, like the Publish at field and the
+  // post list, whatever zone the machine is in.
+  const html = markup(
+    {
+      ...baseView,
+      selected: scheduled,
+      region: { timezone: "America/New_York", locale: "en-US" },
+    },
+    true,
+  );
+  expect(html).toContain("Publishes Fri, Jun 1, 12:30 AM");
   expect(html).toContain("Reschedule");
   expect(html).toContain("Cancel schedule");
 });

@@ -620,11 +620,18 @@ test("URL-selected event rejects invalid, missing, and denied targets without pr
       reads.push(request.url());
   });
   await browser.goto(`/boards?board=${boardId}&section=calendar&event=invalid`);
+  // A refusal reads as a post's or a card's does (Role states).
   const unavailable = browser.getByRole("dialog", {
-    name: "Event unavailable",
+    name: "This event is not available.",
     exact: true,
   });
   await expect(unavailable).toBeVisible();
+  await expect(
+    unavailable.getByText(
+      "It may have been removed, or you may not have access.",
+      { exact: true },
+    ),
+  ).toBeVisible();
   expect(reads).toEqual([]);
   for (const status of [403, 404]) {
     await browser.route(`**/api/boards/${boardId}/events/${eventId}`, (route) =>

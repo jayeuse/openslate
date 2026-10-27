@@ -13,6 +13,7 @@ import {
   kanbanFilterParams,
   parseKanbanFilters,
   recordDateChoices,
+  recordFieldTexts,
   sortStageCards,
   stageCount,
   stagePage,
@@ -138,6 +139,47 @@ test("a card's accessible name says what its face shows", () => {
   expect(cardLabel(sent, { ...face, labelNames: [], assignee: null })).toBe(
     "Q-24112, Quotes record, Status Sent, Pacific Rim Foods, 22,750",
   );
+});
+
+test("a record card's date fields read in the workspace's words, and a due date is not said twice", () => {
+  const region = { timezone: "Asia/Manila", locale: "en-US" };
+  const withFields = (values: string[], dueOn: string | null = null) =>
+    card("dated", {
+      kind: "record",
+      title: null,
+      dueOn,
+      record: {
+        locked: false,
+        recordId: "00000000-0000-4000-8000-0000000000d1",
+        moduleId: "00000000-0000-4000-8000-0000000000d2",
+        moduleName: "Quotes",
+        title: "Q-24112",
+        fields: values.map((value, index) => ({
+          fieldId: `f${index}`,
+          name: `Field ${index}`,
+          value,
+        })),
+        status: null,
+      },
+    });
+  // A date, a datetime in the workspace zone, and plain text.
+  expect(
+    recordFieldTexts(
+      withFields(["2026-11-05", "2026-11-05T17:30:00Z"]),
+      region,
+    ),
+  ).toEqual(["Nov 5", "Nov 6, 1:30 AM"]);
+  expect(
+    recordFieldTexts(withFields(["Pacific Rim Foods", "22,750"]), region),
+  ).toEqual(["Pacific Rim Foods", "22,750"]);
+  // The due date is on the fact line already.
+  expect(
+    recordFieldTexts(
+      withFields(["2026-11-05", "Pacific Rim Foods"], "2026-11-05"),
+      region,
+    ),
+  ).toEqual(["Pacific Rim Foods"]);
+  expect(recordFieldTexts(locked, region)).toEqual([]);
 });
 
 test("a stage's sort orders its cards; manual keeps rank and locked cards keep their place", () => {

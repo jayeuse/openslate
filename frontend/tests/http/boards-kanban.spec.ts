@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, settleReact, test, type Page } from "./helpers/test";
 import {
   installKanbanApi,
   kanbanHref,
@@ -24,6 +24,28 @@ const board = (page: Page) =>
   page.getByRole("region", { name: "Kanban board" });
 const stage = (page: Page, name: string) =>
   board(page).getByRole("region", { name, exact: true });
+
+/**
+ * Holds matching writes until released, as a real server takes time: a
+ * field locked while it saves is then blurred by the browser (the focus
+ * fixup runs on a later frame: `settleReact`), as it is in the app.
+ */
+async function holdWrites(page: Page, method: string, path: RegExp) {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/boards/**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === method &&
+      path.test(new URL(request.url()).pathname)
+    )
+      await held;
+    await route.fallback();
+  });
+  return release;
+}
 
 /** A pointer drag that dnd-kit sees: down, past its 5px start, then up. */
 async function drag(
@@ -74,21 +96,53 @@ test("a manager sets up stages from the empty board, adds, renames, limits and a
     .getByRole("button", { name: /^Blocked, 0 cards\. Stage settings$/ })
     .click();
   const settings = page.getByRole("dialog", { name: "Blocked stage" });
+  const releaseStage = await holdWrites(page, "PATCH", /\/stages\/[^/]+$/);
   await settings.getByRole("textbox", { name: "Name" }).fill("Waiting");
   await settings.getByRole("textbox", { name: "Name" }).press("Enter");
+  await settleReact(page);
+  releaseStage();
   await expect(stage(page, "Waiting")).toBeVisible();
   // The settings title follows the new name.
   const renamed = page.getByRole("dialog", { name: "Waiting stage" });
+  await expect(renamed.getByRole("textbox", { name: "Name" })).toBeEnabled();
+  // One Enter is one save: locking the field while it saves blurs it, and
+  // that blur sends no second PATCH.
+  expect(
+    api.writes.filter(
+      (write) =>
+        write.method === "PATCH" &&
+        (write.body as { name?: string }).name !== undefined,
+    ),
+  ).toEqual([
+    {
+      method: "PATCH",
+      path: `/stages/${api.stages[3].id}`,
+      body: { revision: 1, name: "Waiting" },
+    },
+  ]);
   // A swatch is the label of its radio, named beside its color (BR69).
   await renamed.getByTitle("Purple", { exact: true }).click();
   await expect(renamed.getByRole("radio", { name: "Purple" })).toBeChecked();
+  const releaseWip = await holdWrites(page, "PATCH", /\/stages\/[^/]+$/);
   await renamed.getByRole("spinbutton", { name: "WIP limit" }).fill("4");
   await renamed.getByRole("spinbutton", { name: "WIP limit" }).press("Enter");
+  await settleReact(page);
+  releaseWip();
   await expect(
     page.getByRole("button", {
       name: /^Waiting, 0 cards, limit 4\. Stage settings$/,
     }),
   ).toBeVisible();
+  await expect(
+    renamed.getByRole("spinbutton", { name: "WIP limit" }),
+  ).toBeEnabled();
+  expect(
+    api.writes.filter(
+      (write) =>
+        write.method === "PATCH" &&
+        (write.body as { wip_limit?: number }).wip_limit !== undefined,
+    ),
+  ).toHaveLength(1);
   await renamed.getByRole("button", { name: "Move left" }).click();
   await expect
     .poll(
@@ -182,7 +236,33 @@ test("a writer adds a card and moves it by drag with Undo; nothing else changes"
       title: "Order giveaways",
     },
   });
+  // The composer stays open with focus in the title while a card is added,
+  // so the next title is typed at once and Enter adds it; Escape then
+  // closes the composer.
+  const title = page.getByRole("textbox", { name: "Card title" });
+  await expect(title).toBeFocused();
+  const releaseCard = await holdWrites(page, "POST", /\/cards$/);
+  await page.keyboard.type("Print badges");
+  await page.keyboard.press("Enter");
+  await settleReact(page);
+  await expect(title).toBeFocused();
+  releaseCard();
+  await expect(
+    stage(page, "To do").getByRole("button", {
+      name: /^Print badges, objective/,
+    }),
+  ).toBeVisible();
+  await expect(title).toHaveValue("");
+  await page.keyboard.type("Pack the stand");
+  await page.keyboard.press("Enter");
+  await expect(
+    stage(page, "To do").getByRole("button", {
+      name: /^Pack the stand, objective/,
+    }),
+  ).toBeVisible();
+  await expect(title).toBeFocused();
   await page.keyboard.press("Escape");
+  await expect(title).toHaveCount(0);
 
   const from = await crew.boundingBox();
   const target = await stage(page, "Doing")
@@ -218,10 +298,16 @@ test("a writer adds a card and moves it by drag with Undo; nothing else changes"
     stage_id: stageIds.todo,
     position: 0,
   });
-  // Only card PATCHes and the one POST: no record, stage or label write.
+  // Only card PATCHes and the three POSTs: no record, stage or label write.
   expect(
     api.writes.map((write) => `${write.method} ${write.path.split("/")[1]}`),
-  ).toEqual(["POST cards", "PATCH cards", "PATCH cards"]);
+  ).toEqual([
+    "POST cards",
+    "POST cards",
+    "POST cards",
+    "PATCH cards",
+    "PATCH cards",
+  ]);
 });
 
 test("Find a record adds a record card whose dates come from the record", async ({

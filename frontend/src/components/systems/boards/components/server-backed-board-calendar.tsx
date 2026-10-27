@@ -23,7 +23,11 @@ import {
   useVerifiedWorkspaceUserId,
   useWorkspaceInteractionSuspended,
 } from "@/components/systems/shared/runtime/workspace-identity";
-import { readBoardEvent, type BoardEvent } from "../adapters/board-events-api";
+import {
+  eventReadRefused,
+  readBoardEvent,
+  type BoardEvent,
+} from "../adapters/board-events-api";
 import {
   addBoardCalendarSource,
   addMyCalendarSource,
@@ -340,13 +344,12 @@ export function ServerBackedBoardCalendar({
       })
       .catch((error: unknown) => {
         if (!active) return;
-        const refused =
-          error instanceof ApiError && [401, 403, 404].includes(error.status);
+        const refused = eventReadRefused(error);
         setSelectedDetail({
           key: selectedKey,
           event: null,
           error: refused
-            ? "This event is unavailable or you no longer have access."
+            ? "It may have been removed, or you may not have access."
             : "Could not load the event. Try again.",
           refused,
         });
@@ -632,7 +635,7 @@ export function ServerBackedBoardCalendar({
   const sheetState: EventSheetState = accessDenied
     ? {
         status: "error",
-        message: "This event is unavailable or you no longer have access.",
+        message: "It may have been removed, or you may not have access.",
         retryable: false,
       }
     : currentSelectedDetail?.error

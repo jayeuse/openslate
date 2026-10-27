@@ -157,6 +157,18 @@ export async function listBoardEvents(
   return page;
 }
 
+/**
+ * Whether a failed event read is a refusal, which Retry cannot change: the
+ * address names no event id (no read is sent), or the server refuses or
+ * does not know the event. Any other failure offers Retry.
+ */
+export function eventReadRefused(error: unknown): boolean {
+  return (
+    error instanceof z.ZodError ||
+    (error instanceof ApiError && [401, 403, 404].includes(error.status))
+  );
+}
+
 export async function readBoardEvent(
   rawBoardId: string,
   rawEventId: string,

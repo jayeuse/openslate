@@ -7,7 +7,10 @@ import {
 } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
 import { wireBoard } from "../helpers/wire";
-import { installOpenViewEventSource } from "./helpers/openview-event-source";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
 import {
   directoryIds,
   installBoardApi,
@@ -633,12 +636,38 @@ test("a refused board offers only the Company board; a failed read offers Retry"
   page,
 }) => {
   const refusedId = "00000000-0000-4000-8000-000000000029";
+  // A live stream; this test sends its resync itself.
+  await installOpenViewEventSource(page);
   await installServerBoards(page);
+  const refusedReads: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === `/api/boards/${refusedId}`)
+      refusedReads.push(request.url());
+  });
   await page.goto(`/boards?board=${refusedId}&section=posts`);
   const main = page.locator("#main-content");
   await expect(
     main.getByText("This board is not available.", { exact: true }),
   ).toBeVisible();
+  // A refusal is read once: a resync or a change to the board does not
+  // read it again.
+  await sendOpenViewEvent(page, "resync");
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "boards",
+    board_id: refusedId,
+  });
+  let previous = -1;
+  await expect
+    .poll(
+      () => {
+        const settled = refusedReads.length === previous;
+        previous = refusedReads.length;
+        return settled;
+      },
+      { intervals: [500] },
+    )
+    .toBe(true);
+  expect(refusedReads).toHaveLength(1);
   await expect(
     main.getByText("It may have been removed, or you may not have access."),
   ).toBeVisible();

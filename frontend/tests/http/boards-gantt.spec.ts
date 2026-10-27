@@ -195,6 +195,10 @@ test("dragging a bar's end changes only its due date; Discard puts it back and U
   await expect(
     page.getByRole("status").filter({ hasText: "Changes discarded" }),
   ).toBeVisible();
+  // No live region still says a change waits.
+  await expect(
+    page.getByRole("status").filter({ hasText: "unsaved change" }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(
     bar(
@@ -224,6 +228,9 @@ test("dragging a bar's end changes only its due date; Discard puts it back and U
   await expect(
     page.getByRole("status").filter({ hasText: "Dates saved." }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: "unsaved change" }),
+  ).toHaveCount(0);
 });
 
 test("a bar dragged past the view's edge stops there, stays staged, and live changes still arrive", async ({

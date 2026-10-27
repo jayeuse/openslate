@@ -10,6 +10,7 @@ import {
   postStatesFor,
   postViewForState,
   postingReason,
+  readsPostManageState,
   type PostViewer,
 } from "../../../src/components/systems/boards/domain/post-list";
 
@@ -222,4 +223,28 @@ test("Delete draft shows only for a post that was never published", () => {
   expect(postMenuActions(archived, manager, true)).toEqual(["restore"]);
   // Until the manage state is read, Delete draft waits.
   expect(postMenuActions(draft, author, null)).toEqual(["archive"]);
+});
+
+test("only a menu that can offer Delete draft reads the manage state", () => {
+  const author: PostViewer = {
+    actorId,
+    canWrite: true,
+    canManage: false,
+    boardActive: true,
+  };
+  const manager: PostViewer = { ...author, actorId: otherId, canManage: true };
+  const reader: PostViewer = { ...author, actorId: otherId, canWrite: false };
+  const otherWriter: PostViewer = { ...author, actorId: otherId };
+  const archived: BoardPost = { ...draft, status: "archived" };
+  // A reader or another writer would be refused (403): no read.
+  expect(readsPostManageState(published, reader)).toBe(false);
+  expect(readsPostManageState(published, otherWriter)).toBe(false);
+  expect(readsPostManageState(draft, otherWriter)).toBe(false);
+  // A published post never offers Delete draft, even to its author.
+  expect(readsPostManageState(published, author)).toBe(false);
+  expect(readsPostManageState(draft, author)).toBe(true);
+  expect(readsPostManageState(archived, manager)).toBe(true);
+  expect(readsPostManageState(draft, { ...author, boardActive: false })).toBe(
+    false,
+  );
 });

@@ -4,7 +4,11 @@ import type {
   KanbanCard,
   KanbanLabel,
 } from "../adapters/board-kanban-schemas";
-import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
+import {
+  formatWorkspaceDate,
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time";
 import { addDays, startOfWeek, type WeekStart } from "./calendar-dates";
 
 /**
@@ -411,6 +415,39 @@ export function defaultCardDates(choices: readonly RecordDateChoice[]): {
   return { start: choices[0].fieldId, due: choices[1].fieldId };
 }
 
+const ISO_DATETIME =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * The record field values a card shows (BR67), in the workspace's words:
+ * a date reads "Nov 5" and a datetime "Nov 5, 9:00 AM" in the workspace
+ * zone, never the stored ISO text. A date that is the card's due date is
+ * left out, since the fact line already says "Due Nov 5".
+ */
+export function recordFieldTexts(
+  card: KanbanCard,
+  region: WorkspaceRegion,
+): string[] {
+  const record = card.record && !card.record.locked ? card.record : null;
+  if (!record) return [];
+  return record.fields.slice(0, 2).flatMap(({ value }) => {
+    const plainDate = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const datetime = !plainDate && ISO_DATETIME.test(value);
+    if (!plainDate && !datetime) return [value];
+    if (plainDate && value === card.dueOn) return [];
+    return [
+      plainDate
+        ? shortDate(value, region)
+        : formatWorkspaceDateTime(value, region, {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+    ];
+  });
+}
+
 /**
  * The accessible name of a card: its name first, then what it is, then
  * what its face shows (labels, a record's status and fields, the due date,
@@ -432,7 +469,7 @@ export function cardLabel(
     record ? `${record.moduleName} record` : "objective",
     face.labelNames.length > 0 ? `labels ${face.labelNames.join(", ")}` : null,
     record?.status ? `${record.status.name} ${record.status.value}` : null,
-    ...(record?.fields.slice(0, 2).map((field) => field.value) ?? []),
+    ...recordFieldTexts(card, face.region),
     due ? due.text.toLocaleLowerCase() : null,
     card.checklist.total > 0
       ? `${card.checklist.done} of ${card.checklist.total} done`

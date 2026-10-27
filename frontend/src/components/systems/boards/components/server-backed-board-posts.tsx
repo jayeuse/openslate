@@ -30,6 +30,7 @@ import {
   postStatesFor,
   postViewForState,
   postingReason,
+  readsPostManageState,
   type PostMenuAction,
   type PostViewer,
 } from "../domain/post-list";
@@ -166,6 +167,7 @@ function ScopedServerBackedBoardPosts({
     boardRevision: board.revision,
     boardStatus: board.status,
     refreshKey,
+    region,
     onPublished: onChanged,
   });
   // The board's level shows New post at once; the editor's access check can
@@ -594,7 +596,8 @@ function ScopedServerBackedBoardPosts({
           }}
           onBack={backToList}
           onMenuOpen={() => {
-            if (openPost) readManageState(openPost);
+            if (openPost && readsPostManageState(openPost, viewer))
+              readManageState(openPost);
           }}
           focusTitle={focusTitle && !sideBySide}
           onTitleFocused={titleFocused}

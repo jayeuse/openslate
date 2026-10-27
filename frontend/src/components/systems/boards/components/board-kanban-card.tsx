@@ -22,7 +22,12 @@ import {
 import type { WorkspaceRegion } from "@/lib/date-time";
 import { cn } from "@/lib/utils";
 import type { KanbanCard, KanbanLabel } from "../adapters/board-kanban-schemas";
-import { cardLabel, cardName, dueWords } from "../domain/kanban";
+import {
+  cardLabel,
+  cardName,
+  dueWords,
+  recordFieldTexts,
+} from "../domain/kanban";
 
 /** A person on a card: their name and avatar, when their card was read. */
 export type KanbanPerson = { name: string; avatarUrl: string | null };
@@ -69,6 +74,7 @@ function CardFace({
     const label = labels.get(id);
     return label ? [label] : [];
   });
+  const fields = recordFieldTexts(card, region);
   // The fact line shows only with something to say (BR67).
   const hasFacts = Boolean(
     record?.status || due || card.checklist.total > 0 || person,
@@ -89,12 +95,9 @@ function CardFace({
         </span>
       ) : null}
       <span className="line-clamp-2 font-medium">{cardName(card)}</span>
-      {record && record.fields.length > 0 ? (
+      {fields.length > 0 ? (
         <span className="text-muted-foreground truncate text-xs tabular-nums">
-          {record.fields
-            .slice(0, 2)
-            .map((field) => field.value)
-            .join(" · ")}
+          {fields.join(" · ")}
         </span>
       ) : null}
       {hasFacts ? (

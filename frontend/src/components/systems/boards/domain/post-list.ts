@@ -194,6 +194,18 @@ export function canEditPost(post: BoardPost, viewer: PostViewer): boolean {
 }
 
 /**
+ * Whether opening the post's menu reads its manage state: only Delete draft
+ * needs it, on a post the viewer may change that is not published. Readers
+ * and other writers send no read, which the server would refuse (403).
+ */
+export function readsPostManageState(
+  post: BoardPost,
+  viewer: PostViewer,
+): boolean {
+  return mayChange(post, viewer) && post.status !== "published";
+}
+
+/**
  * The More post actions a viewer may take on the open post (BR12, BR14):
  * only those, in menu order. `publishedBefore` comes from the post's manage
  * state, read when the menu opens: Delete draft shows only once that read

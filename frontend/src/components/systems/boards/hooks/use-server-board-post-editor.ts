@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApiContractError, ApiError } from "@/lib/api";
+import type { WorkspaceRegion } from "@/lib/date-time";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
   createBoardPost,
@@ -55,12 +56,15 @@ export function useServerBoardPostEditor({
   boardRevision,
   boardStatus,
   refreshKey,
+  region,
   onPublished,
 }: {
   boardId: string;
   boardRevision: number;
   boardStatus: "active" | "archived";
   refreshKey: number;
+  /** Times are typed and shown in this zone; editing waits for it. */
+  region: WorkspaceRegion | undefined;
   onPublished?: (boardId: string) => void;
 }) {
   const actorId = useVerifiedWorkspaceUserId();
@@ -69,9 +73,11 @@ export function useServerBoardPostEditor({
     emptyState(key, boardRevision),
   );
   const [retryKey, setRetryKey] = useState(0);
-  const [deviceTimeZone, setDeviceTimeZone] = useState(
-    "your device's local time zone",
-  );
+  const zone = region?.timezone ?? null;
+  // Until the region is read, nothing is open to edit, so no time was read
+  // in another zone; the fallback only satisfies the types.
+  const timezone = zone ?? "UTC";
+  const timezoneRef = useRef(timezone);
   const loadSequence = useRef(0);
   const mutationSequence = useRef(0);
   const operationPendingRef = useRef(false);
@@ -89,13 +95,8 @@ export function useServerBoardPostEditor({
   const current = editorStateForKey(state, key, boardRevision);
 
   useEffect(() => {
-    try {
-      const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      if (resolved) setDeviceTimeZone(resolved);
-    } catch {
-      setDeviceTimeZone("your device's local time zone");
-    }
-  }, []);
+    timezoneRef.current = timezone;
+  }, [timezone]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -193,6 +194,7 @@ export function useServerBoardPostEditor({
             page,
             verified,
             selected !== null,
+            timezoneRef.current,
           );
         });
       } catch (error) {
@@ -221,21 +223,25 @@ export function useServerBoardPostEditor({
   const canEdit =
     boardStatus === "active" &&
     (current.status === "ready" || current.status === "loading") &&
-    access?.edit === true;
+    access?.edit === true &&
+    zone !== null;
   const canManage = access?.manage === true;
   const scheduleDirty =
-    current.scheduleLocal !== postLocalScheduleValue(current.selected);
+    current.scheduleLocal !==
+    postLocalScheduleValue(current.selected, timezone);
   const view: PostEditorView = {
-    status: current.status,
+    // Editing waits for the workspace zone, so the editor reads as opening.
+    status:
+      zone === null && current.status === "ready" ? "loading" : current.status,
     active: boardStatus === "active",
     canEdit,
     canManage,
     selected: canEdit ? current.selected : null,
     form: canEdit ? current.form : null,
-    dirty: dirty(current.form, current.selected),
+    dirty: dirty(current.form, current.selected, timezone),
     scheduleDirty,
     scheduleLocal: canEdit ? current.scheduleLocal : "",
-    deviceTimeZone,
+    region: region ?? null,
     scheduleError: canEdit ? current.scheduleError : null,
     expiryError: canEdit ? current.expiryError : null,
     pending:
@@ -251,7 +257,7 @@ export function useServerBoardPostEditor({
       current.pending ||
       attachmentPendingRef.current ||
       recordLinkPendingRef.current ||
-      dirty(current.form, current.selected) ||
+      dirty(current.form, current.selected, timezone) ||
       scheduleDirty
     )
       return;
@@ -307,7 +313,7 @@ export function useServerBoardPostEditor({
   /** Marks an invalid local expiry; true when the form cannot be saved. */
   function rejectExpiry(form: PostEditorForm): boolean {
     try {
-      postExpiryTimeToUtc(form.expiresLocal);
+      postExpiryTimeToUtc(form.expiresLocal, timezone);
       return false;
     } catch {
       setState((previous) =>
@@ -333,14 +339,14 @@ export function useServerBoardPostEditor({
       ? await updateBoardPost(
           boardId,
           selected.id,
-          postPatchForForm(selected, form, revision, canManage),
+          postPatchForForm(selected, form, revision, timezone, canManage),
         )
       : await createBoardPost(boardId, {
           boardRevision: revision,
           title: form.title,
           body: form.body,
           links: form.links,
-          expiresAt: postExpiryTimeToUtc(form.expiresLocal),
+          expiresAt: postExpiryTimeToUtc(form.expiresLocal, timezone),
           ...(canManage ? { pinned: form.pinned } : {}),
         });
     const saved = await readBoardPost(boardId, result.id, "draft");
@@ -361,11 +367,11 @@ export function useServerBoardPostEditor({
         ? {
             ...previous,
             selected: saved,
-            form: formFor(saved),
+            form: formFor(saved, timezone),
             expiryError: null,
             scheduleLocal: pending
               ? previous.scheduleLocal
-              : postLocalScheduleValue(saved),
+              : postLocalScheduleValue(saved, timezone),
             scheduleError: null,
             boardRevision: revision,
             pending,
@@ -419,7 +425,11 @@ export function useServerBoardPostEditor({
     if (busy() || !valid(form) || !owns(selected)) return;
     // A published post saves as a draft even unchanged, so its files and
     // record links can be edited before it is published again.
-    if (selected && !dirty(form, selected) && selected.status !== "published")
+    if (
+      selected &&
+      !dirty(form, selected, timezone) &&
+      selected.status !== "published"
+    )
       return;
     if (rejectExpiry(form)) return;
     const operation = begin();
@@ -452,8 +462,9 @@ export function useServerBoardPostEditor({
     if (rejectExpiry(form)) return false;
     const converted = postScheduleTimeToUtc(
       current.scheduleLocal,
+      timezone,
       Date.now(),
-      postExpiryTimeToUtc(form.expiresLocal),
+      postExpiryTimeToUtc(form.expiresLocal, timezone),
     );
     if (!converted.ok) {
       setState((previous) =>
@@ -465,7 +476,7 @@ export function useServerBoardPostEditor({
     }
     if (
       selected?.status === "scheduled" &&
-      !dirty(form, selected) &&
+      !dirty(form, selected, timezone) &&
       converted.publishAt === selected.publishAt
     )
       return false;
@@ -473,7 +484,7 @@ export function useServerBoardPostEditor({
     try {
       let target = selected;
       let revision = current.boardRevision;
-      if (!target || dirty(form, target)) {
+      if (!target || dirty(form, target, timezone)) {
         const result = await persist(form, target, revision);
         if (operation !== mutationSequence.current) return false;
         adopt(result.saved, result.boardRevision, true, null);
@@ -535,7 +546,7 @@ export function useServerBoardPostEditor({
       selected.status !== "scheduled" ||
       selected.postRevision === null ||
       !form ||
-      dirty(form, selected) ||
+      dirty(form, selected, timezone) ||
       scheduleDirty ||
       (selected.authorId !== actorId && !canManage)
     )
@@ -564,7 +575,7 @@ export function useServerBoardPostEditor({
           ? {
               ...previous,
               selected: saved,
-              form: formFor(saved),
+              form: formFor(saved, timezone),
               expiryError: null,
               scheduleLocal: "",
               scheduleError: null,
@@ -608,7 +619,7 @@ export function useServerBoardPostEditor({
     try {
       let target = selected;
       let revision = current.boardRevision;
-      if (!target || dirty(form, target)) {
+      if (!target || dirty(form, target, timezone)) {
         const result = await persist(form, target, revision);
         if (operation !== mutationSequence.current) return null;
         adopt(result.saved, result.boardRevision, true, null);
@@ -668,7 +679,7 @@ export function useServerBoardPostEditor({
       current.pending ||
       attachmentPendingRef.current ||
       recordLinkPendingRef.current ||
-      dirty(current.form, current.selected) ||
+      dirty(current.form, current.selected, timezone) ||
       scheduleDirty
     )
       return false;
@@ -688,9 +699,9 @@ export function useServerBoardPostEditor({
           ? {
               ...previous,
               selected: item,
-              form: formFor(item),
+              form: formFor(item, timezone),
               expiryError: null,
-              scheduleLocal: postLocalScheduleValue(item),
+              scheduleLocal: postLocalScheduleValue(item, timezone),
               scheduleError: null,
               conflict: false,
               error: null,

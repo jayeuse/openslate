@@ -1,10 +1,11 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Temporal } from "@js-temporal/polyfill";
+import { Check } from "lucide-react";
 import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Button } from "@/components/ui/button";
 import { DialogFrameFooter } from "@/components/ui/dialog-frame";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldDescription,
@@ -17,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { datetimeInputToUtc, datetimeOffsets } from "@/lib/date-time";
+import { cn } from "@/lib/utils";
 import type {
   BoardEvent,
   BoardEventCreateInput,
@@ -28,6 +30,56 @@ import { ServerBoardAttachments } from "./server-backed-board-attachments";
 import { ServerBoardRecordLinks } from "./server-backed-board-record-links";
 
 type Recurrence = BoardEvent["recurrence"];
+
+/** 44px fields on phones and tablets; the slim 32px from 1280px. */
+const field = "min-h-11 xl:min-h-8";
+const select = "w-full [&_select]:min-h-11 xl:[&_select]:min-h-8";
+
+/**
+ * A checkbox row: the 44px row is the target (32px from 1280px), and the
+ * box is drawn from the label, so the native box is not a 16px target.
+ */
+function CheckRow({
+  id,
+  checked,
+  disabled,
+  onChange,
+  children,
+}: {
+  id: string;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className="flex min-h-11 w-fit cursor-pointer items-center gap-2.5 text-sm has-disabled:cursor-not-allowed has-disabled:opacity-50 xl:min-h-8"
+    >
+      <input
+        id={id}
+        type="checkbox"
+        className="peer sr-only"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+      />
+      <span
+        aria-hidden="true"
+        className={cn(
+          "peer-focus-visible:outline-ring grid size-4 shrink-0 place-items-center rounded-[4px] border peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 xl:size-3.5",
+          checked
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-input dark:bg-input/30",
+        )}
+      >
+        <Check className={cn("size-3.5", !checked && "invisible")} />
+      </span>
+      {children}
+    </label>
+  );
+}
 /** The author's reminder choices, in the order the form shows them. */
 export const REMINDER_TIMINGS: readonly {
   value: BoardEventReminderTiming;
@@ -449,6 +501,7 @@ export function ServerBoardEventEditorForm({
         <Field className="gap-1.5">
           <FieldLabel htmlFor="live-board-event-title">Event title</FieldLabel>
           <Input
+            className={field}
             id="live-board-event-title"
             required
             maxLength={100}
@@ -459,26 +512,26 @@ export function ServerBoardEventEditorForm({
         </Field>
         <FieldSet className="gap-2">
           <FieldLegend className="text-sm font-medium">When</FieldLegend>
-          <label className="flex min-h-11 items-center gap-3 text-sm xl:min-h-8">
-            <Checkbox
-              checked={draft.allDay}
-              disabled={busy}
-              onCheckedChange={(checked: boolean) => {
-                onChange({
-                  allDay: checked,
-                  start: checked
-                    ? draft.start.slice(0, 10)
-                    : `${draft.start.slice(0, 10)}T09:00`,
-                  end: checked
-                    ? draft.end.slice(0, 10)
-                    : `${draft.end.slice(0, 10)}T10:00`,
-                  startOffset: "",
-                  endOffset: "",
-                });
-              }}
-            />
+          <CheckRow
+            id="live-board-event-all-day"
+            checked={draft.allDay}
+            disabled={busy}
+            onChange={(checked) => {
+              onChange({
+                allDay: checked,
+                start: checked
+                  ? draft.start.slice(0, 10)
+                  : `${draft.start.slice(0, 10)}T09:00`,
+                end: checked
+                  ? draft.end.slice(0, 10)
+                  : `${draft.end.slice(0, 10)}T10:00`,
+                startOffset: "",
+                endOffset: "",
+              });
+            }}
+          >
             All day
-          </label>
+          </CheckRow>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field className="gap-1.5">
               <FieldLabel htmlFor="live-board-event-start">
@@ -486,6 +539,7 @@ export function ServerBoardEventEditorForm({
               </FieldLabel>
               <div className="flex min-w-0 items-center gap-2">
                 <Input
+                  className={field}
                   id="live-board-event-start"
                   type={draft.allDay ? "date" : "datetime-local"}
                   step={draft.allDay ? undefined : "any"}
@@ -505,6 +559,7 @@ export function ServerBoardEventEditorForm({
               </FieldLabel>
               <div className="flex min-w-0 items-center gap-2">
                 <Input
+                  className={field}
                   id="live-board-event-end"
                   type={draft.allDay ? "date" : "datetime-local"}
                   step={draft.allDay ? undefined : "any"}
@@ -524,7 +579,7 @@ export function ServerBoardEventEditorForm({
               <FieldLabel htmlFor="live-board-event-repeat">Repeats</FieldLabel>
               <NativeSelect
                 id="live-board-event-repeat"
-                className="w-full"
+                className={select}
                 disabled={busy}
                 value={draft.recurrence}
                 onChange={(event) =>
@@ -547,6 +602,7 @@ export function ServerBoardEventEditorForm({
                   Repeat until
                 </FieldLabel>
                 <Input
+                  className={field}
                   id="live-board-event-until"
                   type="date"
                   required
@@ -563,6 +619,7 @@ export function ServerBoardEventEditorForm({
         <Field className="gap-1.5">
           <FieldLabel htmlFor="live-board-event-location">Location</FieldLabel>
           <Input
+            className={field}
             id="live-board-event-location"
             maxLength={240}
             disabled={busy}
@@ -586,29 +643,23 @@ export function ServerBoardEventEditorForm({
             {REMINDER_TIMINGS.map((timing) => {
               const id = `live-board-event-reminder-${timing.value}`;
               return (
-                <Field
+                <CheckRow
                   key={timing.value}
-                  className="min-h-11 w-auto flex-row items-center gap-2 xl:min-h-8"
+                  id={id}
+                  disabled={busy}
+                  checked={draft.reminders.includes(timing.value)}
+                  onChange={(checked) =>
+                    onChange({
+                      reminders: checked
+                        ? [...draft.reminders, timing.value]
+                        : draft.reminders.filter(
+                            (value) => value !== timing.value,
+                          ),
+                    })
+                  }
                 >
-                  <Checkbox
-                    id={id}
-                    disabled={busy}
-                    checked={draft.reminders.includes(timing.value)}
-                    onCheckedChange={(checked) =>
-                      onChange({
-                        reminders:
-                          checked === true
-                            ? [...draft.reminders, timing.value]
-                            : draft.reminders.filter(
-                                (value) => value !== timing.value,
-                              ),
-                      })
-                    }
-                  />
-                  <FieldLabel htmlFor={id} className="font-normal">
-                    {timing.label}
-                  </FieldLabel>
-                </Field>
+                  {timing.label}
+                </CheckRow>
               );
             })}
           </div>
@@ -674,6 +725,7 @@ export function ServerBoardEventEditorForm({
               Event timezone
             </FieldLabel>
             <Input
+              className={field}
               id="live-board-event-timezone"
               required
               maxLength={80}
@@ -700,7 +752,7 @@ export function ServerBoardEventEditorForm({
                   </FieldLabel>
                   <NativeSelect
                     id="live-board-event-start-offset"
-                    className="w-full"
+                    className={select}
                     required
                     disabled={busy}
                     value={draft.startOffset}
@@ -724,7 +776,7 @@ export function ServerBoardEventEditorForm({
                   </FieldLabel>
                   <NativeSelect
                     id="live-board-event-end-offset"
-                    className="w-full"
+                    className={select}
                     required
                     disabled={busy}
                     value={draft.endOffset}
@@ -761,6 +813,7 @@ export function ServerBoardEventEditorForm({
                       Link label
                     </FieldLabel>
                     <Input
+                      className={field}
                       id={`live-board-event-link-label-${index}`}
                       maxLength={100}
                       required
@@ -782,6 +835,7 @@ export function ServerBoardEventEditorForm({
                       Link URL
                     </FieldLabel>
                     <Input
+                      className={field}
                       id={`live-board-event-link-url-${index}`}
                       type="url"
                       maxLength={2048}

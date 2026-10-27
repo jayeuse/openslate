@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ApiError } from "@/lib/api";
 import type { WorkspaceRegion } from "@/lib/date-time";
-import { readBoardEvent, type BoardEvent } from "../adapters/board-events-api";
+import {
+  eventReadRefused,
+  readBoardEvent,
+  type BoardEvent,
+} from "../adapters/board-events-api";
 import type { CrossBoardOccurrence } from "../adapters/board-my-calendar-api";
 import type { MyCalendarBoard } from "../domain/my-calendar";
 import type { EventSheetState } from "../components/board-event-sheet";
@@ -12,7 +15,7 @@ import {
   boardOccurrenceTimeLabel,
 } from "../components/server-board-calendar-display";
 
-const UNAVAILABLE = "This event is unavailable or you no longer have access.";
+const UNAVAILABLE = "It may have been removed, or you may not have access.";
 
 /**
  * My calendar's event sheet (`?event=`): which board the event belongs to,
@@ -67,8 +70,7 @@ export function useMyCalendarSheet({
       })
       .catch((error: unknown) => {
         if (!active) return;
-        const refused =
-          error instanceof ApiError && [401, 403, 404].includes(error.status);
+        const refused = eventReadRefused(error);
         setDetail({
           key,
           event: null,
