@@ -1,6 +1,7 @@
 """The Kanban, card sheet and calendar routes on the temporary control Board.
 
-The Board manager adds two stages, two labels, an objective card and a record card,
+The Board manager reads the Board's people (the assignee picker) and adds two
+stages, two labels, an objective card assigned to itself and a record card,
 a checklist, a linked record, a file and two calendar sources (201); moves, labels,
 ticks, attaches, dates, archives and restores (200), then removes what it added
 (204). The administrator purges the detached file (200) so that the Board purge,
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
 
+from app.systems.boards.access_preview_router import BoardPersonList
 from app.systems.boards.attachment_router import AttachmentList
 from app.systems.boards.calendar_source_router import CalendarSourceList
 from app.systems.boards.kanban_schemas import CardDetail
@@ -41,6 +43,7 @@ KANBAN_ROUTES = frozenset(
     {
         ("GET", "/api/boards/occurrences"),
         ("GET", "/api/boards/cards/due"),
+        ("GET", "/api/boards/{board_id}/people"),
         ("GET", "/api/boards/{board_id}/stages"),
         ("POST", "/api/boards/{board_id}/stages"),
         ("PATCH", "/api/boards/{board_id}/stages/{stage_id}"),
@@ -232,6 +235,19 @@ class _Kanban:
         board = self.read(f"{self.base}/calendar-sources", f"{step}_board", CalendarSourceList)
         mine = self.read("/api/me/calendar-sources", f"{step}_mine", CalendarSourceList)
         return {str(row.id) for row in board.items}, {str(row.id) for row in mine.items}
+
+    def people(self) -> set[str]:
+        """The assignee picker's people: every page, at most 1,000 people."""
+        found: set[str] = set()
+        for offset in range(0, 1000, 100):
+            page: BoardPersonList = self.read(
+                f"{self.base}/people", "list_board_people", BoardPersonList,
+                limit=100, offset=offset,
+            )  # fmt: skip
+            found |= {str(row.id) for row in page.items}
+            if not page.pagination.has_more:
+                break
+        return found
 
     def listed(self, kind: str, step: str) -> set[str]:
         model = AttachmentList if kind == "attachments" else RecordLinkList

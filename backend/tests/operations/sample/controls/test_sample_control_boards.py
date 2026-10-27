@@ -172,6 +172,7 @@ def test_kanban_controls_run_on_the_control_board_while_its_event_is_live(pack_k
         ("POST", "/api/boards/{board_id}/cards/batch-dates"),
         ("PUT", "/api/boards/{board_id}/cards/{card_id}/checklist/order"),
         ("DELETE", "/api/me/calendar-sources/{source_id}"),
+        ("GET", "/api/boards/{board_id}/people"),
     } <= CONTROL_ROUTES
     # A route the controls execute must be claimable as run coverage.
     assert KANBAN_ROUTES <= SEEDER_ROUTES

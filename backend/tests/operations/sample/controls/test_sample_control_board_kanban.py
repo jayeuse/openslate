@@ -19,6 +19,7 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
+from app.systems.boards.access_preview_router import router as people_router
 from app.systems.boards.attachment_router import router as attachment_router
 from app.systems.boards.calendar_source_router import router as source_router
 from app.systems.boards.cross_board_occurrence_router import router as occurrence_router
@@ -53,7 +54,8 @@ def _api(db: Session, actor: User, store: Store) -> TestClient:
     app = FastAPI()
     # main.py order: the fixed /boards/occurrences and /boards/cards/due paths first.
     routers = (occurrence_router, due_router, source_router, record_link_router,
-               *KANBAN_ROUTERS, attachment_router, board_files.router, boards_router)  # fmt: skip
+               *KANBAN_ROUTERS, people_router, attachment_router, board_files.router,
+               boards_router)  # fmt: skip
     for router in routers:
         app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db

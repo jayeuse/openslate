@@ -50,6 +50,7 @@ def _create(run: _Kanban) -> None:
         run.check(label.name == name, f"create_label_{number}")
         run.keep(f"label:{number}", label.id)
     assignee = run.mapped("user", run.action.actor_key)
+    run.check(assignee in run.people(), "list_board_people")
     objective: CardDetail = run.call(
         "POST", f"{run.base}/cards", "create_objective_card", CardDetail,
         json_body={"kind": "objective", "stage_id": stage_ids[0], "title": run.text("title"),

@@ -287,6 +287,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("PUT", "/api/sandbox/document"),
         # Kanban, card sheet and calendar routes (controls/board_kanban.py).
         ("GET", "/api/boards/occurrences"),
+        ("GET", "/api/boards/{board_id}/people"),
         ("GET", "/api/boards/cards/due"),
         ("GET", "/api/boards/{board_id}/stages"),
         ("POST", "/api/boards/{board_id}/stages"),

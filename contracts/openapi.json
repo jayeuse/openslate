@@ -2779,6 +2779,65 @@
         "title": "BoardOccurrenceStatus",
         "type": "string"
       },
+      "BoardPerson": {
+        "description": "Only person card fields that every member, guests included, sees.",
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "avatar_url"
+        ],
+        "title": "BoardPerson",
+        "type": "object"
+      },
+      "BoardPersonList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BoardPerson"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "BoardPersonList",
+        "type": "object"
+      },
+      "BoardPersonSort": {
+        "enum": [
+          "display_name"
+        ],
+        "title": "BoardPersonSort",
+        "type": "string"
+      },
       "BoardResponse": {
         "description": "A Board and the reader's own level on it.",
         "properties": {
@@ -23426,29 +23485,6 @@
             "title": "Column Field Ids",
             "type": "array"
           },
-          "date_field_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Date Field Id"
-          },
-          "date_range": {
-            "default": "month",
-            "enum": [
-              "week",
-              "month",
-              "quarter",
-              "year"
-            ],
-            "title": "Date Range",
-            "type": "string"
-          },
           "density": {
             "default": "comfortable",
             "enum": [
@@ -23475,9 +23511,6 @@
             "enum": [
               "table",
               "grid",
-              "kanban",
-              "calendar",
-              "timeline",
               "gallery"
             ],
             "title": "Layout",
@@ -23504,21 +23537,6 @@
             ],
             "title": "Primary Field Id"
           },
-          "scale": {
-            "anyOf": [
-              {
-                "enum": [
-                  "month",
-                  "list"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scale"
-          },
           "secondary_field_id": {
             "anyOf": [
               {
@@ -23530,54 +23548,6 @@
               }
             ],
             "title": "Secondary Field Id"
-          },
-          "timeline_deadline_field_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Timeline Deadline Field Id"
-          },
-          "timeline_end_field_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Timeline End Field Id"
-          },
-          "timeline_progress_field_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Timeline Progress Field Id"
-          },
-          "timeline_start_field_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Timeline Start Field Id"
           },
           "version": {
             "const": 1,
@@ -34815,6 +34785,147 @@
           }
         ],
         "summary": "My Board Access",
+        "tags": [
+          "boards"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/people": {
+      "get": {
+        "description": "The active people who can read the Board now, for its writers and managers.",
+        "operationId": "list_board_people_api_boards__board_id__people_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/BoardPersonSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardPersonList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Board People",
         "tags": [
           "boards"
         ]
