@@ -448,6 +448,7 @@ test("Person card rejects mime avatar bytes and keeps accepted text with explici
 test("Person card calendar resolves visible author ids once and never requests an administrator catalog", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   const api = await installPersonCardApi(page, "calendar", "member");
   const catalogs: string[] = [];
   page.on("request", (request) => {
@@ -459,17 +460,23 @@ test("Person card calendar resolves visible author ids once and never requests a
   try {
     await page.goto(api.href);
     await hold.entered;
+    // The event sheet names its author; the second event by the same
+    // author reuses the first read.
     await expect(
       page.getByText("Loading person…", { exact: true }),
-    ).toHaveCount(2);
+    ).toHaveCount(1);
     await expect(page.getByText(cardTarget, { exact: true })).toHaveCount(0);
     hold.release();
-    await expect(trigger(page)).toHaveCount(2);
+    await expect(trigger(page)).toHaveCount(1);
     expect(api.reads).toEqual([{ viewer: cardViewer, target: cardTarget }]);
     await trigger(page).first().click();
     await expectMemberCard(page);
     await page.keyboard.press("Escape");
-    await trigger(page).last().click();
+    await page.getByRole("button", { name: "Close event" }).click();
+    await page.getByRole("button", { name: /^Workshop briefing,/ }).click();
+    await trigger(
+      page.getByRole("dialog", { name: "Workshop briefing" }),
+    ).click();
     await expectMemberCard(page);
     expect(api.reads).toHaveLength(1);
     expect(catalogs).toEqual([]);

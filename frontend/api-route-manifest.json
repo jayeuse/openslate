@@ -294,6 +294,42 @@
     "path": "/api/users/{param}"
   },
   {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "addBoardCalendarSource",
+    "method": "POST",
+    "path": "/api/boards/{param}/calendar-sources"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "addMyCalendarSource",
+    "method": "POST",
+    "path": "/api/me/calendar-sources"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "listBoardCalendarSources",
+    "method": "GET",
+    "path": "/api/boards/{param}/calendar-sources"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "removeBoardCalendarSource",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/calendar-sources/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-due-cards-api.ts",
+    "function": "listBoardStageNames",
+    "method": "GET",
+    "path": "/api/boards/{param}/stages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-due-cards-api.ts",
+    "function": "listDueBoardCards",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards"
+  },
+  {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
     "function": "archiveBoardEvent",
     "method": "POST",
@@ -316,12 +352,6 @@
     "function": "listBoardEvents",
     "method": "GET",
     "path": "/api/boards/{param}/events"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
-    "function": "listMyBoardEvents",
-    "method": "GET",
-    "path": "/api/boards/{param}/events/mine"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",

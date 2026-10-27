@@ -10,7 +10,6 @@ import {
   readBoardEvent,
   restoreBoardEvent,
   updateBoardEvent,
-  type BoardEventPage,
 } from "../../../src/components/systems/boards/adapters/board-events-api";
 import { installNoArgumentFetch as installFetch } from "../helpers/fake-fetch";
 
@@ -78,47 +77,6 @@ test("Board event series list uses bounded query and parses the event with its r
       `/api/boards/${boardId}/events?limit=25&offset=0&sort_by=created_at&sort_order=desc&archived=all&search=Plan`,
     );
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
-  } finally {
-    mock.restore();
-  }
-});
-
-test("My events uses its own bounded paged endpoint", async () => {
-  const mock = installFetch(() =>
-    jsonResponse({
-      items: [allDayEvent],
-      pagination: {
-        limit: 25,
-        offset: 25,
-        count: 1,
-        total: 26,
-        has_more: false,
-      },
-      board_revision: 3,
-    }),
-  );
-  try {
-    const events =
-      (await import("../../../src/components/systems/boards/adapters/board-events-api")) as unknown as {
-        listMyBoardEvents: (
-          id: string,
-          options: { limit: number; offset: number; search: string },
-        ) => Promise<BoardEventPage>;
-      };
-    const result = await events.listMyBoardEvents(boardId, {
-      limit: 25,
-      offset: 25,
-      search: "  Planning  ",
-    });
-    expect(result.items[0]?.id).toBe(eventId);
-    expect(result.pagination).toMatchObject({
-      total: 26,
-      offset: 25,
-      hasMore: false,
-    });
-    expect(String(mock.requests[0]?.input)).toBe(
-      `/api/boards/${boardId}/events/mine?limit=25&offset=25&sort_by=created_at&sort_order=desc&archived=active&search=Planning`,
-    );
   } finally {
     mock.restore();
   }
@@ -260,6 +218,46 @@ test("Board event occurrence window is inclusive, bounded, paged and carries its
     );
   } finally {
     mock.restore();
+  }
+});
+
+test("Board event occurrence page exposes the next occurrence after its window", async () => {
+  const next = {
+    id: `${eventId}:2026-11-02`,
+    event_id: eventId,
+    start: "2026-11-02",
+    end: "2026-11-02",
+    date: "2026-11-02",
+  };
+  const empty = {
+    items: [],
+    pagination: { limit: 100, offset: 0, count: 0, total: 0, has_more: false },
+    board_revision: 3,
+  };
+  for (const [body, expected] of [
+    [
+      { ...empty, next_occurrence: next },
+      {
+        id: next.id,
+        eventId,
+        start: "2026-11-02",
+        end: "2026-11-02",
+        date: "2026-11-02",
+      },
+    ],
+    [{ ...empty, next_occurrence: null }, null],
+    [empty, null],
+  ] as const) {
+    const mock = installFetch(() => jsonResponse(body));
+    try {
+      const result = await listBoardEventOccurrences(boardId, {
+        windowStart: "2026-10-01",
+        windowEnd: "2026-10-31",
+      });
+      expect(result.nextOccurrence).toEqual(expected);
+    } finally {
+      mock.restore();
+    }
   }
 });
 

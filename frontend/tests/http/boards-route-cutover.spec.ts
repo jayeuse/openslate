@@ -230,35 +230,32 @@ test("visible Boards route clears the last Board when access is revoked", async 
   await expect(page.getByText(board.description)).toHaveCount(0);
 });
 
-test("unsaved Event draft asks before changing Board or section", async ({
+test("an unsaved event draft asks before it closes, then the board navigates freely", async ({
   page,
 }) => {
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=calendar`);
   await page.getByRole("button", { name: "New event" }).click();
-  await expect(page.getByRole("heading", { name: "New event" })).toBeVisible();
-
-  await page.getByRole("link", { name: "Posts", exact: true }).click();
-  await expect(page).toHaveURL(`/boards?board=${boardId}&section=calendar`);
-  await expect(
-    page.getByRole("alertdialog", { name: "Discard unsaved Board changes?" }),
-  ).toBeVisible();
-
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "New event" })).toBeVisible();
+  const editor = page.getByRole("dialog", { name: "New event" });
+  await editor.getByLabel("Event title").fill("Draft to keep");
+  await editor.getByRole("button", { name: "Close event editor" }).click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Discard unsaved event changes?",
+  });
+  await expect(confirmation).toBeVisible();
+  await confirmation
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(editor.getByLabel("Event title")).toHaveValue("Draft to keep");
+  await editor.getByRole("button", { name: "Close event editor" }).click();
+  await confirmation.getByRole("button", { name: "Discard changes" }).click();
+  await expect(editor).toBeHidden();
   await page
     .getByRole("navigation", { name: "Main navigation" })
     .getByRole("link", { name: "Second live board", exact: true })
     .click();
-  await expect(page).toHaveURL(`/boards?board=${boardId}&section=calendar`);
-  await expect(
-    page.getByRole("alertdialog", { name: "Discard unsaved Board changes?" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Discard changes" }).click();
   await expect(page).toHaveURL(`/boards?board=${otherBoard.id}&section=posts`);
-  await expect(page.getByRole("heading", { name: "New event" })).toHaveCount(0);
 });
-
 test("Calendar uses Workspace today and reaches later occurrences", async ({
   page,
 }) => {
@@ -340,17 +337,25 @@ test("Calendar uses Workspace today and reaches later occurrences", async ({
     page.getByRole("heading", { name: "September 2026" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /View .*Sep 25/ }),
+    page.getByRole("button", { name: "Fri, Sep 25", exact: true }),
   ).toHaveAttribute("aria-current", "date");
-  await page.getByRole("button", { name: "Load next 100 events" }).click();
-  await expect(page.getByText("101 occurrences")).toBeVisible();
-  expect(requests.some((item) => item.offset === "100")).toBe(true);
+  // A busy month is read to its end, so its last event is one click away.
+  await expect
+    .poll(() => requests.some((item) => item.offset === "100"))
+    .toBe(true);
+  await page.getByRole("button", { name: /^\d+ more on Thu, Sep 24$/ }).click();
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: /^Late occurrence,/ }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByLabel("Search events").fill("missing");
-  await expect(page.getByText("No events on this day.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Earlier 1,/ })).toHaveCount(
+    0,
+  );
   expect(requests.some((item) => item.search === "missing")).toBe(true);
   await page.getByLabel("Search events").fill("");
   await expect(
-    page.getByRole("button", { name: "Load next 100 events" }),
+    page.getByRole("button", { name: /^\d+ more on Thu, Sep 24$/ }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Next month" }).click();
   await expect(
@@ -363,22 +368,23 @@ test("Calendar uses Workspace today and reaches later occurrences", async ({
   expect(requests.some((item) => item.start === "2026-10-01")).toBe(true);
 });
 
-test("compact Calendar enters Agenda and permits manual Month selection", async ({
+test("a phone Calendar opens on the day list and permits Month", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=calendar`);
-  await expect(page.getByRole("button", { name: "Agenda" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(
+    page.getByRole("button", { name: "Week", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Month", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Month", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("view") === "month",
+  );
 });
-
 test.describe("Boards workspace regional activity", () => {
   test.use({ locale: "en-US", timezoneId: "UTC" });
   test("Board activity retains its timezone label while formatting the workspace timestamp", async ({
@@ -516,7 +522,10 @@ test.describe("Boards workspace regional activity", () => {
         entity: "workspace_profiles",
       });
       await expect.poll(() => workspaceReads).toBeGreaterThan(1);
-      const latest = page.getByRole("button", { name: /View .*Sep 26/ });
+      const latest = page.getByRole("button", {
+        name: "Sat, Sep 26",
+        exact: true,
+      });
       await expect(latest).toHaveAttribute("aria-current", "date");
       oldReleased = true;
       releaseOld();
@@ -530,7 +539,7 @@ test.describe("Boards workspace regional activity", () => {
     }
   });
 
-  test("Calendar live workspace changes and rollover keep the selected day and last-good settings", async ({
+  test("Calendar live workspace changes and rollover keep the chosen month and last-good settings", async ({
     page,
   }) => {
     await page.clock.install({ time: new Date("2026-09-25T12:00:00Z") });
@@ -555,16 +564,26 @@ test.describe("Boards workspace regional activity", () => {
           }),
     );
     await page.goto(`/boards?board=${boardId}&section=calendar`);
-    const chosen = page.getByRole("button", { name: /View .*Sep 27/ });
-    await chosen.click();
+    const todayMark = (name: string) =>
+      page.getByRole("button", { name, exact: true });
+    await expect(todayMark("Fri, Sep 25")).toHaveAttribute(
+      "aria-current",
+      "date",
+    );
     today = "2026-09-26";
     const refresh = () =>
       sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" });
     await refresh();
-    await expect(
-      page.getByRole("button", { name: /View .*Sep 26/ }),
-    ).toHaveAttribute("aria-current", "date");
-    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+    await expect(todayMark("Sat, Sep 26")).toHaveAttribute(
+      "aria-current",
+      "date",
+    );
+    await page.getByRole("button", { name: "Next month" }).click();
+    const october = page.getByRole("heading", {
+      name: "October 2026",
+      exact: true,
+    });
+    await expect(october).toBeVisible();
     failRegionalRead = true;
     today = "2026-09-27";
     await refresh();
@@ -573,19 +592,18 @@ test.describe("Boards workspace regional activity", () => {
       exact: true,
     });
     await expect(retry).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /View .*Sep 26/ }),
-    ).toHaveAttribute("aria-current", "date");
-    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+    await expect(october).toBeVisible();
     failRegionalRead = false;
     await retry.click();
-    await expect(chosen).toHaveAttribute("aria-current", "date");
+    await expect(retry).toHaveCount(0);
+    await expect(october).toBeVisible();
     today = "2026-09-28";
     await page.clock.runFor(60_000);
-    await expect(
-      page.getByRole("button", { name: /View .*Sep 28/ }),
-    ).toHaveAttribute("aria-current", "date");
-    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await expect(todayMark("Mon, Sep 28")).toHaveAttribute(
+      "aria-current",
+      "date",
+    );
   });
 });
 
@@ -713,100 +731,6 @@ test("an author sets reminder timings on a new event", async ({ page }) => {
   expect(created).not.toHaveProperty("audience");
 });
 
-test("My events refreshes after saving and when the current tab reselects it", async ({
-  page,
-}) => {
-  await installBoardApi(page, () => true);
-  const eventId = "00000000-0000-4000-8000-000000000015";
-  let title = "My planning meeting";
-  let revision = 1;
-  let listRequests = 0;
-  const event = () => ({
-    id: eventId,
-    board_id: boardId,
-    author_id: userId,
-    title,
-    details: "",
-    location: "",
-    links: [],
-    all_day: true,
-    start_date: "2026-09-25",
-    end_date: "2026-09-25",
-    start_at: null,
-    end_at: null,
-    timezone_name: "UTC",
-    recurrence: "none",
-    repeat_until: null,
-    reminders: [],
-    archived: false,
-    revision,
-    board_revision: 1,
-    created_at: "2026-09-25T00:00:00Z",
-    updated_at: "2026-09-25T00:00:00Z",
-  });
-  await page.route("**/api/boards/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === `/api/boards/${boardId}/events/mine`) {
-      listRequests += 1;
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          ...pageOf([event()], { limit: 25 }),
-          board_revision: 1,
-        }),
-      });
-    }
-    // A background resync re-reads the event under an open editor.
-    if (
-      path === `/api/boards/${boardId}/events/${eventId}` &&
-      route.request().method() === "GET"
-    )
-      return route.fulfill({ json: event() });
-    if (
-      path === `/api/boards/${boardId}/events/${eventId}` &&
-      route.request().method() === "PATCH"
-    ) {
-      const body = route.request().postDataJSON() as { title: string };
-      title = body.title;
-      revision += 1;
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: eventId,
-          event_revision: revision,
-          board_revision: 2,
-        }),
-      });
-    }
-    return route.fallback();
-  });
-
-  await page.goto(`/boards?board=${boardId}&section=calendar`);
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events" }).click();
-  const myEvents = page.getByRole("region", { name: "My events" });
-  await myEvents
-    .getByRole("button", { name: "Edit My planning meeting" })
-    .click();
-  const editor = page.getByRole("form", { name: "Edit Board event" });
-  await editor.getByLabel("Event title").fill("My planning meeting updated");
-  await editor.getByRole("button", { name: "Save event" }).click();
-  await expect(
-    myEvents.getByRole("button", { name: "Edit My planning meeting updated" }),
-  ).toBeVisible();
-
-  const beforeReselect = listRequests;
-  title = "My planning meeting externally updated";
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events" }).click();
-  await expect(
-    myEvents.getByRole("button", {
-      name: "Edit My planning meeting externally updated",
-    }),
-  ).toBeVisible();
-  expect(listRequests).toBeGreaterThan(beforeReselect);
-});
-
 test("an event author can archive their event, while another author's event stays protected", async ({
   page,
 }) => {
@@ -910,40 +834,40 @@ test("an event author can archive their event, while another author's event stay
     },
   );
 
+  await page.route(
+    new RegExp(`/api/boards/${boardId}/events/(${eventId}|${otherEventId})$`),
+    (route) => {
+      const id = new URL(route.request().url()).pathname.split("/").at(-1)!;
+      return route.fulfill({
+        json:
+          id === eventId
+            ? event(eventId, userId, "My planning session", archived ? 2 : 1)
+            : event(
+                otherEventId,
+                otherAuthorId,
+                "Team planning session",
+                archived ? 2 : 1,
+              ),
+      });
+    },
+  );
   await page.goto(`/boards?board=${boardId}&section=calendar`);
-  const selectedEvents = page.getByRole("region", {
-    name: "Fri, Sep 25 events",
-  });
-  await selectedEvents.getByText("View event", { exact: true }).nth(0).click();
-  await selectedEvents.getByText("View event", { exact: true }).nth(1).click();
+  const month = page.getByRole("region", { name: "September 2026 calendar" });
+  await month.getByRole("button", { name: /^Team planning session,/ }).click();
+  const teamSheet = page.getByRole("dialog", { name: "Team planning session" });
+  await teamSheet.getByRole("button", { name: "More event actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
   await expect(
-    selectedEvents.getByRole("button", {
-      name: "Archive My planning session",
-    }),
-  ).toBeVisible();
-  await expect(
-    selectedEvents.getByRole("button", {
-      name: "Archive Team planning session",
-    }),
+    page.getByRole("menuitem", { name: "Archive event" }),
   ).toHaveCount(0);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Agenda", exact: true }).click();
-  const agendaEvents = page.getByRole("region", {
-    name: "September 2026 events",
-  });
-  await expect(
-    agendaEvents.getByRole("button", {
-      name: "Archive My planning session",
-    }),
-  ).toBeVisible();
-  await expect(
-    agendaEvents.getByRole("button", {
-      name: "Archive Team planning session",
-    }),
-  ).toHaveCount(0);
-  await agendaEvents
-    .getByRole("button", { name: "Archive My planning session" })
+  await page.keyboard.press("Escape");
+  await teamSheet.getByRole("button", { name: "Close event" }).click();
+  await month.getByRole("button", { name: /^My planning session,/ }).click();
+  await page
+    .getByRole("dialog", { name: "My planning session" })
+    .getByRole("button", { name: "More event actions" })
     .click();
+  await page.getByRole("menuitem", { name: "Archive event" }).click();
   const confirmation = page.getByRole("alertdialog", {
     name: "Archive event?",
   });
@@ -971,10 +895,9 @@ test("an event author can archive their event, while another author's event stay
   expect(response.status()).toBe(200);
   await expect(page.getByText("Event archived.")).toBeVisible();
   await expect(
-    agendaEvents.getByRole("button", {
-      name: "Archive My planning session",
-    }),
+    month.getByRole("button", { name: /^My planning session,/ }),
   ).toHaveCount(0);
+  await expect(page).toHaveURL((url) => !url.searchParams.has("event"));
   expect(archiveBody).toEqual({ board_revision: 1, event_revision: 1 });
 });
 
@@ -1059,11 +982,35 @@ test("Board Record link labels refresh after linked module invalidations", async
     },
   );
 
+  await page.route(`**/api/boards/${boardId}/events/${eventId}`, (route) =>
+    route.fulfill({
+      json: {
+        id: eventId,
+        board_id: boardId,
+        author_id: userId,
+        title: "Equipment handover",
+        details: "",
+        location: "",
+        links: [],
+        all_day: true,
+        start_date: "2026-09-25",
+        end_date: "2026-09-25",
+        start_at: null,
+        end_at: null,
+        timezone_name: "UTC",
+        recurrence: "none",
+        repeat_until: null,
+        reminders: [],
+        archived: false,
+        revision: 1,
+        board_revision: 1,
+        created_at: "2026-09-25T00:00:00Z",
+        updated_at: "2026-09-25T00:00:00Z",
+      },
+    }),
+  );
   await page.goto(`/boards?board=${boardId}&section=calendar`);
-  const selectedEvents = page.getByRole("region", {
-    name: "Fri, Sep 25 events",
-  });
-  await selectedEvents.getByText("View event", { exact: true }).click();
+  await page.getByRole("button", { name: /^Equipment handover,/ }).click();
   await expect(
     page.getByRole("link", { name: "Cooling manifold" }),
   ).toBeVisible();

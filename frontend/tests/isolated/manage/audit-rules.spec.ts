@@ -323,6 +323,7 @@ const AUDITED_TABLES = [
   "backup_policies",
   "backup_runs",
   "board_attachments",
+  "board_calendar_sources",
   "board_event_reminders",
   "board_events",
   "board_groups",
@@ -391,7 +392,7 @@ const AUDITED_TABLES = [
 ];
 
 test("every audited table has its own Area option, never a shared Other", () => {
-  expect(AUDITED_TABLES).toHaveLength(69);
+  expect(AUDITED_TABLES).toHaveLength(70);
   const labels = AUDITED_TABLES.map(auditKindLabel);
   const repeated = labels.filter(
     (label, index) => labels.indexOf(label) !== index,
@@ -403,6 +404,9 @@ test("every audited table has its own Area option, never a shared Other", () => 
     "Conversation members · OpenComms",
   );
   expect(auditKindLabel("board_posts")).toBe("Posts · Boards");
+  expect(auditKindLabel("board_calendar_sources")).toBe(
+    "Calendar record sources · Boards",
+  );
   expect(auditKindLabel("platform_operators")).toBe(
     "Installation owners · Manage",
   );

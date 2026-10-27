@@ -6,7 +6,12 @@ export type ConnectionFailure = {
   retryAfter?: number;
 };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const boards = new Set(["boards", "board_posts", "board_events"]);
+const boards = new Set([
+  "boards",
+  "board_posts",
+  "board_events",
+  "board_calendar_sources",
+]);
 
 export function parseWorkspaceInvalidation(
   type: string,

@@ -186,8 +186,8 @@ const occurrenceWire = z
         : utc.safeParse(item.start).success && utc.safeParse(item.end).success),
   )
   .transform(({ event_id, ...item }) => ({ ...item, eventId: event_id }));
-// The first occurrence after the window, without its event. It is checked here and left
-// out of the page until the calendar shows it.
+// The first occurrence after the window, without its event: the empty
+// month's pointer to the next event (BR43, FN2).
 const nextOccurrenceWire = z
   .object({
     id: z.string().min(1).max(160),
@@ -196,7 +196,14 @@ const nextOccurrenceWire = z
     end: z.union([date, utc]),
     date,
   })
-  .strict();
+  .strict()
+  .transform(({ event_id, ...item }) => ({
+    id: item.id,
+    eventId: event_id,
+    start: item.start,
+    end: item.end,
+    date: item.date,
+  }));
 export const occurrenceListWire = z
   .object({
     items: z.array(occurrenceWire),
@@ -210,11 +217,14 @@ export const occurrenceListWire = z
       items.length === page.count &&
       items.every((item) => item.event.boardRevision === board_revision),
   )
-  .transform(({ items, pagination: page, board_revision }) => ({
-    items,
-    pagination: page,
-    boardRevision: board_revision,
-  }));
+  .transform(
+    ({ items, pagination: page, board_revision, next_occurrence }) => ({
+      items,
+      pagination: page,
+      boardRevision: board_revision,
+      nextOccurrence: next_occurrence ?? null,
+    }),
+  );
 
 export const listOptions = z
   .object({

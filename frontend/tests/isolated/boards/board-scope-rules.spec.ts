@@ -7,6 +7,10 @@ import {
   resolveBoardSection,
 } from "../../../src/components/systems/boards/hooks/use-server-boards";
 import {
+  parseCalendarShow,
+  parseCalendarView,
+} from "../../../src/components/systems/boards/domain/calendar-dates";
+import {
   prepareBoardPostLifecycleAction,
   resolveDeleteKind,
 } from "../../../src/components/systems/boards/hooks/use-server-board-post-lifecycle";
@@ -110,6 +114,81 @@ for (const row of [
 ]) {
   test(`Board section: ${row.name}`, () => {
     expect(resolveBoardSection(row.route)).toBe(row.expected);
+  });
+}
+
+for (const row of [
+  {
+    name: "Month in the address",
+    view: "month",
+    phone: true,
+    expected: "month",
+  },
+  { name: "Week in the address", view: "week", phone: false, expected: "week" },
+  {
+    name: "Upcoming in the address",
+    view: "upcoming",
+    phone: false,
+    expected: "upcoming",
+  },
+  {
+    name: "no view opens Month on a desktop",
+    view: null,
+    phone: false,
+    expected: "month",
+  },
+  {
+    name: "no view opens the day list (Week) on a phone",
+    view: null,
+    phone: true,
+    expected: "week",
+  },
+  {
+    name: "the retired Agenda opens the default",
+    view: "agenda",
+    phone: false,
+    expected: "month",
+  },
+] as const) {
+  test(`Calendar view: ${row.name}`, () => {
+    expect(parseCalendarView(row.view, row.phone)).toBe(row.expected);
+  });
+}
+
+for (const row of [
+  {
+    name: "Created by me for a writer",
+    show: "mine",
+    allowed: { mine: true, archived: false },
+    expected: "mine",
+  },
+  {
+    name: "Created by me falls back for a reader",
+    show: "mine",
+    allowed: { mine: false, archived: false },
+    expected: "all",
+  },
+  {
+    name: "Archived for a manager",
+    show: "archived",
+    allowed: { mine: true, archived: true },
+    expected: "archived",
+  },
+  {
+    name: "Archived falls back without manage",
+    show: "archived",
+    allowed: { mine: true, archived: false },
+    expected: "all",
+  },
+  {
+    name: "a Posts state is not a calendar filter",
+    show: "drafts",
+    allowed: { mine: true, archived: true },
+    expected: "all",
+  },
+] as const) {
+  test(`Calendar show: ${row.name}`, () => {
+    expect(parseCalendarShow(row.show, row.allowed)).toBe(row.expected);
   });
 }
 

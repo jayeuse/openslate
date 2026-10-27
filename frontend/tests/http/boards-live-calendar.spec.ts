@@ -205,12 +205,12 @@ for (const dirty of [false, true]) {
   }) => {
     const api = await installS11EventApi(browser);
     await browser.goto(`/boards?board=${boardId}&section=calendar`);
-    await browser.getByText("View event", { exact: true }).click();
     await browser
-      .getByRole("button", {
-        name: `Edit ${selectedEventWire.title}`,
-        exact: true,
-      })
+      .getByRole("button", { name: /^Winter planning session,/ })
+      .click();
+    await browser
+      .getByRole("dialog", { name: selectedEventWire.title })
+      .getByRole("button", { name: "Edit event", exact: true })
       .click();
     const title = browser.getByLabel("Event title", { exact: true });
     await expect(title).toHaveValue(selectedEventWire.title);
@@ -230,7 +230,7 @@ for (const dirty of [false, true]) {
     });
     if (dirty) {
       await expect(
-        browser.getByText("Changed by someone else — review latest", {
+        browser.getByText("Someone changed this event first.", {
           exact: true,
         }),
       ).toBeVisible();
@@ -258,7 +258,7 @@ for (const dirty of [false, true]) {
         "Remote planning details",
       );
       await expect(
-        browser.getByText("Changed by someone else — review latest", {
+        browser.getByText("Someone changed this event first.", {
           exact: true,
         }),
       ).toHaveCount(0);
@@ -278,12 +278,12 @@ test("an old live event refusal cannot close a newly created local draft", async
 }) => {
   const api = await installS11EventApi(browser);
   await browser.goto(`/boards?board=${boardId}&section=calendar`);
-  await browser.getByText("View event", { exact: true }).click();
   await browser
-    .getByRole("button", {
-      name: `Edit ${selectedEventWire.title}`,
-      exact: true,
-    })
+    .getByRole("button", { name: /^Winter planning session,/ })
+    .click();
+  await browser
+    .getByRole("dialog", { name: selectedEventWire.title })
+    .getByRole("button", { name: "Edit event", exact: true })
     .click();
   let release: () => void = () => {};
   const held = new Promise<void>((resolve) => {
@@ -312,6 +312,8 @@ test("an old live event refusal cannot close a newly created local draft", async
     });
     await entered;
     await browser.getByRole("button", { name: "Cancel", exact: true }).click();
+    // Cancel returns to the event's sheet; closing it leaves the month.
+    await browser.getByRole("button", { name: "Close event" }).click();
     await browser
       .getByRole("button", { name: "New event", exact: true })
       .click();
@@ -436,27 +438,46 @@ test.describe("Boards workspace regional dates", () => {
             },
           }),
       );
+      // The sheet reads each event's detail.
+      for (const item of items)
+        await browser.route(
+          `**/api/boards/${boardId}/events/${item.event_id}`,
+          (route) => route.fulfill({ json: item.event }),
+        );
       await browser.goto(`/boards?board=${boardId}&section=calendar`);
       await expect(
         browser.getByRole("heading", { name: "septembre 2026", exact: true }),
       ).toBeVisible();
       const day = browser.getByRole("button", {
-        name: /View lun\. 14 sept\./,
+        name: "lun. 14 sept.",
+        exact: true,
       });
       await expect(day).toHaveAttribute("aria-current", "date");
-      await day.click();
+      await browser
+        .getByRole("button", { name: /^Regional all-day event,/ })
+        .click();
+      const sheet = browser.getByRole("dialog", {
+        name: "Regional all-day event",
+      });
       await expect(
-        browser.getByText("All day · lun. 14 sept.–mer. 16 sept.", {
+        sheet.getByText("All day · lun. 14 sept.–mer. 16 sept.", {
           exact: true,
         }),
       ).toBeVisible();
+      await sheet.getByRole("button", { name: "Close event" }).click();
+      await browser
+        .getByRole("button", { name: /^Regional timed event,/ })
+        .click();
       await expect(
-        browser.getByText(
-          personal
-            ? /lun\. 14 sept\..*9:00\sAM.*lun\. 14 sept\..*10:00\sAM.*Asia\/Manila/
-            : /lun\. 14 sept\..*0?9:00.*lun\. 14 sept\..*10:00.*Asia\/Manila/,
-        ),
+        browser
+          .getByRole("dialog", { name: "Regional timed event" })
+          .getByText(
+            personal
+              ? /lun\. 14 sept\..*9:00\sAM.*lun\. 14 sept\..*10:00\sAM.*Asia\/Manila/
+              : /lun\. 14 sept\..*0?9:00.*lun\. 14 sept\..*10:00.*Asia\/Manila/,
+          ),
       ).toBeVisible();
+      await browser.getByRole("button", { name: "Close event" }).click();
       if (personal) {
         const calendar = browser.getByRole("region", {
           name: "septembre 2026 calendar",
@@ -508,26 +529,34 @@ test.describe("organization calendar week start", () => {
         .getByText("Tue", { exact: true })
         .boundingBox();
       const firstDay = await calendar
-        .getByRole("button", { name: "View Tue, Sep 1, 0 events", exact: true })
+        .getByRole("button", { name: "Tue, Sep 1", exact: true })
         .boundingBox();
       expect(tuesday).not.toBeNull();
       expect(firstDay).not.toBeNull();
-      expect(
-        Math.abs(
-          firstDay!.x + firstDay!.width / 2 - (tuesday!.x + tuesday!.width / 2),
-        ),
-      ).toBeLessThan(2);
-      const selected = calendar.getByRole("button", {
-        name: "View Wed, Sep 16, 0 events",
-        exact: true,
-      });
-      await selected.click();
-      await expect(selected).toHaveAttribute("aria-pressed", "true");
+      // The day number sits at the left of the weekday's column.
+      expect(Math.abs(firstDay!.x - tuesday!.x)).toBeLessThan(8);
       await expect
         .poll(() => windows.at(-1))
         .toEqual({ start: "2026-09-01", end: "2026-09-30" });
+      // A day number opens its week, which starts on the week start.
+      await calendar
+        .getByRole("button", { name: "Wed, Sep 16", exact: true })
+        .click();
+      await expect
+        .poll(() => windows.at(-1))
+        .toEqual(
+          weekStart === "monday"
+            ? { start: "2026-09-14", end: "2026-09-20" }
+            : { start: "2026-09-13", end: "2026-09-19" },
+        );
       await expect(
-        browser.getByRole("heading", { name: "Wed, Sep 16", exact: true }),
+        browser.getByRole("heading", {
+          name:
+            weekStart === "monday"
+              ? "Sep 14 – Sep 20, 2026"
+              : "Sep 13 – Sep 19, 2026",
+          exact: true,
+        }),
       ).toBeVisible();
     });
   }
@@ -794,11 +823,9 @@ for (const failChallenge of [false, true]) {
       failChallenge,
     );
     await browser.goto(`/boards?board=${boardId}&section=calendar`);
+    await browser.getByRole("button", { name: "Show: All" }).click();
     await browser
-      .getByRole("button", { name: "Event lists", exact: true })
-      .click();
-    await browser
-      .getByRole("menuitem", { name: "Archived events", exact: true })
+      .getByRole("menuitemradio", { name: "Archived", exact: true })
       .click();
     const archived = browser.getByRole("region", {
       name: "Archived Board events",
@@ -871,11 +898,9 @@ test("archived event remains restorable by a member without permanent-delete aut
 }) => {
   const api = await installArchivedEventPurge(browser, "member");
   await browser.goto(`/boards?board=${boardId}&section=calendar`);
+  await browser.getByRole("button", { name: "Show: All" }).click();
   await browser
-    .getByRole("button", { name: "Event lists", exact: true })
-    .click();
-  await browser
-    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .getByRole("menuitemradio", { name: "Archived", exact: true })
     .click();
   const archived = browser.getByRole("region", {
     name: "Archived Board events",
@@ -901,11 +926,9 @@ test("pending event review can recover after purge setting changes without accep
 }) => {
   const api = await installArchivedEventPurge(browser, "admin", false, true);
   await browser.goto(`/boards?board=${boardId}&section=calendar`);
+  await browser.getByRole("button", { name: "Show: All" }).click();
   await browser
-    .getByRole("button", { name: "Event lists", exact: true })
-    .click();
-  await browser
-    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .getByRole("menuitemradio", { name: "Archived", exact: true })
     .click();
   const archived = browser.getByRole("region", {
     name: "Archived Board events",
@@ -966,16 +989,11 @@ test("admin purges archived-parent event while ordinary lifecycle editing stays 
     `/boards?board=${boardId}&section=calendar&status=archived`,
   );
   await expect(
-    browser.getByRole("heading", { name: "Calendar", exact: true }).last(),
+    browser.getByRole("button", { name: "Show: All" }),
   ).toBeVisible();
-  await expect(
-    browser.getByRole("button", { name: "Event lists", exact: true }),
-  ).toBeVisible();
+  await browser.getByRole("button", { name: "Show: All" }).click();
   await browser
-    .getByRole("button", { name: "Event lists", exact: true })
-    .click();
-  await browser
-    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .getByRole("menuitemradio", { name: "Archived", exact: true })
     .click();
   const archived = browser.getByRole("region", {
     name: "Archived Board events",
@@ -1059,11 +1077,9 @@ test("archived-parent admin retains current-access retry after an event-list fai
   await browser.goto(
     `/boards?board=${boardId}&section=calendar&status=archived`,
   );
+  await browser.getByRole("button", { name: "Show: All" }).click();
   await browser
-    .getByRole("button", { name: "Event lists", exact: true })
-    .click();
-  await browser
-    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .getByRole("menuitemradio", { name: "Archived", exact: true })
     .click();
   const retry = browser.getByRole("button", {
     name: "Retry archived events",

@@ -690,6 +690,8 @@ async function exerciseConnectedBoard(
   await expect(page.getByRole("heading", { name: boardName })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`board=${boardId}`));
 
+  // At 1440×900 a month day holds two all-day pills before "+n more".
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("link", { name: "Calendar", exact: true }).click();
   await page.getByRole("button", { name: "New event" }).click();
   await page.getByLabel("Event title").fill(eventTitle);
@@ -705,11 +707,10 @@ async function exerciseConnectedBoard(
   expect(createdEvent.status()).toBe(201);
   const eventId = ((await createdEvent.json()) as { id: string }).id;
   await expect(page.getByText("Event created.")).toBeVisible();
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
-  const createdEventList = page.getByRole("region", { name: "My events" });
-  await createdEventList
-    .getByRole("button", { name: `Edit ${eventTitle}` })
+  // After Create the event sheet opens on the new event (BR21).
+  await page
+    .getByRole("dialog", { name: eventTitle })
+    .getByRole("button", { name: "Edit event" })
     .click();
   const eventEditor = page.getByRole("form", { name: "Edit Board event" });
   await expect(
@@ -758,13 +759,11 @@ async function exerciseConnectedBoard(
   await expect(eventEditor).toBeHidden();
 
   // The remaining attachments are stored on the event, not in page state.
+  // Cancel returned to the event's sheet, and its address survives a reload.
   await page.reload();
-  await page.getByRole("link", { name: "Calendar", exact: true }).click();
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
   await page
-    .getByRole("region", { name: "My events" })
-    .getByRole("button", { name: `Edit ${eventTitle}` })
+    .getByRole("dialog", { name: eventTitle })
+    .getByRole("button", { name: "Edit event" })
     .click();
   const attachedFiles = eventEditor.getByRole("list", {
     name: "Attached files",
@@ -799,6 +798,7 @@ async function exerciseConnectedBoard(
   await eventEditor
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
+  await page.getByRole("button", { name: "Close event" }).click();
 
   const secondTitle = `Supplier follow-up ${runId.slice(0, 8)}`;
   await page.getByRole("button", { name: "New event" }).click();
@@ -815,10 +815,10 @@ async function exerciseConnectedBoard(
     secondEditor.getByRole("button", { name: "Create event" }).click(),
   ]);
   expect(secondCreated.status()).toBe(201);
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
-  const myEvents = page.getByRole("region", { name: "My events" });
-  await myEvents.getByRole("button", { name: `Edit ${secondTitle}` }).click();
+  await page
+    .getByRole("dialog", { name: secondTitle })
+    .getByRole("button", { name: "Edit event" })
+    .click();
   const updatedSecondTitle = `${secondTitle} updated`;
   const secondUpdateEditor = page.getByRole("form", {
     name: "Edit Board event",
@@ -835,21 +835,18 @@ async function exerciseConnectedBoard(
   ]);
   expect(secondUpdated.status()).toBe(200);
   await expect(
-    myEvents.getByRole("button", { name: `Edit ${updatedSecondTitle}` }),
+    page.getByRole("dialog", { name: updatedSecondTitle }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
+  await page.getByRole("button", { name: "Close event" }).click();
+  // Created by me keeps the author's events (BR44).
+  await page.getByRole("button", { name: "Show: All" }).click();
+  await page.getByRole("menuitemradio", { name: "Created by me" }).click();
   await expect(
-    myEvents.getByRole("button", { name: `Edit ${updatedSecondTitle}` }),
+    page.getByRole("button", { name: `${updatedSecondTitle},` }).first(),
   ).toBeVisible();
   await page.reload();
-  await page.getByRole("link", { name: "Calendar", exact: true }).click();
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
   await expect(
-    page
-      .getByRole("region", { name: "My events" })
-      .getByRole("button", { name: `Edit ${updatedSecondTitle}` }),
+    page.getByRole("button", { name: `${updatedSecondTitle},` }).first(),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Posts", exact: true }).click();

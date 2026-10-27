@@ -134,9 +134,8 @@ function queryString(values: Record<string, string | number>): string {
   return query.toString();
 }
 
-async function listEvents(
+export async function listBoardEvents(
   rawBoardId: string,
-  mine: boolean,
   raw: BoardEventListOptions = {},
 ): Promise<BoardEventPage> {
   const boardId = uuid.parse(rawBoardId);
@@ -150,26 +149,12 @@ async function listEvents(
   };
   if (options.search !== undefined) values.search = options.search;
   const page = await eventJson(
-    `/boards/${boardId}/events${mine ? "/mine" : ""}?${queryString(values)}`,
+    `/boards/${boardId}/events?${queryString(values)}`,
     eventListWire,
   );
   if (page.items.some((item) => item.boardId !== boardId))
     throw new ApiContractError();
   return page;
-}
-
-export function listBoardEvents(
-  boardId: string,
-  options: BoardEventListOptions = {},
-): Promise<BoardEventPage> {
-  return listEvents(boardId, false, options);
-}
-
-export function listMyBoardEvents(
-  boardId: string,
-  options: BoardEventListOptions = {},
-): Promise<BoardEventPage> {
-  return listEvents(boardId, true, options);
 }
 
 export async function readBoardEvent(

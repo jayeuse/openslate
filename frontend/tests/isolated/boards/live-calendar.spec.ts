@@ -5,11 +5,17 @@ import type {
   BoardEventOccurrencePage,
   BoardEventPage,
 } from "../../../src/components/systems/boards/adapters/board-events-api";
+import { canEditBoardEvent } from "../../../src/components/systems/boards/components/server-backed-board-calendar";
+import { BoardEventSheetBody } from "../../../src/components/systems/boards/components/board-event-sheet";
+import { boardOccurrenceTimeLabel } from "../../../src/components/systems/boards/components/server-board-calendar-display";
 import {
-  ServerBoardCalendarDisplay,
-  calendarDayCountLabel,
-  canEditBoardEvent,
-} from "../../../src/components/systems/boards/components/server-backed-board-calendar";
+  itemsOnDay,
+  occurrenceItems,
+} from "../../../src/components/systems/boards/domain/calendar-items";
+import {
+  shiftAnchor,
+  viewWindow,
+} from "../../../src/components/systems/boards/domain/calendar-dates";
 import {
   prepareBoardEventLifecycleAction,
   ServerArchivedBoardEventsDisplay,
@@ -22,8 +28,6 @@ import {
   prepareBoardEventConflictRetry,
 } from "../../../src/components/systems/boards/components/server-backed-board-event-editor";
 import {
-  calendarWindowForMonth,
-  shiftCalendarMonth,
   transitionCalendarState,
   type CalendarState,
 } from "../../../src/components/systems/boards/hooks/use-server-board-events";
@@ -65,15 +69,29 @@ const page: BoardEventOccurrencePage = {
   items: [visibleOccurrence],
   pagination: { limit: 100, offset: 0, count: 1, total: 1, hasMore: false },
   boardRevision: 1,
+  nextOccurrence: null,
 };
 
-test("calendar month navigation requests one inclusive bounded month", () => {
-  expect(calendarWindowForMonth("2026-09")).toMatchObject({
+test("calendar views request one inclusive bounded window", () => {
+  expect(viewWindow("month", "2026-09-16", "monday", "2026-09-16")).toEqual({
     start: "2026-09-01",
     end: "2026-09-30",
   });
-  expect(shiftCalendarMonth("2026-12", 1)).toBe("2027-01");
-  expect(shiftCalendarMonth("2026-01", -1)).toBe("2025-12");
+  expect(viewWindow("week", "2026-09-16", "monday", "2026-09-16")).toEqual({
+    start: "2026-09-14",
+    end: "2026-09-20",
+  });
+  expect(viewWindow("week", "2026-09-16", "sunday", "2026-09-16")).toEqual({
+    start: "2026-09-13",
+    end: "2026-09-19",
+  });
+  expect(viewWindow("upcoming", "2026-01-01", "monday", "2026-09-16")).toEqual({
+    start: "2026-09-16",
+    end: "2026-10-27",
+  });
+  expect(shiftAnchor("month", "2026-12-15", 1)).toBe("2027-01-01");
+  expect(shiftAnchor("month", "2026-01-31", -1)).toBe("2025-12-01");
+  expect(shiftAnchor("week", "2026-09-14", 1)).toBe("2026-09-21");
 });
 
 test("calendar appends the next page only while Board revision and occurrence total are stable", async () => {
@@ -115,107 +133,19 @@ test("calendar appends the next page only while Board revision and occurrence to
   ).toBeNull();
 });
 
-test("calendar compact default follows the 1024px boundary", async () => {
-  const calendarModule =
-    await import("../../../src/components/systems/boards/components/server-backed-board-calendar");
-  const defaultView = calendarModule.defaultCalendarViewForViewport as (
-    compact: boolean,
-  ) => "agenda" | "month";
-  expect(defaultView(true)).toBe("agenda");
-  expect(defaultView(false)).toBe("month");
+test("calendar places only returned occurrences, on every day of an all-day range", () => {
+  const items = occurrenceItems(page.items, "board:calendar");
+  expect(itemsOnDay(items, "2026-09-15").map((item) => item.title)).toEqual([
+    "Visible planning session",
+  ]);
+  expect(itemsOnDay(items, "2026-09-17")).toEqual([]);
+  expect(
+    boardOccurrenceTimeLabel(visibleOccurrence, {
+      locale: "en-US",
+      timezone: "UTC",
+    }),
+  ).toBe("All day · Mon, Sep 14–Wed, Sep 16");
 });
-
-test("calendar renders only returned occurrences and marks all-day range", () => {
-  const html = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page,
-      window: calendarWindowForMonth("2026-09"),
-      date: "2026-09-15",
-    }),
-  );
-  expect(html).toContain("Visible planning session");
-  expect(html).toContain("All day");
-  expect(html).toContain("Sep 15");
-  expect(html).not.toContain("Hidden payroll review");
-  expect(html).not.toContain("sample-board");
-  const afterRange = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page,
-      window: calendarWindowForMonth("2026-09"),
-      date: "2026-09-17",
-    }),
-  );
-  expect(afterRange).not.toContain("Visible planning session");
-});
-
-test("calendar shows an edit action only for an explicitly authorized returned event", () => {
-  const window = calendarWindowForMonth("2026-09");
-  const allowed = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page,
-      window,
-      date: "2026-09-15",
-      canEditEvent: () => true,
-      onEditEvent: () => undefined,
-    }),
-  );
-  expect(allowed).toContain("Edit Visible planning session");
-  const denied = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page,
-      window,
-      date: "2026-09-15",
-      canEditEvent: () => false,
-      onEditEvent: () => undefined,
-    }),
-  );
-  expect(denied).not.toContain("Edit Visible planning session");
-  const noAccess = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page,
-      window,
-      date: "2026-09-15",
-    }),
-  );
-  expect(noAccess).not.toContain("Edit Visible planning session");
-});
-
-test("calendar renders archive only when the supplied event policy allows it", () => {
-  const window = calendarWindowForMonth("2026-09");
-  const manager = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page,
-      window,
-      date: "2026-09-15",
-      canEditEvent: () => true,
-      onEditEvent: () => undefined,
-      canArchiveEvent: () => true,
-      onArchiveEvent: () => undefined,
-    }),
-  );
-  expect(manager).toContain("Archive Visible planning session");
-  const editor = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page,
-      window,
-      date: "2026-09-15",
-      canEditEvent: () => true,
-      onEditEvent: () => undefined,
-      canArchiveEvent: () => false,
-      onArchiveEvent: () => undefined,
-    }),
-  );
-  expect(editor).toContain("Edit Visible planning session");
-  expect(editor).not.toContain("Archive Visible planning session");
-});
-
 test("event edit authority requires current Board edit and author or manager", () => {
   const event = visibleOccurrence.event;
   const author = {
@@ -637,25 +567,18 @@ test("event editor requires an explicit UTC offset for ambiguous local times", (
   });
 });
 
-test("calendar renders returned external event links as safe labelled anchors", () => {
-  const linked = {
-    ...visibleOccurrence,
-    event: {
-      ...visibleOccurrence.event,
-      links: [
-        {
-          label: "Safety <script>guide</script>",
-          url: "https://example.org/guide?a=1&b=2",
-        },
-      ],
-    },
-  };
+test("the event sheet renders returned external links as safe labelled anchors", () => {
   const html = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page: { ...page, items: [linked] },
-      window: calendarWindowForMonth("2026-09"),
-      date: "2026-09-15",
+    createElement(BoardEventSheetBody, {
+      event: {
+        ...visibleOccurrence.event,
+        links: [
+          {
+            label: "Safety <script>guide</script>",
+            url: "https://example.org/guide?a=1&b=2",
+          },
+        ],
+      },
     }),
   );
   expect(html).toContain("Safety &lt;script&gt;guide&lt;/script&gt;");
@@ -665,69 +588,18 @@ test("calendar renders returned external event links as safe labelled anchors", 
   expect(html).toContain('referrerPolicy="no-referrer"');
   expect(html).not.toContain("<script>");
 });
-
-test("calendar shows returned event details as escaped plain text", () => {
-  const detailed = {
-    ...visibleOccurrence,
-    event: {
-      ...visibleOccurrence.event,
-      details: "Bring the <safety> checklist.",
-    },
-  };
+test("the event sheet shows returned details as escaped plain text", () => {
   const html = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page: { ...page, items: [detailed] },
-      window: calendarWindowForMonth("2026-09"),
-      date: "2026-09-15",
+    createElement(BoardEventSheetBody, {
+      event: {
+        ...visibleOccurrence.event,
+        details: "Bring the <safety> checklist.",
+      },
     }),
   );
   expect(html).toContain("Bring the &lt;safety&gt; checklist.");
   expect(html).not.toContain("<safety>");
 });
-
-test("calendar keeps Agenda details inline and offers compact event details on demand", () => {
-  const detailed = {
-    ...visibleOccurrence,
-    event: {
-      ...visibleOccurrence.event,
-      details: "Bring the planning checklist.",
-      location: "Room 3",
-    },
-  };
-  const detailedPage = { ...page, items: [detailed] };
-  const window = calendarWindowForMonth("2026-09");
-  const agenda = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page: detailedPage,
-      window,
-      canEditEvent: () => true,
-      onEditEvent: () => undefined,
-    }),
-  );
-  expect(agenda).toContain("Bring the planning checklist.");
-  expect(agenda).toContain("Edit event");
-  expect(agenda).not.toContain("<details");
-
-  const compactProps = {
-    region: { locale: "en-US", timezone: "UTC" },
-    page: detailedPage,
-    window,
-    date: "2026-09-14",
-    compact: true,
-    canEditEvent: () => true,
-    onEditEvent: () => undefined,
-  };
-  const selectedDay = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, compactProps),
-  );
-  expect(selectedDay).toContain("Visible planning session");
-  expect(selectedDay).toContain("Room 3");
-  expect(selectedDay).toContain("View event");
-  expect(selectedDay).toContain("<details");
-});
-
 test("timed occurrence displays its event timezone without changing its date", () => {
   const timed: BoardEventOccurrencePage["items"][number] = {
     ...visibleOccurrence,
@@ -745,20 +617,20 @@ test("timed occurrence displays its event timezone without changing its date", (
       title: "Timed planning session",
     },
   };
-  const html = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page: { ...page, items: [timed] },
-      window: calendarWindowForMonth("2026-09"),
-    }),
-  );
-  expect(html).toContain("Timed planning session");
-  expect(html).toContain("Sep 14");
-  expect(html).toContain("9:00");
-  expect(html).toContain("10:00");
-  expect(html).toContain("Asia/Manila");
+  const label = boardOccurrenceTimeLabel(timed, {
+    locale: "en-US",
+    timezone: "UTC",
+  });
+  expect(label).toContain("Sep 14");
+  expect(label).toContain("9:00");
+  expect(label).toContain("10:00");
+  expect(label).toContain("Asia/Manila");
+  expect(
+    itemsOnDay(occurrenceItems([timed], "board:calendar"), "2026-09-14").map(
+      (item) => item.title,
+    ),
+  ).toEqual(["Timed planning session"]);
 });
-
 test("overnight timed occurrence appears on the next local day across months, except at exclusive end", () => {
   const overnight: BoardEventOccurrencePage["items"][number] = {
     ...visibleOccurrence,
@@ -776,52 +648,14 @@ test("overnight timed occurrence appears on the next local day across months, ex
       title: "Overnight handoff",
     },
   };
-  const september = calendarWindowForMonth("2026-09");
-  const onSeptemberFirst = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page: { ...page, items: [overnight] },
-      window: september,
-      date: "2026-09-01",
-    }),
-  );
-  expect(onSeptemberFirst).toContain("Overnight handoff");
-  expect(onSeptemberFirst).toContain("Aug 31");
-  expect(onSeptemberFirst).toContain("Sep 1");
-  const endsAtMidnight = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page: {
-        ...page,
-        items: [{ ...overnight, end: "2026-08-31T16:00:00Z" }],
-      },
-      window: september,
-      date: "2026-09-01",
-    }),
-  );
-  expect(endsAtMidnight).not.toContain("Overnight handoff");
+  const titles = (occurrence: typeof overnight) =>
+    itemsOnDay(
+      occurrenceItems([occurrence], "board:calendar"),
+      "2026-09-01",
+    ).map((item) => item.title);
+  expect(titles(overnight)).toEqual(["Overnight handoff"]);
+  expect(titles({ ...overnight, end: "2026-08-31T16:00:00Z" })).toEqual([]);
 });
-
-test("partial occurrence page never presents exact day counts or a confirmed empty day", () => {
-  const partial: BoardEventOccurrencePage = {
-    ...page,
-    pagination: { ...page.pagination, total: 101, hasMore: true },
-  };
-  expect(calendarDayCountLabel(0, true)).toContain("incomplete");
-  expect(calendarDayCountLabel(1, true)).toContain("At least 1 event");
-  expect(calendarDayCountLabel(1, false)).toBe("1 event");
-  const html = renderToStaticMarkup(
-    createElement(ServerBoardCalendarDisplay, {
-      region: { locale: "en-US", timezone: "UTC" },
-      page: partial,
-      window: calendarWindowForMonth("2026-09"),
-      date: "2026-09-17",
-    }),
-  );
-  expect(html).toContain("may be available");
-  expect(html).not.toContain("No events on this day.");
-});
-
 test("calendar clears switched or denied content and ignores stale response", () => {
   const empty: CalendarState = {
     key: null,

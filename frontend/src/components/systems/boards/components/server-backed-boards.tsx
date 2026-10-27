@@ -43,10 +43,13 @@ import {
   ServerBackedBoardPosts,
   type PostParams,
 } from "./server-backed-board-posts";
-import { ServerBackedBoardCalendar } from "./server-backed-board-calendar";
+import {
+  ServerBackedBoardCalendar,
+  type BoardCalendarParams,
+} from "./server-backed-board-calendar";
 import { ServerBackedBoardManagement } from "./server-backed-board-management";
 import { BoardDirectory } from "./board-directory";
-import { BoardPageHeader } from "./board-page-header";
+import { BoardPageHeader, boardPageTitle } from "./board-page-header";
 import { BoardEmpty, ConfirmAction } from "./ui";
 import {
   canonicalBoardUrl,
@@ -288,10 +291,21 @@ function ServerBackedBoardsContent() {
     },
     [requestNavigation, router, search],
   );
-  const selectBoardContent = (
-    kind: "post" | "event",
-    contentId: string | null,
-  ) => updateBoardParams({ [kind]: contentId });
+  // The calendar's view, Show filter, and event sheet keep any draft (the
+  // editor is a modal dialog), so they skip the unsaved-changes guard.
+  const updateCalendarParams = useCallback(
+    (changes: BoardCalendarParams) => {
+      const next = new URLSearchParams(search);
+      for (const [name, value] of Object.entries(changes)) {
+        if (value === undefined) continue;
+        if (value === null) next.delete(name);
+        else next.set(name, value);
+      }
+      const href = `/boards?${next.toString()}` as Route;
+      if (href !== `/boards?${search}`) router.replace(href, { scroll: false });
+    },
+    [router, search],
+  );
   const updatePostParams = useCallback(
     (params: PostParams) => updateBoardParams(params),
     [updateBoardParams],
@@ -607,7 +621,19 @@ function ServerBackedBoardsContent() {
                 refreshKey={resource.detail.sequence}
                 onDraftStateChange={onCalendarDraftStateChange}
                 selectedEventId={searchParams.get("event")}
-                onCloseSelectedEvent={() => selectBoardContent("event", null)}
+                view={searchParams.get("view")}
+                show={searchParams.get("show")}
+                onParams={updateCalendarParams}
+                calendarName={boardPageTitle(board)}
+                departmentIndex={departmentIndex >= 0 ? departmentIndex : null}
+                departmentIndexOf={(departmentId) => {
+                  if (isRefusal(departments.error)) return null;
+                  const index =
+                    departments.data?.items.findIndex(
+                      (entry) => entry.id === departmentId,
+                    ) ?? -1;
+                  return index >= 0 ? index : null;
+                }}
               />
             ) : (
               <ServerBackedBoardPosts

@@ -5,7 +5,6 @@ import {
   purgeBoardEvent,
   listBoardEventOccurrences,
   listBoardEvents,
-  listMyBoardEvents,
   readBoardEvent,
   restoreBoardEvent,
   updateBoardEvent,
@@ -129,16 +128,6 @@ describeContracts("Boards: events, posts, files and record links", [
       }),
     responses: {
       "GET /api/boards/{board_id}/events": {
-        items: [timedEvent],
-        pagination: page,
-      },
-    },
-  },
-  {
-    name: "listMyBoardEvents",
-    run: () => listMyBoardEvents(boardId, { search: "pump" }),
-    responses: {
-      "GET /api/boards/{board_id}/events/mine": {
         items: [timedEvent],
         pagination: page,
       },

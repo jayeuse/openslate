@@ -19,6 +19,7 @@ const entityLabels: Record<string, readonly [string, string]> = {
     "post revision attachments",
   ],
   board_record_links: ["Board link", "Board links"],
+  board_calendar_sources: ["calendar record source", "calendar record sources"],
   board_post_revision_record_links: [
     "post revision link",
     "post revision links",

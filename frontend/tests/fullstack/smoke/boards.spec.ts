@@ -83,15 +83,22 @@ test("A Board calendar shows a seeded event in its month @boards", async ({
     `/boards?board=${encodeURIComponent(sales.id)}&section=calendar`,
   );
   const calendar = page.getByRole("region", { name: "Board calendar" });
-  await page.getByRole("button", { name: "Agenda" }).click();
   const move = page.getByRole("button", {
     name: steps < 0 ? "Previous month" : "Next month",
+    exact: true,
   });
   for (let step = 0; step < Math.abs(steps); step += 1) await move.click();
   await expect(
     calendar.getByRole("heading", { name: target, exact: true }),
   ).toBeVisible();
-  await expect(calendar.getByText(seeded.title).first()).toBeVisible();
+  // A one-day seeded event is a pill in its day, or behind that day's
+  // "+n more" when the day is full.
+  await expect(
+    calendar
+      .getByRole("button", { name: `${seeded.title},` })
+      .or(calendar.getByRole("button", { name: / more on / }))
+      .first(),
+  ).toBeVisible();
 });
 
 type SeededAttachment = { id: string; filename: string };
