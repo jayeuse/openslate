@@ -160,11 +160,14 @@ function SettingsInstance(props: Props) {
   // Archive and Restore swap one button for the other, and the access check
   // that follows a board change redraws Details: focus waits for the new
   // button and goes to it (R5).
-  // After the action, Details waits for the access check the board change
-  // starts ("check"), then draws again ("after"): focus moves then.
-  const [focusLifecycle, setFocusLifecycle] = useState<
-    "check" | "after" | null
-  >(null);
+  // After the action, focus waits for an access check that completes after
+  // the board change (a count, so a check that loads and settles between two
+  // renders still counts), then moves.
+  const [accessChecks, setAccessChecks] = useState(0);
+  const accessChecksRef = useRef(0);
+  /** The board whose management access is known; a re-check keeps it. */
+  const accessFor = useRef<string | null>(null);
+  const [focusLifecycle, setFocusLifecycle] = useState<number | null>(null);
   const lifecycleAction = useCallback(
     () =>
       tabsRef.current
@@ -281,7 +284,9 @@ function SettingsInstance(props: Props) {
     if (!open || deniedRef.current) return;
     let current = true;
     const request = ++accessRequest.current;
-    setAccess("loading");
+    // A re-check of the same board keeps Details drawn (last good), so the
+    // button that holds focus is not swapped for the loading frame.
+    if (accessFor.current !== incomingBoard.id) setAccess("loading");
     void getMyBoardAccess(incomingBoard.id).then(
       (permissions) => {
         if (!current || request !== accessRequest.current || deniedRef.current)
@@ -294,10 +299,14 @@ function SettingsInstance(props: Props) {
           return;
         }
         setAccess("ready");
+        accessFor.current = incomingBoard.id;
+        accessChecksRef.current += 1;
+        setAccessChecks(accessChecksRef.current);
       },
       (failure: unknown) => {
         if (!current || request !== accessRequest.current || deniedRef.current)
           return;
+        accessFor.current = null;
         if (!handleDenied(failure)) setAccess("error");
       },
     );
@@ -308,14 +317,27 @@ function SettingsInstance(props: Props) {
   }, [open, incomingBoard, accessRetry, handleDenied]);
 
   useEffect(() => {
-    if (focusLifecycle === "check" && access === "loading")
-      setFocusLifecycle("after");
-    if (focusLifecycle !== "after" || access !== "ready") return;
+    if (
+      focusLifecycle === null ||
+      access !== "ready" ||
+      accessChecks <= focusLifecycle
+    )
+      return;
     const target = lifecycleAction();
     if (!target) return;
     target.focus();
-    setFocusLifecycle(null);
-  }, [focusLifecycle, access, board, lifecycleAction]);
+    // A button that a draft re-sync disables for a render cannot take focus
+    // yet; the next render tries again.
+    if (document.activeElement === target) setFocusLifecycle(null);
+  }, [
+    focusLifecycle,
+    access,
+    accessChecks,
+    board,
+    draft,
+    conflict,
+    lifecycleAction,
+  ]);
 
   const view: BoardManagementView = {
     board,
@@ -698,7 +720,7 @@ function SettingsInstance(props: Props) {
       setLifecycleNotice(
         action === "archive" ? "Board archived." : "Board restored.",
       );
-      setFocusLifecycle("check");
+      setFocusLifecycle(accessChecksRef.current);
 
       props.onUpdated(changed);
     } catch (failure) {

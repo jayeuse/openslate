@@ -371,9 +371,14 @@ export function ServerBoardManagementDisplay({
               variant="outline"
               className={`${control} self-start`}
               data-lifecycle-action=""
-              disabled={view.pending || view.conflict || dirty}
+              // Locked while a save runs but focusable: after Restore this
+              // button takes Restore's place and focus moves to it (R5).
+              aria-disabled={view.pending || undefined}
+              disabled={view.conflict || dirty}
               aria-describedby={dirty ? `${id}-archive-reason` : undefined}
-              onClick={onArchive}
+              onClick={() => {
+                if (!view.pending) onArchive();
+              }}
             >
               Archive board
             </Button>

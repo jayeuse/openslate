@@ -441,7 +441,8 @@ test("at 1280 a one-day all-day block in Week wraps its title to two lines, as M
   await page.setViewportSize({ width: 1280, height: 720 });
   const renewal = wireEvent({
     id: "00000000-0000-4000-8000-000000000e91",
-    title: "Customer account renewal review",
+    // Short words wrap to two lines across column widths (CI draws scrollbars).
+    title: "Quarterly plan and budget talk",
     author: "00000000-0000-4000-8000-000000000e92",
     allDay: true,
     start: "2026-11-17",
@@ -454,7 +455,7 @@ test("at 1280 a one-day all-day block in Week wraps its title to two lines, as M
   });
   await page.goto(calendarHref("&view=week"));
   const block = page.getByRole("button", {
-    name: /^Customer account renewal review,.*all day$/,
+    name: /^Quarterly plan and budget talk,.*all day$/,
   });
   await expect(block).toBeVisible();
   // The whole title shows: nothing is cut across or below.
