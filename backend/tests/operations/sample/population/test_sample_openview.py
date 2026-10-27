@@ -163,7 +163,7 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
     ]
 
     assert counts == {
-        "views": 36,
+        "views": 18,
         "dashboards": 6,
         "dashboard_widgets": 24,
         "reports": 12,
@@ -171,13 +171,10 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
         "schedules": 12,
         "disabled_schedules": 12,
     }
-    assert len(view_bodies) == 36
+    assert len(view_bodies) == 18
     assert {body["presentation"]["layout"] for body in view_bodies} == {
         "table",
         "grid",
-        "kanban",
-        "calendar",
-        "timeline",
         "gallery",
     }
     assert all(body["definition"]["columns"] for body in view_bodies)

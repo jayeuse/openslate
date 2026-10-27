@@ -400,7 +400,7 @@ def test_plan_summary_reports_exact_profile_counts_and_fixed_supporting_catalogu
         "kanban_labels": 3,
         "kanban_cards": 12,
         "kanban_checklist_items": 7,
-        "views": 36,
+        "views": 18,
         "dashboards": 6,
         "dashboard_widgets": 24,
         "reports": 12,

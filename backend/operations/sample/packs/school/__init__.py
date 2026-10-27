@@ -189,7 +189,7 @@ PACK = OrganizationPack(
             "kanban_labels": 3,
             "kanban_cards": 12,
             "kanban_checklist_items": 7,
-            "views": 42,
+            "views": 21,
             "dashboards": 7,
             "dashboard_widgets": 28,
             "reports": 12,

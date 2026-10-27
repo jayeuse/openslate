@@ -46,36 +46,19 @@ class _FieldSession:
         return _FieldRows(self.fields)
 
 
-def test_old_non_timeline_presentation_accepts_missing_timeline_keys():
-    presentation = ViewPresentation.model_validate(
-        {
-            "version": 1,
-            "layout": "table",
-            "column_field_ids": [],
-            "pinned_field_ids": [],
-        }
-    )
-
-    assert presentation.timeline_start_field_id is None
-    assert presentation.timeline_end_field_id is None
-    assert presentation.timeline_deadline_field_id is None
-    assert presentation.timeline_progress_field_id is None
-
-
-def test_timeline_accepts_mixed_date_types_and_optional_deadline_progress():
+def test_valid_presentation_reads_its_fields_once_from_the_view_module():
     module_id = uuid7()
     fields = [
+        _field(uuid7(), module_id, FieldType.TEXT),
+        _field(uuid7(), module_id, FieldType.SELECT),
         _field(uuid7(), module_id, FieldType.DATE),
-        _field(uuid7(), module_id, FieldType.DATETIME),
-        _field(uuid7(), module_id, FieldType.DATE),
-        _field(uuid7(), module_id, FieldType.DECIMAL),
     ]
     presentation = ViewPresentation(
-        layout="timeline",
-        timeline_start_field_id=fields[0].id,
-        timeline_end_field_id=fields[1].id,
-        timeline_deadline_field_id=fields[2].id,
-        timeline_progress_field_id=fields[3].id,
+        layout="grid",
+        column_field_ids=[fields[0].id],
+        primary_field_id=fields[0].id,
+        secondary_field_id=fields[1].id,
+        group_by_field_id=fields[2].id,
     )
     session = _FieldSession(fields)
 
@@ -91,50 +74,8 @@ def test_timeline_accepts_mixed_date_types_and_optional_deadline_progress():
     assert "fields.module_id =" in compiled
 
 
-def test_timeline_bounds_are_valid_without_optional_deadline_or_progress():
-    module_id = uuid7()
-    fields = [
-        _field(uuid7(), module_id, FieldType.DATE),
-        _field(uuid7(), module_id, FieldType.DATETIME),
-    ]
-    presentation = ViewPresentation(
-        layout="timeline",
-        timeline_start_field_id=fields[0].id,
-        timeline_end_field_id=fields[1].id,
-    )
-
-    _validate_presentation(
-        _FieldSession(fields),  # type: ignore[arg-type]
-        module_id,
-        presentation,
-        _definition(fields),
-    )
-
-
 _COLUMNS = "Presentation fields must be included in query columns"
 _UNAVAILABLE = "A presentation field is unavailable"
-_CALENDAR = "Calendar presentation requires a date or datetime field"
-_BOUNDS = "Timeline presentation requires start and end fields"
-_INTERVAL = "Timeline interval roles must be date or datetime fields"
-_PROGRESS = "Timeline progress must use a numeric field"
-_TIMELINE = {
-    "layout": "timeline",
-    "timeline_start_field_id": "start",
-    "timeline_end_field_id": "end",
-    "timeline_deadline_field_id": "deadline",
-    "timeline_progress_field_id": "progress",
-}
-_TIMELINE_FIELDS = {
-    "start": FieldType.DATE,
-    "end": FieldType.DATETIME,
-    "deadline": FieldType.DATE,
-    "progress": FieldType.DECIMAL,
-}
-_INTERVAL_ONLY = {
-    "layout": "timeline",
-    "timeline_start_field_id": "start",
-    "timeline_end_field_id": "end",
-}
 
 
 # Each row: the presentation (field roles by name), the module fields the session returns
@@ -159,85 +100,13 @@ _INTERVAL_ONLY = {
             True,
             id="deleted primary field",
         ),
-        pytest.param(
-            {"column_field_ids": ["primary"], "date_field_id": "primary"},
-            {"primary": FieldType.TEXT},
-            ["primary"],
-            _CALENDAR,
-            True,
-            id="calendar on a text field",
-        ),
-        pytest.param(
-            {"layout": "timeline", "timeline_end_field_id": "end"},
-            {},
-            [],
-            _BOUNDS,
-            False,
-            id="timeline without a start",
-        ),
-        pytest.param(
-            {"layout": "timeline", "timeline_start_field_id": "start"},
-            {},
-            [],
-            _BOUNDS,
-            False,
-            id="timeline without an end",
-        ),
-        pytest.param(
-            _TIMELINE,
-            _TIMELINE_FIELDS | {"start": FieldType.TEXT},
-            list(_TIMELINE_FIELDS),
-            _INTERVAL,
-            True,
-            id="text timeline start",
-        ),
-        pytest.param(
-            _TIMELINE,
-            _TIMELINE_FIELDS | {"end": FieldType.BOOLEAN},
-            list(_TIMELINE_FIELDS),
-            _INTERVAL,
-            True,
-            id="boolean timeline end",
-        ),
-        pytest.param(
-            _TIMELINE,
-            _TIMELINE_FIELDS | {"deadline": FieldType.SELECT},
-            list(_TIMELINE_FIELDS),
-            _INTERVAL,
-            True,
-            id="select timeline deadline",
-        ),
-        pytest.param(
-            _TIMELINE,
-            _TIMELINE_FIELDS | {"progress": FieldType.DATE},
-            list(_TIMELINE_FIELDS),
-            _PROGRESS,
-            True,
-            id="date timeline progress",
-        ),
-        pytest.param(
-            _INTERVAL_ONLY,
-            {"start": FieldType.DATE, "end": FieldType.DATETIME},
-            ["start"],
-            _COLUMNS,
-            False,
-            id="timeline end outside the query columns",
-        ),
-        pytest.param(
-            _INTERVAL_ONLY,
-            {"start": (FieldType.DATE, True), "end": FieldType.DATETIME},
-            ["start", "end"],
-            _UNAVAILABLE,
-            True,
-            id="deleted timeline start",
-        ),
     ],
 )
 def test_presentation_refuses_fields_it_cannot_show(
     presentation, fields, columns, message, queried
 ):
     module_id = uuid7()
-    ids = {role: uuid7() for role in ("primary", "start", "end", "deadline", "progress")}
+    ids = {"primary": uuid7()}
     settings = {
         name: [ids[role] for role in value] if isinstance(value, list) else ids.get(value, value)
         for name, value in presentation.items()
@@ -269,7 +138,7 @@ def test_presentation_refuses_fields_it_cannot_show(
     assert bool(session.statements) is queried
 
 
-def test_name_only_noop_preserves_legacy_presentation_without_timeline_keys(monkeypatch):
+def test_name_only_noop_preserves_legacy_presentation_without_newer_keys(monkeypatch):
     from datetime import UTC, datetime
     from unittest.mock import Mock
 
@@ -282,12 +151,7 @@ def test_name_only_noop_preserves_legacy_presentation_without_timeline_keys(monk
     user_id = uuid7()
     module_id = uuid7()
     legacy_presentation = ViewPresentation().model_dump(mode="json")
-    for key in (
-        "timeline_start_field_id",
-        "timeline_end_field_id",
-        "timeline_deadline_field_id",
-        "timeline_progress_field_id",
-    ):
+    for key in ("secondary_field_id", "group_by_field_id"):
         legacy_presentation.pop(key)
     now = datetime.now(UTC)
     view = SavedView(

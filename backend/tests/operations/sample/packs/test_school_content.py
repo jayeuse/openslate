@@ -194,7 +194,7 @@ def test_school_content_covers_each_board_and_names_views_from_real_module_label
     assert set(content.event_details) == set(content.event_titles)
     assert content.reminders == ("start", "15m", "1d")
     assert set(content.layout_names) == set(content.layouts)
-    assert set(content.layouts) == {"table", "grid", "gallery", "kanban", "calendar", "timeline"}
+    assert set(content.layouts) == {"table", "grid", "gallery"}
 
     module = next(item for item in pack.catalog.modules if item.key == "fee_assessments")
     assert content.view_name(module.key, "table").startswith(module.name)

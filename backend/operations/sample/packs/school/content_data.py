@@ -25,7 +25,7 @@ _PROJECTS = (
 )
 
 _POST_STATES = ("draft", "published", "scheduled", "archived")
-_LAYOUTS = ("table", "grid", "gallery", "kanban", "calendar", "timeline")
+_LAYOUTS = ("table", "grid", "gallery")
 _REMINDERS = ("start", "15m", "1d")
 
 # Blank attachments on seeded posts (indexes 0-5 stay visible) and events. None sit on

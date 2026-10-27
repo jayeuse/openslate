@@ -100,13 +100,8 @@ def _view_presentation(
     # The API requires every field a layout uses to be one of the query columns.
     columns = fields[:12]
     ids = [_id(field) for field in columns]
-    date_ids = [_id(field) for field in columns if _kind(field) in _DATE_TYPES]
-    if not date_ids:
-        raise SampleContentError("OpenView layout requires an active date field")
     primary = next((_id(field) for field in columns if _kind(field) in _TEXT_TYPES), ids[0])
     secondary = next((_id(field) for field in columns if _kind(field) == "select"), None)
-    group = secondary or primary
-    numeric = next((_id(field) for field in columns if _kind(field) in _NUMBER_TYPES), None)
     result: dict[str, Any] = {
         "version": 1,
         "layout": layout,
@@ -117,16 +112,7 @@ def _view_presentation(
         "card_size": "comfortable",
         "primary_field_id": primary if layout in {"grid", "gallery"} else None,
         "secondary_field_id": secondary if layout == "grid" else None,
-        "date_field_id": date_ids[0] if layout == "calendar" else None,
-        "timeline_start_field_id": date_ids[0] if layout == "timeline" else None,
-        "timeline_end_field_id": (date_ids[1] if len(date_ids) > 1 else date_ids[0])
-        if layout == "timeline"
-        else None,
-        "timeline_deadline_field_id": date_ids[-1] if layout == "timeline" else None,
-        "timeline_progress_field_id": numeric if layout == "timeline" else None,
-        "date_range": "month",
-        "scale": "month" if layout == "timeline" else None,
-        "group_by_field_id": group if layout == "kanban" else None,
+        "group_by_field_id": None,
     }
     return result
 

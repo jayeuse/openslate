@@ -28,9 +28,6 @@ def test_presentation_uses_bounded_field_id_wire_projection() -> None:
             "card_size": "comfortable",
             "primary_field_id": str(field_id),
             "secondary_field_id": None,
-            "date_field_id": None,
-            "date_range": "quarter",
-            "scale": None,
             "group_by_field_id": None,
         }
     )
@@ -45,15 +42,53 @@ def test_presentation_uses_bounded_field_id_wire_projection() -> None:
         "card_size": "comfortable",
         "primary_field_id": str(field_id),
         "secondary_field_id": None,
-        "date_field_id": None,
-        "timeline_start_field_id": None,
-        "timeline_end_field_id": None,
-        "timeline_deadline_field_id": None,
-        "timeline_progress_field_id": None,
-        "date_range": "quarter",
-        "scale": None,
         "group_by_field_id": None,
     }
+
+
+# BR77: OpenView keeps Table, Grid and Gallery. A removed layout or one of the seven calendar
+# and timeline settings is refused by the request schema, before any route logic runs.
+@pytest.mark.parametrize(
+    ("method", "presentation", "loc", "error_type"),
+    [
+        pytest.param("POST", {"layout": "kanban"}, "layout", "literal_error", id="kanban"),
+        pytest.param("POST", {"layout": "calendar"}, "layout", "literal_error", id="calendar"),
+        pytest.param("PATCH", {"layout": "timeline"}, "layout", "literal_error", id="timeline"),
+        *(
+            pytest.param("POST", {name: value}, name, "extra_forbidden", id=name)
+            for name, value in (
+                ("date_field_id", None),
+                ("timeline_start_field_id", None),
+                ("timeline_end_field_id", None),
+                ("timeline_deadline_field_id", None),
+                ("timeline_progress_field_id", None),
+                ("date_range", "month"),
+                ("scale", None),
+            )
+        ),
+    ],
+)
+def test_removed_layout_or_setting_is_refused_with_422(
+    method: str, presentation: dict[str, object], loc: str, error_type: str
+) -> None:
+    from app.main import create_app
+    from tests.rbac.support import _client
+
+    client = _client(create_app(), _admin())
+    body: dict[str, object] = {"presentation": {"version": 1, **presentation}}
+    if method == "POST":
+        body |= {"module_id": str(uuid7()), "name": "Removed layout", "definition": {}}
+        path = "/api/views"
+    else:
+        body |= {"revision": 1}
+        path = f"/api/views/{uuid7()}"
+
+    response = client.request(method, path, json=body)
+
+    assert response.status_code == 422
+    [error] = response.json()["detail"]
+    assert error["loc"] == ["body", "presentation", loc]
+    assert error["type"] == error_type
 
 
 def test_presentation_rejects_more_than_one_pinned_field() -> None:
@@ -107,7 +142,7 @@ def test_saved_view_changes_keep_definitions_and_layouts_out_of_audit_snapshots(
     snapshot = build_update_snapshot(
         {
             "definition": ({"filters": []}, {"filters": [{"value": "private"}]}),
-            "presentation": ({"layout": "table"}, {"layout": "calendar"}),
+            "presentation": ({"layout": "table"}, {"layout": "gallery"}),
         },
         SavedView.__audit_redacted_fields__,
     )

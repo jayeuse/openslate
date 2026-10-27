@@ -169,9 +169,6 @@ LAYOUT_NAMES = {
     "table": "{module}: all records",
     "grid": "{module} at a glance",
     "gallery": "{module} cards",
-    "kanban": "{module} by status",
-    "calendar": "{module} calendar",
-    "timeline": "{module} schedule",
 }
 
 _MODULE_NAMES = {module.key: module.name for module in _MODULES}

@@ -14,7 +14,7 @@ class ViewPresentation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: Literal[1] = 1
-    layout: Literal["table", "grid", "kanban", "calendar", "timeline", "gallery"] = "table"
+    layout: Literal["table", "grid", "gallery"] = "table"
     column_field_ids: list[UUID] = Field(default_factory=list, max_length=20)
     pinned_field_ids: list[UUID] = Field(default_factory=list, max_length=1)
     density: Literal["comfortable", "compact"] = "comfortable"
@@ -22,13 +22,6 @@ class ViewPresentation(BaseModel):
     card_size: Literal["comfortable", "compact"] = "comfortable"
     primary_field_id: UUID | None = None
     secondary_field_id: UUID | None = None
-    date_field_id: UUID | None = None
-    timeline_start_field_id: UUID | None = None
-    timeline_end_field_id: UUID | None = None
-    timeline_deadline_field_id: UUID | None = None
-    timeline_progress_field_id: UUID | None = None
-    date_range: Literal["week", "month", "quarter", "year"] = "month"
-    scale: Literal["month", "list"] | None = None
     group_by_field_id: UUID | None = None
 
     @model_validator(mode="after")

@@ -31,7 +31,7 @@ _PROJECTS = (
     ("Month-end Close", "finance"),
 )
 
-_LAYOUTS = ("table", "grid", "kanban", "calendar", "timeline", "gallery")
+_LAYOUTS = ("table", "grid", "gallery")
 
 _EVENT_TITLES = (
     "Customer account review",
