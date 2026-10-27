@@ -41,7 +41,7 @@ import type {
 } from "../adapters/views-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
 import { selectOptions } from "../domain/record-form";
-import type { RecordInspectionPage } from "./live-record-inspector";
+import type { RecordInspectionPage } from "@/components/systems/shared/components/record-sheet";
 import type { PendingRecordMove } from "../domain/record-moves";
 
 const GROUP_PAGE_SIZE = 12;

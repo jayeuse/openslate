@@ -1,6 +1,11 @@
 "use client";
 
-import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
+import type {
+  CSSProperties,
+  FocusEvent,
+  KeyboardEvent,
+  ReactNode,
+} from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { Check, FileText, Lock, MoreHorizontal } from "lucide-react";
 import { PersonAvatar } from "@/components/person-avatar";
@@ -14,10 +19,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
+import type { WorkspaceRegion } from "@/lib/date-time";
 import { cn } from "@/lib/utils";
 import type { KanbanCard, KanbanLabel } from "../adapters/board-kanban-schemas";
-import { cardName, isOverdue } from "../domain/kanban";
+import { cardLabel, cardName, dueWords } from "../domain/kanban";
 
 /** A person on a card: their name and avatar, when their card was read. */
 export type KanbanPerson = { name: string; avatarUrl: string | null };
@@ -25,36 +30,6 @@ export type KanbanPerson = { name: string; avatarUrl: string | null };
 /** A chart series color as a CSS value (BR69). */
 export const chartVar = (color: string | null) =>
   color ? `var(--${color})` : "var(--ink-muted)";
-
-export function shortDate(date: string, region: WorkspaceRegion): string {
-  return formatWorkspaceDate(date, region, { month: "short", day: "numeric" });
-}
-
-/** "Due Oct 30", or "Overdue · Oct 22" in warn (BR67). */
-export function dueWords(
-  card: KanbanCard,
-  region: WorkspaceRegion,
-  today: string,
-): { text: string; late: boolean } | null {
-  if (!card.dueOn) return null;
-  const late = isOverdue(card, today);
-  const day = shortDate(card.dueOn, region);
-  return { text: late ? `Overdue · ${day}` : `Due ${day}`, late };
-}
-
-/** The accessible name of a card: its name first, then what it is. */
-export function cardLabel(
-  card: KanbanCard,
-  region: WorkspaceRegion,
-  today: string,
-): string {
-  const due = dueWords(card, region, today);
-  const kind =
-    card.record && !card.record.locked
-      ? `${card.record.moduleName} record`
-      : "objective";
-  return `${cardName(card)}, ${kind}${due ? `, ${due.text.toLocaleLowerCase()}` : ""}`;
-}
 
 export function LabelChip({ label }: { label: KanbanLabel }) {
   return (
@@ -94,6 +69,10 @@ function CardFace({
     const label = labels.get(id);
     return label ? [label] : [];
   });
+  // The fact line shows only with something to say (BR67).
+  const hasFacts = Boolean(
+    record?.status || due || card.checklist.total > 0 || person,
+  );
   return (
     <>
       {record ? (
@@ -111,47 +90,49 @@ function CardFace({
       ) : null}
       <span className="line-clamp-2 font-medium">{cardName(card)}</span>
       {record && record.fields.length > 0 ? (
-        <span className="text-muted-foreground truncate text-[0.8125rem] tabular-nums">
+        <span className="text-muted-foreground truncate text-xs tabular-nums">
           {record.fields
             .slice(0, 2)
             .map((field) => field.value)
             .join(" · ")}
         </span>
       ) : null}
-      <span className="text-muted-foreground flex min-h-[22px] items-center gap-2 text-xs tabular-nums">
-        {record?.status ? (
-          <span className="bg-muted text-foreground inline-flex h-5 items-center rounded-sm px-1.5 font-medium">
-            {record.status.value}
-          </span>
-        ) : null}
-        {due ? (
-          <span className={cn(due.late && "text-warn-text font-medium")}>
-            {due.text}
-          </span>
-        ) : null}
-        {card.checklist.total > 0 ? (
-          <span className="inline-flex items-center gap-1">
-            <Check aria-hidden="true" className="size-3.5" />
-            {card.checklist.done}/{card.checklist.total}
-          </span>
-        ) : null}
-        {person ? (
-          <span className="ml-auto" title={person.name}>
-            <PersonAvatar
-              name={person.name}
-              avatarUrl={person.avatarUrl}
-              className="size-[22px] text-[9px]"
-            />
-          </span>
-        ) : null}
-      </span>
+      {hasFacts ? (
+        <span className="text-muted-foreground flex min-h-[22px] items-center gap-2 text-xs tabular-nums">
+          {record?.status ? (
+            <span className="bg-muted text-foreground inline-flex h-5 items-center rounded-sm px-1.5 font-medium">
+              {record.status.value}
+            </span>
+          ) : null}
+          {due ? (
+            <span className={cn(due.late && "text-warn-text font-medium")}>
+              {due.text}
+            </span>
+          ) : null}
+          {card.checklist.total > 0 ? (
+            <span className="inline-flex items-center gap-1">
+              <Check aria-hidden="true" className="size-3.5" />
+              {card.checklist.done}/{card.checklist.total}
+            </span>
+          ) : null}
+          {person ? (
+            <span className="ml-auto" title={person.name}>
+              <PersonAvatar
+                name={person.name}
+                avatarUrl={person.avatarUrl}
+                className="size-[22px] text-[9px]"
+              />
+            </span>
+          ) : null}
+        </span>
+      ) : null}
     </>
   );
 }
 
 /** The note body, shared by the board and the lifted copy under the pointer. */
 export const noteClass =
-  "bg-card text-foreground border-border flex min-w-0 flex-col gap-1.5 rounded-md border px-2.5 py-2 text-left text-sm shadow-[var(--card-lift,none)]";
+  "bg-card text-foreground border-[var(--card-edge,var(--border))] flex min-w-0 flex-col gap-1.5 rounded-md border px-2.5 py-2 text-left text-sm shadow-[var(--card-lift,none)]";
 
 export type CardDragState = "idle" | "lifted" | "source";
 
@@ -167,7 +148,7 @@ export function KanbanCardOverlay(props: {
     <div
       className={cn(
         noteClass,
-        "w-52 -rotate-[1.5deg] border-[var(--focus)] shadow-[var(--lift-raised)]",
+        "w-full -rotate-[1.5deg] border-[var(--focus)] shadow-[var(--lift-raised)]",
       )}
     >
       <LockedFace />
@@ -176,7 +157,7 @@ export function KanbanCardOverlay(props: {
     <div
       className={cn(
         noteClass,
-        "w-52 -rotate-[1.5deg] cursor-grabbing border-[var(--focus)] shadow-[var(--lift-raised)]",
+        "w-full -rotate-[1.5deg] cursor-grabbing border-[var(--focus)] shadow-[var(--lift-raised)]",
       )}
     >
       <CardFace {...props} />
@@ -186,7 +167,7 @@ export function KanbanCardOverlay(props: {
 
 function LockedFace() {
   return (
-    <span className="text-muted-foreground flex items-center gap-1.5 text-[0.8125rem]">
+    <span className="text-muted-foreground flex items-center gap-1.5 text-sm">
       <Lock aria-hidden="true" className="size-3.5" />
       No access to this record
     </span>
@@ -209,6 +190,8 @@ export type KanbanCardProps = {
   describedBy: string;
   onOpen: (card: KanbanCard) => void;
   onKey: (card: KanbanCard, event: KeyboardEvent<HTMLElement>) => void;
+  /** Focus left a lifted card: the move is cancelled. */
+  onLiftLost: (card: KanbanCard) => void;
   onMoveTo: (card: KanbanCard, stageId: string) => void;
   onToggleLabel: (card: KanbanCard, labelId: string) => void;
   onArchive: (card: KanbanCard) => void;
@@ -240,6 +223,18 @@ export function KanbanCardNote(props: KanbanCardProps) {
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (canWrite) props.onKey(card, event);
   };
+  // A lift ends when focus leaves the card, except into its own menu.
+  const onBlur = (event: FocusEvent<HTMLElement>) => {
+    if (!lifted) return;
+    const next = event.relatedTarget;
+    if (
+      next instanceof Element &&
+      (event.currentTarget.contains(next) ||
+        next.closest(`[data-card-menu="${CSS.escape(card.id)}"]`))
+    )
+      return;
+    props.onLiftLost(card);
+  };
   // Space lifts instead of opening: a button would also click on key up.
   const onKeyUp = (event: KeyboardEvent<HTMLElement>) => {
     if (canWrite && event.key === " ") event.preventDefault();
@@ -249,7 +244,10 @@ export function KanbanCardNote(props: KanbanCardProps) {
     <div
       ref={setNodeRef}
       data-kanban-card={card.id}
+      data-card-note=""
       className="group/card relative min-w-0"
+      // Focus leaving the card and its menu ends a keyboard lift.
+      onBlur={onBlur}
       {...(locked ? {} : listeners)}
     >
       {locked ? (
@@ -276,7 +274,15 @@ export function KanbanCardNote(props: KanbanCardProps) {
           <button
             type="button"
             data-kanban-focus={card.id}
-            aria-label={cardLabel(card, props.region, props.today)}
+            aria-label={cardLabel(card, {
+              region: props.region,
+              today: props.today,
+              labelNames: card.labelIds.flatMap((id) => {
+                const label = props.labelMap.get(id);
+                return label ? [label.name] : [];
+              }),
+              assignee: props.person?.name ?? null,
+            })}
             aria-describedby={canWrite ? props.describedBy : undefined}
             className={cn(
               frame,
@@ -325,14 +331,20 @@ function CardMenu({
             size="icon"
             aria-label={`Card actions for ${name}`}
             disabled={pending}
-            className="absolute top-1 right-1 size-11 md:size-7 md:opacity-0 md:group-hover/card:opacity-100 md:focus-visible:opacity-100 md:data-popup-open:opacity-100"
+            // Hidden at rest only where a pointer can hover (wide screens);
+            // tablets and phones always show it at 44px.
+            className="absolute top-1 right-1 size-11 xl:size-8 xl:[@media(hover:hover)]:[[data-card-note]:not(:hover)_&:not(:focus-visible):not([data-popup-open])]:opacity-0"
             onPointerDown={(event) => event.stopPropagation()}
           />
         }
       >
         <MoreHorizontal aria-hidden="true" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="slim-ui min-w-48">
+      <DropdownMenuContent
+        align="end"
+        className="slim-ui min-w-48"
+        data-card-menu={card.id}
+      >
         <DropdownMenuGroup>
           <DropdownMenuLabel className="text-muted-foreground px-2 py-1.5 text-xs font-medium">
             Move to stage

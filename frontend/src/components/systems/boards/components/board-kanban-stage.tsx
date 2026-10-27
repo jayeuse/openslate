@@ -34,7 +34,7 @@ import {
   type ChartColor,
   type KanbanStage,
 } from "../adapters/board-kanban-schemas";
-import { stageCount } from "../domain/kanban";
+import { STARTER_STAGES, stageCount } from "../domain/kanban";
 import { chartVar } from "./board-kanban-card";
 
 /** The chart series by name: the name always stands beside the color (BR69). */
@@ -66,7 +66,7 @@ function HeaderFace({ stage, count }: { stage: KanbanStage; count: number }) {
       <span className="min-w-0 truncate font-semibold">{stage.name}</span>
       <span
         className={cn(
-          "text-muted-foreground ml-auto text-[0.8125rem] whitespace-nowrap tabular-nums",
+          "text-muted-foreground ml-auto text-xs whitespace-nowrap tabular-nums",
           shown.over && "text-warn-text font-semibold",
         )}
       >
@@ -248,7 +248,7 @@ function StageSettings({
         <span aria-hidden="true" className="text-muted-foreground text-xs">
           Color
         </span>
-        <span className="flex items-center gap-1">
+        <span className="flex flex-wrap items-center gap-1">
           {[...CHART_COLORS, null].map((color) => {
             const label = color ? COLOR_NAMES[color] : "No color";
             const checked = stage.color === color;
@@ -256,7 +256,7 @@ function StageSettings({
               <label
                 key={color ?? "none"}
                 title={label}
-                className="grid size-11 cursor-pointer place-items-center rounded-full xl:size-6"
+                className="grid size-11 shrink-0 cursor-pointer place-items-center rounded-full xl:size-6"
               >
                 <input
                   type="radio"
@@ -614,21 +614,21 @@ export function KanbanSetup({
   return (
     <div className="flex h-full min-h-60 flex-col gap-4 p-3">
       <div
-        className="grid min-h-0 flex-1 grid-cols-3 gap-2.5"
+        className="grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(0,17rem))] gap-2.5"
         aria-hidden="true"
       >
-        {["To do", "Doing", "Done"].map((name, index) => (
+        {STARTER_STAGES.map(({ name, color }) => (
           <div
             key={name}
             className="flex flex-col gap-2 rounded-md border-[1.5px] border-dashed border-[var(--rule-strong)] p-2"
           >
             <span
               className="text-muted-foreground flex h-8 items-center gap-2 border-b-2 px-1 text-sm font-semibold"
-              style={{ borderColor: chartVar(CHART_COLORS[index]) }}
+              style={{ borderColor: chartVar(color) }}
             >
               <span
                 className="size-[9px] rounded-full"
-                style={{ background: chartVar(CHART_COLORS[index]) }}
+                style={{ background: chartVar(color) }}
               />
               {name}
             </span>

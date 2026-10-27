@@ -91,7 +91,8 @@ alert preferences can narrow but never widen the shared policy.
 OpenView's live Record inspector displays field values read-only until an
 authorized writer opens Edit. Its Details, linked-record, and Files actions
 enforce current permissions, including attachment upload and archive
-([`live-record-inspector.tsx`](../../frontend/src/components/systems/openview/components/live-record-inspector.tsx)).
+([`record-sheet.tsx`](../../frontend/src/components/systems/shared/components/record-sheet.tsx)).
+OpenView and the Boards Kanban (a record card's sheet) share that one sheet.
 Sandbox Test evaluates temporary values against the draft; it does not create or
 change live Records.
 

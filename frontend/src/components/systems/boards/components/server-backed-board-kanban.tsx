@@ -34,6 +34,7 @@ import {
 } from "../domain/kanban-keyboard";
 import { useCalendarPhone } from "../hooks/use-calendar-media";
 import { useKanbanCommands } from "../hooks/use-kanban-commands";
+import { useAssigneeChoices } from "../hooks/use-card-sheet";
 import {
   kanbanCellKey,
   useKanbanBoardData,
@@ -43,7 +44,7 @@ import {
   UNGROUPED,
   type KanbanTarget,
 } from "./board-kanban-board";
-import { KanbanCardSummary } from "./board-kanban-card-summary";
+import { KanbanCardSheet } from "./board-card-sheet";
 import { KanbanComposer } from "./board-kanban-composer";
 import {
   AddStage,
@@ -150,7 +151,14 @@ export function ServerBackedBoardKanban({
   };
 
   // ---- Moves ----
-  const [keyboard, setKeyboard] = useState<KeyboardMove>(IDLE_MOVE);
+  const [keyboard, setKeyboardState] = useState<KeyboardMove>(IDLE_MOVE);
+  // The move as the last key left it, for a blur that comes before the
+  // next render (a drop moves focus).
+  const keyboardNow = useRef<KeyboardMove>(IDLE_MOVE);
+  const setKeyboard = (state: KeyboardMove) => {
+    keyboardNow.current = state;
+    setKeyboardState(state);
+  };
   const [liftLane, setLiftLane] = useState(UNGROUPED);
   const [announcement, setAnnouncement] = useState("");
   const [focusCard, setFocusCard] = useState<string | null>(null);
@@ -227,6 +235,15 @@ export function ServerBackedBoardKanban({
         slot: step.drop.slot,
       });
   }
+  /** Focus left the lifted card: put it back, as Escape does (WCAG 2.1.1). */
+  function onLiftLost(card: KanbanCard) {
+    const now = keyboardNow.current;
+    if (now.kind !== "lifted" || now.cardId !== card.id) return;
+    const step = keyboardStep(now, { type: "cancel" }, layoutFor(liftLane));
+    setKeyboard(step.state);
+    hold(false);
+    if (step.announcement) setAnnouncement(step.announcement);
+  }
   // A lifted card that leaves the board (a live refresh) is put back.
   const liftedCard =
     keyboard.kind === "lifted"
@@ -235,7 +252,8 @@ export function ServerBackedBoardKanban({
   const liftLost = keyboard.kind === "lifted" && !liftedCard;
   useEffect(() => {
     if (!liftLost) return;
-    setKeyboard(IDLE_MOVE);
+    keyboardNow.current = IDLE_MOVE;
+    setKeyboardState(IDLE_MOVE);
     holdRef.current = false;
   }, [liftLost]);
   const lifted =
@@ -255,12 +273,19 @@ export function ServerBackedBoardKanban({
   const [archiving, setArchiving] = useState<KanbanStage | null>(null);
   const [editingLabels, setEditingLabels] = useState(false);
   const describedBy = useId();
-  const boardRef = useRef<HTMLDivElement>(null);
   const setFilters = (changes: Partial<KanbanFilters>) => {
     const next = kanbanFilterParams({ ...filters, ...changes });
     onParams({ ...next, label: next.label });
   };
-  const openCard = (card: KanbanCard) => openKanbanCard(card, onParams);
+  // A locked card never opens (BR63); any other opens its sheet (BR64).
+  const openCard = (card: KanbanCard) => {
+    if (!card.record?.locked) onParams({ card: card.id });
+  };
+  const choices = useAssigneeChoices({
+    boardId,
+    enabled: canWrite,
+    assigned: peopleList,
+  });
   const moveStage = (stage: KanbanStage, offset: -1 | 1) => {
     const ids = stages.map((item) => item.id);
     const from = ids.indexOf(stage.id);
@@ -291,16 +316,19 @@ export function ServerBackedBoardKanban({
   });
 
   return (
-    <div className="flex min-w-0 flex-col gap-2.5 xl:min-h-0 xl:flex-1">
-      <KanbanToolbar
-        filters={filters}
-        onFilters={setFilters}
-        people={peopleList}
-        labels={labels}
-        manage={manage}
-        phone={phone}
-        onEditLabels={() => setEditingLabels(true)}
-      />
+    <div className="slim-ui flex min-w-0 flex-col gap-2.5 xl:min-h-0 xl:flex-1">
+      {/* Filters need stages to filter; the setup state stands alone. */}
+      {stages.length > 0 ? (
+        <KanbanToolbar
+          filters={filters}
+          onFilters={setFilters}
+          people={peopleList}
+          labels={labels}
+          manage={manage}
+          phone={phone}
+          onEditLabels={() => setEditingLabels(true)}
+        />
+      ) : null}
       <p id={describedBy} className="sr-only">
         Press Space to lift the card, then the arrow keys to move it.
       </p>
@@ -331,6 +359,14 @@ export function ServerBackedBoardKanban({
           stages={switcher}
           current={currentStage}
           onSelect={setPhoneStage}
+          addStage={
+            manage ? (
+              <AddStage
+                className="flex-none"
+                onAdd={(name) => commands.addStage(name)}
+              />
+            ) : null
+          }
         />
       ) : null}
       <LoadingRegion
@@ -342,8 +378,8 @@ export function ServerBackedBoardKanban({
       >
         {stagesRead.data && cardsRead.data ? (
           <div
-            ref={boardRef}
-            className="flex min-w-0 flex-col xl:min-h-0 xl:flex-1"
+            // Vertical scroll stays native; a sideways swipe changes the stage.
+            className="flex min-w-0 touch-pan-y flex-col xl:min-h-0 xl:flex-1"
             onPointerDown={onSwipeStart}
             onPointerUp={onSwipeEnd}
           >
@@ -402,6 +438,7 @@ export function ServerBackedBoardKanban({
                 onCompose={setComposing}
                 onOpen={openCard}
                 onKey={onKey}
+                onLiftLost={onLiftLost}
                 onMoveTo={(card, stageId) => {
                   const stage = stages.find((item) => item.id === stageId);
                   if (stage) void commands.move(card, stage, null);
@@ -448,32 +485,26 @@ export function ServerBackedBoardKanban({
         onChange={commands.changeLabel}
         onRemove={commands.removeLabel}
       />
-      <KanbanCardSummary
+      <KanbanCardSheet
         boardId={boardId}
         cardId={selectedCardId}
-        card={selectedCard}
+        listed={selectedCard}
+        canWrite={canWrite}
         stages={stages}
+        labels={labels}
         labelMap={labelMap}
         people={people}
+        choices={choices}
         region={region}
         today={today}
-        fallbackAnchor={boardRef}
+        onMove={(card, stage) =>
+          commands.move(card, stage, null, { quiet: true })
+        }
+        onArchive={(card) => void commands.archive(card, cardName(card))}
         onClose={() => onParams({ card: null })}
       />
     </div>
   );
-}
-
-/**
- * Opening a card (P4a): the address names it, and a read-only summary
- * shows. P4b replaces this with the card sheets (BR64).
- */
-export function openKanbanCard(
-  card: KanbanCard,
-  onParams: (changes: BoardKanbanParams) => void,
-) {
-  if (card.record?.locked) return;
-  onParams({ card: card.id });
 }
 
 function KanbanSkeleton() {

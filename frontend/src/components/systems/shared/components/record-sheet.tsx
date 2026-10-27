@@ -2,24 +2,24 @@
 import {
   formatOpenViewFieldValue,
   RecordPersonCard,
-} from "./live-record-cards";
+} from "@/components/systems/openview/components/live-record-cards";
 
 import type { ReactNode } from "react";
-import type { OpenViewGroupSelector } from "../adapters/analytics-api";
+import type { OpenViewGroupSelector } from "@/components/systems/openview/adapters/analytics-api";
 import type {
   OpenViewDataSourceField,
   OpenViewQueryDefinition,
   OpenViewQueryFieldType,
   OpenViewRecord,
-} from "../adapters/views-api";
-import type { OpenViewDataSource } from "../adapters/views-api";
-import type { OpenViewWindowQueryRequest } from "../adapters/window-api";
-import { openViewRecordFieldValue } from "../domain/record-display";
-import { RecordDetailsControls } from "./record-details-controls";
-import { RecordHistoryPanel } from "./record-history-panel";
+} from "@/components/systems/openview/adapters/views-api";
+import type { OpenViewDataSource } from "@/components/systems/openview/adapters/views-api";
+import type { OpenViewWindowQueryRequest } from "@/components/systems/openview/adapters/window-api";
+import { openViewRecordFieldValue } from "@/components/systems/openview/domain/record-display";
+import { RecordDetailsControls } from "@/components/systems/openview/components/record-details-controls";
+import { RecordHistoryPanel } from "@/components/systems/openview/components/record-history-panel";
 import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
-import { RecordFilesPanel } from "./record-files-panel";
-import { RecordLinksPanel } from "./record-links-panel";
+import { RecordFilesPanel } from "@/components/systems/openview/components/record-files-panel";
+import { RecordLinksPanel } from "@/components/systems/openview/components/record-links-panel";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -91,6 +91,11 @@ type LiveRecordInspectorProps = {
   inspectionError: string;
   fields: readonly OpenViewDataSourceField[];
   onRetryRecord: () => void;
+  /**
+   * A tab that comes before the record's own tabs and opens first. A board
+   * card's "On this board" (BR64) is the one caller; OpenView passes none.
+   */
+  leadingTab?: { value: string; label: string; content: ReactNode };
 };
 
 function readableValue(value: unknown): string {
@@ -124,8 +129,9 @@ export function recordTitle(
 }
 
 /**
- * The record sheet's body (OD7): the Details, Linked records, Files, and
- * History tabs, with only the open tab scrolling. The sheet header, which
+ * The record sheet's body (OD7), shared by OpenView and Boards (BR83): the
+ * Details, Linked records, Files, and History tabs, with only the open tab
+ * scrolling. The sheet header, which
  * the workspace owns, holds the name, Previous and Next, and Close; Edit and
  * the record menu render into it through `actionsSlot`.
  */
@@ -141,6 +147,7 @@ export function LiveRecordInspector({
   fields,
   onRetryRecord,
   controls,
+  leadingTab,
 }: LiveRecordInspectorProps) {
   const details = record ? (
     fields.length > 0 ? (
@@ -200,12 +207,23 @@ export function LiveRecordInspector({
       {status}
       {record ? (
         controls ? (
-          <Tabs defaultValue="details" className="min-h-0 flex-1 gap-0">
+          <Tabs
+            defaultValue={leadingTab?.value ?? "details"}
+            className="min-h-0 flex-1 gap-0"
+          >
             <div className="shrink-0 border-b px-5 py-3">
               <TabsList
                 aria-label="Record sections"
                 className="max-w-full flex-nowrap justify-start overflow-x-auto"
               >
+                {leadingTab ? (
+                  <TabsTrigger
+                    value={leadingTab.value}
+                    className="min-h-11 shrink-0 xl:min-h-8"
+                  >
+                    {leadingTab.label}
+                  </TabsTrigger>
+                ) : null}
                 <TabsTrigger
                   value="details"
                   className="min-h-11 shrink-0 xl:min-h-8"
@@ -234,6 +252,11 @@ export function LiveRecordInspector({
                 ) : null}
               </TabsList>
             </div>
+            {leadingTab ? (
+              <TabsContent value={leadingTab.value} className={panelClassName}>
+                {leadingTab.content}
+              </TabsContent>
+            ) : null}
             <TabsContent value="details" className={panelClassName} keepMounted>
               <RecordDetailsControls
                 key={record.id}

@@ -45,6 +45,12 @@ const MESSAGES: Record<string, string> = {
   label_unavailable: "A label is no longer on this board.",
   assignee_unavailable: "That person cannot read this board.",
   card_dates_invalid: "The start must not be after the due date.",
+  stale_checklist_revision: "Someone changed this checklist first.",
+  checklist_order_stale: "Someone changed this checklist first.",
+  checklist_conflict: "Someone changed this checklist first.",
+  checklist_limit: "A card has at most 50 checklist items.",
+  checklist_objectives_only: "Only objectives have a checklist.",
+  card_objectives_only: "Only objectives have files and linked records.",
 };
 
 /** What a failed Kanban request tells the person; never the server's words. */
@@ -344,19 +350,6 @@ export async function restoreKanbanCard(
     },
   );
   return checkCard(boardId, saved);
-}
-
-/** One card, for a `card=<id>` link to a card the board has not drawn. */
-export async function readKanbanCard(
-  boardId: string,
-  cardId: string,
-): Promise<KanbanCard> {
-  const card = await apiFetch(
-    boardPath(boardId, `/cards/${uuid.parse(cardId)}`),
-    cardDetailWire,
-    { cache: "no-store" },
-  );
-  return checkCard(boardId, card);
 }
 
 export async function createKanbanLabel(

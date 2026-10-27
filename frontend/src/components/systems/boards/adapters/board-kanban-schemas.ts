@@ -123,6 +123,49 @@ export const cardDetailWire = z
   .strict()
   .transform(toCard);
 export type KanbanCard = z.output<typeof cardWire>;
+
+export const checklistItemWire = z
+  .object({
+    id: uuid,
+    card_id: uuid,
+    text: z.string().min(1).max(200),
+    done: z.boolean(),
+    position: z.number().int(),
+    revision: z.number().int(),
+  })
+  .strict()
+  .transform((item) => ({
+    id: item.id,
+    cardId: item.card_id,
+    text: item.text,
+    done: item.done,
+    position: item.position,
+    revision: item.revision,
+  }));
+export type ChecklistItem = z.output<typeof checklistItemWire>;
+export const checklistItemsWire = z
+  .object({ items: z.array(checklistItemWire).max(50) })
+  .strict();
+
+/**
+ * A card as its sheet reads it (BR64): the card, its description, and its
+ * checklist in order. `PATCH /cards/{id}` answers with the same shape.
+ */
+export const cardSheetWire = z
+  .object({
+    ...cardShape,
+    description: z.string().nullable(),
+    checklist_items: z.array(checklistItemWire).max(50),
+  })
+  .strict()
+  .transform((card) => ({
+    card: toCard(card),
+    description: card.description,
+    checklist: [...card.checklist_items].sort(
+      (left, right) => left.position - right.position,
+    ),
+  }));
+export type CardSheet = z.output<typeof cardSheetWire>;
 export type KanbanRecord = NonNullable<KanbanCard["record"]>;
 
 /** One page of a card list; `extend` adds fields such as the card's board. */

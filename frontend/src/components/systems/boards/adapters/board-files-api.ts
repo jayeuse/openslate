@@ -63,6 +63,8 @@ export type BoardAttachmentPage = z.output<typeof attachmentListWire>;
 export type BoardAttachmentVersions = z.output<typeof revisions>;
 export type BoardAttachmentTarget =
   | { kind: "event"; boardId: string; contentId: string }
+  /** An objective card's files (a record card's files are its record's). */
+  | { kind: "card"; boardId: string; contentId: string }
   | {
       kind: "post";
       boardId: string;
@@ -81,9 +83,13 @@ function ids(target: BoardAttachmentTarget) {
 
 function contentPath(target: BoardAttachmentTarget): string {
   const { boardId, contentId } = ids(target);
-  return target.kind === "event"
-    ? `/boards/${boardId}/events/${contentId}/attachments`
-    : `/boards/${boardId}/posts/${contentId}/attachments`;
+  const owner =
+    target.kind === "event"
+      ? "events"
+      : target.kind === "card"
+        ? "cards"
+        : "posts";
+  return `/boards/${boardId}/${owner}/${contentId}/attachments`;
 }
 
 function checkedFile(

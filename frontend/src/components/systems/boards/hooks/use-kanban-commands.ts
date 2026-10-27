@@ -28,14 +28,7 @@ import type {
   KanbanLabel,
   KanbanStage,
 } from "../adapters/board-kanban-schemas";
-import { applyMove } from "../domain/kanban";
-
-/** The three stages "Start with To do · Doing · Done" adds (BR80). */
-export const STARTER_STAGES: readonly { name: string; color: ChartColor }[] = [
-  { name: "To do", color: "chart-1" },
-  { name: "Doing", color: "chart-2" },
-  { name: "Done", color: "chart-3" },
-];
+import { applyMove, STARTER_STAGES } from "../domain/kanban";
 
 /**
  * Every Kanban change for one board: card moves that save at once with
@@ -91,7 +84,8 @@ export function useKanbanCommands(boardId: string) {
     card: KanbanCard,
     stage: { id: string; name: string },
     position: number | null,
-    options: { undo?: boolean } = {},
+    /** `quiet`: the card's sheet says where it went, so no toast shows. */
+    options: { undo?: boolean; quiet?: boolean } = {},
   ): Promise<KanbanCard | null> {
     if (pendingRef.current.has(card.id)) return null;
     const before = client.getQueryData<KanbanCard[]>(cardsKey) ?? [];
@@ -108,7 +102,7 @@ export function useKanbanCommands(boardId: string) {
       });
       replaceCard(saved);
       void client.invalidateQueries({ queryKey: kanbanKeys.stages(boardId) });
-      if (!options.undo) {
+      if (!options.undo && !options.quiet) {
         const from = client
           .getQueryData<KanbanStage[]>(kanbanKeys.stages(boardId))
           ?.find((item) => item.id === back.stageId);

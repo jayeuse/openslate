@@ -81,9 +81,9 @@ export function ServerBoardRecordLinks(props: Props) {
   const view = props.target.kind === "post" ? props.target.view : null;
   const target = useMemo<BoardRecordLinkTarget>(
     () =>
-      kind === "event"
-        ? { kind, boardId, contentId }
-        : { kind, boardId, contentId, view: view ?? "published" },
+      kind === "post"
+        ? { kind, boardId, contentId, view: view ?? "published" }
+        : { kind, boardId, contentId },
     [kind, boardId, contentId, view],
   );
   const [items, setItems] = useState<BoardRecordLink[]>([]);

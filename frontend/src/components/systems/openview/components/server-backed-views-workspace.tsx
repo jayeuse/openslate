@@ -149,7 +149,7 @@ import {
   recordUpdatedDate,
   type RecordInspectionContext,
   type RecordInspectionPage,
-} from "./live-record-inspector";
+} from "@/components/systems/shared/components/record-sheet";
 import { LiveRecordResults } from "./live-record-results";
 import { RecordCreateDialog } from "./record-create-dialog";
 import { ModulePageSwitch } from "./module-page-switch";

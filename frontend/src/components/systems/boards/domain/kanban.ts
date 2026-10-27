@@ -1,8 +1,10 @@
 import type {
   CardSort,
+  ChartColor,
   KanbanCard,
   KanbanLabel,
 } from "../adapters/board-kanban-schemas";
+import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import { addDays, startOfWeek, type WeekStart } from "./calendar-dates";
 
 /**
@@ -16,6 +18,14 @@ import { addDays, startOfWeek, type WeekStart } from "./calendar-dates";
 /** A long stage shows this many cards, then the rest in pages of this many. */
 export const KANBAN_PAGE = 25;
 export const LOCKED_CARD_NAME = "No access to this record";
+
+/** The three stages "Start with To do · Doing · Done" adds (BR80). Doing is not
+ * amber (`chart-2`): amber is the WIP warn color. */
+export const STARTER_STAGES: readonly { name: string; color: ChartColor }[] = [
+  { name: "To do", color: "chart-1" },
+  { name: "Doing", color: "chart-4" },
+  { name: "Done", color: "chart-3" },
+];
 
 export function cardName(card: KanbanCard): string {
   if (card.record?.locked) return LOCKED_CARD_NAME;
@@ -279,6 +289,22 @@ export function isOverdue(card: KanbanCard, today: string): boolean {
   return card.dueOn !== null && card.dueOn < today;
 }
 
+export function shortDate(date: string, region: WorkspaceRegion): string {
+  return formatWorkspaceDate(date, region, { month: "short", day: "numeric" });
+}
+
+/** "Due Oct 30", or "Overdue · Oct 22" in warn (BR67). */
+export function dueWords(
+  card: KanbanCard,
+  region: WorkspaceRegion,
+  today: string,
+): { text: string; late: boolean } | null {
+  if (!card.dueOn) return null;
+  const late = isOverdue(card, today);
+  const day = shortDate(card.dueOn, region);
+  return { text: late ? `Overdue · ${day}` : `Due ${day}`, late };
+}
+
 export type Swimlane = { id: string; name: string; cards: KanbanCard[] };
 
 /**
@@ -383,4 +409,35 @@ export function defaultCardDates(choices: readonly RecordDateChoice[]): {
   if (choices.length === 0) return { start: null, due: null };
   if (choices.length === 1) return { start: null, due: choices[0].fieldId };
   return { start: choices[0].fieldId, due: choices[1].fieldId };
+}
+
+/**
+ * The accessible name of a card: its name first, then what it is, then
+ * what its face shows (labels, a record's status and fields, the due date,
+ * the checklist, the assignee), so the face reads the same to everyone.
+ */
+export function cardLabel(
+  card: KanbanCard,
+  face: {
+    region: WorkspaceRegion;
+    today: string;
+    labelNames: readonly string[];
+    assignee: string | null;
+  },
+): string {
+  const due = dueWords(card, face.region, face.today);
+  const record = card.record && !card.record.locked ? card.record : null;
+  const parts = [
+    cardName(card),
+    record ? `${record.moduleName} record` : "objective",
+    face.labelNames.length > 0 ? `labels ${face.labelNames.join(", ")}` : null,
+    record?.status ? `${record.status.name} ${record.status.value}` : null,
+    ...(record?.fields.slice(0, 2).map((field) => field.value) ?? []),
+    due ? due.text.toLocaleLowerCase() : null,
+    card.checklist.total > 0
+      ? `${card.checklist.done} of ${card.checklist.total} done`
+      : null,
+    face.assignee ? `assigned to ${face.assignee}` : null,
+  ];
+  return parts.filter(Boolean).join(", ");
 }

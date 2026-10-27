@@ -36,7 +36,7 @@ import type {
 } from "../adapters/views-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
 import { formatOpenViewFieldValue } from "./live-record-cards";
-import type { RecordInspectionPage } from "./live-record-inspector";
+import type { RecordInspectionPage } from "@/components/systems/shared/components/record-sheet";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";

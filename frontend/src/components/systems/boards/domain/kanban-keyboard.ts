@@ -82,12 +82,14 @@ export function keyboardStep(
     };
   }
   let next = at;
-  if (action.type === "up") next = { ...at, slot: Math.max(0, at.slot - 1) };
-  if (action.type === "down")
-    next = {
-      ...at,
-      slot: Math.min(places(layout, at.stage, cardId), at.slot + 1),
-    };
+  const end = places(layout, at.stage, cardId);
+  // At a stage's edge the card stays, and the live region says why.
+  if (action.type === "up" && at.slot === 0)
+    return { ...still, announcement: `Top of ${layout[at.stage].name}.` };
+  if (action.type === "down" && at.slot >= end)
+    return { ...still, announcement: `End of ${layout[at.stage].name}.` };
+  if (action.type === "up") next = { ...at, slot: at.slot - 1 };
+  if (action.type === "down") next = { ...at, slot: at.slot + 1 };
   if (action.type === "left" || action.type === "right") {
     const stage = at.stage + (action.type === "left" ? -1 : 1);
     if (stage >= 0 && stage < layout.length)

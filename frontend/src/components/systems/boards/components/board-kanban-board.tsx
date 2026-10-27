@@ -10,6 +10,7 @@ import {
   useDroppable,
   useSensor,
   useSensors,
+  type Announcements,
   type CollisionDetection,
   type DragEndEvent,
   type DragMoveEvent,
@@ -23,7 +24,7 @@ import type {
   KanbanLabel,
   KanbanStage,
 } from "../adapters/board-kanban-schemas";
-import { KANBAN_PAGE, stagePage } from "../domain/kanban";
+import { KANBAN_PAGE, cardName, stagePage } from "../domain/kanban";
 import {
   DropSlot,
   KanbanCardNote,
@@ -88,6 +89,7 @@ export type KanbanBoardProps = {
   onCompose: (stageId: string | null) => void;
   onOpen: (card: KanbanCard) => void;
   onKey: (card: KanbanCard, event: KeyboardEvent<HTMLElement>) => void;
+  onLiftLost: (card: KanbanCard) => void;
   onMoveTo: (card: KanbanCard, stageId: string) => void;
   onToggleLabel: (card: KanbanCard, labelId: string) => void;
   onArchive: (card: KanbanCard) => void;
@@ -203,6 +205,43 @@ export function KanbanBoard(props: KanbanBoardProps) {
     finish();
   }
 
+  // What a screen reader hears during a pointer drag: names, never ids.
+  const nameOf = (data: Record<string, unknown> | undefined) => {
+    if (typeof data?.cardId === "string") {
+      const card = cardOf(data.cardId);
+      return card ? cardName(card) : "the card";
+    }
+    if (typeof data?.stageId === "string")
+      return (
+        props.allStages.find((stage) => stage.id === data.stageId)?.name ??
+        "the stage"
+      );
+    return "the item";
+  };
+  const stageOf = (data: Record<string, unknown> | undefined) =>
+    typeof data?.stageId === "string"
+      ? (props.allStages.find((stage) => stage.id === data.stageId)?.name ??
+        null)
+      : null;
+  const announcements: Announcements = {
+    onDragStart: ({ active: item }) =>
+      `Picked up ${nameOf(item.data.current)}.`,
+    onDragOver: ({ active: item, over: place }) => {
+      const stage = stageOf(place?.data.current);
+      return stage
+        ? `${nameOf(item.data.current)} is over ${stage}.`
+        : `${nameOf(item.data.current)} is not over a stage.`;
+    },
+    onDragEnd: ({ active: item, over: place }) => {
+      const stage = stageOf(place?.data.current);
+      return stage
+        ? `${nameOf(item.data.current)} was dropped in ${stage}.`
+        : `${nameOf(item.data.current)} was put back.`;
+    },
+    onDragCancel: ({ active: item }) =>
+      `Moving ${nameOf(item.data.current)} was cancelled.`,
+  };
+
   const target =
     active?.type === "card" ? over : (props.lifted?.target ?? null);
   // A card drops only in its own lane: its lane is its assignee or label,
@@ -215,7 +254,16 @@ export function KanbanBoard(props: KanbanBoardProps) {
   const movingId =
     active?.type === "card" ? active.card.id : (props.lifted?.cardId ?? null);
 
-  function renderCell(stage: KanbanStage, laneId: string, scroll: boolean) {
+  /**
+   * One stage's cards in one lane. `tail` (the page line and Add a card)
+   * follows the last card; in a scrolling stage it sticks to the foot.
+   */
+  function renderCell(
+    stage: KanbanStage,
+    laneId: string,
+    scroll: boolean,
+    tail?: (more: ReactNode) => ReactNode,
+  ) {
     const cell = props.cells.get(cellKey(stage.id, laneId));
     const cards = cell?.cards ?? [];
     const key = cellKey(stage.id, laneId);
@@ -257,6 +305,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
           describedBy={props.describedBy}
           onOpen={props.onOpen}
           onKey={props.onKey}
+          onLiftLost={props.onLiftLost}
           onMoveTo={props.onMoveTo}
           onToggleLabel={props.onToggleLabel}
           onArchive={props.onArchive}
@@ -266,27 +315,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
     }
     if (here && !slotted)
       items.push(<DropSlot key="slot" stageName={stage.name} />);
-    const body = (
-      <DropCell
-        id={`drop:${key}`}
-        stageId={stage.id}
-        laneId={laneId}
-        scroll={scroll}
-        targeted={Boolean(here)}
-        disabled={
-          !props.canWrite || (activeLane !== null && activeLane !== laneId)
-        }
-      >
-        {items.length > 0 ? (
-          items
-        ) : (
-          <div className="text-muted-foreground grid min-h-16 place-content-center rounded-md border-[1.5px] border-dashed border-[var(--rule-strong)] p-2 text-center text-[0.8125rem]">
-            {props.filtered ? "No matching cards" : "No cards"}
-          </div>
-        )}
-      </DropCell>
-    );
-    // The page line sits under the stage body, so it stays in view (BR67).
+    // The page line sits with Add a card, after the last card (BR67).
     const more = page.line ? (
       <div className="text-muted-foreground flex shrink-0 items-center justify-between px-1.5 text-xs tabular-nums">
         <span>{page.line}</span>
@@ -301,10 +330,39 @@ export function KanbanBoard(props: KanbanBoardProps) {
         </button>
       </div>
     ) : null;
+    const end = tail ? tail(more) : null;
     return (
       <Fragment key={key}>
-        {body}
-        {more}
+        <DropCell
+          id={`drop:${key}`}
+          stageId={stage.id}
+          laneId={laneId}
+          scroll={scroll}
+          targeted={Boolean(here)}
+          disabled={
+            !props.canWrite || (activeLane !== null && activeLane !== laneId)
+          }
+        >
+          {items.length > 0 ? (
+            items
+          ) : (
+            <div className="text-muted-foreground grid min-h-16 place-content-center rounded-md border-[1.5px] border-dashed border-[var(--rule-strong)] p-2 text-center text-xs">
+              {props.filtered ? "No matching cards" : "No cards"}
+            </div>
+          )}
+          {end ? (
+            <div
+              className={cn(
+                "flex min-w-0 shrink-0 flex-col gap-1",
+                scroll &&
+                  "sticky bottom-0 z-[1] -mx-1 -mb-1 bg-[var(--canvas-background)] px-1 pb-1.5",
+              )}
+            >
+              {end}
+            </div>
+          ) : null}
+        </DropCell>
+        {tail ? null : more}
       </Fragment>
     );
   }
@@ -341,7 +399,8 @@ export function KanbanBoard(props: KanbanBoardProps) {
     );
   }
 
-  const columns = `repeat(${stages.length}, minmax(12rem, 1fr))${props.manage && !phone ? " 8rem" : ""}`;
+  // Stages stop at 17rem, so a few stages stay readable notes, not wide bands.
+  const columns = `repeat(${stages.length}, minmax(12rem, 17rem))${props.manage && !phone ? " 8rem" : ""}`;
   const grouped = lanes !== null && !phone;
   const body = grouped ? (
     <div
@@ -399,10 +458,14 @@ export function KanbanBoard(props: KanbanBoardProps) {
           highlighted={overColumn === stage.id}
         >
           {header(stage, index)}
-          {renderCell(stage, UNGROUPED, !phone)}
-          <div className="flex min-w-0 shrink-0 flex-col gap-1 px-0.5 pt-0.5">
-            {footer(stage)}
-          </div>
+          {renderCell(stage, UNGROUPED, !phone, (more) =>
+            more || props.canWrite ? (
+              <>
+                {more}
+                {footer(stage)}
+              </>
+            ) : null,
+          )}
         </Column>
       ))}
       {props.manage && !phone ? props.addStage : null}
@@ -419,7 +482,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
       onDragMove={onDragMove}
       onDragEnd={onDragEnd}
       onDragCancel={finish}
-      accessibility={{ restoreFocus: false }}
+      accessibility={{ restoreFocus: false, announcements }}
     >
       <div
         data-skin="board-surface"
@@ -515,7 +578,7 @@ function DropCell({
       ref={setNodeRef}
       data-kanban-drop={id}
       className={cn(
-        "relative flex min-w-0 flex-col gap-2 rounded-md px-0.5 pt-2 pb-1",
+        "relative flex min-w-0 flex-col gap-2 rounded-md px-1 pt-2 pb-1",
         scroll && "min-h-0 flex-1 overflow-y-auto overscroll-contain",
         targeted &&
           "bg-[color-mix(in_oklab,var(--action-tint)_65%,transparent)] shadow-[inset_0_0_0_2px_var(--action)]",

@@ -24,9 +24,9 @@ import {
 import {
   defaultCardDates,
   recordDateChoices,
+  shortDate,
   type RecordDateChoice,
 } from "../domain/kanban";
-import { shortDate } from "./board-kanban-card";
 
 /**
  * Add a card (BR62), the Trello way: a title adds an objective; Find a

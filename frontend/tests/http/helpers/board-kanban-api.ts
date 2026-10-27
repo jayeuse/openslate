@@ -2,6 +2,7 @@ import type { Page, Route } from "./test";
 import { wirePagination } from "../../helpers/pagination";
 import {
   authorAccess,
+  board,
   boardId,
   installBoardApi,
   managerAccess,
@@ -34,6 +35,7 @@ export const recordIds = {
   validFrom: "00000000-0000-4000-8000-00000000e303",
   validUntil: "00000000-0000-4000-8000-00000000e304",
   title: "00000000-0000-4000-8000-00000000e305",
+  department: "00000000-0000-4000-8000-00000000e308",
 };
 const stamp = "2026-09-20T00:00:00Z";
 const people: Record<string, string> = {
@@ -175,12 +177,55 @@ export const defaultLabels = () => [
   },
 ];
 
+export type WireChecklistItem = {
+  id: string;
+  card_id: string;
+  text: string;
+  done: boolean;
+  position: number;
+  revision: number;
+};
+export type WireActivity = {
+  id: string;
+  created_at: string;
+  kind: "card" | "label" | "checklist";
+  action: "create" | "update" | "delete";
+  summary: string;
+  actor_label: string | null;
+};
+export type WireRecordLink = {
+  id: string;
+  record_id: string;
+  module_id: string;
+  label: string;
+  available: boolean;
+  url: string | null;
+};
+
+/** What a card's sheet reads beyond the list: its text, checklist, history. */
+export type CardExtras = {
+  description?: string | null;
+  checklist?: { text: string; done?: boolean }[];
+  activity?: WireActivity[];
+};
+
 export type KanbanApiOptions = {
   level?: "read" | "write" | "manage";
   stages?: WireStage[];
   cards?: WireCard[];
   labels?: ReturnType<typeof defaultLabels>;
+  /** Sheet data per card id. */
+  extras?: Record<string, CardExtras>;
 };
+
+export const checklistItemId = (index: number) =>
+  `00000000-0000-4000-8000-${String(0xc0000 + index)
+    .padStart(12, "0")
+    .slice(-12)}`;
+export const fileIdFor = (index: number) =>
+  `00000000-0000-4000-8000-${String(0xd0000 + index)
+    .padStart(12, "0")
+    .slice(-12)}`;
 
 const MOVE_KEYS = new Set([
   "revision",
@@ -216,7 +261,61 @@ export async function installKanbanApi(
     cardReads: 0,
     /** Answer the next card change with a stale revision, as another person's save would. */
     staleNext: false,
+    boardRevision: 1,
+    descriptions: new Map<string, string | null>(),
+    checklists: new Map<string, WireChecklistItem[]>(),
+    activity: new Map<string, WireActivity[]>(),
+    files: new Map<string, { id: string; filename: string; size: number }[]>(),
+    reserved: new Map<string, { id: string; filename: string; size: number }>(),
+    links: new Map<string, WireRecordLink[]>(),
   };
+  let itemCounter = 0;
+  for (const [cardId, extras] of Object.entries(options.extras ?? {})) {
+    state.descriptions.set(cardId, extras.description ?? null);
+    state.checklists.set(
+      cardId,
+      (extras.checklist ?? []).map((entry, position) => {
+        itemCounter += 1;
+        return {
+          id: checklistItemId(itemCounter),
+          card_id: cardId,
+          text: entry.text,
+          done: entry.done ?? false,
+          position,
+          revision: 1,
+        };
+      }),
+    );
+    state.activity.set(cardId, extras.activity ?? []);
+  }
+  const checklistOf = (cardId: string) =>
+    [...(state.checklists.get(cardId) ?? [])].sort(
+      (left, right) => left.position - right.position,
+    );
+  const progress = (cardId: string) => {
+    const items = checklistOf(cardId);
+    return {
+      done: items.filter((item) => item.done).length,
+      total: items.length,
+    };
+  };
+  const fileWire = (file: { id: string; filename: string; size: number }) => ({
+    id: file.id,
+    purpose: "board_attachment",
+    record_id: null,
+    department_id: null,
+    board_id: boardId,
+    creator_id: peopleIds.ana,
+    filename: file.filename,
+    media_type: "application/pdf",
+    expected_size: file.size,
+    actual_size: file.size,
+    state: "ready",
+    failure_code: null,
+    is_deleted: false,
+    created_at: stamp,
+    updated_at: stamp,
+  });
   const active = (stageId: string) =>
     state.cards
       .filter((card) => card.stage_id === stageId && card.archived_at === null)
@@ -227,8 +326,11 @@ export async function installKanbanApi(
   });
   const detail = (card: WireCard) => ({
     ...card,
-    description: null,
-    checklist_items: [],
+    checklist: state.checklists.has(card.id)
+      ? progress(card.id)
+      : card.checklist,
+    description: state.descriptions.get(card.id) ?? null,
+    checklist_items: checklistOf(card.id),
   });
   const place = (card: WireCard, stageId: string, position?: number) => {
     const siblings = active(stageId).filter((item) => item.id !== card.id);
@@ -247,6 +349,199 @@ export async function installKanbanApi(
     });
   };
 
+  const writerLevel = level !== "read";
+  /** The sheet's routes: checklist, activity, files and record links. */
+  async function sheetRoute(
+    path: string,
+    method: string,
+    body: Record<string, unknown>,
+    url: URL,
+    route: Route,
+  ) {
+    // Every answer says it handled the request.
+    const reply = (status: number, json: unknown) =>
+      route.fulfill({ status, json }).then(() => true);
+    const done = (fulfilled: Promise<void>) => fulfilled.then(() => true);
+    const refuse = () =>
+      writerLevel ? null : reply(403, { detail: "Forbidden" });
+    const stale = () =>
+      reply(409, { detail: { code: "stale_revision", message: "Changed" } });
+    const itemMatch = path.match(/^\/checklist\/([^/]+)$/);
+    if (itemMatch) {
+      const refused = refuse();
+      if (refused) return refused;
+      for (const [cardId, items] of state.checklists) {
+        const item = items.find((entry) => entry.id === itemMatch[1]);
+        if (!item) continue;
+        if (body.revision !== item.revision)
+          return reply(409, {
+            detail: { code: "stale_checklist_revision", message: "Changed" },
+          });
+        if (method === "DELETE") {
+          state.checklists.set(
+            cardId,
+            items.filter((entry) => entry !== item),
+          );
+          return done(route.fulfill({ status: 204, body: "" }));
+        }
+        if (body.text !== undefined) item.text = String(body.text);
+        if (body.done !== undefined) item.done = Boolean(body.done);
+        item.revision += 1;
+        return reply(200, item);
+      }
+      return reply(404, { detail: "Checklist item not found" });
+    }
+    if (path === "/files" && method === "POST") {
+      const file = {
+        id: fileIdFor(state.reserved.size + 1),
+        filename: String(body.filename),
+        size: Number(body.expected_size),
+      };
+      state.reserved.set(file.id, file);
+      return reply(201, {
+        ...fileWire(file),
+        state: "awaiting_upload",
+        media_type: null,
+        actual_size: null,
+      });
+    }
+    const contentMatch = path.match(/^\/files\/([^/]+)\/content$/);
+    if (contentMatch && method === "PUT") {
+      const file = state.reserved.get(contentMatch[1]);
+      return file
+        ? reply(200, fileWire(file))
+        : reply(404, { detail: "File not found" });
+    }
+    const match = path.match(
+      /^\/cards\/([^/]+)\/(checklist|activity|attachments|record-links)(?:\/([^/]+))?(\/content)?$/,
+    );
+    if (!match) return false;
+    const card = state.cards.find((item) => item.id === match[1]);
+    if (!card) return reply(404, { detail: "Card not found" });
+    const [, , kind, child, content] = match;
+    if (kind === "activity")
+      return reply(200, {
+        items: state.activity.get(card.id) ?? [],
+        pagination: wirePagination({
+          limit: 25,
+          count: (state.activity.get(card.id) ?? []).length,
+          total: (state.activity.get(card.id) ?? []).length,
+        }),
+      });
+    if (card.kind !== "objective")
+      return reply(409, {
+        detail: { code: "card_objectives_only", message: "Objectives only" },
+      });
+    if (kind === "checklist") {
+      const refused = refuse();
+      if (refused) return refused;
+      const items = checklistOf(card.id);
+      if (child === "order") {
+        const ids = body.item_ids as string[];
+        ids.forEach((id, position) => {
+          const item = items.find((entry) => entry.id === id);
+          if (item) item.position = position;
+        });
+        return reply(200, { items: checklistOf(card.id) });
+      }
+      if (items.length >= 50)
+        return reply(409, {
+          detail: { code: "checklist_limit", message: "At most 50" },
+        });
+      itemCounter += 1;
+      const item = {
+        id: checklistItemId(itemCounter),
+        card_id: card.id,
+        text: String(body.text),
+        done: false,
+        position: items.length,
+        revision: 1,
+      };
+      state.checklists.set(card.id, [...items, item]);
+      return reply(201, item);
+    }
+    const bump = () => {
+      card.revision += 1;
+      state.boardRevision += 1;
+    };
+    const fresh = () =>
+      body.board_revision === state.boardRevision &&
+      body.content_revision === card.revision;
+    if (kind === "attachments") {
+      const files = state.files.get(card.id) ?? [];
+      if (method === "GET" && content) {
+        const file = files.find((item) => item.id === child);
+        return file
+          ? done(
+              route.fulfill({
+                status: 200,
+                body: Buffer.from("%PDF-1.4\n"),
+                headers: {
+                  "Content-Type": "application/pdf",
+                  "Content-Disposition": `attachment; filename="${file.filename}"`,
+                  "Content-Length": "9",
+                },
+              }),
+            )
+          : reply(404, { detail: "File not found" });
+      }
+      if (method === "GET")
+        return reply(200, {
+          items: files.map(fileWire),
+          limit: Number(url.searchParams.get("limit") ?? 25),
+          offset: 0,
+          has_more: false,
+        });
+      const refused = refuse();
+      if (refused) return refused;
+      if (!fresh()) return stale();
+      if (method === "POST") {
+        const file = state.reserved.get(String(body.file_id));
+        if (!file) return reply(404, { detail: "File not found" });
+        state.files.set(card.id, [...files, file]);
+        bump();
+        return reply(200, fileWire(file));
+      }
+      state.files.set(
+        card.id,
+        files.filter((item) => item.id !== child),
+      );
+      bump();
+      return done(route.fulfill({ status: 204, body: "" }));
+    }
+    // record-links
+    const links = state.links.get(card.id) ?? [];
+    if (method === "GET")
+      return reply(200, {
+        items: links,
+        limit: 20,
+        offset: 0,
+        has_more: false,
+      });
+    const refused = refuse();
+    if (refused) return refused;
+    if (!fresh()) return stale();
+    if (method === "POST") {
+      const link = {
+        id: `00000000-0000-4000-8000-0000000e${String(links.length + 900).padStart(4, "0")}`,
+        record_id: String(body.record_id),
+        module_id: recordIds.module,
+        label: "Q-24112",
+        available: true,
+        url: `/openview?module=${recordIds.module}&record=${String(body.record_id)}`,
+      };
+      state.links.set(card.id, [...links, link]);
+      bump();
+      return reply(201, link);
+    }
+    state.links.set(
+      card.id,
+      links.filter((item) => item.id !== child),
+    );
+    bump();
+    return done(route.fulfill({ status: 204, body: "" }));
+  }
+
   await page.route(`**/api/users/*/card`, (route) => {
     const id = new URL(route.request().url()).pathname.split("/")[3];
     return people[id]
@@ -263,13 +558,25 @@ export async function installKanbanApi(
       : route.fulfill({ status: 404, json: { detail: "Not found" } });
   });
 
+  await page.route(`**/api/boards/${boardId}`, (route) =>
+    route.fulfill({
+      json: {
+        ...board,
+        level,
+        revision: state.boardRevision,
+      },
+    }),
+  );
+
   await page.route(`**/api/boards/${boardId}/**`, async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname.replace(`/api/boards/${boardId}`, "");
     const method = request.method();
     const body: Record<string, unknown> =
-      method === "GET" ? {} : (request.postDataJSON() ?? {});
+      method === "GET" || path.endsWith("/content")
+        ? {}
+        : (request.postDataJSON() ?? {});
     const reply = (status: number, json: unknown) =>
       route.fulfill({ status, json });
     if (method !== "GET") state.writes.push({ method, path, body });
@@ -344,7 +651,12 @@ export async function installKanbanApi(
       state.cardReads += 1;
       const items = state.cards
         .filter((card) => card.archived_at === null)
-        .sort((left, right) => left.rank - right.rank);
+        .sort((left, right) => left.rank - right.rank)
+        .map((card) =>
+          state.checklists.has(card.id)
+            ? { ...card, checklist: progress(card.id) }
+            : card,
+        );
       const limit = Number(url.searchParams.get("limit") ?? 25);
       const offset = Number(url.searchParams.get("offset") ?? 0);
       const slice = items.slice(offset, offset + limit);
@@ -373,6 +685,7 @@ export async function installKanbanApi(
       place(card, card.stage_id);
       return reply(201, detail(card));
     }
+    if (await sheetRoute(path, method, body, url, route)) return;
     const cardMatch = path.match(/^\/cards\/([^/]+)(\/archive|\/restore)?$/);
     if (cardMatch) {
       const card = state.cards.find((item) => item.id === cardMatch[1]);
@@ -403,6 +716,15 @@ export async function installKanbanApi(
           return reply(422, { detail: "Unexpected field" });
         if (body.label_ids !== undefined)
           card.label_ids = body.label_ids as string[];
+        if (body.title !== undefined) card.title = String(body.title);
+        if (body.description !== undefined)
+          state.descriptions.set(card.id, body.description as string | null);
+        if (body.assignee_id !== undefined)
+          card.assignee_id = body.assignee_id as string | null;
+        if (body.start_on !== undefined)
+          card.start_on = body.start_on as string | null;
+        if (body.due_on !== undefined)
+          card.due_on = body.due_on as string | null;
         if (body.stage_id !== undefined || body.position !== undefined)
           place(
             card,
@@ -526,4 +848,73 @@ export async function installKanbanApi(
     }),
   );
   return state;
+}
+
+/**
+ * The record behind the quote card, as the shared record sheet reads it:
+ * its module, the module in the data-source catalog (for Linked records),
+ * its title field, and a records query that finds it.
+ */
+export async function installRecordSheetApi(page: Page) {
+  const source = {
+    id: recordIds.module,
+    name: "Quotes",
+    department_id: recordIds.department,
+    title_field_id: recordIds.title,
+  };
+  await page.route(`**/api/modules/${recordIds.module}`, (route) =>
+    route.fulfill({
+      json: {
+        id: recordIds.module,
+        department_id: recordIds.department,
+        module_name: "Quotes",
+        title_field_id: recordIds.title,
+        is_deleted: false,
+      },
+    }),
+  );
+  await page.route(
+    (url) => url.pathname === "/api/views/data-sources",
+    (route) =>
+      route.fulfill({
+        json: {
+          items: [source],
+          pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
+        },
+      }),
+  );
+  await page.route(`**/api/fields/${recordIds.title}`, (route) =>
+    route.fulfill({
+      json: {
+        id: recordIds.title,
+        module_id: recordIds.module,
+        name: "Quote",
+        type: "text",
+        required: false,
+        position: 0,
+        config: {},
+        is_deleted: false,
+      },
+    }),
+  );
+  await page.route("**/api/records/query", (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: recordIds.quote,
+            module_id: recordIds.module,
+            data: { [recordIds.title]: "Q-24112" },
+            display_values: {},
+            created_at: stamp,
+            updated_at: stamp,
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          },
+        ],
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
+      },
+    }),
+  );
 }

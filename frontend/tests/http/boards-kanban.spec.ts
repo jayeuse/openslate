@@ -60,7 +60,8 @@ test("a manager sets up stages from the empty board, adds, renames, limits and a
       .map((write) => write.body),
   ).toEqual([
     { name: "To do", color: "chart-1" },
-    { name: "Doing", color: "chart-2" },
+    // Not amber: amber is the WIP warn color.
+    { name: "Doing", color: "chart-4" },
     { name: "Done", color: "chart-3" },
   ]);
 
@@ -238,7 +239,7 @@ test("Find a record adds a record card whose dates come from the record", async 
   });
 });
 
-test("a reader sees the board read-only; opening a card shows its summary", async ({
+test("a reader sees the board read-only; opening a card opens its sheet", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -469,4 +470,71 @@ test("on a phone one stage shows at a time, with a switcher and Move to stage", 
     stage_id: stageIds.todo,
   });
   expect(await documentScrolls(page)).toMatchObject({ across: false });
+});
+
+test("a lifted card is put back when focus leaves it, so another card can be lifted", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const api = await installKanbanApi(page, {
+    level: "write",
+    cards: [
+      wireCard("Book the expo booth crew", stageIds.todo, 1024),
+      wireCard("Renewal terms", stageIds.doing, 1024),
+    ],
+  });
+  await page.goto(kanbanHref());
+  const crew = stage(page, "To do").getByRole("button", {
+    name: /^Book the expo booth crew, objective/,
+  });
+  await crew.focus();
+  await page.keyboard.press("Space");
+  await expect(
+    page.getByText(/^Lifted Book the expo booth crew/),
+  ).toBeAttached();
+  // Its own menu button keeps the lift; the next card does not.
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", {
+      name: "Card actions for Book the expo booth crew",
+    }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByText("Move cancelled. Book the expo booth crew stays in To do."),
+  ).toBeAttached();
+  // Focus went on to the stage's Add a card; any other card lifts now.
+  await expect(
+    stage(page, "To do").getByRole("button", { name: "Add a card" }),
+  ).toBeFocused();
+  await stage(page, "Doing")
+    .getByRole("button", { name: /^Renewal terms/ })
+    .focus();
+  await page.keyboard.press("Space");
+  await expect(page.getByText(/^Lifted Renewal terms/)).toBeAttached();
+  expect(api.writes).toEqual([]);
+});
+
+test("stages keep a readable width, and Add a card follows the last card", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installKanbanApi(page, {
+    level: "write",
+    cards: [wireCard("Book the expo booth crew", stageIds.todo, 1024)],
+  });
+  await page.goto(kanbanHref());
+  const todo = stage(page, "To do");
+  // Three stages at 1440 stop at 17rem, not a third of the board each.
+  const width = (await todo.boundingBox())!.width;
+  expect(width).toBeLessThanOrEqual(272 + 1);
+  const last = await todo
+    .getByRole("button", { name: /^Book the expo booth crew/ })
+    .boundingBox();
+  const add = await todo
+    .getByRole("button", { name: "Add a card" })
+    .boundingBox();
+  // On a short stage the block sits under the last card, not at the foot.
+  expect(add!.y - (last!.y + last!.height)).toBeGreaterThanOrEqual(0);
+  expect(add!.y - (last!.y + last!.height)).toBeLessThan(24);
 });

@@ -5,6 +5,7 @@ import type {
 } from "../../../src/components/systems/boards/adapters/board-kanban-schemas";
 import {
   applyMove,
+  cardLabel,
   cardName,
   dropPosition,
   filterCards,
@@ -95,6 +96,48 @@ test("a card's name is its title, its record's name, or the locked words", () =>
   );
   expect(cardName(quote)).toBe("Q-24112");
   expect(cardName(locked)).toBe("No access to this record");
+});
+
+test("a card's accessible name says what its face shows", () => {
+  const face = {
+    region: { timezone: "UTC", locale: "en-US" },
+    today: "2026-10-27",
+    labelNames: ["Expo", "Pricing"],
+    assignee: "Ana Santos",
+  };
+  expect(
+    cardLabel(
+      card("crew", {
+        title: "Book the expo booth crew",
+        dueOn: "2026-10-30",
+        checklist: { done: 0, total: 3 },
+        labelIds: [expo, pricing],
+      }),
+      face,
+    ),
+  ).toBe(
+    "Book the expo booth crew, objective, labels Expo, Pricing, due oct 30, 0 of 3 done, assigned to Ana Santos",
+  );
+  const sent = card("sent", {
+    kind: "record",
+    title: null,
+    record: {
+      locked: false,
+      recordId: "00000000-0000-4000-8000-0000000000d1",
+      moduleId: "00000000-0000-4000-8000-0000000000d2",
+      moduleName: "Quotes",
+      title: "Q-24112",
+      fields: [
+        { fieldId: "f1", name: "Customer", value: "Pacific Rim Foods" },
+        { fieldId: "f2", name: "Total", value: "22,750" },
+      ],
+      status: { fieldId: "f3", name: "Status", value: "Sent" },
+    },
+  });
+  // A bare card says only its name and kind.
+  expect(cardLabel(sent, { ...face, labelNames: [], assignee: null })).toBe(
+    "Q-24112, Quotes record, Status Sent, Pacific Rim Foods, 22,750",
+  );
 });
 
 test("a stage's sort orders its cards; manual keeps rank and locked cards keep their place", () => {

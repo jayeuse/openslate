@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Search, Trash2 } from "lucide-react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,13 @@ import {
   type ChartColor,
   type KanbanLabel,
 } from "../adapters/board-kanban-schemas";
-import type { KanbanDue, KanbanFilters, KanbanGroup } from "../domain/kanban";
+import {
+  NO_FILTERS,
+  hasCardFilters,
+  type KanbanDue,
+  type KanbanFilters,
+  type KanbanGroup,
+} from "../domain/kanban";
 import { LabelChip, chartVar, type KanbanPerson } from "./board-kanban-card";
 import { COLOR_NAMES } from "./board-kanban-stage";
 
@@ -73,8 +79,8 @@ export function KanbanToolbar({
   );
   return (
     <div
-      role="toolbar"
-      aria-label="Kanban"
+      role="group"
+      aria-label="Kanban filters"
       className="flex min-w-0 flex-wrap items-center gap-1.5"
     >
       <label className="relative block min-w-0 max-md:flex-1 md:w-48">
@@ -92,6 +98,17 @@ export function KanbanToolbar({
           onChange={(event) => onFilters({ search: event.currentTarget.value })}
         />
       </label>
+      {/* Phones hide the other filters; a filtered link can still be cleared. */}
+      {phone && hasCardFilters(filters) ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 shrink-0"
+          onClick={() => onFilters(NO_FILTERS)}
+        >
+          Clear filters
+        </Button>
+      ) : null}
       {!phone && people.length > 0 ? (
         <div
           role="group"
@@ -494,6 +511,7 @@ export function StageSwitcher({
   stages,
   current,
   onSelect,
+  addStage,
 }: {
   stages: readonly {
     id: string;
@@ -505,9 +523,19 @@ export function StageSwitcher({
   }[];
   current: string | null;
   onSelect: (id: string) => void;
+  /** Managers add a stage from the end of the row. */
+  addStage?: ReactNode;
 }) {
+  const row = useRef<HTMLElement>(null);
+  // The current stage's chip stays in view as the stage changes (a swipe).
+  useEffect(() => {
+    row.current
+      ?.querySelector<HTMLElement>('[aria-current="true"]')
+      ?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
+  }, [current]);
   return (
     <nav
+      ref={row}
       aria-label="Stages"
       className="bg-muted flex gap-0.5 overflow-x-auto rounded-md p-[3px]"
     >
@@ -540,6 +568,7 @@ export function StageSwitcher({
           </span>
         </button>
       ))}
+      {addStage}
     </nav>
   );
 }

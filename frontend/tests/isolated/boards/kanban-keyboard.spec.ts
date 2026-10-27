@@ -42,7 +42,8 @@ test("Space lifts, arrows move, Space drops in another stage", () => {
   expect(farther.announcement).toBe("Done, position 1 of 1.");
   const back = keyboardStep(farther.state, { type: "left" }, layout);
   const up = keyboardStep(back.state, { type: "up" }, layout);
-  expect(up.announcement).toBe("In progress, position 1 of 2.");
+  // Left kept the top place, so Up is at the stage's edge.
+  expect(up.announcement).toBe("Top of In progress.");
   const dropped = keyboardStep(up.state, { type: "drop" }, layout);
   expect(dropped.announcement).toBe(
     "Dropped Book the expo booth crew in In progress, position 1 of 2.",
@@ -54,7 +55,7 @@ test("Space lifts, arrows move, Space drops in another stage", () => {
 test("moves stop at the ends, and the first and last stages", () => {
   let step = keyboardStep(IDLE_MOVE, { type: "lift", cardId: "gifts" }, layout);
   step = keyboardStep(step.state, { type: "down" }, layout);
-  expect(step.announcement).toBe("To do, position 3 of 3.");
+  expect(step.announcement).toBe("End of To do.");
   step = keyboardStep(step.state, { type: "left" }, layout);
   expect(step.announcement).toBe("To do, position 3 of 3.");
   // Into a shorter stage, the place is kept within its cards.
@@ -99,4 +100,36 @@ test("arrows do nothing until a card is lifted, and an unknown card does not lif
   expect(
     keyboardStep(IDLE_MOVE, { type: "lift", cardId: "gone" }, layout),
   ).toEqual({ state: IDLE_MOVE, announcement: null, drop: null });
+});
+
+test("at the edge of a stage a move says so and stays put", () => {
+  const lifted = keyboardStep(
+    IDLE_MOVE,
+    { type: "lift", cardId: "crew" },
+    layout,
+  );
+  const top = keyboardStep(lifted.state, { type: "up" }, layout);
+  expect(top.announcement).toBe("Top of To do.");
+  expect(top.state).toEqual(lifted.state);
+  const bottom = keyboardStep(
+    keyboardStep(
+      keyboardStep(lifted.state, { type: "down" }, layout).state,
+      { type: "down" },
+      layout,
+    ).state,
+    { type: "down" },
+    layout,
+  );
+  expect(bottom.announcement).toBe("End of To do.");
+  // An empty stage has one place, which is both its top and its end.
+  const done = keyboardStep(
+    keyboardStep(
+      keyboardStep(lifted.state, { type: "right" }, layout).state,
+      { type: "right" },
+      layout,
+    ).state,
+    { type: "down" },
+    layout,
+  );
+  expect(done.announcement).toBe("End of Done.");
 });

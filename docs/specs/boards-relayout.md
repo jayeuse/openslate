@@ -315,7 +315,7 @@ The analysis holds the full text. "Refined" and "superseded" name the later deci
 | Project board, Read | "Posting needs write access through one of this board's groups." |
 | Guest anywhere | "Guests can read only." |
 | Archived board | The Archived chip; "Archived boards are read-only." |
-| A stage menu, writer | Not shown; the header reads as text. "Only board managers change stages." in the setup state. |
+| A stage menu, writer | Not shown; the header reads as text. "Board managers add stages." in the setup state. |
 | A record card the viewer cannot read | "No access to this record" (no name) |
 | Unknown or unreadable board, post, event, or card | "This board is not available." over "It may have been removed, or you may not have access." with Go to Company board; no Retry |
 
@@ -415,6 +415,21 @@ Choices the code forced that the rows above leave open; each is the smallest tha
 | Stage settings open in a popover from the stage header (labeled fields cannot live in `role="menu"`); Move left and Move right are the keyboard path for column order (WCAG 2.5.7). | — |
 | A record card's dates: the record's date and datetime values in field order (a datetime is its day in the workspace zone); one value is the due date, two or more prefill start with the first and due with the second, and the person picks from selects. | — |
 | Until the card sheets (P4b), opening a card names it in the address (`card=<id>`) and shows a read-only summary popover; `openKanbanCard` in `server-backed-board-kanban.tsx` is the one function P4b replaces. A locked card never opens; a `card=` link to a card the viewer cannot open says "This card is not available." | — |
+| (Owner, review) "Add a card" and the page line ("25 of 41 · Show 16 more") follow the last card as one block. On a long stage the block sticks to the stage's foot; on a short stage it sits under the last card. The drop cell keeps the stage's full height. Stages are 12rem to 17rem wide. | Add a card pinned to the foot of a short stage |
+
+### Recorded during P4b (2026-10-27)
+
+Choices the code forced in the card sheets; each is the smallest that fits DESIGN.md.
+
+| Choice | Removes |
+| --- | --- |
+| **Gap: the assignee picker.** No route lists a board's readers for a writer (`/preview-users` is for managers, `/users` for admins). The picker offers the viewer, the people already assigned on the board, and the board's post authors; the server refuses anyone else with "That person cannot read this board." A board-readers route (backend) would complete BR64. | — |
+| The record sheet body (`shared/components/record-sheet.tsx`) is shared; its header is each page's own. A record card's header has the module eyebrow ("Quotes · record card"), the record's name and meta line, Edit and More record actions from the shared body, and "Close card". The comp's "From the quote" block is not drawn: the Details tab holds the record's fields. | A second record body |
+| Copy link in either sheet copies the card's board address (`board`, `section=kanban`, `card`), never the viewer's filters. | — |
+| Inside a sheet, saves and moves are announced inline ("Due saved.", "Moved to Done."), with no toast (Request feedback). Archive card closes the sheet, so it keeps the board's Undo toast. | Toasts under an open sheet |
+| A pick (assignee, stage, a date, a label) saves on the card's latest revision; a typed edit (title, description) keeps the revision it began from, advanced only by the viewer's own saves, so another person's change in the meantime shows "Someone changed this card first." and the card is read again. Saves run one at a time. Dates save on leaving the field or on Enter. | Silent overwrites |
+| A checklist tick shows at once; Move up and Move down in each item's menu order it (WCAG 2.5.7). | Drag-only checklist order |
+| A `card=` link to an unknown, unreadable, locked or archived card opens the sheet with "This card is not available." over "It may have been removed, or you may not have access."; only a failed read (not a refusal) offers Retry. | The P4a toast |
 
 ## Comps
 

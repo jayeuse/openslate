@@ -330,6 +330,54 @@
     "path": "/api/me/calendar-sources/{param}"
   },
   {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "addChecklistItem",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/{param}/checklist"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "deleteChecklistItem",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/checklist/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "listCardActivity",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}/activity"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "orderChecklist",
+    "method": "PUT",
+    "path": "/api/boards/{param}/cards/{param}/checklist/order"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "readCardRecord",
+    "method": "GET",
+    "path": "/api/records/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "readCardSheet",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "saveCardFields",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/cards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "updateChecklistItem",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/checklist/{param}"
+  },
+  {
     "adapter": "frontend/src/components/systems/boards/adapters/board-due-cards-api.ts",
     "function": "listMyDueCards",
     "method": "GET",
@@ -406,12 +454,6 @@
     "function": "orderKanbanStages",
     "method": "PUT",
     "path": "/api/boards/{param}/stages/order"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
-    "function": "readKanbanCard",
-    "method": "GET",
-    "path": "/api/boards/{param}/cards/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
@@ -580,6 +622,30 @@
     "function": "uploadBoardFile",
     "method": "PUT",
     "path": "/api/boards/{param}/files/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "attachBoardFile",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/{param}/attachments"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "detachBoardFile",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/cards/{param}/attachments/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "downloadBoardAttachment",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}/attachments/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "listBoardAttachments",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}/attachments"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
@@ -766,6 +832,24 @@
     "function": "removeBoardRecordLink",
     "method": "DELETE",
     "path": "/api/boards/{param}/posts/{param}/record-links/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "addBoardRecordLink",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/{param}/record-links"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "listBoardRecordLinks",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}/record-links"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "removeBoardRecordLink",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/cards/{param}/record-links/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-tools-api.ts",
