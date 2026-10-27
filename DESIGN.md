@@ -476,7 +476,7 @@ Wrong: Triplicate sets `--action` to its navy form ink, so a link looks like bod
 
 One exception, for dense rows: an Access People row may show a person's department marks with a count ("■■■ 3") when the names are in the row's accessible text and in the person sheet one click away. A single department still shows its name.
 
-A second exception, for calendar month cells (Boards BR53, BR54): an item carries its calendar's mark without the calendar's name beside it. A timed event has a 3px rule in the color, an all-day event a tinted pill, a record source an outlined chip, and a card due date an outlined chip with "Due" before the title. The name stands beside the color everywhere else: in the calendar list (the rail, or the Calendars popover below 1440px), in the item's accessible name and tooltip, and in the event sheet one click away. Titles stay in ink, never in the color.
+A second exception, for calendar month cells (Boards BR53, BR54): an item carries its calendar's mark without the calendar's name beside it. A timed event has a 3px rule in the color, an all-day event a tinted pill, a record source an outlined chip, and a card due date a dashed outlined chip with "Due" before the title. The name stands beside the color everywhere else: in the calendar list (the rail, or the Calendars popover below 1440px), in the item's accessible name and tooltip, and in the event sheet one click away. Titles stay in ink, never in the color.
 
 Correct: the module header shows the `--dept-n` mark, then the module name, in the department's frame under its named head.
 
