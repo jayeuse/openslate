@@ -40,9 +40,9 @@ from operations.sample.scenario import build_dataset
 from operations.sample.verification.route_coverage import read_route_evidence
 from tests.boards.kanban_support import ROUTERS as KANBAN_ROUTERS
 from tests.boards.kanban_support import record_source
-from tests.boards.provider_accounts import create_password_account
 from tests.boards.support import grant, member, project_board
 from tests.conftest import create_member
+from tests.fake_provider_support import install_fake_provider
 from tests.files.test_integration import Store
 from tests.organization_scope_support import scoped_override
 from tests.rbac.support import organization
@@ -93,12 +93,14 @@ def _client(api: TestClient, journal: Path) -> SampleClient:
     return client
 
 
-def _admin(db: Session, password: str) -> User:
+def _admin(db: Session, password: str, monkeypatch: pytest.MonkeyPatch) -> User:
     user_id = uuid7()
     email = f"kanban-admin-{user_id.hex}@example.test"
+    # The test's monkeypatch puts the shared provider client back at teardown.
+    provider = install_fake_provider(monkeypatch)
     actor, _ = create_member(
         db, organization(db), id=user_id, email=email, username=f"kanban_{user_id.hex[:12]}",
-        supabase_user_id=create_password_account(db, email=email, password=password),
+        supabase_user_id=provider.add(email, password),
         status="active", role="admin",
     )  # fmt: skip
     return actor
@@ -118,7 +120,7 @@ def test_kanban_controls_cover_every_board_kanban_route_and_leave_no_card_conten
               if str(action.values["operation"]).startswith("kanban_")]  # fmt: skip
     values = kanban[0].values
     password = token_urlsafe(18)
-    manager, admin = member(db), _admin(db, password)
+    manager, admin = member(db), _admin(db, password, monkeypatch)
     board = project_board(db)
     grant(db, board, [manager], AccessLevel.MANAGE)
     source = record_source(db, manager)
