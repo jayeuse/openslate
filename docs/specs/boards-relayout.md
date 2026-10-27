@@ -463,6 +463,20 @@ Choices the brief and comps left open; each is the smallest that fits DESIGN.md.
 | (Owner, final review D2) One set of level words: the group select says Read, Post, Manager (the values stay `read`, `write`, `manage`), a manager who is not an admin reads the level chip, and the hints say what each level adds on posts, events, cards, stages and labels. | Read · Write · Manage beside the chip's Read · Post · Manager |
 | Final review choices: one sheet width, 40rem (the OpenView record sheet and the card sheet), for the event, card and settings sheets; the record-link select is "Module"; Check a person cannot tell a guest from a member, so every Read reason adds "Guests read only."; after Remove, focus goes to the next row, else the row before, else Add a group. | 34rem and 42rem sheets; "Data source" |
 
+### Deferred after the final critique (2026-10-27)
+
+The final critique (`.impeccable/critique/2026-10-27T10-10-43Z__frontend-src-components-systems-boards-page-tsx.md`) scored 30/40 with no P1, so EXIT-8 is met. Its P2 3–6 and seven P3s are fixed in this branch. These wait:
+
+| Finding | Why it waits |
+| --- | --- |
+| P2 1: Check a person names people by username (`board-settings-access.tsx`) | Needs `display_name` on `GET /api/boards/{id}/preview-users`, a public API change for the owner to approve |
+| P2 2: Activity rows read "Changed groups" for every group change (`domain/board-settings.ts`) | Needs the group name, action and level on the board activity read, a public API change for the owner to approve; no frontend-only wording meanwhile |
+| P3: Upcoming facts column cuts beside free space; Upcoming heading repeats the segment | Calendar polish; next Boards pass |
+| P3: weekend and outside-day tint invisible in Slate dark; violet all-day pill near neutral in dark | Look tokens; needs a contrast pass across the four looks |
+| P3: project meta line is a constant, not the group count (BR45) | Needs the group count on the board read |
+| P3: skeleton does not match the layout; Activity rows top-align on phones; setup primary sits at the panel foot | Layout polish; next Boards pass |
+| P3: no people filter in the phone Kanban Filters sheet | Small feature; next Boards pass |
+
 ## Comps
 
 Comps draw the novel parts only, in Slate dark with Harbor content and the sidebar's Announcements rows. Serve them over HTTP from `.impeccable/mocks/boards/` (`python3 -m http.server <port>`). They reuse the OpenView comp kit (`openview.css` as a symlink, the icon sprite with calendar, Kanban, and Gantt icons, and the `_next`/`app-out` links to the app's tokens). New classes start with `bd-`.
