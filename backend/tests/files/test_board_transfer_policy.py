@@ -12,7 +12,7 @@ BOARD, FILE, ITEM = "019c0000-0000-7000-8000-00000000000b", str(uuid4()), str(uu
 
 
 def test_board_file_upload_and_contextual_download_receive_transfer_leases() -> None:
-    board, file, event, notice = (uuid4() for _ in range(4))
+    board, file, event, notice, card = (uuid4() for _ in range(5))
     upload = file_transfer_policy(f"/api/boards/{board}/files/{file}/content", "PUT")
     event_download = file_transfer_policy(
         f"/api/boards/{board}/events/{event}/attachments/{file}/content", "GET"
@@ -20,11 +20,15 @@ def test_board_file_upload_and_contextual_download_receive_transfer_leases() -> 
     notice_download = file_transfer_policy(
         f"/api/boards/{board}/posts/{notice}/attachments/{file}/content", "GET"
     )
+    card_download = file_transfer_policy(
+        f"/api/boards/{board}/cards/{card}/attachments/{file}/content", "GET"
+    )
     reconcile = file_transfer_policy(f"/api/boards/{board}/files/{file}/reconcile", "POST")
     purge = file_transfer_policy(f"/api/boards/{board}/files/{file}/purge", "POST")
     assert upload is not None and upload.request_bytes == 10 * 1024 * 1024
     assert event_download is not None and event_download.deadline_seconds == 120
     assert notice_download is not None and notice_download.deadline_seconds == 120
+    assert card_download is not None and card_download.deadline_seconds == 120
     assert reconcile is not None and purge is not None
     assert file_transfer_policy(f"/api/boards/{board}/files/{file}/content", "GET") is None
 

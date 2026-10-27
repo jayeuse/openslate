@@ -27,7 +27,7 @@ _COMMS_FILE_ROUTE = re.compile(rf"/api/comms/conversations/{_UUID}/files/{_UUID}
 _COMMS_PURGE_ROUTE = re.compile(rf"/api/comms/conversations/{_UUID}/purge")
 _COMMS_EXPORT_ROUTE = re.compile(rf"/api/comms/exports/{_UUID}/content")
 _BOARD_CONTENT_ROUTE = re.compile(
-    rf"/api/boards/{_UUID}/(?:events|posts)/{_UUID}/attachments/{_UUID}/content"
+    rf"/api/boards/{_UUID}/(?:events|posts|cards)/{_UUID}/attachments/{_UUID}/content"
 )
 
 
