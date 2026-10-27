@@ -80,6 +80,9 @@ export type PostParams = {
 type PostsProps = {
   board: BoardManagementBoard;
   region: WorkspaceRegion | undefined;
+  /** The regional settings read failed; the editor offers its Retry. */
+  regionFailed: boolean;
+  onRetryRegion: () => void;
   refreshKey: number;
   /** `?post=`: the open post. */
   selectedPostId: string | null;
@@ -136,6 +139,8 @@ const MENU_CONFIRM = {
 function ScopedServerBackedBoardPosts({
   board,
   region,
+  regionFailed,
+  onRetryRegion,
   refreshKey,
   selectedPostId,
   show,
@@ -168,6 +173,8 @@ function ScopedServerBackedBoardPosts({
     boardStatus: board.status,
     refreshKey,
     region,
+    regionFailed,
+    onRetryRegion,
     onPublished: onChanged,
   });
   // The board's level shows New post at once; the editor's access check can
@@ -425,7 +432,7 @@ function ScopedServerBackedBoardPosts({
     <Button
       type="button"
       className="min-h-11 xl:min-h-8"
-      disabled={!editor.view.canEdit || editor.view.pending}
+      disabled={!editor.view.canStart || editor.view.pending}
       onClick={openNew}
     >
       <Plus aria-hidden="true" />
@@ -549,7 +556,7 @@ function ScopedServerBackedBoardPosts({
                   type="button"
                   variant="outline"
                   className="min-h-11 xl:min-h-8"
-                  disabled={!editor.view.canEdit}
+                  disabled={!editor.view.canStart}
                   onClick={openNew}
                 >
                   <Plus aria-hidden="true" />

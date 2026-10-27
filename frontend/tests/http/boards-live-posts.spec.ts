@@ -2414,6 +2414,48 @@ test("the pane shows Links and Files only when the post has them, at the reading
   await expect(message).toHaveCSS("line-height", "24px");
 });
 
+test("a failed regional settings read shows in the post dialog, and its Retry opens the editor", async ({
+  page,
+}) => {
+  await installS05PostApi(page);
+  // The regional settings read fails until Retry.
+  let failing = true;
+  const reads: number[] = [];
+  await page.route("**/api/workspace", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    reads.push(failing ? 500 : 200);
+    return failing
+      ? route.fulfill({ status: 500, json: { detail: "Unavailable" } })
+      : route.fallback();
+  });
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await expect(
+    page.getByText("Could not load regional settings. Dates are unavailable."),
+  ).toBeVisible();
+  const newPost = page
+    .getByRole("button", { name: "New post", exact: true })
+    .first();
+  await expect(newPost).toBeEnabled();
+  await newPost.click();
+  const editor = page.getByRole("dialog", { name: "New post", exact: true });
+  // Not "Opening the post…" with no way out: the failure, and a Retry that
+  // reruns the page's read.
+  await expect(
+    editor.getByText("Regional settings could not be loaded.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(editor.getByText("Opening the post…")).toHaveCount(0);
+  failing = false;
+  const before = reads.length;
+  await editor.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(editor.getByLabel("Title", { exact: true })).toBeVisible();
+  expect(reads.slice(before)).toEqual([200]);
+  await expect(
+    page.getByText("Could not load regional settings. Dates are unavailable."),
+  ).toHaveCount(0);
+});
+
 test("New post publishes from the editor dialog with one consequence line and a toast", async ({
   page,
 }) => {

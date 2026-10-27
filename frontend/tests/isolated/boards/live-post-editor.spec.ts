@@ -33,7 +33,9 @@ const draft: BoardPost = {
 const baseView: PostEditorView = {
   status: "ready",
   active: true,
+  canStart: true,
   canEdit: true,
+  regionFailed: false,
   canManage: false,
   selected: draft,
   form: {

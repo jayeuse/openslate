@@ -34,7 +34,11 @@ export type { PostEditorForm };
 export type PostEditorView = {
   status: "loading" | "ready" | "error" | "denied";
   active: boolean;
+  /** New post may open: the editor itself may still wait for the region. */
+  canStart: boolean;
   canEdit: boolean;
+  /** The regional settings read failed; Retry reruns it. */
+  regionFailed: boolean;
   canManage: boolean;
   selected: BoardPost | null;
   form: PostEditorForm | null;
@@ -152,13 +156,17 @@ export function ServerBoardPostEditorDisplay({
       </p>
     );
   if (!view.canEdit || !view.form) {
-    if (view.status === "error")
+    if (view.regionFailed || view.status === "error")
       return (
         <Alert
           variant="destructive"
           className="flex flex-wrap items-center gap-3"
         >
-          <span>{view.error ?? "Posts could not be loaded."}</span>
+          <span>
+            {view.regionFailed
+              ? "Regional settings could not be loaded."
+              : (view.error ?? "Posts could not be loaded.")}
+          </span>
           <Button
             type="button"
             variant="outline"

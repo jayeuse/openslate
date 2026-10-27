@@ -57,6 +57,8 @@ export function useServerBoardPostEditor({
   boardStatus,
   refreshKey,
   region,
+  regionFailed,
+  onRetryRegion,
   onPublished,
 }: {
   boardId: string;
@@ -65,6 +67,10 @@ export function useServerBoardPostEditor({
   refreshKey: number;
   /** Times are typed and shown in this zone; editing waits for it. */
   region: WorkspaceRegion | undefined;
+  /** The regional settings read failed, so no region is known. */
+  regionFailed: boolean;
+  /** Reruns the page's regional settings read. */
+  onRetryRegion: () => void;
   onPublished?: (boardId: string) => void;
 }) {
   const actorId = useVerifiedWorkspaceUserId();
@@ -220,11 +226,14 @@ export function useServerBoardPostEditor({
   const access = current.access;
   // A background re-check keeps this Board's last confirmed access, so open menus
   // and editors stay mounted; a denial or failure clears it.
-  const canEdit =
+  // New post opens at once; the editor waits for the workspace zone, and a
+  // failed regional settings read shows in its frame with Retry.
+  const editable =
     boardStatus === "active" &&
     (current.status === "ready" || current.status === "loading") &&
-    access?.edit === true &&
-    zone !== null;
+    access?.edit === true;
+  const canEdit = editable && zone !== null;
+  const zoneFailed = zone === null && regionFailed;
   const canManage = access?.manage === true;
   const scheduleDirty =
     current.scheduleLocal !==
@@ -234,7 +243,9 @@ export function useServerBoardPostEditor({
     status:
       zone === null && current.status === "ready" ? "loading" : current.status,
     active: boardStatus === "active",
+    canStart: editable,
     canEdit,
+    regionFailed: zoneFailed,
     canManage,
     selected: canEdit ? current.selected : null,
     form: canEdit ? current.form : null,
@@ -253,7 +264,7 @@ export function useServerBoardPostEditor({
 
   function newDraft() {
     if (
-      !canEdit ||
+      !editable ||
       current.pending ||
       attachmentPendingRef.current ||
       recordLinkPendingRef.current ||
@@ -855,7 +866,10 @@ export function useServerBoardPostEditor({
     setAttachmentPending,
     setRecordLinkPending,
     refreshAttachmentVersions,
-    retry: () => setRetryKey((value) => value + 1),
+    retry: () => {
+      if (zoneFailed) onRetryRegion();
+      else setRetryKey((value) => value + 1);
+    },
     close,
   };
 }

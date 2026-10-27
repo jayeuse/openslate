@@ -692,6 +692,14 @@ function ServerBackedBoardsContent() {
               <ServerBackedBoardPosts
                 board={board}
                 region={displayRegion}
+                // While a read is in flight the editor keeps its loading
+                // frame; only a settled failure shows with Retry.
+                regionFailed={
+                  workspaceCalendar.isError &&
+                  !workspaceCalendar.isFetching &&
+                  !displayRegion
+                }
+                onRetryRegion={() => void workspaceCalendar.refetch()}
                 refreshKey={postsLiveKey + manualLiveKey}
                 selectedPostId={searchParams.get("post")}
                 show={searchParams.get("show")}
