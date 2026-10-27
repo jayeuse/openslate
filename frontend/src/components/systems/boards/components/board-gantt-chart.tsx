@@ -13,16 +13,22 @@ import {
 import { FileText } from "lucide-react";
 import type { WorkspaceRegion } from "@/lib/date-time";
 import { cn } from "@/lib/utils";
-import type { KanbanCard, KanbanLabel } from "../adapters/board-kanban-schemas";
+import type {
+  ChartColor,
+  KanbanCard,
+  KanbanLabel,
+} from "../adapters/board-kanban-schemas";
 import {
   barColor,
   barLabel,
   barPlacement,
   cardProgress,
   cardSpan,
+  clampShift,
   datesWords,
   dayWidth,
   moveDates,
+  outOfView,
   resizeDue,
   type CardDates,
   type GanttGroupRows,
@@ -33,16 +39,41 @@ import {
 import { cardName } from "../domain/kanban";
 import { chartVar } from "./board-kanban-card";
 
-/** The axis: a month row over a week row. */
+/** The axis: a month row over a week row, and a day row at Week zoom. */
 const AXIS = 52;
 const MONTH_ROW = 28;
+const DAY_ROW = 20;
+/** A month's name needs this much room, or it keeps only its line. */
+const MONTH_NAME_MIN = 36;
 
 export type GanttAxis = {
   weeks: { offset: number; label: string }[];
   months: { offset: number; label: string | null }[];
-  lines: { offset: number; kind: "week" | "month" }[];
+  days: { offset: number; label: string }[];
+  lines: { offset: number; kind: "day" | "week" | "month" }[];
   today: number | null;
 };
+
+/**
+ * A bar's 1px edge carries its 3:1 against the card (WCAG 1.4.11; BR74).
+ * `--chart-2` is under 3:1 on light cards, so only its edge takes some ink.
+ */
+const barEdge = (color: ChartColor | null) =>
+  color === null
+    ? "var(--ink-muted)"
+    : color === "chart-2"
+      ? "color-mix(in oklab, var(--chart-2) 80%, var(--ink))"
+      : `var(--${color})`;
+
+/** The edge, the staged warn ring and the drag lift share one shadow. */
+const barShadow = (edge: string, staged: boolean, lifted: boolean) =>
+  [
+    `inset 0 0 0 1px ${edge}`,
+    staged ? "0 0 0 2px var(--warn)" : null,
+    lifted ? "var(--shadow-lg)" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
 type Drag = {
   cardId: string;
@@ -63,6 +94,7 @@ export function GanttChart({
   window,
   zoom,
   axis,
+  todayTick,
   groups,
   unscheduled,
   labels,
@@ -75,6 +107,7 @@ export function GanttChart({
   facts,
   legend,
   onStage,
+  onEdge,
   onOpen,
   onAddDates,
   onDragging,
@@ -82,6 +115,8 @@ export function GanttChart({
   window: GanttWindow;
   zoom: GanttZoom;
   axis: GanttAxis;
+  /** Counts presses of Today, which scrolls today into view again. */
+  todayTick: number;
   groups: GanttGroupRows[];
   unscheduled: KanbanCard[];
   labels: readonly KanbanLabel[];
@@ -95,6 +130,8 @@ export function GanttChart({
   facts: string;
   legend: ReactNode;
   onStage: (card: KanbanCard, to: CardDates) => void;
+  /** An arrow key met the window's edge; the bar stays (BR75). */
+  onEdge: (card: KanbanCard, side: "start" | "end") => void;
   onOpen: (card: KanbanCard) => void;
   onAddDates: (card: KanbanCard) => void;
   onDragging: (held: boolean) => void;
@@ -113,21 +150,27 @@ export function GanttChart({
   const day = dayWidth(zoom, Math.max(0, width - names), window.days);
   const track = Math.round(day * window.days);
   const x = (offset: number) => offset * day;
+  const axisHeight = axis.days.length > 0 ? AXIS + DAY_ROW : AXIS;
 
-  // Today in view on the first paint of a period (BR76: phones scroll);
-  // a drag or a live refresh never moves the view.
+  // Today in view on the first paint of a period and on each Today (BR76:
+  // phones scroll); a drag or a live refresh never moves the view. The view
+  // starts at a week line, so the first week's label is whole, unless that
+  // would leave today out (a phone at Week zoom); then at a day line.
   const today = axis.today;
   const scrolledFor = useRef<string | null>(null);
   useEffect(() => {
     const node = scroller.current;
-    const key = `${zoom}:${window.start}`;
+    const key = `${zoom}:${window.start}:${todayTick}`;
     if (!node || width === 0 || scrolledFor.current === key) return;
     scrolledFor.current = key;
     if (today === null) return;
     const view = node.clientWidth - names;
     const at = today * day;
-    if (at < node.scrollLeft || at > node.scrollLeft + view - day)
-      node.scrollLeft = Math.max(0, at - view / 3);
+    if (at >= node.scrollLeft && at <= node.scrollLeft + view - day) return;
+    const target = Math.max(0, at - view / 3);
+    const week = Math.floor(target / (7 * day)) * 7 * day;
+    node.scrollLeft =
+      at + day <= week + view ? week : Math.floor(target / day) * day;
   });
 
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -168,7 +211,10 @@ export function GanttChart({
         if (!now || now.cardId !== card.id) return;
         const dx = event.clientX - now.x;
         const moved = now.moved || Math.abs(dx) > 4;
-        const days = moved ? Math.round(dx / day) : 0;
+        // Past the window's edge the bar would unmount mid-drag.
+        const days = moved
+          ? clampShift(card, now.mode, Math.round(dx / day), window)
+          : 0;
         if (days !== now.days || moved !== now.moved)
           setDragState({ ...now, days, moved });
       },
@@ -192,6 +238,12 @@ export function GanttChart({
         setDragState(null);
         onDragging(false);
       },
+      // Fires after pointerup too, which has already ended the drag.
+      onLostPointerCapture() {
+        if (!dragRef.current) return;
+        setDragState(null);
+        onDragging(false);
+      },
       onClick() {
         // A drag ends in a click; only a click without one opens the card.
         if (clickAfterDrag.current) {
@@ -204,10 +256,17 @@ export function GanttChart({
         if (!canMove) return;
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
         event.preventDefault();
-        const days = event.key === "ArrowRight" ? 1 : -1;
+        const step = event.key === "ArrowRight" ? 1 : -1;
+        const mode = event.shiftKey ? "resize" : "move";
+        const days = clampShift(card, mode, step, window);
+        // At the edge the bar and its focus stay; the live region says why.
+        if (days === 0) {
+          onEdge(card, step > 0 ? "end" : "start");
+          return;
+        }
         onStage(
           card,
-          event.shiftKey ? resizeDue(card, days) : moveDates(card, days),
+          mode === "resize" ? resizeDue(card, days) : moveDates(card, days),
         );
       },
     };
@@ -234,10 +293,24 @@ export function GanttChart({
         ? cardSpan(change ? change.from : card)
         : null;
     const wasPlace = was ? barPlacement(was, window) : null;
+    const away = span && !place ? outOfView(span, window, region) : null;
+    const label = barLabel(
+      { ...card, ...dates },
+      labels,
+      region,
+      change ? change.from : null,
+    );
+    // Less ink reads lighter in every look (BR74): a label bar is its
+    // series at 52%, a bar with no label ink-muted at 14%.
     const fill: CSSProperties = {
       background: color
         ? `color-mix(in oklab, ${chartVar(color)} 52%, var(--card))`
-        : "color-mix(in oklab, var(--ink-muted) 34%, var(--card))",
+        : "color-mix(in oklab, var(--ink-muted) 14%, var(--card))",
+      boxShadow: barShadow(
+        barEdge(color),
+        change !== undefined,
+        drag?.cardId === card.id,
+      ),
     };
     const barStyle: CSSProperties = place
       ? {
@@ -249,11 +322,12 @@ export function GanttChart({
     const inner = (
       <>
         {progress ? (
+          // Inside the 1px edge, so the edge stays whole.
           <span
             aria-hidden="true"
-            className="absolute inset-y-0 left-0"
+            className="absolute inset-y-px left-px"
             style={{
-              width: `${Math.round(progress * 100)}%`,
+              width: `calc(${Math.round(progress * 100)}% - 1px)`,
               background: chartVar(color),
             }}
           />
@@ -272,8 +346,6 @@ export function GanttChart({
       "group/bar absolute top-1/2 z-[1] h-6 -translate-y-1/2 overflow-hidden rounded-[4px]",
       place?.clippedStart && "rounded-l-none",
       place?.clippedEnd && "rounded-r-none",
-      change && "shadow-[0_0_0_2px_var(--warn)]",
-      drag?.cardId === card.id && "shadow-[var(--shadow-lg)]",
     );
     return (
       <Fragment key={card.id}>
@@ -282,7 +354,7 @@ export function GanttChart({
             <button
               type="button"
               className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--focus)]"
-              aria-label={barLabel({ ...card, ...dates }, region)}
+              aria-label={label}
               onClick={() => onOpen(card)}
             >
               <RowName card={card} name={name} />
@@ -309,10 +381,29 @@ export function GanttChart({
               style={{ left: x(wasPlace.from), width: x(wasPlace.length) }}
             />
           ) : null}
+          {away ? (
+            // The bar is out of view: its dates point the way (the name
+            // button says them).
+            <div
+              aria-hidden="true"
+              className={cn(
+                "flex h-full items-center",
+                away.side === "end" ? "justify-end" : "justify-start",
+              )}
+            >
+              <span
+                className="text-muted-foreground bg-card sticky px-2 text-xs whitespace-nowrap tabular-nums"
+                style={away.side === "end" ? { right: 0 } : { left: names }}
+              >
+                {away.text}
+              </span>
+            </div>
+          ) : null}
           {place && barIsControl ? (
             <button
               type="button"
-              aria-label={barLabel({ ...card, ...dates }, region)}
+              aria-label={label}
+              title={label}
               aria-describedby={canMove ? describedBy : undefined}
               className={cn(
                 barClass,
@@ -329,6 +420,7 @@ export function GanttChart({
           ) : place ? (
             <span
               aria-hidden="true"
+              title={label}
               className={cn(barClass, "pointer-events-none")}
               style={barStyle}
             >
@@ -376,7 +468,7 @@ export function GanttChart({
                   ? ""
                   : `, ${Math.round(group.progress * 100)}% of the checklist done`
               }`}
-              className="absolute top-1/2 z-[1] flex h-[26px] -translate-y-1/2 items-center overflow-hidden rounded-[4px] bg-[color-mix(in_oklab,var(--ink-muted)_16%,var(--card))] shadow-[inset_0_0_0_1px_var(--rule-strong)]"
+              className="absolute top-1/2 z-[2] flex h-[26px] -translate-y-1/2 items-center overflow-hidden rounded-[4px] bg-[color-mix(in_oklab,var(--ink-muted)_28%,var(--card))] shadow-[inset_0_0_0_1px_var(--ink-muted)]"
               style={{
                 left: x(place.from),
                 width: Math.max(4, x(place.length)),
@@ -384,11 +476,15 @@ export function GanttChart({
             >
               {group.progress ? (
                 <span
-                  className="absolute inset-y-0 left-0 bg-[color-mix(in_oklab,var(--ink-muted)_36%,var(--card))]"
-                  style={{ width: `${Math.round(group.progress * 100)}%` }}
+                  className="absolute inset-y-px left-px bg-[color-mix(in_oklab,var(--ink-muted)_60%,var(--card))]"
+                  style={{
+                    width: `calc(${Math.round(group.progress * 100)}% - 1px)`,
+                  }}
                 />
               ) : null}
-              <span className="text-foreground relative px-2 text-xs font-semibold whitespace-nowrap">
+              {/* The name keeps the body's 28% behind it: ink on the 60%
+                  segment is under 4.5:1 in three dark looks. */}
+              <span className="text-foreground relative mx-0.5 rounded-[3px] bg-[color-mix(in_oklab,var(--ink-muted)_28%,var(--card))] px-1.5 text-xs font-semibold whitespace-nowrap">
                 {group.name}
               </span>
             </span>
@@ -402,7 +498,7 @@ export function GanttChart({
   return (
     <section
       aria-label="Gantt"
-      className="bg-card flex min-w-0 flex-col overflow-hidden rounded-lg border xl:min-h-0 xl:flex-1"
+      className="bg-card flex min-w-0 flex-col overflow-hidden rounded-lg border max-md:max-h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-1"
     >
       <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2.5">
         <span className="text-muted-foreground text-[13px] tabular-nums">
@@ -410,9 +506,12 @@ export function GanttChart({
         </span>
         {legend}
       </div>
+      {/* Phones: the panel is at most the screen under the header and
+          scrolls inside, so the date axis stays on top (BR76). */}
       <div
         ref={scroller}
-        className="relative min-h-0 overflow-x-auto overscroll-x-contain md:overflow-y-auto md:max-xl:h-[38rem] xl:flex-1"
+        data-testid="gantt-scroller"
+        className="relative min-h-0 overflow-auto overscroll-x-contain md:max-xl:h-[38rem] xl:flex-1"
       >
         <div
           className="relative grid"
@@ -421,26 +520,27 @@ export function GanttChart({
           <div
             aria-hidden="true"
             className="bg-card sticky top-0 left-0 z-[6] border-b"
-            style={{ height: AXIS }}
+            style={{ height: axisHeight }}
           />
           <div
             aria-hidden="true"
             className="bg-card sticky top-0 z-[5] border-b"
-            style={{ height: AXIS }}
+            style={{ height: axisHeight }}
           >
             {/* A month's name stays at the panel's left edge while any of
-                its days are in view (phones scroll the panel sideways). */}
-            {axis.months.map((month, index) =>
-              month.label ? (
+                its days are in view (phones scroll the panel sideways). A
+                month too narrow for its name keeps only its line. */}
+            {axis.months.map((month, index) => {
+              const width = x(
+                (axis.months[index + 1]?.offset ?? window.days) - month.offset,
+              );
+              return month.label && width >= MONTH_NAME_MIN ? (
                 <span
                   key={month.offset}
                   className="absolute top-0 flex"
                   style={{
                     left: x(month.offset),
-                    width: x(
-                      (axis.months[index + 1]?.offset ?? window.days) -
-                        month.offset,
-                    ),
+                    width,
                     height: MONTH_ROW,
                   }}
                 >
@@ -451,12 +551,19 @@ export function GanttChart({
                     {month.label}
                   </span>
                 </span>
-              ) : null,
-            )}
+              ) : null;
+            })}
+            {/* W labels center in their week; a start date reads from its
+                week line (BR72). */}
             {axis.weeks.map((week) => (
               <span
                 key={week.offset}
-                className="text-muted-foreground absolute grid place-items-center text-xs whitespace-nowrap tabular-nums"
+                className={cn(
+                  "text-muted-foreground absolute grid text-xs whitespace-nowrap tabular-nums",
+                  zoom === "quarter"
+                    ? "place-items-center"
+                    : "items-center justify-items-start pl-1.5",
+                )}
                 style={{
                   left: x(week.offset),
                   width: x(7),
@@ -467,7 +574,39 @@ export function GanttChart({
                 {week.label}
               </span>
             ))}
+            {axis.days.map((date) => (
+              <span
+                key={date.offset}
+                className="text-muted-foreground absolute grid place-items-center text-xs tabular-nums"
+                style={{
+                  left: x(date.offset),
+                  width: day,
+                  top: AXIS,
+                  height: DAY_ROW,
+                }}
+              >
+                {date.label}
+              </span>
+            ))}
+            {today !== null ? (
+              <span
+                className="absolute z-[1] -translate-x-1/2 rounded-[3px] bg-[var(--ink)] px-[5px] py-px text-[11px] font-semibold whitespace-nowrap text-[var(--background)]"
+                style={{ left: x(today) + day / 2, top: MONTH_ROW + 2 }}
+              >
+                Today
+              </span>
+            ) : null}
           </div>
+          {/* The today line runs under the rows: bars and summaries cover
+              it, so it never crosses a summary's name. */}
+          {today !== null ? (
+            <div
+              aria-hidden="true"
+              data-testid="gantt-today"
+              className="pointer-events-none absolute bottom-0 z-[1] w-0 border-l-2 border-[var(--ink)]"
+              style={{ top: axisHeight, left: names + x(today) + day / 2 }}
+            />
+          ) : null}
           {groups.map(groupRows)}
           {unscheduled.length > 0 ? (
             <>
@@ -495,10 +634,13 @@ export function GanttChart({
               {unscheduled.map((card) => {
                 const locked = card.record?.locked === true;
                 const name = cardName(card);
+                // Readers open the card by its name; on a phone writers
+                // do too, and a tap on the row opens it (BR76).
+                const opens = !locked && (phone || !canWrite);
                 return (
                   <Fragment key={card.id}>
                     <div className={cn(nameCell, rowHeight)} title={name}>
-                      {!locked && !canWrite ? (
+                      {opens ? (
                         <button
                           type="button"
                           className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--focus)]"
@@ -515,7 +657,20 @@ export function GanttChart({
                       className={cn(
                         "relative border-b border-dotted",
                         rowHeight,
+                        phone && opens && "cursor-pointer",
                       )}
+                      onClick={
+                        phone && opens
+                          ? (event) => {
+                              // Add dates is its own target.
+                              if (
+                                (event.target as HTMLElement).closest("button")
+                              )
+                                return;
+                              onOpen(card);
+                            }
+                          : undefined
+                      }
                     >
                       <span
                         className="text-muted-foreground sticky flex h-full w-max items-center gap-2.5 pl-2.5 text-xs"
@@ -539,31 +694,28 @@ export function GanttChart({
               })}
             </>
           ) : null}
-          {/* Week lines dotted, month lines solid (BR72). */}
+          {/* Week lines dotted, month lines solid; Week zoom adds faint day
+              lines (BR72). */}
           <div
             aria-hidden="true"
             className="pointer-events-none absolute bottom-0"
-            style={{ top: AXIS, left: names, width: track }}
+            style={{ top: axisHeight, left: names, width: track }}
           >
             {axis.lines.map((line) => (
               <i
                 key={line.offset}
                 className={cn(
-                  "absolute inset-y-0 border-l border-[var(--rule-strong)]",
-                  line.kind === "week" ? "border-dotted" : "border-solid",
+                  "absolute inset-y-0 border-l",
+                  line.kind === "day"
+                    ? "border-dotted border-[var(--rule)]"
+                    : line.kind === "week"
+                      ? "border-dotted border-[var(--rule-strong)]"
+                      : "border-solid border-[var(--rule-strong)]",
                 )}
                 style={{ left: x(line.offset) }}
               />
             ))}
           </div>
-          {today !== null ? (
-            <div
-              aria-hidden="true"
-              data-testid="gantt-today"
-              className="pointer-events-none absolute bottom-0 z-[2] w-0 border-l-2 border-[var(--ink)]"
-              style={{ top: MONTH_ROW, left: names + x(today) + day / 2 }}
-            />
-          ) : null}
         </div>
       </div>
     </section>

@@ -105,7 +105,7 @@ test("a writer drags a bar; its old place shows dashed until Save changes sends 
 
   const booth = bar(
     page,
-    /^Book the expo booth crew, Sep 14 to Sep 18, checklist 1 of 2 done$/,
+    /^Book the expo booth crew, Expo, Sep 14 to Sep 18, checklist 1 of 2 done$/,
   );
   const box = await booth.boundingBox();
   if (!box) throw new Error("The bar has no box");
@@ -115,9 +115,14 @@ test("a writer drags a bar; its old place shows dashed until Save changes sends 
     { x: box.x + box.width / 2, y: box.y + box.height / 2 },
     2 * day,
   );
-  await expect(
-    bar(page, /^Book the expo booth crew, Sep 16 to Sep 20/),
-  ).toBeVisible();
+  const staged = bar(
+    page,
+    /^Book the expo booth crew, Expo, Sep 16 to Sep 20, checklist 1 of 2 done, unsaved, was Sep 14 to Sep 18$/,
+  );
+  await expect(staged).toHaveAttribute(
+    "title",
+    "Book the expo booth crew, Expo, Sep 16 to Sep 20, checklist 1 of 2 done, unsaved, was Sep 14 to Sep 18",
+  );
   await expect(page.getByTestId("gantt-was")).toHaveCount(1);
   await expect(
     page.getByText("1 unsaved change", { exact: true }),
@@ -153,11 +158,11 @@ test("a writer drags a bar; its old place shows dashed until Save changes sends 
     page.getByRole("status").filter({ hasText: "Dates saved." }),
   ).toHaveCount(1);
   await expect(
-    bar(page, /^Book the expo booth crew, Sep 16 to Sep 20/),
+    bar(page, /^Book the expo booth crew, Expo, Sep 16 to Sep 20/),
   ).toBeVisible();
 });
 
-test("dragging a bar's end changes only its due date; Discard puts it back", async ({
+test("dragging a bar's end changes only its due date; Discard puts it back and Undo restores it", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -167,7 +172,7 @@ test("dragging a bar's end changes only its due date; Discard puts it back", asy
     cards: Object.values(cards),
   });
   await page.goto(ganttHref("zoom=month"));
-  const booth = bar(page, /^Book the expo booth crew, Sep 14 to Sep 18/);
+  const booth = bar(page, /^Book the expo booth crew, Expo, Sep 14 to Sep 18/);
   const end = async () => {
     const box = await booth.boundingBox();
     if (!box) throw new Error("The bar has no box");
@@ -176,18 +181,28 @@ test("dragging a bar's end changes only its due date; Discard puts it back", asy
   const first = await end();
   await dragBy(page, first.at, 3 * (first.box.width / 5));
   await expect(
-    bar(page, /^Book the expo booth crew, Sep 14 to Sep 21/),
+    bar(page, /^Book the expo booth crew, Expo, Sep 14 to Sep 21/),
   ).toBeVisible();
   await page.getByRole("button", { name: "Discard" }).click();
   await expect(
-    bar(page, /^Book the expo booth crew, Sep 14 to Sep 18/),
+    bar(page, /^Book the expo booth crew, Expo, Sep 14 to Sep 18/),
   ).toBeVisible();
   await expect(page.getByText("1 unsaved change", { exact: true })).toHaveCount(
     0,
   );
-
-  const again = await end();
-  await dragBy(page, again.at, 3 * (again.box.width / 5));
+  await expect(
+    page.getByRole("status").filter({ hasText: "Changes discarded" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(
+    bar(
+      page,
+      /^Book the expo booth crew, Expo, Sep 14 to Sep 21, checklist 1 of 2 done, unsaved, was Sep 14 to Sep 18$/,
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Undo", exact: true }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText("1 unsaved change", { exact: true })).toHaveCount(
     0,
@@ -200,6 +215,82 @@ test("dragging a bar's end changes only its due date; Discard puts it back", asy
           revision: 1,
           start_on: "2026-09-14",
           due_on: "2026-09-21",
+        },
+      ],
+    },
+  ]);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Dates saved." }),
+  ).toBeVisible();
+});
+
+test("a bar dragged past the view's edge stops there, stays staged, and live changes still arrive", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installOpenViewEventSource(page);
+  const cards = boardCards();
+  const api = await installKanbanApi(page, {
+    level: "write",
+    cards: Object.values(cards),
+  });
+  await page.goto(ganttHref("zoom=month"));
+  await sendOpenViewEvent(page, "resync");
+  const box = await bar(
+    page,
+    /^Book the expo booth crew, Expo, Sep 14 to Sep 18/,
+  ).boundingBox();
+  if (!box) throw new Error("The bar has no box");
+  // 22 days back: Sep 18 can only go 18, to Aug 31, the view's first day.
+  await dragBy(
+    page,
+    { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+    -22 * (box.width / 5),
+  );
+  const held = bar(
+    page,
+    /^Book the expo booth crew, Expo, Aug 27 to Aug 31, checklist 1 of 2 done, unsaved, was Sep 14 to Sep 18$/,
+  );
+  await expect(held).toBeVisible();
+  await expect(
+    page.getByText("1 unsaved change", { exact: true }),
+  ).toBeVisible();
+
+  // An arrow key at the edge keeps the bar and its focus, and says why.
+  await held.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(
+    page.getByRole("status").filter({ hasText: "at the start" }),
+  ).toHaveText(
+    "Book the expo booth crew is at the start of the view. Use Previous month to move it further.",
+  );
+  await expect(held).toBeFocused();
+
+  // The drag ended, so another viewer's change shows at once.
+  const price = api.cards.find((item) => item.id === cards.price.id);
+  if (!price) throw new Error("No price card");
+  price.title = "Update the Q4 price list";
+  price.revision += 1;
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "board_cards",
+    board_id: boardId,
+  });
+  await expect(
+    bar(page, /^Update the Q4 price list, Pricing, Sep 7 to Sep 21/),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("1 unsaved change", { exact: true })).toHaveCount(
+    0,
+  );
+  expect(batches(api)).toEqual([
+    {
+      items: [
+        {
+          card_id: cards.booth.id,
+          revision: 1,
+          start_on: "2026-08-27",
+          due_on: "2026-08-31",
         },
       ],
     },
@@ -219,7 +310,7 @@ test("arrows move a focused bar a day and Shift+arrows its due date; a live chan
   await page.goto(ganttHref("zoom=month"));
   await sendOpenViewEvent(page, "resync");
   const live = page.getByRole("status").filter({ hasText: /unsaved/ });
-  await bar(page, /^Book the expo booth crew, Sep 14 to Sep 18/).focus();
+  await bar(page, /^Book the expo booth crew, Expo, Sep 14 to Sep 18/).focus();
   await page.keyboard.press("ArrowRight");
   await expect(live).toHaveText(
     "Book the expo booth crew: Sep 15 to Sep 19. 1 unsaved change.",
@@ -229,7 +320,7 @@ test("arrows move a focused bar a day and Shift+arrows its due date; a live chan
     "Book the expo booth crew: Sep 15 to Sep 20. 1 unsaved change.",
   );
   await expect(
-    bar(page, /^Book the expo booth crew, Sep 15 to Sep 20/),
+    bar(page, /^Book the expo booth crew, Expo, Sep 15 to Sep 20/),
   ).toBeFocused();
 
   // Another viewer renames a card: the Gantt reads it, the change stays.
@@ -242,7 +333,7 @@ test("arrows move a focused bar a day and Shift+arrows its due date; a live chan
     board_id: boardId,
   });
   await expect(
-    bar(page, /^Update the Q4 price list, Sep 7 to Sep 21/),
+    bar(page, /^Update the Q4 price list, Pricing, Sep 7 to Sep 21/),
   ).toBeVisible();
   await expect(
     page.getByText("1 unsaved change", { exact: true }),
@@ -287,9 +378,9 @@ test("a card another person changed first says so and shows its latest dates; th
     cards: Object.values(cards),
   });
   await page.goto(ganttHref("zoom=month"));
-  await bar(page, /^Book the expo booth crew, Sep 14 to Sep 18/).focus();
+  await bar(page, /^Book the expo booth crew, Expo, Sep 14 to Sep 18/).focus();
   await page.keyboard.press("ArrowRight");
-  await bar(page, /^Update the price list, Sep 7 to Sep 21/).focus();
+  await bar(page, /^Update the price list, Pricing, Sep 7 to Sep 21/).focus();
   await page.keyboard.press("ArrowRight");
   await expect(
     page.getByText("2 unsaved changes", { exact: true }),
@@ -301,16 +392,16 @@ test("a card another person changed first says so and shows its latest dates; th
   ).toHaveText("Update the price list: Someone changed this card first.");
   // The changed card is read again; the saved one keeps its new place.
   await expect(
-    bar(page, /^Update the price list, Sep 21 to Sep 23$/),
+    bar(page, /^Update the price list, Pricing, Sep 21 to Sep 23$/),
   ).toBeVisible();
   await expect(
-    bar(page, /^Book the expo booth crew, Sep 15 to Sep 19/),
+    bar(page, /^Book the expo booth crew, Expo, Sep 15 to Sep 19/),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(
     0,
   );
   // The next change clears the last save's results.
-  await bar(page, /^Update the price list, Sep 21 to Sep 23$/).focus();
+  await bar(page, /^Update the price list, Pricing, Sep 21 to Sep 23$/).focus();
   await page.keyboard.press("ArrowRight");
   await expect(
     page.getByRole("alert").filter({ hasText: "Someone changed" }),
@@ -369,7 +460,7 @@ test("a reader sees the quarter read-only: no handles, no Add dates, a bar opens
   await expect(
     page.getByRole("button", { name: "Quarter", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
-  for (const month of ["July", "August", "September"])
+  for (const month of ["Jul", "Aug", "Sep"])
     await expect(gantt(page).getByText(month, { exact: true })).toBeVisible();
   await expect(page.locator("[data-gantt-resize]")).toHaveCount(0);
   await expect(
@@ -381,7 +472,7 @@ test("a reader sees the quarter read-only: no handles, no Add dates, a bar opens
     gantt(page).getByRole("button", { name: /No access to this record/ }),
   ).toHaveCount(0);
 
-  const booth = bar(page, /^Book the expo booth crew, Sep 14 to Sep 18/);
+  const booth = bar(page, /^Book the expo booth crew, Expo, Sep 14 to Sep 18/);
   await booth.focus();
   await page.keyboard.press("ArrowRight");
   await expect(page.getByText(/unsaved change/)).toHaveCount(0);
@@ -436,7 +527,7 @@ test("on a phone the bars stay, only the panel scrolls sideways, and a tap on a 
   await expect(page.locator("[data-gantt-resize]")).toHaveCount(0);
   // The row is the target: the bar is not one.
   const row = gantt(page).getByRole("button", {
-    name: /^Book the expo booth crew, Sep 14 to Sep 18/,
+    name: /^Book the expo booth crew, Expo, Sep 14 to Sep 18/,
   });
   await expect(row).toHaveCount(1);
   const box = await row.boundingBox();
@@ -447,6 +538,66 @@ test("on a phone the bars stay, only the panel scrolls sideways, and a tap on a 
   await page.mouse.click(box.x + box.width + 60, box.y + box.height / 2);
   await expect(
     page.getByRole("dialog", { name: "Book the expo booth crew", exact: true }),
+  ).toBeVisible();
+});
+
+test("on a phone the panel fits under the header, keeps its date axis while it scrolls, and Today brings today back", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const cards = boardCards();
+  const shelves = Array.from({ length: 16 }, (_, index) =>
+    wireCard(`Shelf check ${index + 1}`, stageIds.todo, 4096 + index * 1024, {
+      due_on: "2026-09-22",
+    }),
+  );
+  await installKanbanApi(page, {
+    level: "write",
+    cards: [...Object.values(cards), ...shelves],
+  });
+  await page.goto(ganttHref());
+  const panel = page.getByTestId("gantt-scroller");
+  const panelBox = await panel.boundingBox();
+  // The first week in view starts at the names' edge: no week label is cut.
+  const week = await gantt(page)
+    .getByText("Sep 14", { exact: true })
+    .boundingBox();
+  if (!panelBox || !week) throw new Error("No panel or week label box");
+  expect(Math.round(week.x - panelBox.x)).toBe(120);
+
+  // Today brings today back when the period already holds it.
+  await panel.evaluate((node) => {
+    node.scrollLeft = 0;
+  });
+  await expect(page.getByTestId("gantt-today")).not.toBeInViewport();
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(page.getByTestId("gantt-today")).toBeInViewport();
+
+  // The last row comes into view inside the panel; the axis stays on top.
+  const last = gantt(page).getByRole("button", {
+    name: /^Shelf check 16, Sep 22$/,
+  });
+  await last.scrollIntoViewIfNeeded();
+  await expect(last).toBeInViewport();
+  const section = await gantt(page).boundingBox();
+  const month = await gantt(page)
+    .getByText("September", { exact: true })
+    .boundingBox();
+  if (!section || !month) throw new Error("No section or month box");
+  expect(section.height).toBeLessThanOrEqual(844 - 56);
+  expect(month.y).toBeGreaterThanOrEqual(56);
+  expect((await documentScrolls(page)).across).toBe(false);
+
+  // A writer opens an Unscheduled card by tapping its row.
+  const plan = gantt(page).getByRole("button", {
+    name: "Plan the Q4 reviews, no dates",
+  });
+  await plan.scrollIntoViewIfNeeded();
+  const row = await plan.boundingBox();
+  if (!row) throw new Error("The row has no box");
+  await page.mouse.click(row.x + row.width + 200, row.y + row.height / 2);
+  await expect(
+    page.getByRole("dialog", { name: "Plan the Q4 reviews", exact: true }),
   ).toBeVisible();
 });
 

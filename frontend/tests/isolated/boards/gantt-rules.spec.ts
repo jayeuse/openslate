@@ -12,8 +12,12 @@ import {
   batchPayload,
   cardProgress,
   cardSpan,
+  clampShift,
   dayWidth,
+  discardDraft,
+  edgeWords,
   ganttAnnouncement,
+  ganttDays,
   ganttGroups,
   ganttLines,
   ganttMonths,
@@ -21,6 +25,7 @@ import {
   ganttWeeks,
   ganttWindow,
   moveDates,
+  outOfView,
   parseGanttGroup,
   parseGanttZoom,
   pruneStaged,
@@ -28,8 +33,11 @@ import {
   settleResults,
   shiftGanttAnchor,
   stageDates,
+  stageDraft,
   todayOffset,
+  undoDiscard,
   withStaged,
+  type GanttDraft,
   type StagedDates,
 } from "../../../src/components/systems/boards/domain/gantt";
 
@@ -210,22 +218,39 @@ test("the week row reads W1–W5 by each week's place in its month at Quarter, s
   ]);
 });
 
-test("months head their days; a sliver under a week has a line but no name", () => {
+test("months head their days; at Quarter three days earn a short name, elsewhere a week earns the long one", () => {
+  // Q3 2026 runs Jun 29 to Oct 4: the last week's "W1" is October's, so
+  // October's four days carry its name; June's two days carry none.
+  const q3 = ganttWindow("quarter", "2026-07-15", "monday");
+  expect(ganttMonths(q3, region, "quarter")).toEqual([
+    { offset: 2, label: "Jul" },
+    { offset: 33, label: "Aug" },
+    { offset: 64, label: "Sep" },
+    { offset: 94, label: "Oct" },
+  ]);
   const quarter = ganttWindow("quarter", "2026-10-26", "monday");
-  expect(ganttMonths(quarter, region)).toEqual([
+  expect(ganttMonths(quarter, region, "quarter")).toEqual([
+    { offset: 0, label: "Sep" },
+    { offset: 3, label: "Oct" },
+    { offset: 34, label: "Nov" },
+    { offset: 64, label: "Dec" },
+    { offset: 95, label: "Jan" },
+  ]);
+  // Month zoom: September's three days have a line but no name.
+  expect(
+    ganttMonths(ganttWindow("month", "2026-10-26", "monday"), region, "month"),
+  ).toEqual([
     { offset: 3, label: "October" },
-    { offset: 34, label: "November" },
-    { offset: 64, label: "December" },
-    { offset: 95, label: null },
+    { offset: 34, label: null },
   ]);
   // March 2027 starts on a Monday: its line is the window's left edge.
   const march = ganttWindow("month", "2027-03-10", "monday");
-  expect(ganttMonths(march, region)).toEqual([
+  expect(ganttMonths(march, region, "month")).toEqual([
     { offset: 0, label: "March" },
     { offset: 31, label: null },
   ]);
   // Weeks are dotted and months solid; a month line wins where both fall.
-  expect(ganttLines(march)).toEqual([
+  expect(ganttLines(march, "month")).toEqual([
     { offset: 0, kind: "month" },
     { offset: 7, kind: "week" },
     { offset: 14, kind: "week" },
@@ -233,6 +258,51 @@ test("months head their days; a sliver under a week has a line but no name", () 
     { offset: 28, kind: "week" },
     { offset: 31, kind: "month" },
   ]);
+});
+
+test("Week zoom adds a line and a number for each day", () => {
+  const weeks = ganttWindow("week", "2026-10-28", "monday");
+  expect(ganttDays(weeks, "week").map((day) => day.label)).toEqual([
+    "26",
+    "27",
+    "28",
+    "29",
+    "30",
+    "31",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14",
+    "15",
+  ]);
+  expect(
+    ganttLines(weeks, "week")
+      .filter((line) => line.kind !== "day")
+      .map((line) => [line.offset, line.kind]),
+  ).toEqual([
+    [0, "week"],
+    [6, "month"],
+    [7, "week"],
+    [14, "week"],
+  ]);
+  expect(
+    ganttLines(weeks, "week").filter((line) => line.kind === "day"),
+  ).toHaveLength(17);
+  const month = ganttWindow("month", "2026-10-26", "monday");
+  expect(ganttDays(month, "month")).toEqual([]);
+  expect(
+    ganttLines(month, "month").filter((line) => line.kind === "day"),
+  ).toEqual([]);
 });
 
 test("a day fills the panel, but never narrower than its zoom allows", () => {
@@ -300,20 +370,86 @@ test("a bar takes its card's first label in board order; record cards have no pr
       }),
     ),
   ]).toEqual([0.25, null, null]);
+  const priceList = card(id(1), {
+    title: "Update the Q4 price list",
+    startOn: "2026-09-01",
+    dueOn: "2026-09-30",
+    labelIds: [pricing],
+    checklist: { done: 1, total: 4 },
+  });
   expect([
+    barLabel(priceList, labels, region),
+    // A staged bar says it is unsaved and where it was.
     barLabel(
-      card(id(1), {
-        title: "Update the Q4 price list",
-        startOn: "2026-10-05",
-        dueOn: "2026-11-02",
-        checklist: { done: 1, total: 4 },
-      }),
+      { ...priceList, startOn: "2026-09-03", dueOn: "2026-10-02" },
+      labels,
+      region,
+      { startOn: "2026-09-01", dueOn: "2026-09-30" },
+    ),
+    barLabel(
+      card(id(2), { title: "Call back", dueOn: "2026-10-27" }),
+      labels,
       region,
     ),
-    barLabel(card(id(2), { title: "Call back", dueOn: "2026-10-27" }), region),
+    // A locked card names no label.
+    barLabel(
+      card(id(5), {
+        kind: "record",
+        record: lockedRecord,
+        labelIds: [expo],
+        dueOn: "2026-10-27",
+      }),
+      labels,
+      region,
+    ),
   ]).toEqual([
-    "Update the Q4 price list, Oct 5 to Nov 2, checklist 1 of 4 done",
+    "Update the Q4 price list, Pricing, Sep 1 to Sep 30, checklist 1 of 4 done",
+    "Update the Q4 price list, Pricing, Sep 3 to Oct 2, checklist 1 of 4 done, unsaved, was Sep 1 to Sep 30",
     "Call back, Oct 27",
+    "No access to this record, Oct 27",
+  ]);
+});
+
+test("a drag or an arrow key stops a bar at the window's edge, one day still in view", () => {
+  // Month zoom over September 2026: Aug 31 to Oct 4.
+  const window = ganttWindow("month", "2026-09-25", "monday");
+  const booth = { startOn: "2026-09-14", dueOn: "2026-09-18" };
+  expect([
+    clampShift(booth, "move", 2, window),
+    // Sep 14 can move 20 days, to Oct 4, the window's last day.
+    clampShift(booth, "move", 40, window),
+    // Sep 18 can move back 18 days, to Aug 31, the window's first day.
+    clampShift(booth, "move", -30, window),
+    // A resize moves only the end, so it never leaves on the right.
+    clampShift(booth, "resize", 40, window),
+    clampShift(booth, "resize", -30, window),
+    // With its start out of view, the end stops at the window's first day.
+    clampShift(
+      { startOn: "2026-08-20", dueOn: "2026-09-02" },
+      "resize",
+      -5,
+      window,
+    ),
+    clampShift({ startOn: null, dueOn: null }, "move", 9, window),
+  ]).toEqual([2, 20, -18, 40, -30, -2, 9]);
+  expect(edgeWords("Book the expo booth crew", "end", "month")).toBe(
+    "Book the expo booth crew is at the end of the view. Use Next month to move it further.",
+  );
+  expect(edgeWords("Call back", "start", "quarter")).toBe(
+    "Call back is at the start of the view. Use Previous quarter to move it further.",
+  );
+});
+
+test("a bar out of view points to its dates at the track's edge", () => {
+  const window = ganttWindow("month", "2026-09-25", "monday");
+  expect([
+    outOfView({ start: "2026-10-12", end: "2026-10-20" }, window, region),
+    outOfView({ start: "2026-05-20", end: "2026-06-03" }, window, region),
+    outOfView({ start: "2026-08-20", end: "2026-08-31" }, window, region),
+  ]).toEqual([
+    { side: "end", text: "Oct 12 →" },
+    { side: "start", text: "← Jun 3" },
+    null,
   ]);
 });
 
@@ -498,6 +634,43 @@ test("staged changes keep each card's first revision; a change back to the saved
     dueOn: "2026-11-02",
   }).staged;
   expect(staged.size).toBe(0);
+});
+
+test("Discard keeps the set for Undo until the next change; Undo restores each first revision", () => {
+  const booth = card(id(1), {
+    revision: 3,
+    startOn: "2026-10-05",
+    dueOn: "2026-10-09",
+  });
+  const call = card(id(2), { revision: 5, dueOn: "2026-10-27" });
+  let draft: GanttDraft = { staged: new Map(), discarded: null };
+  draft = stageDraft(draft, booth, {
+    startOn: "2026-10-06",
+    dueOn: "2026-10-10",
+  }).draft;
+  draft = stageDraft(draft, call, { startOn: null, dueOn: "2026-10-28" }).draft;
+  const discarded = discardDraft(draft);
+  expect([discarded.staged.size, discarded.discarded?.size]).toEqual([0, 2]);
+  // Someone saved the booth card since; its change keeps revision 3, so
+  // Save reports it stale. The call card left the board.
+  const restored = undoDiscard(discarded, [{ ...booth, revision: 4 }]);
+  expect([...restored.staged.values()]).toEqual([
+    {
+      cardId: id(1),
+      revision: 3,
+      from: { startOn: "2026-10-05", dueOn: "2026-10-09" },
+      to: { startOn: "2026-10-06", dueOn: "2026-10-10" },
+    },
+  ]);
+  expect(restored.discarded).toBeNull();
+  // A new change after Discard ends the chance to undo it.
+  const moved = stageDraft(discarded, call, {
+    startOn: null,
+    dueOn: "2026-10-29",
+  }).draft;
+  expect([moved.staged.size, moved.discarded]).toEqual([1, null]);
+  // Discard with nothing staged keeps the last discarded set.
+  expect(discardDraft(discarded)).toBe(discarded);
 });
 
 test("one save holds at most 100 cards; the 101st waits, edits to staged cards do not", () => {

@@ -10,11 +10,15 @@ import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { WorkspaceRegion } from "@/lib/date-time";
+import { cn } from "@/lib/utils";
 import type { KanbanCard } from "../adapters/board-kanban-schemas";
 import type { WeekStart } from "../domain/calendar-dates";
 import {
+  MAX_STAGED,
   cardSpan,
+  edgeWords,
   ganttAnnouncement,
+  ganttDays,
   ganttGroups,
   ganttLines,
   ganttMonths,
@@ -116,6 +120,8 @@ export function ServerBackedBoardGantt({
   useEffect(() => () => onDraftStateChange(false, false), [onDraftStateChange]);
 
   const [anchor, setAnchor] = useState<string | null>(null);
+  // Today scrolls today into view again, even in the period it is in.
+  const [todayTick, setTodayTick] = useState(0);
   const currentAnchor = anchor ?? today;
   const [announcement, setAnnouncement] = useState("");
   const [datesFor, setDatesFor] = useState<string | null>(null);
@@ -148,6 +154,11 @@ export function ServerBackedBoardGantt({
     if (next)
       setAnnouncement(ganttAnnouncement(cardName(card), to, next.size, region));
   };
+  const undo = () => {
+    const restored = staging.undo();
+    if (restored.size > 0)
+      setAnnouncement(`Changes restored. ${unsavedWords(restored.size)}.`);
+  };
   const openCard = (card: KanbanCard) => {
     if (card.record?.locked) return;
     setDatesFor(null);
@@ -176,7 +187,10 @@ export function ServerBackedBoardGantt({
             setAnchor(shiftGanttAnchor(zoom, currentAnchor, -1))
           }
           onNext={() => setAnchor(shiftGanttAnchor(zoom, currentAnchor, 1))}
-          onToday={() => setAnchor(today)}
+          onToday={() => {
+            setAnchor(today);
+            setTodayTick((tick) => tick + 1);
+          }}
           onZoom={(next: GanttZoom) =>
             onParams({
               zoom: next === parseGanttZoom(null, phone) ? null : next,
@@ -260,10 +274,12 @@ export function ServerBackedBoardGantt({
               zoom={zoom}
               axis={{
                 weeks: ganttWeeks(window, zoom, region),
-                months: ganttMonths(window, region),
-                lines: ganttLines(window),
+                months: ganttMonths(window, region, zoom),
+                days: ganttDays(window, zoom),
+                lines: ganttLines(window, zoom),
                 today: todayOffset(window, today),
               }}
+              todayTick={todayTick}
               groups={groups}
               unscheduled={unscheduled}
               labels={labels}
@@ -297,6 +313,9 @@ export function ServerBackedBoardGantt({
                 ) : null
               }
               onStage={stage}
+              onEdge={(card, side) =>
+                setAnnouncement(edgeWords(cardName(card), side, zoom))
+              }
               onOpen={openCard}
               onAddDates={addDates}
               onDragging={hold}
@@ -304,50 +323,86 @@ export function ServerBackedBoardGantt({
           )
         ) : null}
       </LoadingRegion>
-      {count > 0 || staging.problems.length > 0 || staging.notice ? (
-        <div className="flex shrink-0 flex-col gap-2">
-          {staging.problems.length > 0 ? (
-            <Alert role="alert" variant="destructive">
-              <ul className="flex flex-col gap-0.5">
-                {staging.problems.map((problem) => (
-                  <li key={problem.cardId ?? "all"}>{problem.text}</li>
-                ))}
-              </ul>
-            </Alert>
-          ) : null}
-          {count > 0 ? (
-            <div className="bg-popover flex flex-wrap items-center gap-2.5 rounded-lg border py-2 pr-2.5 pl-3.5 shadow-[var(--shadow-lg)]">
-              <span className="mr-auto flex items-center gap-2 font-semibold">
-                <span
-                  aria-hidden="true"
-                  className="size-2 rounded-full bg-[var(--warn)]"
-                />
-                {unsavedWords(count)}
-              </span>
-              <Button
+      {/* Results sit above the save bar; after a save or a Discard, one
+          muted line takes the bar's place until the next change. */}
+      <div
+        className={cn(
+          "flex shrink-0 flex-col gap-2",
+          // Empty, it holds only the live region and takes no room.
+          !(
+            staging.full ||
+            staging.problems.length > 0 ||
+            staging.failure ||
+            count > 0 ||
+            staging.notice
+          ) && "sr-only",
+        )}
+      >
+        {staging.full ? (
+          <Alert variant="warning">
+            Save these changes first: one save holds {MAX_STAGED} cards.
+          </Alert>
+        ) : null}
+        {staging.problems.length > 0 || staging.failure ? (
+          <Alert role="alert" variant="destructive">
+            <ul className="flex flex-col gap-0.5">
+              {staging.problems.map((problem) => (
+                <li key={problem.cardId}>{problem.text}</li>
+              ))}
+              {staging.failure ? <li>{staging.failure}</li> : null}
+            </ul>
+          </Alert>
+        ) : null}
+        {count > 0 ? (
+          <div className="bg-popover flex flex-wrap items-center gap-2.5 rounded-lg border py-2 pr-2.5 pl-3.5 shadow-[var(--shadow-lg)]">
+            <span className="mr-auto flex items-center gap-2 font-semibold">
+              <span
+                aria-hidden="true"
+                className="size-2 rounded-full bg-[var(--warn)]"
+              />
+              {unsavedWords(count)}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 xl:min-h-8"
+              disabled={staging.saving}
+              onClick={staging.discard}
+            >
+              Discard
+            </Button>
+            <Button
+              type="button"
+              className="min-h-11 xl:min-h-8"
+              pending={staging.saving}
+              pendingLabel="Saving…"
+              onClick={() => void staging.save()}
+            >
+              Save changes
+            </Button>
+          </div>
+        ) : null}
+        <div
+          className={cn(
+            "text-muted-foreground flex min-h-11 items-center gap-1.5 px-1 text-sm xl:min-h-8",
+            (count > 0 || !staging.notice) && "sr-only",
+          )}
+        >
+          <p role="status">{staging.notice}</p>
+          {staging.canUndo && staging.notice ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <button
                 type="button"
-                variant="ghost"
-                className="min-h-11 xl:min-h-8"
-                disabled={staging.saving}
-                onClick={staging.discard}
+                className="inline-flex min-h-11 items-center rounded-sm px-1 font-medium text-[var(--action-text)] outline-none hover:underline focus-visible:outline-2 focus-visible:outline-[var(--focus)] xl:min-h-8"
+                onClick={undo}
               >
-                Discard
-              </Button>
-              <Button
-                type="button"
-                className="min-h-11 xl:min-h-8"
-                disabled={staging.saving}
-                onClick={() => void staging.save()}
-              >
-                {staging.saving ? "Saving…" : "Save changes"}
-              </Button>
-            </div>
+                Undo
+              </button>
+            </>
           ) : null}
         </div>
-      ) : null}
-      <p role="status" className="sr-only">
-        {staging.notice}
-      </p>
+      </div>
       <KanbanCardSheet
         boardId={boardId}
         cardId={selectedCardId}

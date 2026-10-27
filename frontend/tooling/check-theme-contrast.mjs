@@ -285,15 +285,15 @@ for (const [mode, tokens] of Object.entries(modes)) {
 // Board Kanban tints: label chips are ink on a chart series at 22% over the
 // card (BR69); a locked card is muted ink on the sunken fill at 60% over the
 // card; the drop slot's words are action text on the target stage's 65%
-// action tint over the board surface. The Gantt's group summary bar (BR73)
-// carries the group name in ink on ink-muted at 16% over the card, and on its
-// darker 36% checklist segment.
+// action tint over the board surface. The Gantt's group summary bar (BR73,
+// BR74) carries the group name in ink on ink-muted at 28% over the card; the
+// name keeps that 28% behind it over the 60% checklist segment, where ink
+// falls under 4.5:1 in three dark looks.
 const KANBAN_TINTS = [
   ...[1, 2, 3, 4, 5].map((n) => ["foreground", `chart-${n}`, 22, "card"]),
   ["muted-foreground", "surface-sunken", 60, "card"],
   ["action-text", "action-tint", 65, "canvas-background"],
-  ["foreground", "ink-muted", 16, "card"],
-  ["foreground", "ink-muted", 36, "card"],
+  ["foreground", "ink-muted", 28, "card"],
 ];
 for (const [mode, tokens] of Object.entries(modes))
   for (const [fg, tint, percent, ground] of KANBAN_TINTS) {
@@ -312,6 +312,34 @@ for (const [mode, tokens] of Object.entries(modes))
     if (!ok || process.argv.includes("--verbose"))
       console.log(
         `${ok ? "ok  " : "FAIL"} ${mode.padEnd(16)} ${pair}: ${ratio.toFixed(2)} (needs 4.5)`,
+      );
+  }
+// Gantt bar edges (BR74, WCAG 1.4.11): each bar's 1px edge is 3:1 on the
+// card. A summary or a bar with no label has an ink-muted edge; a label bar
+// has its series, and `--chart-2`, under 3:1 on light cards, mixes 80% with
+// ink (board-gantt-chart.tsx `barEdge`).
+const GANTT_EDGES = [
+  ["ink-muted", null],
+  ["chart-1", null],
+  ["chart-2", "ink"],
+  ["chart-3", null],
+  ["chart-4", null],
+  ["chart-5", null],
+];
+for (const [mode, tokens] of Object.entries(modes))
+  for (const [edge, mix] of GANTT_EDGES) {
+    const color = mix
+      ? mixOklab(resolve(tokens, edge), 80, resolve(tokens, mix))
+      : resolve(tokens, edge);
+    const ratio = contrast(color, resolve(tokens, "card"));
+    const pair = `Gantt edge --${edge}${mix ? ` 80% with --${mix}` : ""} on --card`;
+    const known = lowest.get(pair);
+    if (!known || ratio < known.ratio) lowest.set(pair, { ratio, mode, pair });
+    const ok = ratio >= 3;
+    if (!ok) failures += 1;
+    if (!ok || process.argv.includes("--verbose"))
+      console.log(
+        `${ok ? "ok  " : "FAIL"} ${mode.padEnd(16)} ${pair}: ${ratio.toFixed(2)} (needs 3)`,
       );
   }
 if (process.argv.includes("--verbose"))

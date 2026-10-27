@@ -122,7 +122,7 @@ export function ganttTitle(
 /**
  * The week row (BR72). At Quarter a week reads W1–W5 by its place in the
  * month that holds its middle day (the ISO Thursday for Monday weeks); at
- * Week and Month it reads its start date.
+ * Week and Month it reads its start date, aligned at its week line.
  */
 export function ganttWeeks(
   window: GanttWindow,
@@ -145,12 +145,16 @@ export function ganttWeeks(
 }
 
 /**
- * The month row: each month starts at its first day. A month with under a
- * week in view keeps its line but no name, so names never overlap.
+ * The month row: each month starts at its first day. At Quarter a month
+ * with 3 or more days in view reads its short name ("Oct"), so a trailing
+ * "W1" sits under the month it counts in; at Month and Week a month needs a
+ * week in view for its long name. A shorter month keeps its line but no
+ * name, so names never overlap.
  */
 export function ganttMonths(
   window: GanttWindow,
   region: WorkspaceRegion,
+  zoom: GanttZoom,
 ): { offset: number; label: string | null }[] {
   const months: { offset: number; label: string | null }[] = [];
   let first = monthStart(window.start);
@@ -158,9 +162,12 @@ export function ganttMonths(
     const from = first < window.start ? window.start : first;
     const to = monthEnd(first) > window.end ? window.end : monthEnd(first);
     const visible = daysBetween(from, to) + 1;
+    const quarter = zoom === "quarter";
     const label =
-      visible >= 7
-        ? formatWorkspaceDate(first, region, { month: "long" })
+      visible >= (quarter ? 3 : 7)
+        ? formatWorkspaceDate(first, region, {
+            month: quarter ? "short" : "long",
+          })
         : null;
     if (first >= window.start || label)
       months.push({ offset: daysBetween(window.start, from), label });
@@ -169,11 +176,18 @@ export function ganttMonths(
   return months;
 }
 
-/** Dotted week lines and solid month lines; a month line wins a shared day. */
+/**
+ * Dotted week lines and solid month lines; a month line wins a shared day.
+ * Week zoom also draws a faint line at each day (BR72).
+ */
 export function ganttLines(
   window: GanttWindow,
-): { offset: number; kind: "week" | "month" }[] {
-  const lines = new Map<number, "week" | "month">();
+  zoom: GanttZoom,
+): { offset: number; kind: "day" | "week" | "month" }[] {
+  const lines = new Map<number, "day" | "week" | "month">();
+  if (zoom === "week")
+    for (let offset = 1; offset < window.days; offset += 1)
+      lines.set(offset, "day");
   for (let offset = 0; offset < window.days; offset += 7)
     lines.set(offset, "week");
   let first = monthStart(window.start);
@@ -185,6 +199,18 @@ export function ganttLines(
   return [...lines]
     .sort(([left], [right]) => left - right)
     .map(([offset, kind]) => ({ offset, kind }));
+}
+
+/** Week zoom's day row: each day's number under its week (BR72). */
+export function ganttDays(
+  window: GanttWindow,
+  zoom: GanttZoom,
+): { offset: number; label: string }[] {
+  if (zoom !== "week") return [];
+  return Array.from({ length: window.days }, (_, offset) => ({
+    offset,
+    label: String(Number(addDays(window.start, offset).slice(8, 10))),
+  }));
 }
 
 /** The narrowest day each zoom allows, in CSS pixels. */
@@ -229,6 +255,56 @@ export function barPlacement(
   };
 }
 
+/**
+ * A drag or arrow key may move a bar to the window's edge but not past it,
+ * so the bar, its focus and its pointer stay (BR75). A move keeps one day of
+ * the span in view; a resize keeps the end in view when the start is out.
+ */
+export function clampShift(
+  dates: CardDates,
+  mode: "move" | "resize",
+  days: number,
+  window: GanttWindow,
+): number {
+  const span = cardSpan(dates);
+  if (!span) return days;
+  const low =
+    mode === "move" || span.start < window.start
+      ? daysBetween(span.end, window.start)
+      : -Infinity;
+  const high = mode === "move" ? daysBetween(span.start, window.end) : Infinity;
+  return Math.min(high, Math.max(low, days));
+}
+
+/**
+ * The words for a bar held at the edge: "Book the expo booth crew is at the
+ * end of the view. Use Next month to move it further."
+ */
+export function edgeWords(
+  name: string,
+  side: "start" | "end",
+  zoom: GanttZoom,
+): string {
+  const button = `${side === "end" ? "Next" : "Previous"} ${zoom}`;
+  return `${name} is at the ${side} of the view. Use ${button} to move it further.`;
+}
+
+/**
+ * Where a bar out of view is: "Oct 12 →" past the window's end (its start),
+ * "← Jun 3" before its start (its due date). Null when the bar is in view.
+ */
+export function outOfView(
+  span: CardSpan,
+  window: GanttWindow,
+  region: WorkspaceRegion,
+): { side: "start" | "end"; text: string } | null {
+  if (span.start > window.end)
+    return { side: "end", text: `${shortDay(span.start, region)} →` };
+  if (span.end < window.start)
+    return { side: "start", text: `← ${shortDay(span.end, region)}` };
+  return null;
+}
+
 /** The today line's day in the window, or null when today is not in view. */
 export function todayOffset(window: GanttWindow, today: string): number | null {
   if (!today || today < window.start || today > window.end) return null;
@@ -236,18 +312,27 @@ export function todayOffset(window: GanttWindow, today: string): number | null {
 }
 
 /**
- * A bar's color (BR74): its first label in board order, as the Kanban's
- * label lanes read it. A locked card shows nothing of itself: neutral.
+ * A bar's label (BR74): the card's first label in board order, as the
+ * Kanban's label lanes read it. A locked card shows nothing of itself.
  */
+export function firstLabel(
+  card: KanbanCard,
+  labels: readonly KanbanLabel[],
+): KanbanLabel | null {
+  if (card.record?.locked) return null;
+  return (
+    [...labels]
+      .sort((left, right) => left.position - right.position)
+      .find((label) => card.labelIds.includes(label.id)) ?? null
+  );
+}
+
+/** A bar's color: its first label's chart series, or neutral (BR74). */
 export function barColor(
   card: KanbanCard,
   labels: readonly KanbanLabel[],
 ): ChartColor | null {
-  if (card.record?.locked) return null;
-  const first = [...labels]
-    .sort((left, right) => left.position - right.position)
-    .find((label) => card.labelIds.includes(label.id));
-  return first?.color ?? null;
+  return firstLabel(card, labels)?.color ?? null;
 }
 
 /** An objective's checklist share; record cards and empty checklists have none. */
@@ -265,13 +350,25 @@ export function datesWords(dates: CardDates, region: WorkspaceRegion): string {
     : `${shortDay(span.start, region)} to ${shortDay(span.end, region)}`;
 }
 
-/** "Update the Q4 price list, Oct 5 to Nov 2, checklist 1 of 4 done". */
-export function barLabel(card: KanbanCard, region: WorkspaceRegion): string {
+/**
+ * A bar's accessible name and tooltip (BR69, the Gantt exception to Name
+ * Beside Color): "Update the Q4 price list, Pricing, Sep 1 to Sep 30,
+ * checklist 1 of 4 done", and ", unsaved, was Aug 28 to Sep 27" while a
+ * change to it is staged.
+ */
+export function barLabel(
+  card: KanbanCard,
+  labels: readonly KanbanLabel[],
+  region: WorkspaceRegion,
+  was: CardDates | null = null,
+): string {
+  const label = firstLabel(card, labels);
   const checklist =
     cardProgress(card) === null
       ? ""
       : `, checklist ${card.checklist.done} of ${card.checklist.total} done`;
-  return `${cardName(card)}, ${datesWords(card, region)}${checklist}`;
+  const staged = was ? `, unsaved, was ${datesWords(was, region)}` : "";
+  return `${cardName(card)}${label ? `, ${label.name}` : ""}, ${datesWords(card, region)}${checklist}${staged}`;
 }
 
 export type GanttGroupRows = {
@@ -432,6 +529,46 @@ export function withStaged(
     const change = staged.get(card.id);
     return change ? { ...card, ...change.to } : card;
   });
+}
+
+/**
+ * The staged set and the set a Discard put aside: Undo brings it back
+ * until the next change (Four Moments: after).
+ */
+export type GanttDraft = {
+  staged: StagedDates;
+  discarded: StagedDates | null;
+};
+
+/** Stages a change; the discarded set is gone once a new change starts. */
+export function stageDraft(
+  draft: GanttDraft,
+  card: KanbanCard,
+  to: CardDates,
+): { draft: GanttDraft; refused: boolean } {
+  const result = stageDates(draft.staged, card, to);
+  if (result.refused) return { draft, refused: true };
+  return { draft: { staged: result.staged, discarded: null }, refused: false };
+}
+
+/** Discard empties the set and keeps it for Undo. */
+export function discardDraft(draft: GanttDraft): GanttDraft {
+  return draft.staged.size === 0
+    ? draft
+    : { staged: new Map(), discarded: draft.staged };
+}
+
+/**
+ * Undo brings the discarded set back with each change's first revision, so
+ * a card someone saved since is stale at Save; a card that left the board
+ * stays out.
+ */
+export function undoDiscard(
+  draft: GanttDraft,
+  cards: readonly KanbanCard[],
+): GanttDraft {
+  if (!draft.discarded) return draft;
+  return { staged: pruneStaged(draft.discarded, cards), discarded: null };
 }
 
 /** A card that left the board (archived elsewhere) leaves the staged set. */
