@@ -476,6 +476,13 @@ The final critique (`.impeccable/critique/2026-10-27T10-10-43Z__frontend-src-com
 | P3: project meta line is a constant, not the group count (BR45) | Needs the group count on the board read |
 | P3: skeleton does not match the layout; Activity rows top-align on phones; setup primary sits at the panel foot | Layout polish; next Boards pass |
 | P3: no people filter in the phone Kanban Filters sheet | Small feature; next Boards pass |
+| Smoke M2: Find a record finds nothing in a module with no title field (the title is then the Record ID) | Search API behavior outside Boards; the fix belongs to search or the record picker's empty-state hint |
+
+Smoke-pass decisions (2026-10-27, fresh organization):
+
+- The Gantt first run shows the stage setup state, as BR80 specifies for Kanban and Gantt alike; it is not a defect.
+- A department board's Access summary keeps "Write on Operations · can post": the row quotes the Access grant by its Access › Groups name, then says what it allows on the board. D2's Read, Post, Manager are board levels, so the words do not clash.
+- P2 1 and P2 2 above were approved by the owner and are built in this branch; the table keeps them for the record.
 
 ## Comps
 
