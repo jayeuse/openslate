@@ -24,14 +24,15 @@ const invalidatesBoardList = (event: WorkspaceInvalidation) =>
 export type BoardSection = (typeof SECTIONS)[number];
 /**
  * What a `/boards` address opens (BR9, BR41): Company (no Board in the
- * address), a department's board by its department, a Board by its id, or
- * All boards.
+ * address), a department's board by its department, a Board by its id, All
+ * boards, or My calendar (BR22).
  */
 export type BoardRoute =
   | { kind: "none"; section: BoardSection | null }
   | { kind: "board"; boardId: string; section: BoardSection | null }
   | { kind: "department"; departmentId: string; section: BoardSection | null }
   | { kind: "all" }
+  | { kind: "my-calendar" }
   | { kind: "invalid-board"; section: BoardSection | null };
 export type BoardCandidate = {
   id: string;
@@ -56,7 +57,9 @@ export function parseBoardRoute(search: string): BoardRoute {
   if (boards.length === 0 && departments.length === 0)
     return sections.length === 1 && sections[0] === "all"
       ? { kind: "all" }
-      : { kind: "none", section };
+      : sections.length === 1 && sections[0] === "my-calendar"
+        ? { kind: "my-calendar" }
+        : { kind: "none", section };
   if (boards.length > 0 && departments.length > 0)
     return { kind: "invalid-board", section };
   if (departments.length > 0)
@@ -79,7 +82,12 @@ export function chooseBoardCandidate(
   boards: readonly BoardChoice[],
   open: BoardChoice | null = null,
 ): BoardCandidate | null {
-  if (route.kind === "invalid-board" || route.kind === "all") return null;
+  if (
+    route.kind === "invalid-board" ||
+    route.kind === "all" ||
+    route.kind === "my-calendar"
+  )
+    return null;
   if (route.kind === "board") return { id: route.boardId, source: "explicit" };
   if (route.kind === "department") {
     const department = [...(open ? [open] : []), ...boards].find(
@@ -97,7 +105,11 @@ export function chooseBoardCandidate(
 }
 
 export function resolveBoardSection(route: BoardRoute): BoardSection {
-  return route.kind === "all" ? "posts" : (route.section ?? "posts");
+  return route.kind === "all"
+    ? "posts"
+    : route.kind === "my-calendar"
+      ? "calendar"
+      : (route.section ?? "posts");
 }
 
 export function boardUrl(boardId: string, section: BoardSection): Route {

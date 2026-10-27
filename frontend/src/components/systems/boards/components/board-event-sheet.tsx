@@ -1,6 +1,8 @@
 "use client";
 
 import type { RefObject } from "react";
+import Link from "next/link";
+import type { Route } from "next";
 import { ArrowUpRight, MoreHorizontal, X } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -36,7 +38,7 @@ export function BoardEventSheetBody({
    * The event's calendar. Its name stands beside its color here, which the
    * month cells' Name Beside Color exception relies on (BR53).
    */
-  calendar?: { name: string; color: string };
+  calendar?: SheetCalendar;
   /** The author's person card; the sheet passes it in. */
   author?: React.ReactNode;
 }) {
@@ -47,10 +49,19 @@ export function BoardEventSheetBody({
     <div className="flex min-w-0 flex-col gap-5">
       <dl className="divide-y text-sm">
         {calendar ? (
-          <Fact label="Calendar">
-            <span className="flex min-w-0 items-center gap-2">
+          <Fact label={calendar.href ? "Board" : "Calendar"}>
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2">
               <CalendarSwatch color={calendar.color} />
               <span className="min-w-0">{calendar.name}</span>
+              {calendar.href ? (
+                <Link
+                  href={calendar.href as Route}
+                  className="text-action-text focus-visible:outline-ring inline-flex min-h-11 items-center gap-1 rounded-sm underline underline-offset-4 focus-visible:outline-2 xl:min-h-8"
+                >
+                  Open board
+                  <ArrowUpRight aria-hidden="true" className="size-4" />
+                </Link>
+              ) : null}
             </span>
           </Fact>
         ) : null}
@@ -111,6 +122,12 @@ function Fact({
   );
 }
 
+/**
+ * The event's calendar in the sheet. On My calendar it is the event's board,
+ * with `href` to open it there (BR53).
+ */
+export type SheetCalendar = { name: string; color: string; href?: string };
+
 export type EventSheetState =
   | { status: "loading" }
   | { status: "error"; message: string; retryable: boolean }
@@ -135,7 +152,7 @@ export function BoardEventSheet({
 }: {
   open: boolean;
   state: EventSheetState;
-  calendar: { name: string; color: string };
+  calendar: SheetCalendar;
   canEdit: boolean;
   canArchive: boolean;
   finalFocus: RefObject<HTMLElement | null>;
@@ -216,8 +233,14 @@ export function BoardEventSheet({
                   <DropdownMenuItem
                     className="min-h-11 xl:min-h-8"
                     onClick={() => {
+                      // My calendar copies the board's own address for the
+                      // event, which opens it from any month.
                       void navigator.clipboard
-                        .writeText(window.location.href)
+                        .writeText(
+                          calendar.href
+                            ? new URL(calendar.href, window.location.href).href
+                            : window.location.href,
+                        )
                         .then(
                           () => reportDone("Link copied"),
                           () => reportError("Could not copy the link"),

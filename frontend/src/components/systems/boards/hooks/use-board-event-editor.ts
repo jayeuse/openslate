@@ -243,6 +243,10 @@ export function useBoardEventEditor({
   }, [invalidate]);
 
   useEffect(() => {
+    // My calendar moves a new draft to the board chosen in its Board field,
+    // and the board an edit opens on: a draft that already belongs to the
+    // new board stays. A board's own calendar is keyed by its board.
+    if (liveDraft.current.draft?.boardId === boardId) return;
     setDraft(null);
     setDraftBase(null);
     attachmentPendingRef.current = false;

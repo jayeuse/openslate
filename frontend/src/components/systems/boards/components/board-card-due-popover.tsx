@@ -18,12 +18,15 @@ import { dueCardTitle } from "../domain/calendar-items";
  */
 export function BoardCardDuePopover({
   boardId,
+  boardName,
   card,
   anchor,
   region,
   onClose,
 }: {
   boardId: string;
+  /** My calendar names the card's board (BR58). */
+  boardName?: string;
   card: DueCard | null;
   anchor: HTMLElement | null;
   region: WorkspaceRegion;
@@ -64,6 +67,12 @@ export function BoardCardDuePopover({
               <span className="wrap-anywhere">{dueCardTitle(card)}</span>
             </PopoverTitle>
             <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm">
+              {boardName ? (
+                <>
+                  <dt className="text-muted-foreground">Board</dt>
+                  <dd className="min-w-0 wrap-anywhere">{boardName}</dd>
+                </>
+              ) : null}
               <dt className="text-muted-foreground">Stage</dt>
               <dd>{stage ?? (stages.isError ? "Unavailable" : "Loading…")}</dd>
               <dt className="text-muted-foreground">Due</dt>

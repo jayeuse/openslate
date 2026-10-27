@@ -165,30 +165,69 @@ export const eventListWire = z
     pagination: page,
     boardRevision: board_revision,
   }));
+const occurrenceFields = {
+  id: z.string().min(1).max(160),
+  event_id: uuid,
+  start: z.union([date, utc]),
+  end: z.union([date, utc]),
+  date,
+  event: eventWire,
+};
+/** An occurrence's id, day, and bounds agree with its event. */
+export function occurrenceAgrees(item: {
+  id: string;
+  event_id: string;
+  start: string;
+  end: string;
+  date: string;
+  event: z.output<typeof eventWire>;
+}): boolean {
+  return (
+    item.event_id === item.event.id &&
+    item.id ===
+      `${item.event_id}:${item.event.allDay || item.event.recurrence !== "none" ? item.date : item.start}` &&
+    (!item.event.allDay || item.date === item.start) &&
+    (item.event.allDay
+      ? date.safeParse(item.start).success && date.safeParse(item.end).success
+      : utc.safeParse(item.start).success && utc.safeParse(item.end).success)
+  );
+}
 const occurrenceWire = z
+  .object(occurrenceFields)
+  .strict()
+  .refine(occurrenceAgrees)
+  .transform(({ event_id, ...item }) => ({ ...item, eventId: event_id }));
+/** A board's mark on a My calendar item: its name, scope, and department. */
+export const occurrenceBoardWire = z
   .object({
-    id: z.string().min(1).max(160),
-    event_id: uuid,
-    start: z.union([date, utc]),
-    end: z.union([date, utc]),
-    date,
-    event: eventWire,
+    id: uuid,
+    name: z.string().min(1).max(200),
+    scope: z.enum(["company", "department", "project"]),
+    department_id: uuid.nullable(),
   })
   .strict()
   .refine(
-    (item) =>
-      item.event_id === item.event.id &&
-      item.id ===
-        `${item.event_id}:${item.event.allDay || item.event.recurrence !== "none" ? item.date : item.start}` &&
-      (!item.event.allDay || item.date === item.start) &&
-      (item.event.allDay
-        ? date.safeParse(item.start).success && date.safeParse(item.end).success
-        : utc.safeParse(item.start).success && utc.safeParse(item.end).success),
+    (board) =>
+      (board.scope === "department") === (board.department_id !== null),
+  )
+  .transform((board) => ({
+    id: board.id,
+    name: board.name,
+    scope: board.scope,
+    departmentId: board.department_id,
+  }));
+/** One occurrence on My calendar: the per-board occurrence and its board. */
+export const crossBoardOccurrenceWire = z
+  .object({ ...occurrenceFields, board: occurrenceBoardWire })
+  .strict()
+  .refine(
+    (item) => occurrenceAgrees(item) && item.board.id === item.event.boardId,
   )
   .transform(({ event_id, ...item }) => ({ ...item, eventId: event_id }));
+export { pagination as occurrencePagination };
 // The first occurrence after the window, without its event: the empty
 // month's pointer to the next event (BR43, FN2).
-const nextOccurrenceWire = z
+export const nextOccurrenceWire = z
   .object({
     id: z.string().min(1).max(160),
     event_id: uuid,

@@ -26,7 +26,8 @@ export type BoardsPlace =
   | { kind: "company" }
   | { kind: "department"; departmentId: string }
   | { kind: "board"; boardId: string }
-  | { kind: "all" };
+  | { kind: "all" }
+  | { kind: "my-calendar" };
 
 export type BoardsNavigationRow = {
   id: string;
@@ -37,6 +38,7 @@ export type BoardsNavigationRow = {
 
 export const companyBoardHref = "/boards";
 export const allBoardsHref = "/boards?section=all";
+export const myCalendarHref = "/boards?section=my-calendar";
 
 /** A department's board (BR41): the address names the department. */
 export function announcementsHref(departmentId: string): string {
@@ -58,6 +60,7 @@ export function boardsPlace(
   if (department) return { kind: "department", departmentId: department };
   if (board) return { kind: "board", boardId: board };
   if (params.get("section") === "all") return { kind: "all" };
+  if (params.get("section") === "my-calendar") return { kind: "my-calendar" };
   return { kind: "company" };
 }
 
@@ -84,8 +87,8 @@ function isCompany(
 }
 
 /**
- * The Boards group: Company, the active project boards by name, All boards.
- * My calendar joins this list in P3, first.
+ * The Boards group (BR2): My calendar, Company, the active project boards by
+ * name, All boards.
  */
 export function boardsGroupRows(
   place: BoardsPlace | null,
@@ -95,6 +98,12 @@ export function boardsGroupRows(
     .filter((board) => board.scope === "project" && board.status === "active")
     .sort((a, b) => a.name.localeCompare(b.name));
   return [
+    {
+      id: "my-calendar",
+      label: "My calendar",
+      href: myCalendarHref,
+      active: place?.kind === "my-calendar",
+    },
     {
       id: "company",
       label: "Company",
@@ -118,7 +127,7 @@ export function boardsGroupRows(
 
 /**
  * "Sales › Announcements", "Boards › Company", "Boards › <project>",
- * "Boards › All boards" (BR4). A name the caches do not hold yet reads
+ * "Boards › My calendar", "Boards › All boards" (BR4). A name the caches do not hold yet reads
  * "Board" or leaves the department out; it never shows an id.
  */
 export function boardsLocation(
@@ -134,6 +143,8 @@ export function boardsLocation(
       current: "Announcements",
     };
   if (place.kind === "all") return { parent: "Boards", current: "All boards" };
+  if (place.kind === "my-calendar")
+    return { parent: "Boards", current: "My calendar" };
   if (isCompany(place, boards)) return { parent: "Boards", current: "Company" };
   const board =
     place.kind === "board"

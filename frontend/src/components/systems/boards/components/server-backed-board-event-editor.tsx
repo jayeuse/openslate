@@ -407,10 +407,13 @@ export function ServerBoardEventEditorForm({
   onAttachmentBusyChange,
   onRecordLinkBusyChange,
   refreshAttachmentVersions,
+  leading,
 }: {
   draft: BoardEventDraft;
   busy: boolean;
   saveBlocked?: boolean;
+  /** A field before the title: My calendar's Board (BR35). */
+  leading?: React.ReactNode;
   error: string | null;
   onChange: (patch: Partial<BoardEventDraft>) => void;
   onCancel: () => void;
@@ -442,6 +445,7 @@ export function ServerBoardEventEditorForm({
       }}
     >
       <FieldGroup className="gap-4">
+        {leading}
         <Field className="gap-1.5">
           <FieldLabel htmlFor="live-board-event-title">Event title</FieldLabel>
           <Input

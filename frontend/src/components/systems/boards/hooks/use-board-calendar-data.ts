@@ -135,7 +135,8 @@ export function useBoardCalendarSources(boardId: string) {
   return useQuery(boardCalendarSourcesOptions(boardId));
 }
 
-export type CalendarReadStatus = "loading" | "ready" | "error";
+/** "limited": the server capped the board's events for the window (not a failure). */
+export type CalendarReadStatus = "loading" | "ready" | "error" | "limited";
 
 export type CalendarWindowData = {
   items: CalendarItem[];

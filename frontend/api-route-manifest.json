@@ -313,9 +313,21 @@
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "listMyCalendarSources",
+    "method": "GET",
+    "path": "/api/me/calendar-sources"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
     "function": "removeBoardCalendarSource",
     "method": "DELETE",
     "path": "/api/boards/{param}/calendar-sources/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "removeMyCalendarSource",
+    "method": "DELETE",
+    "path": "/api/me/calendar-sources/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-due-cards-api.ts",
@@ -328,6 +340,12 @@
     "function": "listDueBoardCards",
     "method": "GET",
     "path": "/api/boards/{param}/cards"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-due-cards-api.ts",
+    "function": "listMyDueCards",
+    "method": "GET",
+    "path": "/api/boards/cards/due"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
@@ -526,6 +544,12 @@
     "function": "updateBoard",
     "method": "PATCH",
     "path": "/api/boards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-my-calendar-api.ts",
+    "function": "listCrossBoardOccurrences",
+    "method": "GET",
+    "path": "/api/boards/occurrences"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-post-author-api.ts",

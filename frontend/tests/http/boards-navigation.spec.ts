@@ -270,7 +270,7 @@ test("a department's Announcements row opens its board by department, and a Boar
   await expect(page).toHaveURL(/\/platform\?section=search$/);
 });
 
-test("the Boards group lists Company, the active project boards by name and All boards, read once", async ({
+test("the Boards group lists My calendar, Company, the active project boards by name and All boards, read once", async ({
   page,
 }) => {
   await installBoardApi(page, () => true);
@@ -283,11 +283,16 @@ test("the Boards group lists Company, the active project boards by name and All 
   await nav.getByRole("button", { name: "Boards", exact: true }).click();
   const rows = nav.getByRole("list", { name: "Boards" });
   await expect(rows.getByRole("link")).toHaveText([
+    "My calendar",
     "Company",
     "Customer Renewal",
     "Fleet Reliability",
     "All boards",
   ]);
+  await expect(rows.getByRole("link", { name: "My calendar" })).toHaveAttribute(
+    "href",
+    "/boards?section=my-calendar",
+  );
   await expect(rows.getByRole("link", { name: "Company" })).toHaveAttribute(
     "href",
     "/boards",

@@ -47,6 +47,7 @@ import {
   type BoardCalendarParams,
 } from "./server-backed-board-calendar";
 import { ServerBackedBoardManagement } from "./server-backed-board-management";
+import { ServerBackedMyCalendar } from "./server-backed-my-calendar";
 import { BoardDirectory } from "./board-directory";
 import { BoardPageHeader, boardPageTitle } from "./board-page-header";
 import { BoardEmpty, ConfirmAction } from "./ui";
@@ -89,6 +90,8 @@ const pageClass = "boards-ui flex min-w-0 flex-col xl:min-h-0 xl:flex-1";
  * Without a Board to wait for (refused, missing, none), only the title stays.
  */
 const BOARD_REFUSED_TITLE = "This board is not available.";
+/** My calendar's draft owner in the unsaved-changes guard. */
+const MY_CALENDAR_DRAFT = "my-calendar";
 
 function BoardsLoadingHeader({
   placeholders = true,
@@ -225,7 +228,8 @@ function ServerBackedBoardsContent() {
   const closeActivity = useCallback(() => setActivitySelection(null), []);
   const closePreview = useCallback(() => setPreviewSelection(null), []);
   const section = resolveBoardSection(route);
-  const regionActive = board !== null;
+  const myCalendar = route.kind === "my-calendar";
+  const regionActive = board !== null || myCalendar;
   const workspaceCalendar = useQuery({
     ...workspaceCalendarQueryOptions(),
     enabled: regionActive,
@@ -258,10 +262,12 @@ function ServerBackedBoardsContent() {
     };
   }, [regionActive, queryClient, refreshWorkspaceCalendar]);
 
+  // My calendar's event draft is the page's own, not one board's.
+  const draftOwner = myCalendar ? MY_CALENDAR_DRAFT : (board?.id ?? null);
   const currentDraftState =
     draftState !== null &&
-    board !== null &&
-    draftState.boardId === board.id &&
+    draftOwner !== null &&
+    draftState.boardId === draftOwner &&
     draftState.section === section
       ? draftState
       : null;
@@ -345,6 +351,22 @@ function ServerBackedBoardsContent() {
       updateDraftState(boardId, "calendar", dirty, pending),
     [updateDraftState],
   );
+  const onMyCalendarDraftStateChange = useCallback(
+    (dirty: boolean, pending: boolean) =>
+      updateDraftState(MY_CALENDAR_DRAFT, "calendar", dirty, pending),
+    [updateDraftState],
+  );
+  const departmentIndexOf = useCallback(
+    (departmentId: string) => {
+      if (isRefusal(departments.error)) return null;
+      const index =
+        departments.data?.items.findIndex(
+          (entry) => entry.id === departmentId,
+        ) ?? -1;
+      return index >= 0 ? index : null;
+    },
+    [departments.data, departments.error],
+  );
   const onPostDraftStateChange = useCallback(
     (boardId: string, dirty: boolean, pending: boolean) =>
       updateDraftState(boardId, "posts", dirty, pending),
@@ -362,7 +384,12 @@ function ServerBackedBoardsContent() {
   // names it another way (a department's or Company's Board id, no section)
   // is replaced in place, keeping the post, the event and the rest.
   useEffect(() => {
-    if (!board || route.kind === "invalid-board" || route.kind === "all")
+    if (
+      !board ||
+      route.kind === "invalid-board" ||
+      route.kind === "all" ||
+      route.kind === "my-calendar"
+    )
       return;
     const target = canonicalBoardUrl(board, section, search);
     if (target !== `/boards?${search}`)
@@ -391,6 +418,7 @@ function ServerBackedBoardsContent() {
     (resource.detail.status === "idle" || resource.detail.status === "loading");
   const loading =
     route.kind !== "all" &&
+    route.kind !== "my-calendar" &&
     !(route.kind === "department" && resource.list.status === "error") &&
     (awaitingList || awaitingDetail);
 
@@ -461,6 +489,38 @@ function ServerBackedBoardsContent() {
       }}
     />
   );
+
+  if (myCalendar)
+    return (
+      <div className={pageClass}>
+        <ServerBackedMyCalendar
+          listed={resource.listItems}
+          departmentIndexOf={departmentIndexOf}
+          workspaceCalendar={workspaceCalendar.data}
+          workspaceDateError={workspaceCalendar.isError}
+          onRetryWorkspaceDate={() => void workspaceCalendar.refetch()}
+          selectedEventId={searchParams.get("event")}
+          view={searchParams.get("view")}
+          show={searchParams.get("show")}
+          onParams={updateCalendarParams}
+          onDraftStateChange={onMyCalendarDraftStateChange}
+          regionClassName={boardsRegionClass}
+        />
+        <ConfirmAction
+          open={pendingNavigation !== null}
+          title="Discard unsaved Board changes?"
+          description="Your unsaved Event or post changes will be lost."
+          action="Discard changes"
+          disabled={currentDraftState?.pending ?? false}
+          onCancel={() => setPendingNavigation(null)}
+          onConfirm={() => {
+            const resume = pendingNavigation;
+            setPendingNavigation(null);
+            resume?.();
+          }}
+        />
+      </div>
+    );
 
   if (route.kind === "all")
     return (
@@ -635,14 +695,7 @@ function ServerBackedBoardsContent() {
                 onParams={updateCalendarParams}
                 calendarName={boardPageTitle(board)}
                 departmentIndex={departmentIndex >= 0 ? departmentIndex : null}
-                departmentIndexOf={(departmentId) => {
-                  if (isRefusal(departments.error)) return null;
-                  const index =
-                    departments.data?.items.findIndex(
-                      (entry) => entry.id === departmentId,
-                    ) ?? -1;
-                  return index >= 0 ? index : null;
-                }}
+                departmentIndexOf={departmentIndexOf}
               />
             ) : (
               <ServerBackedBoardPosts

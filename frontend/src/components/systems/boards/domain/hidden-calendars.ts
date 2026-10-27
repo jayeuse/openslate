@@ -41,3 +41,8 @@ export function writeHiddenCalendars(
     // The choice still applies until the page closes.
   }
 }
+
+/** My calendar's hidden calendars, kept apart from every board's own. */
+export function myCalendarHiddenKey(viewerId: string): string {
+  return hiddenCalendarsKey(viewerId, "my-calendar");
+}

@@ -166,3 +166,12 @@ export function addMyCalendarSource(
 ): Promise<CalendarSource> {
   return addSource(sourcesPath("me"), "me", input);
 }
+
+/** My calendar's own sources (BR57): only those the server still shows. */
+export function listMyCalendarSources(): Promise<CalendarSource[]> {
+  return listSources(sourcesPath("me"), "me");
+}
+
+export function removeMyCalendarSource(sourceId: string): Promise<void> {
+  return removeSource(`${sourcesPath("me")}/${uuid.parse(sourceId)}`, "me");
+}

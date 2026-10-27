@@ -1,20 +1,10 @@
 "use client";
-import {
-  useDisplayRegion,
-  useDisplayWeekStart,
-} from "@/components/use-display-region";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Plus, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   authMeOptions,
@@ -28,7 +18,6 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
 import { reportDone, reportError } from "@/lib/feedback";
-import { formatWorkspaceDate } from "@/lib/date-time";
 import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
 import {
   useVerifiedWorkspaceUserId,
@@ -48,19 +37,12 @@ import {
   type BoardMyAccess,
 } from "../adapters/board-tools-api";
 import {
-  monthGrid,
   parseCalendarShow,
-  parseCalendarView,
-  shiftAnchor,
-  viewWindow,
-  weekDays,
   type CalendarShow,
   type CalendarView,
 } from "../domain/calendar-dates";
 import {
   calendarColor,
-  calendarEmptyStatus,
-  calendarFilterEmpty,
   filterCalendarItems,
   type CalendarItem,
   type CalendarTone,
@@ -80,6 +62,7 @@ import {
   useBoardCalendarWindow,
 } from "../hooks/use-board-calendar-data";
 import { useBoardEventEditor } from "../hooks/use-board-event-editor";
+import { useCalendarPeriod } from "../hooks/use-calendar-period";
 import { useBoardEventLifecycle } from "../hooks/use-board-event-lifecycle";
 import { BoardEmpty, ConfirmAction } from "./ui";
 import {
@@ -92,18 +75,8 @@ import {
 } from "./server-board-calendar-display";
 import { dayLabel, type CalendarInfo } from "./board-calendar-chips";
 import { BoardCalendarToolbar } from "./board-calendar-toolbar";
-import {
-  BoardCalendarMonth,
-  BoardCalendarPhoneMonth,
-} from "./board-calendar-month";
-import {
-  BoardCalendarPhoneWeek,
-  BoardCalendarWeek,
-} from "./board-calendar-week";
-import {
-  BoardCalendarUpcoming,
-  UpcomingGroupList,
-} from "./board-calendar-upcoming";
+import { CalendarViews, useCalendarEmpty } from "./board-calendar-views";
+import { UpcomingGroupList } from "./board-calendar-upcoming";
 import {
   CalendarList,
   CalendarsPopover,
@@ -120,46 +93,6 @@ import {
   BoardEventPurgeDialog,
 } from "./board-event-lifecycle-dialogs";
 import { upcomingGroups } from "../domain/calendar-items";
-
-const phoneQuery = "(max-width: 47.99rem)";
-const railQuery = "(min-width: 90rem)";
-function subscribeQuery(media: string) {
-  return (notify: () => void) => {
-    const query = window.matchMedia(media);
-    query.addEventListener("change", notify);
-    return () => query.removeEventListener("change", notify);
-  };
-}
-const subscribePhone = subscribeQuery(phoneQuery);
-const subscribeRail = subscribeQuery(railQuery);
-function useMedia(
-  query: string,
-  subscribe: (notify: () => void) => () => void,
-) {
-  return useSyncExternalStore(
-    subscribe,
-    () => window.matchMedia(query).matches,
-    () => false,
-  );
-}
-
-function minuteNow(timezone: string | undefined): number | null {
-  try {
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-      timeZone: timezone,
-    }).formatToParts(new Date());
-    const hour = Number(parts.find((part) => part.type === "hour")?.value);
-    const minute = Number(parts.find((part) => part.type === "minute")?.value);
-    return Number.isFinite(hour) && Number.isFinite(minute)
-      ? hour * 60 + minute
-      : null;
-  } catch {
-    return null;
-  }
-}
 
 export function canEditBoardEvent(
   event: BoardEvent,
@@ -242,14 +175,10 @@ export function ServerBackedBoardCalendar({
     identityQuery.data.id === viewerId &&
     identityQuery.data.role === "admin" &&
     !suspended;
-  const todayButton = useRef<HTMLButtonElement>(null);
   // Closing the event sheet returns focus to the chip or row that opened
   // it; a sheet opened from an `?event=` link returns it to Today.
   const sheetOpener = useRef<HTMLElement | null>(null);
   const sheetReturn = useRef<HTMLElement | null>(null);
-  // The period title takes focus after a jump moves the period.
-  const periodTitle = useRef<HTMLHeadingElement>(null);
-  const [titleFocus, setTitleFocus] = useState(0);
   const [selectedRetry, setSelectedRetry] = useState(0);
   const selectedKey = `${viewerId}:${boardId}:${selectedEventId}:${refreshKey}:${selectedRetry}`;
   const [selectedDetail, setSelectedDetail] = useState<{
@@ -258,17 +187,18 @@ export function ServerBackedBoardCalendar({
     error: string | null;
     refused: boolean;
   } | null>(null);
-  const workspaceToday = workspaceCalendar?.today ?? null;
-  const displayRegion = useDisplayRegion(workspaceCalendar);
-  const displayWeekStart = useDisplayWeekStart(
-    workspaceCalendar?.week_start ?? "monday",
-  );
-  const [anchor, setAnchor] = useState<string | null>(null);
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const period = useCalendarPeriod({ workspaceCalendar, requestedView });
+  const {
+    today: workspaceToday,
+    displayRegion,
+    region,
+    view,
+    wide,
+    days,
+    title,
+    anchorDate,
+  } = period;
   const [search, setSearch] = useState("");
-  const phone = useMedia(phoneQuery, subscribePhone);
-  const wide = useMedia(railQuery, subscribeRail);
-  const view = parseCalendarView(requestedView, phone);
   const [hiddenState, setHiddenState] = useState<{
     key: string;
     ids: string[];
@@ -291,11 +221,7 @@ export function ServerBackedBoardCalendar({
   } | null>(null);
   const [accessVersion, setAccessVersion] = useState(0);
   const [blockedBoardId, setBlockedBoardId] = useState<string | null>(null);
-  const currentAnchor = anchor ?? workspaceToday;
-  const calendarWindow =
-    currentAnchor && workspaceToday
-      ? viewWindow(view, currentAnchor, displayWeekStart, workspaceToday)
-      : null;
+  const calendarWindow = period.window;
   const hiddenKey = viewerId ? hiddenCalendarsKey(viewerId, boardId) : null;
   const hidden = new Set(
     hiddenState && hiddenState.key === hiddenKey
@@ -316,8 +242,7 @@ export function ServerBackedBoardCalendar({
     dueCards: true,
   });
   const { state, retry, invalidate } = data.events;
-  const selectedCalendarDate =
-    selectedDay ?? currentAnchor ?? calendarWindow?.start ?? "";
+  const selectedCalendarDate = period.newEventDate;
   const invalidateRef = useRef(invalidate);
   const accessKey = `${boardId}:${refreshKey}:${boardActive}:${isPurgeAdmin}:${accessVersion}`;
   // A re-check keeps this Board's last confirmed access, so open menus and
@@ -432,11 +357,6 @@ export function ServerBackedBoardCalendar({
   }, [accessDenied, boardId, selectedEventId, selectedKey, viewerId]);
 
   useEffect(() => {
-    if (!workspaceToday) return;
-    setAnchor((current) => current ?? workspaceToday);
-  }, [workspaceToday]);
-
-  useEffect(() => {
     onDraftStateChange?.(
       boardId,
       editor.hasDraft,
@@ -527,7 +447,6 @@ export function ServerBackedBoardCalendar({
   }
 
   // ---- The calendars, their items, and what opens them ----
-  const region = displayRegion ?? workspaceCalendar;
   const requestNavigation = useWorkspaceNavigationRequest();
   const router = useRouter();
   const toneOf = (index: number | null): CalendarTone =>
@@ -723,148 +642,37 @@ export function ServerBackedBoardCalendar({
         : { status: "loading" };
 
   // ---- The period ----
-  const anchorDate = currentAnchor ?? "";
-  const monthName =
-    region && anchorDate
-      ? formatWorkspaceDate(`${anchorDate.slice(0, 7)}-01`, region, {
-          month: "long",
-        })
-      : "";
-  const days =
-    anchorDate && view === "week" ? weekDays(anchorDate, displayWeekStart) : [];
-  const title =
-    !region || !anchorDate
-      ? "Calendar"
-      : view === "month"
-        ? formatWorkspaceDate(`${anchorDate.slice(0, 7)}-01`, region, {
-            month: phone ? "short" : "long",
-            year: "numeric",
-          })
-        : view === "week"
-          ? `${formatWorkspaceDate(days[0], region, { month: "short", day: "numeric" })} – ${formatWorkspaceDate(days[6], region, { month: "short", day: "numeric" })}${phone ? "" : `, ${days[6].slice(0, 4)}`}`
-          : workspaceToday
-            ? `From ${dayLabel(workspaceToday, region)}`
-            : "Upcoming";
   const nextEvent = data.nextOccurrence;
   const hiddenCount = rows.filter((row) => hidden.has(row.id)).length;
-  const emptyView = data.eventsReady && items.length === 0 && region;
-  // A search or hidden calendar that emptied the view says so first.
-  const filterEmpty = emptyView
-    ? calendarFilterEmpty(search, hiddenCount)
-    : null;
-  const monthEmpty =
-    view === "month" && show === "all" && emptyView && !filterEmpty
-      ? calendarEmptyStatus(
-          monthName,
-          nextEvent ? dayLabel(nextEvent.date, region) : null,
-        )
-      : null;
-  function undoFilter() {
-    if (filterEmpty?.kind === "search") setSearch("");
-    else if (hiddenKey) {
+  // A search or hidden calendar that emptied the view says so first; the
+  // words show on the grid, and one live region announces them.
+  const empty = useCalendarEmpty({
+    period,
+    items,
+    ready: data.eventsReady,
+    search,
+    hiddenCount,
+    show,
+    nextOccurrence: nextEvent,
+    onClearSearch: () => setSearch(""),
+    onShowAll: () => {
+      if (!hiddenKey) return;
       setHiddenState({ key: hiddenKey, ids: [] });
       writeHiddenCalendars(browserStorage, hiddenKey, []);
-    }
-  }
-  function goToNext() {
-    if (!nextEvent) return;
-    setAnchor(nextEvent.date);
-    setSelectedDay(nextEvent.date);
-    setTitleFocus((value) => value + 1);
-  }
-  const emptyMessage =
-    show === "archived" || view === "upcoming"
-      ? ""
-      : view === "week" && !filterEmpty
-        ? ""
-        : (filterEmpty?.message ?? monthEmpty?.message ?? "");
-  // The words show on the grid; this one live region announces them.
-  const emptyNotice =
-    filterEmpty || monthEmpty ? (
-      <>
-        <span aria-hidden="true">
-          {filterEmpty?.message ?? monthEmpty?.message}
-        </span>
-        {filterEmpty ? (
-          <>
-            <span aria-hidden="true">·</span>
-            <Button
-              type="button"
-              variant="ghost"
-              className="min-h-11 px-1.5 xl:min-h-7"
-              onClick={undoFilter}
-            >
-              {filterEmpty.action}
-            </Button>
-          </>
-        ) : monthEmpty?.next ? (
-          <>
-            <span aria-hidden="true">·</span>
-            <Button
-              type="button"
-              variant="ghost"
-              className="text-action-text min-h-11 px-1.5 xl:min-h-7"
-              aria-label={monthEmpty.next.name}
-              onClick={goToNext}
-            >
-              {monthEmpty.next.text}
-              <ArrowRight aria-hidden="true" data-icon="inline-end" />
-            </Button>
-          </>
-        ) : null}
-      </>
-    ) : null;
+    },
+  });
   const showOptions: CalendarShow[] = [
     "all",
     ...(canEdit ? (["mine"] as const) : []),
     ...(canBrowseArchived ? (["archived"] as const) : []),
   ];
-  const daySelected =
-    selectedDay &&
-    (view !== "month" || selectedDay.slice(0, 7) === anchorDate.slice(0, 7))
-      ? selectedDay
-      : workspaceToday && workspaceToday.slice(0, 7) === anchorDate.slice(0, 7)
-        ? workspaceToday
-        : view === "week"
-          ? (days[0] ?? anchorDate)
-          : `${anchorDate.slice(0, 7)}-01`;
   function closeSheet() {
     const opener = sheetOpener.current;
-    sheetReturn.current = opener?.isConnected ? opener : todayButton.current;
+    sheetReturn.current = opener?.isConnected
+      ? opener
+      : period.todayRef.current;
     sheetOpener.current = null;
     onParams({ event: null });
-  }
-
-  useEffect(() => {
-    if (titleFocus > 0) periodTitle.current?.focus();
-  }, [titleFocus]);
-
-  // The now line moves: Week re-renders on each minute while it shows today.
-  const showsToday =
-    view === "week" && workspaceToday !== null && days.includes(workspaceToday);
-  const [, setMinuteTick] = useState(0);
-  useEffect(() => {
-    if (!showsToday) return;
-    let interval: ReturnType<typeof setInterval> | undefined;
-    const tick = () => setMinuteTick((value) => value + 1);
-    const timeout = setTimeout(
-      () => {
-        tick();
-        interval = setInterval(tick, 60_000);
-      },
-      60_000 - (Date.now() % 60_000),
-    );
-    return () => {
-      clearTimeout(timeout);
-      if (interval) clearInterval(interval);
-    };
-  }, [showsToday]);
-
-  function move(amount: number) {
-    if (!anchorDate) return;
-    const next = shiftAnchor(view, anchorDate, amount);
-    setAnchor(next);
-    setSelectedDay(view === "week" ? next : null);
   }
 
   const calendarList = <CalendarList rows={rows} actions={listActions} />;
@@ -970,79 +778,20 @@ export function ServerBackedBoardCalendar({
         description="No events are shown. Retry or ask a Board manager to check your access."
       />
     );
-  } else if (view === "month") {
-    const grid = monthGrid(anchorDate, displayWeekStart);
-    main = phone ? (
-      <BoardCalendarPhoneMonth
-        grid={grid}
-        anchor={anchorDate}
-        today={workspaceToday}
-        label={title}
-        items={items}
-        calendars={calendars}
-        region={region}
-        selected={daySelected}
-        onSelect={setSelectedDay}
-        onOpen={openItem}
-      />
-    ) : (
-      <BoardCalendarMonth
-        grid={grid}
-        anchor={anchorDate}
-        today={workspaceToday}
-        weekStart={displayWeekStart}
-        label={title}
-        items={items}
-        calendars={calendars}
-        region={region}
-        onOpen={openItem}
-        empty={emptyNotice}
-        onShowDay={(date) => {
-          setAnchor(date);
-          setSelectedDay(date);
-          onParams({ view: "week" });
-          setTitleFocus((value) => value + 1);
-        }}
-      />
-    );
-  } else if (view === "week") {
-    main = phone ? (
-      <BoardCalendarPhoneWeek
-        days={days}
-        today={workspaceToday}
-        items={items}
-        calendars={calendars}
-        region={region}
-        selected={daySelected}
-        onSelect={setSelectedDay}
-        onOpen={openItem}
-      />
-    ) : (
-      <BoardCalendarWeek
-        days={days}
-        label={title}
-        today={workspaceToday}
-        nowMinute={minuteNow(region.timezone)}
-        items={items}
-        calendars={calendars}
-        region={region}
-        onOpen={openItem}
-        empty={filterEmpty ? emptyNotice : null}
-      />
-    );
   } else {
     main = (
-      <BoardCalendarUpcoming
-        today={workspaceToday}
+      <CalendarViews
+        period={{ ...period, region, today: workspaceToday }}
         items={items}
+        calendars={calendars}
         ready={data.eventsReady}
         nextOccurrence={nextEvent}
-        calendars={calendars}
-        region={region}
+        empty={empty}
         onOpen={openItem}
-        filterEmpty={
-          filterEmpty ? { ...filterEmpty, onAction: undoFilter } : null
-        }
+        onShowDay={(date) => {
+          period.jump(date);
+          onParams({ view: "week" });
+        }}
         renderLater={(window) => (
           <LaterWindow
             boardId={boardId}
@@ -1150,13 +899,10 @@ export function ServerBackedBoardCalendar({
               <MiniMonth
                 anchor={anchorDate}
                 today={workspaceToday}
-                weekStart={displayWeekStart}
+                weekStart={period.weekStart}
                 highlight={view === "week" ? days : []}
                 region={region}
-                onPick={(date) => {
-                  setAnchor(date);
-                  setSelectedDay(date);
-                }}
+                onPick={period.pick}
               />
             ) : null}
             {calendarList}
@@ -1181,14 +927,13 @@ export function ServerBackedBoardCalendar({
                   ? { previous: "Previous week", next: "Next week" }
                   : { previous: "Previous month", next: "Next month" }
             }
-            todayRef={todayButton}
-            titleRef={periodTitle}
-            onPrevious={() => move(-1)}
-            onNext={() => move(1)}
+            todayRef={period.todayRef}
+            titleRef={period.titleRef}
+            onPrevious={() => period.move(-1)}
+            onNext={() => period.move(1)}
             onToday={() => {
               if (!workspaceToday) return;
-              setAnchor(workspaceToday);
-              setSelectedDay(workspaceToday);
+              period.pick(workspaceToday);
               if (show === "archived") onParams({ show: null });
             }}
             onView={(next) =>
@@ -1201,7 +946,7 @@ export function ServerBackedBoardCalendar({
             onSearch={setSearch}
           />
           <p role="status" className="sr-only">
-            {emptyMessage}
+            {empty.message}
           </p>
           {main}
         </div>

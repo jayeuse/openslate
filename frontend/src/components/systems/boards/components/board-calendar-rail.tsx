@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import {
@@ -55,7 +55,8 @@ export type CalendarListActions = {
   onRetry: (id: string) => void;
   onAddSource: () => void;
   onRemoveSource: (source: CalendarSource) => void;
-  onAddToMyCalendar: (source: CalendarSource) => void;
+  /** A board's source copies to My calendar; My calendar's own do not. */
+  onAddToMyCalendar?: (source: CalendarSource) => void;
 };
 
 /**
@@ -65,17 +66,44 @@ export type CalendarListActions = {
 export function CalendarList({
   rows,
   actions,
+  personal = false,
 }: {
   rows: readonly CalendarListRow[];
   actions: CalendarListActions;
+  /**
+   * My calendar's list (the comp): Board calendars with their count, My
+   * cards, and the person's own record sources.
+   */
+  personal?: boolean;
 }) {
   const own = rows.filter((row) => row.kind !== "source");
   const sources = rows.filter((row) => row.kind === "source");
+  const boards = own.filter((row) => row.kind === "events");
   return (
     <div className="flex flex-col gap-3">
-      <CalendarGroup title="Calendars" rows={own} actions={actions} />
+      {personal ? (
+        <>
+          <CalendarGroup
+            title="Board calendars"
+            count={boards.length}
+            rows={boards}
+            actions={actions}
+          />
+          <CalendarGroup
+            title="My cards"
+            rows={own.filter((row) => row.kind === "due")}
+            actions={actions}
+          />
+        </>
+      ) : (
+        <CalendarGroup title="Calendars" rows={own} actions={actions} />
+      )}
       {sources.length || actions.canManage ? (
-        <CalendarGroup title="Record sources" rows={sources} actions={actions}>
+        <CalendarGroup
+          title={personal ? "My record sources" : "Record sources"}
+          rows={sources}
+          actions={actions}
+        >
           {actions.canManage && sources.length < 5 ? (
             <Button
               type="button"
@@ -94,21 +122,32 @@ export function CalendarList({
 
 function CalendarGroup({
   title,
+  count,
   rows,
   actions,
   children,
 }: {
   title: string;
+  count?: number;
   rows: readonly CalendarListRow[];
   actions: CalendarListActions;
   children?: React.ReactNode;
 }) {
+  const headingId = useId();
   return (
     <div className="flex flex-col gap-0.5">
-      <h3 className="text-muted-foreground px-1 pb-1 text-xs font-medium">
+      <h3
+        id={headingId}
+        className="text-muted-foreground flex items-center justify-between px-1 pb-1 text-xs font-medium"
+      >
         {title}
+        {count !== undefined ? (
+          <span className="tabular-nums" aria-hidden="true">
+            {count}
+          </span>
+        ) : null}
       </h3>
-      <ul className="flex flex-col">
+      <ul aria-labelledby={headingId} className="flex flex-col">
         {rows.map((row) => (
           <CalendarListItem key={row.id} row={row} actions={actions} />
         ))}
@@ -126,7 +165,8 @@ function CalendarListItem({
   actions: CalendarListActions;
 }) {
   const checkboxId = `board-calendar-toggle-${row.id.replace(/[^a-z0-9-]/gi, "-")}`;
-  const failed = actions.statuses.get(row.id) === "error";
+  const status = actions.statuses.get(row.id);
+  const failed = status === "error";
   const shown = !actions.hidden.has(row.id);
   return (
     <li className="flex min-h-11 items-center gap-2 rounded-md px-1 xl:min-h-8">
@@ -159,6 +199,11 @@ function CalendarListItem({
           >
             Retry
           </Button>
+        </span>
+      ) : status === "limited" ? (
+        // A server cap, not a failure: it says so in muted words.
+        <span className="text-muted-foreground shrink-0 text-xs">
+          Too many events to show
         </span>
       ) : null}
       {row.source ? (
@@ -208,12 +253,14 @@ function SourceMenu({
             Open records without a date
           </DropdownMenuItem>
         ) : null}
-        <DropdownMenuItem
-          className="min-h-11 xl:min-h-8"
-          onClick={() => actions.onAddToMyCalendar(source)}
-        >
-          Add to My calendar
-        </DropdownMenuItem>
+        {actions.onAddToMyCalendar ? (
+          <DropdownMenuItem
+            className="min-h-11 xl:min-h-8"
+            onClick={() => actions.onAddToMyCalendar?.(source)}
+          >
+            Add to My calendar
+          </DropdownMenuItem>
+        ) : null}
         {actions.canManage ? (
           <>
             <DropdownMenuSeparator />
@@ -359,9 +406,11 @@ export function MiniMonth({
 export function CalendarsPopover({
   rows,
   actions,
+  personal = false,
 }: {
   rows: readonly CalendarListRow[];
   actions: CalendarListActions;
+  personal?: boolean;
 }) {
   const failed = rows.filter(
     (row) => actions.statuses.get(row.id) === "error",
@@ -399,7 +448,7 @@ export function CalendarsPopover({
         </span>
       </PopoverTrigger>
       <PopoverContent align="start" className="slim-ui w-72">
-        <CalendarList rows={rows} actions={actions} />
+        <CalendarList rows={rows} actions={actions} personal={personal} />
       </PopoverContent>
     </Popover>
   );

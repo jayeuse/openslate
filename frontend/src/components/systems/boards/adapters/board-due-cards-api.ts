@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
+import { occurrenceBoardWire } from "./board-events-schemas";
+
+type OccurrenceBoard = z.output<typeof occurrenceBoardWire>;
 
 /**
  * "Cards · Due" on a board calendar (BR58): the board's cards whose due date
@@ -177,4 +180,66 @@ export async function listBoardStageNames(
   } catch (error) {
     throw safe(error);
   }
+}
+
+export type MyDueCard = DueCard & { board: OccurrenceBoard };
+
+const myCardPageWire = z
+  .object({
+    items: z.array(cardWire.extend({ board: occurrenceBoardWire }).strict()),
+    pagination,
+  })
+  .strict()
+  .refine(
+    ({ items, pagination: page }) =>
+      items.length === page.count &&
+      page.has_more === page.offset + page.count < page.total,
+  );
+
+/**
+ * "My cards · Due" (BR58): the person's cards due in the window on every
+ * board they read, in one merged list read page by page to the end.
+ */
+export async function listMyDueCards(window: {
+  from: string;
+  to: string;
+}): Promise<MyDueCard[]> {
+  const from = date.parse(window.from);
+  const to = date.parse(window.to);
+  const cards: MyDueCard[] = [];
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const query = new URLSearchParams({
+      from,
+      to,
+      limit: String(PAGE),
+      offset: String(cards.length),
+    });
+    let result: z.output<typeof myCardPageWire>;
+    try {
+      result = await apiFetch(
+        `/boards/cards/due?${query.toString()}`,
+        myCardPageWire,
+        { cache: "no-store" },
+      );
+    } catch (error) {
+      throw safe(error);
+    }
+    if (result.pagination.offset !== cards.length) throw new ApiContractError();
+    for (const card of result.items) {
+      if (card.board_id !== card.board.id || card.due_on === null)
+        throw new ApiContractError();
+      cards.push({
+        id: card.id,
+        kind: card.kind,
+        title: card.title,
+        dueOn: card.due_on,
+        stageId: card.stage_id,
+        assigneeId: card.assignee_id,
+        record: card.record,
+        board: card.board,
+      });
+    }
+    if (!result.pagination.has_more) return cards;
+  }
+  throw new ApiContractError();
 }

@@ -579,6 +579,7 @@ const navigationBoards: NavigationBoard[] = [
   },
 ];
 
+// My calendar leads the group (BR2); the title stays, as the ledger names it.
 test("the Boards group lists Company, the active project boards by name, and All boards, and marks the open one", () => {
   const rows = (search: string, boards = navigationBoards) =>
     boardsGroupRows(
@@ -586,18 +587,20 @@ test("the Boards group lists Company, the active project boards by name, and All
       boards,
     ).map((row) => [row.label, row.href, row.active]);
   expect(rows("")).toEqual([
+    ["My calendar", "/boards?section=my-calendar", false],
     ["Company", "/boards", true],
     ["Customer Renewal", "/boards?board=renewal", false],
     ["Fleet Reliability", "/boards?board=fleet", false],
     ["All boards", "/boards?section=all", false],
   ]);
   // Company's Board id in the address is still Company.
-  expect(rows("board=company&section=calendar")[0]).toEqual([
+  expect(rows("board=company&section=calendar")[1]).toEqual([
     "Company",
     "/boards",
     true,
   ]);
   expect(rows("board=fleet&section=posts").map((row) => row[2])).toEqual([
+    false,
     false,
     false,
     true,
@@ -607,7 +610,15 @@ test("the Boards group lists Company, the active project boards by name, and All
     false,
     false,
     false,
+    false,
     true,
+  ]);
+  expect(rows("section=my-calendar").map((row) => row[2])).toEqual([
+    true,
+    false,
+    false,
+    false,
+    false,
   ]);
   // A department's board lives in its department group (BR1).
   expect(rows("department=sales").map((row) => row[2])).toEqual([
@@ -615,20 +626,22 @@ test("the Boards group lists Company, the active project boards by name, and All
     false,
     false,
     false,
+    false,
   ]);
-  // Before the list is read, Company and All boards are already there.
+  // Before the list is read, My calendar, Company and All boards are there.
   expect(
     boardsGroupRows(
       boardsPlace("/platform", new URLSearchParams()),
       undefined,
     ).map((row) => [row.label, row.active]),
   ).toEqual([
+    ["My calendar", false],
     ["Company", false],
     ["All boards", false],
   ]);
 });
 
-test("the Boards breadcrumb names Company, the project board, All boards, or the department's Announcements", () => {
+test("the Boards breadcrumb names Company, the project board, All boards, My calendar, or the department's Announcements", () => {
   const location = (search: string, boards = navigationBoards) => {
     const place = boardsPlace("/boards", new URLSearchParams(search));
     if (!place) throw new Error("/boards is always a Boards place");
@@ -650,6 +663,10 @@ test("the Boards breadcrumb names Company, the project board, All boards, or the
   expect(location("section=all")).toEqual({
     parent: "Boards",
     current: "All boards",
+  });
+  expect(location("section=my-calendar&view=week")).toEqual({
+    parent: "Boards",
+    current: "My calendar",
   });
   expect(location("department=sales&section=posts")).toEqual({
     parent: "Sales",
@@ -676,4 +693,5 @@ test("each Boards place has its own navigation key", () => {
   expect(key("section=calendar")).toBe("boards:company");
   expect(key("board=fleet&section=posts")).toBe("boards:board:fleet");
   expect(key("section=all")).toBe("boards:all");
+  expect(key("section=my-calendar")).toBe("boards:my-calendar");
 });

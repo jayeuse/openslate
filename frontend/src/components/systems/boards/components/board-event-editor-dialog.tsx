@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -44,7 +44,15 @@ export function BoardEventEditorDialog({
   onAttachmentBusyChange,
   onRecordLinkBusyChange,
   refreshAttachmentVersions,
+  leading,
+  leadingId,
 }: {
+  /**
+   * My calendar's Board field, first in the form; the editor opens on it
+   * (`leadingId` names its control).
+   */
+  leading?: ReactNode;
+  leadingId?: string;
   draft: BoardEventDraft | null;
   dirty: boolean;
   busy: boolean;
@@ -82,8 +90,12 @@ export function BoardEventEditorDialog({
       >
         <DialogContent
           className={cn(dialogFrameContentClass, "max-w-2xl")}
-          // The editor opens on its first field, the title.
-          initialFocus={() => document.getElementById("live-board-event-title")}
+          // The editor opens on its first field: the Board, else the title.
+          initialFocus={() =>
+            document.getElementById(
+              leading && leadingId ? leadingId : "live-board-event-title",
+            )
+          }
         >
           <DialogFrameHeader
             title={<DialogTitle>{title}</DialogTitle>}
@@ -113,6 +125,7 @@ export function BoardEventEditorDialog({
               onAttachmentBusyChange={onAttachmentBusyChange}
               onRecordLinkBusyChange={onRecordLinkBusyChange}
               refreshAttachmentVersions={refreshAttachmentVersions}
+              leading={leading}
             />
           ) : null}
         </DialogContent>
