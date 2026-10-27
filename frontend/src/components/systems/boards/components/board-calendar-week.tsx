@@ -266,7 +266,7 @@ function DayColumn({
       {date === today && nowMinute !== null ? (
         <span
           aria-hidden="true"
-          className="border-foreground pointer-events-none absolute inset-x-0 z-10 border-t-2 before:absolute before:-top-[6px] before:-left-[5px] before:size-2.5 before:rounded-full before:bg-[var(--ink)]"
+          className="bg-foreground pointer-events-none absolute inset-x-0 z-10 h-0.5 before:absolute before:-top-[4px] before:-left-[5px] before:size-2.5 before:rounded-full before:bg-[var(--ink)]"
           style={{ top: minuteTop(nowMinute) }}
         />
       ) : null}

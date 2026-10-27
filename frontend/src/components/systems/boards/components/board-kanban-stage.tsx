@@ -53,7 +53,7 @@ const SORT_NAMES: Record<CardSort, string> = {
 };
 
 const headerClass =
-  "flex h-11 w-full min-w-0 items-center gap-2 rounded-t-sm border-b-2 border-[var(--stage-color)] px-1.5 text-left text-sm xl:h-8 data-[over]:border-[var(--warn)]";
+  "flex h-11 w-full min-w-0 items-center gap-2 rounded-t-sm px-1.5 text-left text-sm shadow-[inset_0_-2px_0_var(--stage-color)] xl:h-8 data-[over]:shadow-[inset_0_-2px_0_var(--warn)]";
 
 function HeaderFace({ stage, count }: { stage: KanbanStage; count: number }) {
   const shown = stageCount(count, stage.wipLimit);
