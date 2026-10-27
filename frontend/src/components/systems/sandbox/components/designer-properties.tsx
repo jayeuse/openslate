@@ -190,7 +190,7 @@ export function ModuleSettings({
 }
 
 /**
- * Close or Reopen, Delete, and Permanently delete for the selected module or
+ * Close or Reopen, Delete, and Delete forever for the selected module or
  * department, with the note that says when a close applies.
  */
 export function LifecycleActions({
@@ -254,7 +254,7 @@ export function LifecycleActions({
             disabled={disabled}
             onClick={onPurge}
           >
-            Permanently delete {kind}
+            Delete {kind} forever
           </Button>
         ) : null}
       </div>

@@ -938,7 +938,7 @@ export function Designer({
       return {
         ok: false,
         error:
-          "Load the closed live item and save or cancel your edits before reviewing permanent deletion.",
+          "Load the closed live item and save or cancel your edits before you delete it forever.",
       };
     return onLifecycle(binding, "purge");
   }

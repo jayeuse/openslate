@@ -89,7 +89,10 @@ export function SandboxLifecycleDialog({
 
   if (!request) return null;
   const { operation, binding } = request;
-  const title = `${operation === "purge" ? "Permanently delete" : operation === "close" ? "Close" : "Reopen"} ${binding.kind}`;
+  const title =
+    operation === "purge"
+      ? `Delete ${binding.kind} forever`
+      : `${operation === "close" ? "Close" : "Reopen"} ${binding.kind}`;
   const recordLinkCount = preview
     ? new Set(
         preview.impact.external_impacts
@@ -155,7 +158,7 @@ export function SandboxLifecycleDialog({
           description={
             <DialogDescription>
               {operation === "purge"
-                ? `Permanent deletion removes this live ${binding.kind} and its corresponding current design structure${binding.kind === "department" ? ", including draft modules and fields" : ""}.`
+                ? `This removes the live ${binding.kind} forever, with its current design structure${binding.kind === "department" ? ", including draft modules and fields" : ""}.`
                 : operation === "close"
                   ? "Review the effect on the live workspace before closing this item."
                   : "Reopens this and everything its close included."}
@@ -276,7 +279,7 @@ export function SandboxLifecycleDialog({
             {busy === "command"
               ? "Confirming…"
               : operation === "purge"
-                ? "Permanently delete"
+                ? title
                 : title}
           </Button>
         </DialogFrameFooter>

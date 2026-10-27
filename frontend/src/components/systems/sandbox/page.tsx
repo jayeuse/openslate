@@ -962,7 +962,7 @@ function SandboxWorkspace() {
     operation: SandboxLifecycleOperation,
   ): Promise<SandboxCommandResult<Design>> {
     if (operation === "purge" && !purgeEnabled)
-      return { ok: false, error: "Permanent deletion is unavailable." };
+      return { ok: false, error: "Delete forever is unavailable." };
     if (
       !session ||
       !bindingsReady ||

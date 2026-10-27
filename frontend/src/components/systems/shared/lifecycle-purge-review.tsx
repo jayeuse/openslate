@@ -77,8 +77,8 @@ export function LifecyclePurgeReview({
     return `${count} ${label}`;
   });
   const summary = groups.length
-    ? `This permanently removes ${new Intl.ListFormat("en", { type: "conjunction" }).format(groups)}.`
-    : "No items are included in this permanent-deletion review.";
+    ? `This deletes ${new Intl.ListFormat("en", { type: "conjunction" }).format(groups)} forever.`
+    : "No items are included in this review.";
 
   return (
     <div className="space-y-3">
@@ -114,7 +114,7 @@ export function LifecyclePurgeReview({
       ) : null}
       {impact.blockers.length > 0 ? (
         <Alert variant="warning" role="alert">
-          <p className="font-medium">Permanent deletion is blocked</p>
+          <p className="font-medium">Delete forever is blocked</p>
           <p className="mt-1">Resolve these dependencies, then review again.</p>
           <ul className="mt-2 list-disc space-y-2 pl-5">
             {impact.blockers.map((blocker) => (

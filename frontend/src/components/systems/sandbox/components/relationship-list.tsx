@@ -22,7 +22,7 @@ export interface RelationshipRow {
   /** Closed relationships accept no new links until reopened. */
   closed?: boolean;
   /**
-   * A live relationship's Close or Reopen and Permanently delete; null for
+   * A live relationship's Close or Reopen and Delete forever; null for
    * one that exists only in the draft.
    */
   lifecycle: {
@@ -35,7 +35,7 @@ export interface RelationshipRow {
 /**
  * A module's relationships as compact rows: the name, the module at the
  * other end with an arrow for the direction, and one quiet ⋯ menu with the
- * row's actions: Edit, Close or Reopen (live ones), Permanently delete (a
+ * row's actions: Edit, Close or Reopen (live ones), Delete forever (a
  * closed live one), and Delete. This is the module's one relationships list
  * (docs/specs/sandbox-relayout.md S12).
  */
@@ -136,10 +136,10 @@ export function RelationshipList({
                       variant="destructive"
                       className="min-h-11 xl:min-h-0"
                       disabled={row.lifecycle.disabled}
-                      aria-label={`Permanently delete relationship ${row.name}, ${row.direction}`}
+                      aria-label={`Delete relationship ${row.name} forever, ${row.direction}`}
                       onClick={() => onPurge(row.id)}
                     >
-                      Permanently delete
+                      Delete forever
                     </DropdownMenuItem>
                   ) : null}
                   <DropdownMenuItem

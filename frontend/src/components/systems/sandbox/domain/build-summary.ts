@@ -123,7 +123,7 @@ function lifecycleWords({ closed, canPurge }: Lifecycle): string[] {
   return [
     closed ? "Reopen" : "Close",
     "Delete",
-    ...(canPurge ? ["Permanently delete"] : []),
+    ...(canPurge ? ["Delete forever"] : []),
   ];
 }
 

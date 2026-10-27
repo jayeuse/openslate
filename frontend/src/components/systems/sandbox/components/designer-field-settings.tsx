@@ -753,7 +753,7 @@ export function FieldSettings({
                   if (!result.ok) setError(result.error);
                 }}
               >
-                Permanently delete field
+                Delete field forever
               </Button>
             ) : null}
           </div>

@@ -268,7 +268,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   });
   await begin.click();
   await expect(
-    manage.getByText("This permanently removes 1 Board and 2 posts."),
+    manage.getByText("This deletes 1 Board and 2 posts forever."),
   ).toBeVisible();
   await expect(manage.getByRole("code")).toHaveText(board.name);
   await expect(manage.getByText(/Last successful backup/)).toHaveText(
@@ -1330,9 +1330,9 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
     );
     releaseFile();
     await oldResponse;
-    await expect(
-      manage.getByText("This permanently removes 1 file."),
-    ).toHaveCount(0);
+    await expect(manage.getByText("This deletes 1 file forever.")).toHaveCount(
+      0,
+    );
     await expect(
       manage.getByText(controlFile.filename, { exact: true }),
     ).toHaveCount(0);
@@ -1342,7 +1342,7 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
     ).toBeDisabled();
     releaseBoard();
     await expect(
-      manage.getByText("This permanently removes 1 Board."),
+      manage.getByText("This deletes 1 Board forever."),
     ).toBeVisible();
     await expect(manage.getByLabel("Type the board name")).toBeVisible();
     expect(purges).toBe(0);

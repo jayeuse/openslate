@@ -312,7 +312,7 @@ export function RecordDetailsControls({
       setError(
         lifecycleErrorMessage(
           caught,
-          "A permanent-deletion review could not be prepared. Try again.",
+          "The Delete forever review could not be prepared. Try again.",
         ),
       );
       setPurgeReviewAgain(true);
@@ -342,12 +342,12 @@ export function RecordDetailsControls({
         password,
       });
       clearPurgeReview();
-      onChanged("Record permanently deleted.");
+      onChanged("Record deleted forever.");
     } catch (caught) {
       setError(
         lifecycleErrorMessage(
           caught,
-          "The record was not permanently deleted. Request a new review and try again.",
+          "Delete forever could not be confirmed. Request a new review and try again.",
         ),
       );
       clearPurgeReview();
@@ -553,7 +553,7 @@ export function RecordDetailsControls({
                     ? "Preparing review…"
                     : purgeReviewAgain
                       ? "Review again"
-                      : "Permanently delete"}
+                      : "Delete forever"}
                 </Button>
               ) : null}
             </div>
@@ -631,7 +631,7 @@ export function RecordDetailsControls({
                     >
                       {pending === "purge"
                         ? "Deleting…"
-                        : "Confirm permanent deletion"}
+                        : "Delete record forever"}
                     </Button>
                     <Button
                       type="button"

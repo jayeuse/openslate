@@ -90,13 +90,10 @@ test("shared lifecycle failures describe any purge target without exposing serve
       new ApiError(403, "Private server detail", undefined, "purge_disabled"),
       "Unable to delete.",
     ),
-  ).toBe("Permanent delete is turned off for this installation.");
+  ).toBe("Delete forever is turned off for this installation.");
   for (const [code, message] of [
-    [
-      "purge_requires_closed",
-      "Close this item before permanently deleting it.",
-    ],
-    ["preflight_failed", "Dependencies prevent permanent deletion."],
+    ["purge_requires_closed", "Close this item before you delete it forever."],
+    ["preflight_failed", "Dependencies prevent Delete forever."],
     [
       "impact_changed",
       "This item or its dependencies changed. Request a new review.",

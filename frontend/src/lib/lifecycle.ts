@@ -204,11 +204,11 @@ const safeLifecycleErrors: Partial<
 > = {
   purge_disabled: {
     status: 403,
-    message: "Permanent delete is turned off for this installation.",
+    message: "Delete forever is turned off for this installation.",
   },
   purge_requires_closed: {
     status: 409,
-    message: "Close this item before permanently deleting it.",
+    message: "Close this item before you delete it forever.",
   },
   confirmation_name_mismatch: {
     status: 422,
@@ -257,7 +257,7 @@ const safeLifecycleErrors: Partial<
   },
   preflight_failed: {
     status: 409,
-    message: "Dependencies prevent permanent deletion.",
+    message: "Dependencies prevent Delete forever.",
   },
   impact_changed: {
     status: 409,
@@ -265,7 +265,7 @@ const safeLifecycleErrors: Partial<
   },
   temporarily_unavailable: {
     status: 503,
-    message: "Permanent deletion is temporarily unavailable. Try again later.",
+    message: "Delete forever is unavailable right now. Try again later.",
   },
   board_purge_conflict: {
     status: 409,
@@ -288,14 +288,19 @@ export function structuralLifecycleErrorMessage(
   error: unknown,
   operation: "close" | "purge" | "reopen",
 ): string {
-  const fallback = `This ${operation === "purge" ? "permanent deletion" : operation} could not be confirmed. Request a new review and try again.`;
+  const fallback =
+    operation === "purge"
+      ? "Delete forever could not be confirmed. Request a new review and try again."
+      : `This ${operation} could not be confirmed. Request a new review and try again.`;
   if (!(error instanceof ApiError)) return fallback;
   if (error.code === "confirmation_name_mismatch" && error.status === 422)
     return "The name confirmation did not match. Request a new review.";
   if (error.code === "closed_ancestor" && error.status === 409)
     return "Reopen the parent before reopening this item.";
   if (error.code === "preflight_failed" && error.status === 409)
-    return `Dependencies prevent this ${operation === "purge" ? "permanent deletion" : operation}. Request a new review.`;
+    return operation === "purge"
+      ? "Dependencies prevent Delete forever. Request a new review."
+      : `Dependencies prevent this ${operation}. Request a new review.`;
   if (error.code === "temporarily_unavailable" && error.status === 503)
     return "This change is temporarily unavailable. Try again later.";
   return lifecycleErrorMessage(error, fallback);

@@ -330,7 +330,7 @@ Correct: the Triplicate block sets `--button-edge: var(--action); --button-ink: 
 
 Wrong: `[data-theme="triplicate"] [data-slot="button"][data-variant="outline"] { border-color: var(--action); color: var(--action); }` (every outline button turns blue, and no call site can change it back).
 
-**The Advanced Last Rule.** A panel shows the controls that its common task needs. Every other control goes in one closed **Advanced** block (`AdvancedSection`), the last block of the panel. Advanced remembers its state for each viewer, and when closed its header counts the controls whose value differs from the default ("Advanced · 2 set"). An error inside a closed Advanced block opens it for that render (`forceOpen`) without storing the choice, so the person sees the field that failed. Lifecycle actions (Close, Reopen, Delete, Permanently delete) always live in Advanced. A control that applies only in one case appears only in that case.
+**The Advanced Last Rule.** A panel shows the controls that its common task needs. Every other control goes in one closed **Advanced** block (`AdvancedSection`), the last block of the panel. Advanced remembers its state for each viewer, and when closed its header counts the controls whose value differs from the default ("Advanced · 2 set"). An error inside a closed Advanced block opens it for that render (`forceOpen`) without storing the choice, so the person sees the field that failed. Lifecycle actions (Close, Reopen, Delete, Delete forever) always live in Advanced. A control that applies only in one case appears only in that case.
 
 Correct: The module panel shows the name, the field list, and "Add field", then "Advanced · 1 set" (closed).
 

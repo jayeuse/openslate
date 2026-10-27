@@ -4643,13 +4643,15 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     details.getByRole("button", { name: "Restore record" }),
   ).toBeVisible();
   await expect(
-    details.getByRole("button", { name: "Permanently delete" }),
+    details.getByRole("button", { name: "Delete forever", exact: true }),
   ).toBeVisible();
 
-  await details.getByRole("button", { name: "Permanently delete" }).click();
+  await details
+    .getByRole("button", { name: "Delete forever", exact: true })
+    .click();
   const impactSummary = details
     .getByRole("status")
-    .filter({ hasText: "permanently removes" });
+    .filter({ hasText: "This deletes" });
   await expect(impactSummary).toContainText("1 record");
   await expect(impactSummary).toContainText("2 links");
   await expect(impactSummary).toContainText("3 automation history entries");
@@ -4674,7 +4676,7 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   api.workspace.purge_enabled = true;
   await api.triggerInvalidation("workspace_profiles");
   await details
-    .getByRole("button", { name: "Permanently delete", exact: true })
+    .getByRole("button", { name: "Delete forever", exact: true })
     .click();
   await expect(details.getByLabel("Administrator password")).toBeVisible();
   await details
@@ -4689,7 +4691,9 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     `/api/records/${recordOneId}/purge/preview`,
     `/api/records/${recordOneId}/purge/preview`,
   ]);
-  await details.getByRole("button", { name: "Permanently delete" }).click();
+  await details
+    .getByRole("button", { name: "Delete forever", exact: true })
+    .click();
   await expect(
     details.getByText(/Pump seal replacement.*Work orders.*Maintenance/),
   ).toBeVisible();
@@ -4701,9 +4705,7 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await details
     .getByLabel("Administrator password")
     .fill("synthetic-test-passphrase");
-  await details
-    .getByRole("button", { name: "Confirm permanent deletion" })
-    .click();
+  await details.getByRole("button", { name: "Delete record forever" }).click();
   await expect(details.getByRole("alert")).toHaveText(
     "Administrator verification failed. Confirm your password and access, then request a new review.",
   );
@@ -4718,10 +4720,8 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await details
     .getByLabel("Administrator password")
     .fill("synthetic-test-passphrase");
-  await details
-    .getByRole("button", { name: "Confirm permanent deletion" })
-    .click();
-  await expect(page.getByText("Record permanently deleted.")).toBeVisible();
+  await details.getByRole("button", { name: "Delete record forever" }).click();
+  await expect(page.getByText("Record deleted forever.")).toBeVisible();
   expect(recordPurgeCalls.map(({ method, path }) => [method, path])).toEqual([
     ["POST", `/api/records/${recordOneId}/purge/preview`],
     ["POST", `/api/records/${recordOneId}/purge/preview`],
@@ -4805,17 +4805,17 @@ test("a blocked record purge lists the dependency and hides password confirmatio
   );
   const details = page.getByRole("dialog", { name: "Record details" });
   await details
-    .getByRole("button", { name: "Permanently delete", exact: true })
+    .getByRole("button", { name: "Delete forever", exact: true })
     .click();
   await expect(details.getByRole("alert")).toContainText(
     "Remove the Board link before deleting this record.",
   );
   await expect(
-    details.getByText("This permanently removes 1 record."),
+    details.getByText("This deletes 1 record forever."),
   ).toBeVisible();
   await expect(details.getByLabel("Administrator password")).toHaveCount(0);
   await expect(
-    details.getByRole("button", { name: "Confirm permanent deletion" }),
+    details.getByRole("button", { name: "Delete record forever" }),
   ).toHaveCount(0);
   expect(deletions).toBe(0);
 });
@@ -4837,7 +4837,7 @@ test("members with write access can restore a deleted record but cannot see perm
     details.getByRole("button", { name: "Restore record" }),
   ).toBeVisible();
   await expect(
-    details.getByRole("button", { name: "Permanently delete" }),
+    details.getByRole("button", { name: "Delete forever", exact: true }),
   ).toHaveCount(0);
 });
 
@@ -4860,7 +4860,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
       details.getByRole("button", { name: "Restore record" }),
     ).toBeEnabled();
     await expect(
-      details.getByRole("button", { name: "Permanently delete", exact: true }),
+      details.getByRole("button", { name: "Delete forever", exact: true }),
     ).toHaveCount(0);
   });
 }
