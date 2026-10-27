@@ -55,9 +55,9 @@ test("My calendar opens first in the Boards group and shows every board's events
   await expect(page.getByRole("navigation", { name: /views$/ })).toHaveCount(0);
   const month = page.getByRole("region", { name: "November 2026 calendar" });
   for (const name of [
-    "Q4 town hall, Company announcements, Fri, Nov 13, 4pm",
-    "Customer account review, Sales announcements, Mon, Nov 16, 9am",
-    "Forklift breakdown review, Fleet Reliability announcements, Wed, Nov 18, 11am",
+    "Q4 town hall, Company, Fri, Nov 13, 4pm",
+    "Customer account review, Sales, Mon, Nov 16, 9am",
+    "Forklift breakdown review, Fleet Reliability, Wed, Nov 18, 11am",
   ])
     await expect(
       month.getByRole("button", { name, exact: true }),
@@ -68,14 +68,16 @@ test("My calendar opens first in the Boards group and shows every board's events
   ]);
   const rail = page.getByRole("complementary", { name: "Calendars" });
   for (const name of [
-    "Company announcements",
-    "Sales announcements",
-    "Inventory announcements",
-    "Fleet Reliability announcements",
+    "Company",
+    "Sales",
+    "Inventory",
+    "Fleet Reliability",
     "My cards · Due",
     "Sales Orders · Promised delivery",
   ])
-    await expect(rail.getByRole("checkbox", { name })).toBeChecked();
+    await expect(
+      rail.getByRole("checkbox", { name, exact: true }),
+    ).toBeChecked();
   expect(await documentScrolls(page)).toEqual({ down: false, across: false });
 
   // A board's event change refreshes My calendar from the same stream.
@@ -105,7 +107,7 @@ test("My calendar opens first in the Boards group and shows every board's events
     page
       .getByRole("region", { name: "Selected day" })
       .getByRole("button", { name: /^Forklift breakdown review,/ }),
-  ).toContainText("Fleet Reliability announcements");
+  ).toContainText("Fleet Reliability");
   expect((await documentScrolls(page)).across).toBe(false);
 });
 
@@ -122,19 +124,15 @@ test("a board whose events cannot be read shows not loaded in its row while the 
   });
   await page.goto(myCalendarHref());
   const rail = page.getByRole("complementary", { name: "Calendars" });
-  const inventory = rail
-    .getByRole("listitem")
-    .filter({ hasText: "Inventory announcements" });
+  const inventory = rail.getByRole("listitem").filter({ hasText: "Inventory" });
   await expect(inventory.getByRole("alert")).toContainText("not loaded ·");
   await expect(
-    rail
-      .getByRole("listitem")
-      .filter({ hasText: "Fleet Reliability announcements" }),
+    rail.getByRole("listitem").filter({ hasText: "Fleet Reliability" }),
   ).toContainText("Too many events to show");
   const month = page.getByRole("region", { name: "November 2026 calendar" });
   await expect(
     month.getByRole("button", {
-      name: "Customer account review, Sales announcements, Mon, Nov 16, 9am",
+      name: "Customer account review, Sales, Mon, Nov 16, 9am",
       exact: true,
     }),
   ).toBeVisible();
@@ -142,15 +140,13 @@ test("a board whose events cannot be read shows not loaded in its row while the 
   // Below 1440 the Calendars button carries the failure.
   await page.setViewportSize({ width: 1280, height: 720 });
   await expect(
-    page.getByRole("button", { name: /^Calendars · 1 not loaded$/ }),
+    page.getByRole("button", { name: "Calendars, 1 not loaded" }),
   ).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 900 });
-  await inventory
-    .getByRole("button", { name: "Retry Inventory announcements" })
-    .click();
+  await inventory.getByRole("button", { name: "Retry Inventory" }).click();
   await expect(
     month.getByRole("button", {
-      name: "Quarterly cycle count, Inventory announcements, Thu, Nov 19, 8am",
+      name: "Quarterly cycle count, Inventory, Thu, Nov 19, 8am",
       exact: true,
     }),
   ).toBeVisible();
@@ -213,20 +209,20 @@ test("My cards · Due shows the person's cards in their boards' names and opens 
   const month = page.getByRole("region", { name: "November 2026 calendar" });
   await expect(
     month.getByRole("button", {
-      name: "Due: No access to this record, Fleet Reliability announcements, Fri, Nov 20, due",
+      name: "Due: No access to this record, Fleet Reliability, Fri, Nov 20, due",
       exact: true,
     }),
   ).toBeVisible();
   await month
     .getByRole("button", {
-      name: "Due: Update the Q4 price list, Sales announcements, Fri, Nov 20, due",
+      name: "Due: Update the Q4 price list, Sales, Fri, Nov 20, due",
       exact: true,
     })
     .click();
   const summary = page.getByRole("dialog", {
     name: "Update the Q4 price list",
   });
-  await expect(summary.getByText("Sales announcements")).toBeVisible();
+  await expect(summary.getByText("Sales")).toBeVisible();
   await expect(summary.getByText("Doing")).toBeVisible();
   expect(api.dueReads).toEqual([
     "?from=2026-11-01&to=2026-11-30&limit=100&offset=0",
@@ -247,13 +243,13 @@ test("New event from My calendar starts with the Board field and names who sees 
   await expect(board).toBeFocused();
   // Only the boards the person posts on.
   await expect(board.getByRole("option")).toHaveText([
-    "Sales announcements",
-    "Fleet Reliability announcements",
+    "Sales",
+    "Fleet Reliability",
   ]);
   await expect(
     editor.getByText("Everyone who reads Sales sees this event."),
   ).toBeVisible();
-  await board.selectOption({ label: "Fleet Reliability announcements" });
+  await board.selectOption({ label: "Fleet Reliability" });
   await expect(
     editor.getByText("Everyone who reads Fleet Reliability sees this event."),
   ).toBeVisible();
@@ -268,9 +264,7 @@ test("New event from My calendar starts with the Board field and names who sees 
   });
   // The saved event's sheet opens with its board.
   const sheet = page.getByRole("dialog", { name: "Reach truck maintenance" });
-  await expect(
-    sheet.getByText("Fleet Reliability announcements"),
-  ).toBeVisible();
+  await expect(sheet.getByText("Fleet Reliability")).toBeVisible();
 });
 
 test("a person who posts nowhere has no New event, and a read-only board's event sheet has no Edit", async ({
@@ -282,9 +276,7 @@ test("a person who posts nowhere has no New event, and a read-only board's event
   });
   await page.goto(myCalendarHref(`&event=${forkliftEventId}`));
   const sheet = page.getByRole("dialog", { name: "Forklift breakdown review" });
-  await expect(
-    sheet.getByText("Fleet Reliability announcements"),
-  ).toBeVisible();
+  await expect(sheet.getByText("Fleet Reliability")).toBeVisible();
   await expect(sheet.getByRole("button", { name: "Edit event" })).toHaveCount(
     0,
   );
@@ -299,7 +291,7 @@ test("?event= on My calendar opens the event's sheet with its board and a link t
   await page.goto(myCalendarHref(`&event=${reviewEventId}`));
   const sheet = page.getByRole("dialog", { name: "Customer account review" });
   await expect(sheet).toBeVisible();
-  await expect(sheet.getByText("Sales announcements")).toBeVisible();
+  await expect(sheet.getByText("Sales")).toBeVisible();
   await expect(sheet.getByRole("link", { name: "Open board" })).toHaveAttribute(
     "href",
     `/boards?department=${salesDepartmentId}&section=calendar&event=${reviewEventId}`,
@@ -317,7 +309,7 @@ test("?event= on My calendar opens the event's sheet with its board and a link t
   // A Company event opens its sheet too; Company is read-only here.
   await page
     .getByRole("button", {
-      name: "Q4 town hall, Company announcements, Fri, Nov 13, 4pm",
+      name: "Q4 town hall, Company, Fri, Nov 13, 4pm",
       exact: true,
     })
     .click();
@@ -336,4 +328,22 @@ test("?event= on My calendar opens the event's sheet with its board and a link t
   );
   await company.getByRole("button", { name: "More event actions" }).click();
   await expect(page.getByRole("menuitem")).toHaveText(["Copy link"]);
+});
+
+test("the toolbar keeps one row at 1280 in Week while a board is not loaded", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await installMyCalendarApi(page, {
+    statuses: { [inventoryBoardId]: "unavailable" },
+  });
+  await page.goto(myCalendarHref());
+  await expect(
+    page.getByRole("button", { name: "Calendars, 1 not loaded" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Week", exact: true }).click();
+  const toolbar = page.getByRole("group", { name: "Calendar", exact: true });
+  await expect(toolbar).toContainText("Nov");
+  // One row (BR16): the 32px controls with no second line.
+  expect((await toolbar.boundingBox())?.height ?? 0).toBeLessThanOrEqual(40);
 });

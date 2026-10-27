@@ -152,7 +152,7 @@ export function BoardCalendarToolbar({
           <ToggleGroupItem
             key={option.value}
             value={option.value}
-            className="px-3 text-sm xl:px-2"
+            className="px-3 text-sm whitespace-nowrap md:flex-none xl:px-2.5"
           >
             {option.label}
           </ToggleGroupItem>

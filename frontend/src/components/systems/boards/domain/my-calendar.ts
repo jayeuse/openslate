@@ -76,11 +76,9 @@ export function myCalendarBoards(
     return {
       id: state.boardId,
       calendarId: `board:${state.boardId}`,
-      name: mark
-        ? mark.scope === "company"
-          ? "Company announcements"
-          : `${mark.name} announcements`
-        : "Board",
+      // The short name, as the sidebar shows it: the list is already
+      // titled "Board calendars".
+      name: mark ? (mark.scope === "company" ? "Company" : mark.name) : "Board",
       ownerName: mark ? mark.name : "this board",
       scope: mark?.scope ?? null,
       departmentId: mark?.departmentId ?? null,

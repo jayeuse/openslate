@@ -416,8 +416,16 @@ export function CalendarsPopover({
     (row) => actions.statuses.get(row.id) === "error",
   ).length;
   const hidden = rows.filter((row) => actions.hidden.has(row.id)).length;
-  // The button says what the folded list hides or failed to load; its name
-  // is its words.
+  // Hidden calendars count like active filters (the Posts Filters badge); a
+  // failed read adds a danger dot. The words are the name and the tooltip,
+  // so the toolbar keeps one row at 1280.
+  const summary = [
+    hidden ? `${hidden} hidden` : null,
+    failed ? `${failed} not loaded` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const name = summary ? `Calendars, ${summary}` : "Calendars";
   return (
     <Popover>
       <PopoverTrigger
@@ -426,26 +434,27 @@ export function CalendarsPopover({
             type="button"
             variant="outline"
             className="min-h-11 max-md:min-w-11 max-md:px-2 xl:h-8 xl:min-h-8 xl:px-2.5"
+            aria-label={name}
+            title={name}
           />
         }
       >
         <ListFilter aria-hidden="true" />
-        <span className={hidden || failed ? undefined : "max-md:sr-only"}>
-          Calendars
-          {hidden ? (
-            <span className="text-muted-foreground"> · {hidden} hidden</span>
-          ) : null}
-          {failed ? (
-            <span className="text-danger-text">
-              {" · "}
-              <span
-                aria-hidden="true"
-                className="bg-danger-text mr-1 inline-block size-1.5 rounded-full align-middle"
-              />
-              {failed} not loaded
-            </span>
-          ) : null}
-        </span>
+        <span className="max-md:sr-only">Calendars</span>
+        {hidden ? (
+          <span
+            aria-hidden="true"
+            className="bg-action-tint text-action-text inline-grid h-[18px] min-w-[18px] place-items-center rounded-full px-1 text-xs leading-none font-semibold tabular-nums"
+          >
+            {hidden}
+          </span>
+        ) : null}
+        {failed ? (
+          <span
+            aria-hidden="true"
+            className="bg-danger-text inline-block size-2 rounded-full"
+          />
+        ) : null}
       </PopoverTrigger>
       <PopoverContent align="start" className="slim-ui w-72">
         <CalendarList rows={rows} actions={actions} personal={personal} />

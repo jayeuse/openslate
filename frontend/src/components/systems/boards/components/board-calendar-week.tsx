@@ -91,7 +91,7 @@ export function BoardCalendarWeek({
           </div>
         </div>
       ) : null}
-      <div className="grid h-11 shrink-0 grid-cols-[56px_repeat(7,minmax(0,1fr))] items-center border-b">
+      <div className="grid h-11 shrink-0 grid-cols-[64px_repeat(7,minmax(0,1fr))] items-center border-b">
         <span />
         {days.map((date) => (
           <span
@@ -113,7 +113,7 @@ export function BoardCalendarWeek({
         ))}
       </div>
       <div
-        className="grid shrink-0 grid-cols-[56px_repeat(7,minmax(0,1fr))] border-b py-1"
+        className="grid shrink-0 grid-cols-[64px_repeat(7,minmax(0,1fr))] border-b py-1"
         style={{ gridTemplateRows: `repeat(${laneCount}, 24px)` }}
       >
         <span
@@ -149,7 +149,7 @@ export function BoardCalendarWeek({
         className="max-h-[36rem] min-h-0 overflow-y-auto overscroll-contain xl:max-h-none xl:flex-1"
       >
         <div
-          className="relative grid grid-cols-[56px_repeat(7,minmax(0,1fr))]"
+          className="relative grid grid-cols-[64px_repeat(7,minmax(0,1fr))]"
           style={{ height }}
         >
           <div className="relative">
@@ -169,7 +169,7 @@ export function BoardCalendarWeek({
             )}
             {nowMinute !== null && days.includes(today ?? "") ? (
               <span
-                className="bg-foreground text-background absolute right-1 z-10 -translate-y-1/2 rounded-[3px] px-1 text-xs font-semibold tabular-nums"
+                className="bg-foreground text-background absolute right-1 z-10 -translate-y-1/2 rounded-[3px] px-1 text-xs font-semibold whitespace-nowrap tabular-nums"
                 style={{ top: minuteTop(nowMinute) }}
               >
                 {compactTime(nowMinute, region)}

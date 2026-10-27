@@ -350,46 +350,18 @@ test("each board the read covered is a calendar, named and ordered, with its rea
       board.status,
     ]),
   ).toEqual([
-    [
-      `board:${companyId}`,
-      "Company announcements",
-      "Company",
-      "read",
-      9,
-      "limited",
-    ],
-    [
-      `board:${inventoryId}`,
-      "Inventory announcements",
-      "Inventory",
-      "read",
-      null,
-      "error",
-    ],
-    [
-      `board:${salesId}`,
-      "Sales announcements",
-      "Sales",
-      "manage",
-      4,
-      "limited",
-    ],
+    [`board:${companyId}`, "Company", "Company", "read", 9, "limited"],
+    [`board:${inventoryId}`, "Inventory", "Inventory", "read", null, "error"],
+    [`board:${salesId}`, "Sales", "Sales", "manage", 4, "limited"],
     [
       `board:${fleetId}`,
-      "Fleet Reliability announcements",
+      "Fleet Reliability",
       "Fleet Reliability",
       "write",
       2,
       "ready",
     ],
-    [
-      `board:${authorId}`,
-      "Spring Launch announcements",
-      "Spring Launch",
-      null,
-      1,
-      "ready",
-    ],
+    [`board:${authorId}`, "Spring Launch", "Spring Launch", null, 1, "ready"],
     [`board:${stageId}`, "Board", "this board", null, 1, "ready"],
   ]);
   // A board the read did not cover is not a calendar (the Same Answer Rule).
@@ -412,8 +384,8 @@ test("the Board field lists only the boards the person posts on, and names who s
     () => null,
   );
   expect(postableBoards(boards).map((board) => board.name)).toEqual([
-    "Sales announcements",
-    "Fleet Reliability announcements",
+    "Sales",
+    "Fleet Reliability",
   ]);
   expect(boardConsequence(postableBoards(boards)[0])).toBe(
     "Everyone who reads Sales sees this event.",
