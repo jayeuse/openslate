@@ -56,35 +56,6 @@ export function movedChecklist(
   return ids;
 }
 
-export type AssigneeChoice = { id: string; name: string };
-
-/**
- * Who a writer can pick as the assignee. No route lists a board's readers
- * for a writer, so the choices are the people the board already shows:
- * the viewer, the people assigned on its cards, and its post authors. The
- * server refuses anyone who cannot read the board.
- */
-export function assigneeChoices({
-  viewer,
-  assigned,
-  authors,
-}: {
-  viewer: AssigneeChoice | null;
-  assigned: readonly AssigneeChoice[];
-  authors: readonly AssigneeChoice[];
-}): AssigneeChoice[] {
-  const byId = new Map<string, AssigneeChoice>();
-  for (const person of [...assigned, ...authors])
-    if (!byId.has(person.id)) byId.set(person.id, person);
-  const others = [...byId.values()]
-    .filter((person) => person.id !== viewer?.id)
-    .sort(
-      (left, right) =>
-        left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
-    );
-  return viewer ? [viewer, ...others] : others;
-}
-
 /**
  * The card's own board address (J4): the board, the Kanban, and the card,
  * never the viewer's filters.

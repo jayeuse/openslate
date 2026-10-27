@@ -81,7 +81,7 @@ OpenView is for reading records and reports. Its content belongs to departments 
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
-| View | `?section=views`, `temporary-view`, "Unsaved view", legacy `?section=records` | A query over one module, shown as Table, Kanban, Calendar, or Timeline. It is not saved until you save it. | Customer |
+| View | `?section=views`, `temporary-view`, "Unsaved view", legacy `?section=records` | A query over one module, shown as Table, Grid, or Gallery. It is not saved until you save it. | Customer |
 | Saved view | `SavedView` | A view that is stored for the module. Every reader of the module sees it; `manage` on the module changes it. | Customer |
 | Default view | `defaultViewId`, "Module default" | The one saved view that a module opens with. Making a new default clears the old one. | Customer |
 | Dashboard | `Dashboard` | A page of widgets that belongs to one department. Each widget reads a module of that department. | Customer |

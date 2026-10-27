@@ -1,13 +1,10 @@
 "use client";
 
 import {
-  CalendarDays,
   Check,
-  ChartGantt,
   ChevronDown,
   GalleryVerticalEnd,
   LayoutGrid,
-  SquareKanban,
   Table2,
   type LucideIcon,
 } from "lucide-react";
@@ -31,15 +28,12 @@ const LAYOUTS: readonly {
   { value: "table", label: "Table", icon: Table2 },
   { value: "grid", label: "Grid", icon: LayoutGrid },
   { value: "gallery", label: "Gallery", icon: GalleryVerticalEnd },
-  { value: "kanban", label: "Kanban", icon: SquareKanban },
-  { value: "calendar", label: "Calendar", icon: CalendarDays },
-  { value: "timeline", label: "Timeline", icon: ChartGantt },
 ];
 
 /**
- * The layout of the module page's records (OD4): one control that names the
- * current layout, opening the six layouts with their icons and, under them,
- * the settings of the chosen layout.
+ * The layout of the module page's records: one control that names the
+ * current layout, opening Table, Grid and Gallery (BR77) with their icons
+ * and, under them, the settings of the chosen layout.
  */
 export function LayoutMenu({
   layout,

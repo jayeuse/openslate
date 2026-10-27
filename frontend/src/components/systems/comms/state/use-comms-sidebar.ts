@@ -32,15 +32,13 @@ export async function muteFor(
   if (duration === "until tomorrow") {
     const [
       { getWorkspaceCalendarSettings },
-      { formatDateTimeLocal, datetimeInputToUtc },
-      { shiftMoveDay },
+      { formatDateTimeLocal, datetimeInputToUtc, shiftPlainDate },
     ] = await Promise.all([
       import("../../manage/adapters/workspace-api"),
       import("@/lib/date-time"),
-      import("../../openview/domain/record-moves"),
     ]);
     const { timezone } = await getWorkspaceCalendarSettings(signal);
-    const tomorrow = shiftMoveDay(
+    const tomorrow = shiftPlainDate(
       formatDateTimeLocal(until.toISOString(), timezone).slice(0, 10),
       1,
     );

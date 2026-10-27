@@ -30,6 +30,8 @@ export const labelIds = {
 export const peopleIds = {
   ana: "00000000-0000-4000-8000-00000000e201",
   ben: "00000000-0000-4000-8000-00000000e202",
+  /** A reader of the board who is neither assigned nor a post author. */
+  carla: "00000000-0000-4000-8000-00000000e203",
 };
 export const recordIds = {
   quote: "00000000-0000-4000-8000-00000000e301",
@@ -43,6 +45,7 @@ const stamp = "2026-09-20T00:00:00Z";
 const people: Record<string, string> = {
   [peopleIds.ana]: "Ana Santos",
   [peopleIds.ben]: "Ben Reyes",
+  [peopleIds.carla]: "Carla Diaz",
 };
 
 export type WireStage = {
@@ -272,6 +275,8 @@ export async function installKanbanApi(
     files: new Map<string, { id: string; filename: string; size: number }[]>(),
     reserved: new Map<string, { id: string; filename: string; size: number }>(),
     links: new Map<string, WireRecordLink[]>(),
+    /** The query of each board people read, as the assignee picker sends it. */
+    peopleRequests: [] as URLSearchParams[],
   };
   let itemCounter = 0;
   for (const [cardId, extras] of Object.entries(options.extras ?? {})) {
@@ -587,6 +592,29 @@ export async function installKanbanApi(
     const writer = level !== "read";
     const manager = level === "manage";
 
+    if (path === "/people" && method === "GET") {
+      if (!writer) return reply(403, { detail: "Forbidden" });
+      state.peopleRequests.push(url.searchParams);
+      const search = (url.searchParams.get("search") ?? "").toLowerCase();
+      const limit = Number(url.searchParams.get("limit") ?? 25);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const readers = Object.entries(people)
+        .filter(([, name]) => name.toLowerCase().includes(search))
+        .sort(([, left], [, right]) => left.localeCompare(right));
+      const items = readers
+        .slice(offset, offset + limit)
+        .map(([id, display_name]) => ({ id, display_name, avatar_url: null }));
+      return reply(200, {
+        items,
+        pagination: wirePagination({
+          limit,
+          offset,
+          count: items.length,
+          total: readers.length,
+          has_more: offset + items.length < readers.length,
+        }),
+      });
+    }
     if (path === "/stages" && method === "GET") {
       const items = state.stages
         .filter((stage) => stage.archived_at === null)

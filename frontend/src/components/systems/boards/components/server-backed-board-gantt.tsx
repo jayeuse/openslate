@@ -33,7 +33,6 @@ import {
 } from "../domain/gantt";
 import { NO_FILTERS, cardName } from "../domain/kanban";
 import { useCalendarPhone } from "../hooks/use-calendar-media";
-import { useAssigneeChoices } from "../hooks/use-card-sheet";
 import { useGanttStaging } from "../hooks/use-gantt-staging";
 import { useKanbanBoardData } from "../hooks/use-kanban-board-data";
 import { useKanbanCommands } from "../hooks/use-kanban-commands";
@@ -101,7 +100,6 @@ export function ServerBackedBoardGantt({
     allCards,
     labelMap,
     people,
-    peopleList,
     hold,
   } = useKanbanBoardData({
     boardId,
@@ -122,11 +120,6 @@ export function ServerBackedBoardGantt({
   const [announcement, setAnnouncement] = useState("");
   const [datesFor, setDatesFor] = useState<string | null>(null);
   const describedBy = useId();
-  const choices = useAssigneeChoices({
-    boardId,
-    enabled: canWrite,
-    assigned: peopleList,
-  });
 
   const shown = withStaged(allCards, staging.staged);
   const { groups, unscheduled } = ganttGroups({
@@ -364,7 +357,6 @@ export function ServerBackedBoardGantt({
         labels={labels}
         labelMap={labelMap}
         people={people}
-        choices={choices}
         region={region}
         today={today}
         focusDates={datesFor !== null && datesFor === selectedCardId}

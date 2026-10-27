@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { SearchSelect } from "@/components/ui/search-select";
 import { Select, SelectItem } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -20,9 +21,9 @@ import type {
   KanbanLabel,
   KanbanStage,
 } from "../adapters/board-kanban-schemas";
-import type { AssigneeChoice } from "../domain/card-sheet";
 import { shortDate } from "../domain/kanban";
 import type { CardField, CardSheetModel } from "../hooks/use-card-sheet";
+import { useAssigneePicker } from "../hooks/use-assignee-picker";
 import { LabelChip, type KanbanPerson } from "./board-kanban-card";
 
 const control = "min-h-11 xl:min-h-8";
@@ -124,14 +125,11 @@ export function DateRow({
 /** The assignee: a person who can read the board, or no one. */
 export function AssigneeRow({
   context,
-  choices,
   people,
 }: {
   context: CardFieldContext;
-  choices: readonly AssigneeChoice[];
   people: ReadonlyMap<string, KanbanPerson>;
 }) {
-  const id = useId();
   const current = context.sheet.card.assigneeId;
   const person = current ? people.get(current) : undefined;
   if (!context.canWrite)
@@ -147,28 +145,69 @@ export function AssigneeRow({
         )}
       </SheetRow>
     );
-  const options =
-    current && !choices.some((choice) => choice.id === current)
-      ? [...choices, { id: current, name: person?.name ?? "Current assignee" }]
-      : choices;
+  return <AssigneePicker context={context} person={person} />;
+}
+
+/**
+ * A writer's assignee field: the board's readers, searched on the server and
+ * read 100 at a time, so a company board's long list stays usable.
+ */
+function AssigneePicker({
+  context,
+  person,
+}: {
+  context: CardFieldContext;
+  person: KanbanPerson | undefined;
+}) {
+  const id = useId();
+  const picker = useAssigneePicker(context.sheet.card.boardId);
+  const current = context.sheet.card.assigneeId;
+  const listed = picker.people.find((choice) => choice.id === current);
   return (
     <SheetRow label="Assignee" htmlFor={id}>
-      <Select
-        id={id}
-        className={cn(control, "xl:h-8")}
-        value={current ?? ""}
-        disabled={context.model.saving === "assignee"}
-        onValueChange={(value) =>
-          void context.model.save("assignee", { assigneeId: value || null })
-        }
-      >
-        <SelectItem value="">No one</SelectItem>
-        {options.map((choice) => (
-          <SelectItem key={choice.id} value={choice.id}>
-            {choice.name}
-          </SelectItem>
-        ))}
-      </Select>
+      <div className="w-full max-w-72 min-w-0">
+        <SearchSelect
+          id={id}
+          label="Assignee"
+          hideLabel
+          value={current ?? ""}
+          placeholder="No one"
+          searchPlaceholder="Search people…"
+          emptyMessage="No one by that name can read this board."
+          options={[
+            // "No one" is a choice only before a search narrows the list.
+            ...(picker.search.trim() ? [] : [{ value: "", label: "No one" }]),
+            ...picker.people.map((choice) => ({
+              value: choice.id,
+              label: choice.name,
+            })),
+          ]}
+          // The placeholder names "No one"; an assignee off the loaded page
+          // keeps their name on the trigger.
+          selectedOption={
+            current
+              ? {
+                  value: current,
+                  label: listed?.name ?? person?.name ?? "Current assignee",
+                }
+              : undefined
+          }
+          search={picker.search}
+          onSearchChange={picker.setSearch}
+          loading={picker.loading}
+          error={picker.error}
+          onRetry={picker.retry}
+          hasMore={picker.hasMore}
+          onLoadMore={picker.loadMore}
+          loadingMore={picker.loadingMore}
+          disabled={context.model.saving === "assignee"}
+          popupClassName="slim-ui"
+          onValueChange={(value) => {
+            if (value === (current ?? "")) return;
+            void context.model.save("assignee", { assigneeId: value || null });
+          }}
+        />
+      </div>
     </SheetRow>
   );
 }

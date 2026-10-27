@@ -720,6 +720,12 @@
     "path": "/api/boards/occurrences"
   },
   {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-people-api.ts",
+    "function": "listBoardPeople",
+    "method": "GET",
+    "path": "/api/boards/{param}/people"
+  },
+  {
     "adapter": "frontend/src/components/systems/boards/adapters/board-post-author-api.ts",
     "function": "listBoardPostAuthors",
     "method": "GET",
@@ -2110,12 +2116,6 @@
     "function": "updateOpenViewRecord",
     "method": "PATCH",
     "path": "/api/records/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
-    "function": "updateOpenViewRecordMoves",
-    "method": "POST",
-    "path": "/api/records/batch-update"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-export-api.ts",

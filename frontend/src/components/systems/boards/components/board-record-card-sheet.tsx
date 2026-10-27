@@ -30,7 +30,6 @@ import type {
   KanbanRecord,
   KanbanStage,
 } from "../adapters/board-kanban-schemas";
-import type { AssigneeChoice } from "../domain/card-sheet";
 import {
   AssigneeRow,
   DateRow,
@@ -56,7 +55,6 @@ export function RecordCardSheetBody({
   labels,
   labelMap,
   people,
-  choices,
   region,
   moving,
   copyLink,
@@ -73,7 +71,6 @@ export function RecordCardSheetBody({
   labels: readonly KanbanLabel[];
   labelMap: ReadonlyMap<string, KanbanLabel>;
   people: ReadonlyMap<string, KanbanPerson>;
-  choices: readonly AssigneeChoice[];
   region: WorkspaceRegion;
   moving: boolean;
   copyLink: ReactNode;
@@ -143,7 +140,7 @@ export function RecordCardSheetBody({
           onSave={(date) => context.model.save("cardDue", { dueOn: date })}
         />
         <LabelsRow context={context} labels={labels} labelMap={labelMap} />
-        <AssigneeRow context={context} choices={choices} people={people} />
+        <AssigneeRow context={context} people={people} />
       </div>
       <p className="bg-muted text-muted-foreground flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm">
         <Lock aria-hidden="true" className="mt-0.5 size-4 shrink-0" />

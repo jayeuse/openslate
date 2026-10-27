@@ -18,14 +18,15 @@ const fieldTypeSchema = z.enum([
   "user",
 ]);
 const queryFieldTypeSchema = fieldTypeSchema;
-const viewLayoutSchema = z.enum([
-  "table",
-  "grid",
-  "kanban",
-  "calendar",
-  "timeline",
-  "gallery",
-]);
+const viewLayoutSchema = z.enum(["table", "grid", "gallery"]);
+/**
+ * A saved View's layout as the server sends it. Only Table, Grid and Gallery
+ * remain (BR77); a value the frontend does not know opens as Table instead
+ * of refusing the whole View.
+ */
+const wireViewLayoutSchema = z
+  .string()
+  .transform((layout) => viewLayoutSchema.catch("table").parse(layout));
 
 const pageRequestSchema = z
   .object({
@@ -257,14 +258,7 @@ const presentationSchema = z
     cardSize: z.enum(["comfortable", "compact"]),
     primaryFieldId: uuidSchema.nullable(),
     secondaryFieldId: uuidSchema.nullable(),
-    dateFieldId: uuidSchema.nullable(),
-    timelineStartFieldId: uuidSchema.nullable().optional(),
-    timelineEndFieldId: uuidSchema.nullable().optional(),
-    timelineDeadlineFieldId: uuidSchema.nullable().optional(),
-    timelineProgressFieldId: uuidSchema.nullable().optional(),
     groupByFieldId: uuidSchema.nullable(),
-    dateRange: z.enum(["week", "month", "quarter", "year"]),
-    scale: z.enum(["month", "list"]).nullable(),
   })
   .strict()
   .superRefine((presentation, context) => {
@@ -282,7 +276,7 @@ const presentationSchema = z
 const wirePresentationSchema = z
   .object({
     version: z.literal(1),
-    layout: viewLayoutSchema,
+    layout: wireViewLayoutSchema,
     column_field_ids: z.array(uuidSchema).max(20),
     pinned_field_ids: z.array(uuidSchema).max(1),
     density: z.enum(["comfortable", "compact"]),
@@ -290,14 +284,7 @@ const wirePresentationSchema = z
     card_size: z.enum(["comfortable", "compact"]),
     primary_field_id: uuidSchema.nullable(),
     secondary_field_id: uuidSchema.nullable(),
-    date_field_id: uuidSchema.nullable(),
-    timeline_start_field_id: uuidSchema.nullable().optional(),
-    timeline_end_field_id: uuidSchema.nullable().optional(),
-    timeline_deadline_field_id: uuidSchema.nullable().optional(),
-    timeline_progress_field_id: uuidSchema.nullable().optional(),
     group_by_field_id: uuidSchema.nullable(),
-    date_range: z.enum(["week", "month", "quarter", "year"]),
-    scale: z.enum(["month", "list"]).nullable(),
   })
   .strict()
   .transform(
@@ -307,14 +294,7 @@ const wirePresentationSchema = z
       card_size,
       primary_field_id,
       secondary_field_id,
-      date_field_id,
-      timeline_start_field_id,
-      timeline_end_field_id,
-      timeline_deadline_field_id,
-      timeline_progress_field_id,
       group_by_field_id,
-      date_range,
-      scale,
       ...presentation
     }) => ({
       ...presentation,
@@ -323,22 +303,7 @@ const wirePresentationSchema = z
       cardSize: card_size,
       primaryFieldId: primary_field_id,
       secondaryFieldId: secondary_field_id,
-      dateFieldId: date_field_id,
-      ...(timeline_start_field_id === undefined
-        ? {}
-        : { timelineStartFieldId: timeline_start_field_id }),
-      ...(timeline_end_field_id === undefined
-        ? {}
-        : { timelineEndFieldId: timeline_end_field_id }),
-      ...(timeline_deadline_field_id === undefined
-        ? {}
-        : { timelineDeadlineFieldId: timeline_deadline_field_id }),
-      ...(timeline_progress_field_id === undefined
-        ? {}
-        : { timelineProgressFieldId: timeline_progress_field_id }),
       groupByFieldId: group_by_field_id,
-      dateRange: date_range,
-      scale,
     }),
   );
 

@@ -50,6 +50,8 @@ export interface SearchSelectProps {
   loadingMore?: boolean;
   /** Classes for the option popup's positioner (a scope class such as `slim-ui`). */
   popupClassName?: string;
+  /** Keep the label for assistive technology only, where a row shows it. */
+  hideLabel?: boolean;
 }
 
 /**
@@ -80,6 +82,7 @@ export function SearchSelect({
   onLoadMore,
   loadingMore = false,
   popupClassName,
+  hideLabel = false,
 }: SearchSelectProps) {
   const generatedId = useId();
   const controlId = id ?? generatedId;
@@ -124,7 +127,12 @@ export function SearchSelect({
 
   return (
     <Field invalid={Boolean(validationError)}>
-      <FieldLabel htmlFor={controlId}>{label}</FieldLabel>
+      <FieldLabel
+        htmlFor={controlId}
+        className={hideLabel ? "sr-only" : undefined}
+      >
+        {label}
+      </FieldLabel>
       <Combobox
         items={grouped ? groups : [...optionByValue.keys()]}
         {...(onSearchChange

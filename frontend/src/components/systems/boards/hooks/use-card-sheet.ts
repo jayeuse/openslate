@@ -25,13 +25,7 @@ import type {
 } from "../adapters/board-kanban-schemas";
 import { uuid } from "../adapters/board-kanban-schemas";
 import { readBoard } from "../adapters/board-management-api";
-import { listBoardPostAuthors } from "../adapters/board-post-author-api";
-import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
-import {
-  assigneeChoices,
-  movedChecklist,
-  type AssigneeChoice,
-} from "../domain/card-sheet";
+import { movedChecklist } from "../domain/card-sheet";
 
 /** The words a save announces ("Due saved."), by the field it changed. */
 export const CARD_FIELD_WORDS = {
@@ -306,35 +300,3 @@ export function useCardSheet({
 }
 
 export type CardSheetModel = ReturnType<typeof useCardSheet>;
-
-/**
- * Who a writer can pick as a card's assignee: the viewer, the people
- * assigned on the board, and its post authors (see `assigneeChoices`).
- */
-export function useAssigneeChoices({
-  boardId,
-  enabled,
-  assigned,
-}: {
-  boardId: string;
-  enabled: boolean;
-  assigned: readonly AssigneeChoice[];
-}): AssigneeChoice[] {
-  const identity = useQuery(authMeOptions());
-  const authors = useQuery({
-    queryKey: kanbanKeys.authors(boardId),
-    queryFn: ({ signal }) =>
-      listBoardPostAuthors(boardId, { limit: 100, signal }),
-    enabled,
-  });
-  if (!enabled) return [];
-  const me = identity.data;
-  return assigneeChoices({
-    viewer: me ? { id: me.id, name: me.displayName || me.username } : null,
-    assigned,
-    authors: (authors.data?.items ?? []).map((author) => ({
-      id: author.id,
-      name: author.label,
-    })),
-  });
-}

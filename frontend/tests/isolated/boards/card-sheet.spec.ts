@@ -14,7 +14,6 @@ import type {
   KanbanCard,
 } from "../../../src/components/systems/boards/adapters/board-kanban-schemas";
 import {
-  assigneeChoices,
   canAddChecklistItem,
   cardLink,
   cardMetaLine,
@@ -143,26 +142,6 @@ test("the checklist counts done items, holds at most 50, and moves one place at 
   // Already at an end: nothing to send.
   expect(movedChecklist(list, item(1).id, -1)).toBeNull();
   expect(movedChecklist(list, item(3).id, 1)).toBeNull();
-});
-
-test("assignee choices put the viewer first, then everyone else once, by name", () => {
-  expect(
-    assigneeChoices({
-      viewer: { id: "me", name: "Zoe Admin" },
-      assigned: [
-        { id: "ben", name: "Ben Reyes" },
-        { id: "me", name: "Zoe Admin" },
-      ],
-      authors: [
-        { id: "ana", name: "Ana Santos" },
-        { id: "ben", name: "Ben Reyes" },
-      ],
-    }),
-  ).toEqual([
-    { id: "me", name: "Zoe Admin" },
-    { id: "ana", name: "Ana Santos" },
-    { id: "ben", name: "Ben Reyes" },
-  ]);
 });
 
 test("a card's link is its board address with the Kanban and the card only", () => {

@@ -63,9 +63,8 @@ test("a writer edits an objective's assignee, due date, labels and description, 
   ).toHaveText(["Details", "Files", "Linked records", "Activity"]);
   await expect(page).toHaveURL(new RegExp(`card=${renewal.id}`));
 
-  await sheet
-    .getByRole("combobox", { name: "Assignee" })
-    .selectOption({ label: "Ana Santos" });
+  await sheet.getByRole("combobox", { name: "Assignee", exact: true }).click();
+  await page.getByRole("option", { name: "Ana Santos", exact: true }).click();
   await expect(sheet.getByRole("status")).toHaveText("Assignee saved.");
 
   await sheet.getByLabel("Due", { exact: true }).fill("2026-10-30");
@@ -112,6 +111,45 @@ test("a writer edits an objective's assignee, due date, labels and description, 
     revision: 1,
     description: "Send the 2027 price list.",
   });
+});
+
+test("a writer assigns a board reader found by search who is neither assigned nor a post author", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const renewal = wireCard("Renewal terms", stageIds.doing, 1024);
+  const api = await installKanbanApi(page, {
+    level: "write",
+    cards: [renewal],
+  });
+  await page.goto(kanbanHref());
+  await stage(page, "Doing")
+    .getByRole("button", { name: /^Renewal terms, objective/ })
+    .click();
+  const sheet = page.getByRole("dialog", {
+    name: "Renewal terms",
+    exact: true,
+  });
+
+  await sheet.getByRole("combobox", { name: "Assignee", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Search assignee", exact: true })
+    .fill("car");
+  await expect(page.getByRole("option")).toHaveText(["Carla Diaz"]);
+  await page.getByRole("option", { name: "Carla Diaz", exact: true }).click();
+  await expect(sheet.getByRole("status")).toHaveText("Assignee saved.");
+  await expect(
+    sheet.getByRole("combobox", { name: "Assignee", exact: true }),
+  ).toContainText("Carla Diaz");
+
+  expect(cardPatches(api)).toEqual([
+    { revision: 1, assignee_id: peopleIds.carla },
+  ]);
+  // The picker reads the board's readers in pages of 100, narrowed by search.
+  const searched = api.peopleRequests.find(
+    (query) => query.get("search") === "car",
+  );
+  expect(searched?.get("limit")).toBe("100");
 });
 
 test("a writer adds, ticks and reorders checklist items; the card counts them", async ({
@@ -507,5 +545,14 @@ test("on a phone the card sheet fills the screen, with Move to stage and 44px ta
   await expect(sheet.getByRole("status")).toHaveText("Moved to Done.");
   await expect(sheet.getByText("Done", { exact: true })).toBeVisible();
   expect(cardPatches(api)).toEqual([{ revision: 1, stage_id: stageIds.done }]);
+  // The assignee search opens above the full-screen sheet.
+  await sheet.getByRole("combobox", { name: "Assignee", exact: true }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Search assignee", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("option", { name: "Carla Diaz", exact: true }),
+  ).toBeInViewport();
+  await page.keyboard.press("Escape");
   expect(await documentScrollsAcross(page)).toBe(false);
 });

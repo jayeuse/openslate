@@ -13,7 +13,6 @@ import type {
   OpenViewRecord,
 } from "@/components/systems/openview/adapters/views-api";
 import type { OpenViewDataSource } from "@/components/systems/openview/adapters/views-api";
-import type { OpenViewWindowQueryRequest } from "@/components/systems/openview/adapters/window-api";
 import { openViewRecordFieldValue } from "@/components/systems/openview/domain/record-display";
 import { RecordDetailsControls } from "@/components/systems/openview/components/record-details-controls";
 import { RecordHistoryPanel } from "@/components/systems/openview/components/record-history-panel";
@@ -29,24 +28,18 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 
-export type RecordInspectionPageSource =
-  | {
-      kind: "records";
-      /** The originating page size; legacy fixed-size callers fall back to 25. */
-      limit?: number;
-      group: {
-        fieldId: string;
-        fieldType: OpenViewQueryFieldType;
-        selected: OpenViewGroupSelector;
-        offset: number;
-      } | null;
-      returnToPage?: (offset: number) => void;
-    }
-  | {
-      kind: "window";
-      request: OpenViewWindowQueryRequest;
-      returnToPage: (offset: number) => void;
-    };
+export type RecordInspectionPageSource = {
+  kind: "records";
+  /** The originating page size; legacy fixed-size callers fall back to 25. */
+  limit?: number;
+  group: {
+    fieldId: string;
+    fieldType: OpenViewQueryFieldType;
+    selected: OpenViewGroupSelector;
+    offset: number;
+  } | null;
+  returnToPage?: (offset: number) => void;
+};
 
 export type RecordInspectionPage = {
   rows: readonly OpenViewRecord[];

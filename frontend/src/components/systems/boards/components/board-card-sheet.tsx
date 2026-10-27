@@ -35,11 +35,7 @@ import type {
   KanbanLabel,
   KanbanStage,
 } from "../adapters/board-kanban-schemas";
-import {
-  cardLink,
-  cardMetaLine,
-  type AssigneeChoice,
-} from "../domain/card-sheet";
+import { cardLink, cardMetaLine } from "../domain/card-sheet";
 import { cardName } from "../domain/kanban";
 import { useCardSheet, type CardSheetModel } from "../hooks/use-card-sheet";
 import {
@@ -69,7 +65,6 @@ export type KanbanCardSheetProps = {
   labels: readonly KanbanLabel[];
   labelMap: ReadonlyMap<string, KanbanLabel>;
   people: ReadonlyMap<string, KanbanPerson>;
-  choices: readonly AssigneeChoice[];
   region: WorkspaceRegion;
   today: string;
   /** A move from the sheet; it saves at once, with no toast. */
@@ -266,7 +261,6 @@ function ReadySheet({
         labels={props.labels}
         labelMap={props.labelMap}
         people={props.people}
-        choices={props.choices}
         region={region}
         moving={moving}
         copyLink={copyLink}
@@ -417,11 +411,7 @@ function ReadySheet({
           <div className="flex flex-col gap-5">
             {feedback}
             <div>
-              <AssigneeRow
-                context={context}
-                choices={props.choices}
-                people={props.people}
-              />
+              <AssigneeRow context={context} people={props.people} />
               <DateRow
                 label="Start"
                 field="start"

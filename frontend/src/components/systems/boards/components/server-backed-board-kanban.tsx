@@ -34,7 +34,6 @@ import {
 } from "../domain/kanban-keyboard";
 import { useCalendarPhone } from "../hooks/use-calendar-media";
 import { useKanbanCommands } from "../hooks/use-kanban-commands";
-import { useAssigneeChoices } from "../hooks/use-card-sheet";
 import {
   kanbanCellKey,
   useKanbanBoardData,
@@ -281,11 +280,6 @@ export function ServerBackedBoardKanban({
   const openCard = (card: KanbanCard) => {
     if (!card.record?.locked) onParams({ card: card.id });
   };
-  const choices = useAssigneeChoices({
-    boardId,
-    enabled: canWrite,
-    assigned: peopleList,
-  });
   const moveStage = (stage: KanbanStage, offset: -1 | 1) => {
     const ids = stages.map((item) => item.id);
     const from = ids.indexOf(stage.id);
@@ -494,7 +488,6 @@ export function ServerBackedBoardKanban({
         labels={labels}
         labelMap={labelMap}
         people={people}
-        choices={choices}
         region={region}
         today={today}
         onMove={(card, stage) =>

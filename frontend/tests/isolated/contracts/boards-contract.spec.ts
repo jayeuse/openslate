@@ -17,6 +17,7 @@ import {
   listBoardPreviewUsers,
 } from "../../../src/components/systems/boards/adapters/board-tools-api";
 import { getBoardWorkspaceToday } from "../../../src/components/systems/boards/adapters/board-workspace-date-api";
+import { listBoardPeople } from "../../../src/components/systems/boards/adapters/board-people-api";
 import { describeContracts } from "./openapi-contract";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
@@ -160,6 +161,16 @@ describeContracts("Boards: management and tools", [
       }),
     responses: {
       "GET /api/boards/{board_id}/preview-users": { pagination: page },
+    },
+  },
+  {
+    name: "listBoardPeople",
+    run: () => listBoardPeople(boardId, { offset: 100, search: "ana" }),
+    responses: {
+      // The adapter checks the page it asked for: 100 from offset 100.
+      "GET /api/boards/{board_id}/people": {
+        pagination: { ...page, limit: 100, offset: 100, total: 101 },
+      },
     },
   },
   {

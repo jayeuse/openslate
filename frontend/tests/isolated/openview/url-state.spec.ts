@@ -1,8 +1,14 @@
 import { expect, test } from "@playwright/test";
+import type { OpenViewDataSourceField } from "../../../src/components/systems/openview/adapters/views-api";
 import {
   parseOpenViewUrl,
   serializeOpenViewUrl,
 } from "../../../src/components/systems/openview/domain/model";
+import {
+  emptyDefinition,
+  emptyPresentation,
+} from "../../../src/components/systems/openview/domain/server-view-draft";
+import { decodeTemporaryView } from "../../../src/components/systems/openview/domain/temporary-view";
 
 test("legacy Board record links resolve to Views and reserialize to a canonical OpenView URL", () => {
   const legacyBoardLink = parseOpenViewUrl(
@@ -104,3 +110,64 @@ test("a module page's Reports view keeps its report and copy in the address", ()
         .invalid,
     ).toBe(true);
 });
+
+for (const layout of ["kanban", "calendar", "timeline"]) {
+  test(`an old address with the removed ${layout} layout opens Table and keeps its other changes`, () => {
+    const moduleId = "00000000-0000-4000-8000-0000000000b1";
+    const nameField = "00000000-0000-4000-8000-0000000000c1";
+    const dueField = "00000000-0000-4000-8000-0000000000c2";
+    const fields: OpenViewDataSourceField[] = [
+      {
+        id: nameField,
+        moduleId,
+        name: "Name",
+        type: "text",
+        required: false,
+        position: 0,
+        config: {},
+      },
+      {
+        id: dueField,
+        moduleId,
+        name: "Due",
+        type: "date",
+        required: false,
+        position: 1,
+        config: {},
+      },
+    ];
+    const base = {
+      name: "All records",
+      definition: emptyDefinition(fields),
+      presentation: emptyPresentation(fields),
+    };
+    // The removed layouts' own settings travelled in the same address.
+    const changes = Buffer.from(
+      JSON.stringify({
+        d: { search: "pump" },
+        p: {
+          layout,
+          density: "compact",
+          dateFieldId: dueField,
+          timelineStartFieldId: dueField,
+          timelineEndFieldId: dueField,
+          timelineDeadlineFieldId: null,
+          timelineProgressFieldId: null,
+          dateRange: "quarter",
+          scale: "month",
+        },
+      }),
+      "utf8",
+    ).toString("base64url");
+
+    expect(decodeTemporaryView(changes, base, fields)).toEqual({
+      name: "All records",
+      definition: { ...base.definition, search: "pump" },
+      presentation: {
+        ...base.presentation,
+        layout: "table",
+        density: "compact",
+      },
+    });
+  });
+}

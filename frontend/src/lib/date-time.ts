@@ -61,3 +61,8 @@ export function datetimeInputToUtc(
     .toInstant()
     .toString();
 }
+
+/** A plain calendar date ("YYYY-MM-DD") moved by whole days. */
+export function shiftPlainDate(date: string, days: number): string {
+  return Temporal.PlainDate.from(date).add({ days }).toString();
+}

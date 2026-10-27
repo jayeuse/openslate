@@ -423,7 +423,7 @@ Choices the code forced in the card sheets; each is the smallest that fits DESIG
 
 | Choice | Removes |
 | --- | --- |
-| **Gap: the assignee picker.** No route lists a board's readers for a writer (`/preview-users` is for managers, `/users` for admins). The picker offers the viewer, the people already assigned on the board, and the board's post authors; the server refuses anyone else with "That person cannot read this board." A board-readers route (backend) would complete BR64. | — |
+| **Gap closed (P4d): the assignee picker** lists the board's readers from `GET /api/boards/{board_id}/people`, searched on the server and read 100 at a time. | The stopgap list of the viewer, assigned people and post authors |
 | The record sheet body (`shared/components/record-sheet.tsx`) is shared; its header is each page's own. A record card's header has the module eyebrow ("Quotes · record card"), the record's name and meta line, Edit and More record actions from the shared body, and "Close card". The comp's "From the quote" block is not drawn: the Details tab holds the record's fields. | A second record body |
 | Copy link in either sheet copies the card's board address (`board`, `section=kanban`, `card`), never the viewer's filters. | — |
 | Inside a sheet, saves and moves are announced inline ("Due saved.", "Moved to Done."), with no toast (Request feedback). Archive card closes the sheet, so it keeps the board's Undo toast. | Toasts under an open sheet |
