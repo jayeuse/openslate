@@ -189,16 +189,16 @@ export function CalendarChip({
             lines === 2 ? "line-clamp-2 break-words" : "truncate",
           )}
         >
+          {/* The time starts line 1 inside the title, so line 2 takes the
+              chip's whole width (BR55). */}
+          {time ? (
+            <span className="text-muted-foreground tabular-nums">{time} </span>
+          ) : null}
           {item.kind === "due" ? (
             <span className="text-muted-foreground">Due </span>
           ) : null}
           {item.title}
         </span>
-        {time ? (
-          <span className="text-muted-foreground shrink-0 tabular-nums">
-            {time}
-          </span>
-        ) : null}
       </span>
     </button>
   );

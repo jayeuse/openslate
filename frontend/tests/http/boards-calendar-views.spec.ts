@@ -1,5 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
-import { wireBoard } from "../helpers/wire";
+import { expect, test, type Locator, type Page } from "./helpers/test";
 import {
   calendarBoardId,
   calendarHref,
@@ -10,6 +9,17 @@ import {
 } from "./helpers/board-calendar-api";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
+
+/** Nothing in the chip is cut across or below. */
+function wholeTitle(chip: Locator) {
+  return chip.evaluate((node) =>
+    [...node.querySelectorAll("span")].every(
+      (span) =>
+        span.scrollWidth <= span.clientWidth + 1 &&
+        span.scrollHeight <= span.clientHeight + 1,
+    ),
+  );
+}
 
 function documentScrolls(page: Page) {
   return page.evaluate(() => ({
@@ -59,6 +69,7 @@ test("Month draws bars, ruled chips named with their calendar, week numbers, and
     chip!.x + chip!.width + 0.5,
   );
   expect(chip!.height).toBeGreaterThan(30);
+  expect(await wholeTitle(roomy)).toBe(true);
   expect(await documentScrolls(page)).toEqual({ down: false, across: false });
   // Below 1440 the calendar list folds into the toolbar.
   await expect(
@@ -77,6 +88,18 @@ test("Month draws bars, ruled chips named with their calendar, week numbers, and
     rail.getByRole("checkbox", { name: "Cards · Due" }),
   ).toBeChecked();
   expect(await documentScrolls(page)).toEqual({ down: false, across: false });
+  // With the rail open the cells are narrowest, and a timed title still
+  // reads whole in two lines: its time starts line 1 (BR55).
+  expect(await wholeTitle(roomy)).toBe(true);
+  // The rail's lists are sections of the page, not of a missing h2.
+  const levels = await page.evaluate(() =>
+    [...document.querySelectorAll("h1, h2, h3, h4, h5, h6")].map((heading) =>
+      Number(heading.tagName[1]),
+    ),
+  );
+  expect(
+    levels.filter((level, index) => index > 0 && level > levels[index - 1] + 1),
+  ).toEqual([]);
 });
 
 test("Week sizes blocks by duration, sets overlaps side by side, keeps all-day items above, and opens at 7 AM", async ({
@@ -394,22 +417,12 @@ test("an alert above the month keeps its bars at 1280×720, and the page still d
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await installCalendarApi(page);
-  await page.route(`**/api/boards/${calendarBoardId}`, (route) =>
-    route.fulfill({
-      json: wireBoard({
-        id: calendarBoardId,
-        name: "Calendar board",
-        description: "Board calendar",
-        level: "manage",
-        status: "archived",
-        created_at: "2026-09-01T00:00:00Z",
-        updated_at: "2026-09-01T00:00:00Z",
-      }),
-    }),
+  await page.route(`**/api/boards/${calendarBoardId}/my-access`, (route) =>
+    route.fulfill({ status: 500, json: { detail: "unavailable" } }),
   );
   await page.goto(calendarHref());
   await expect(
-    page.getByText("This board is archived and read-only."),
+    page.getByText("Could not check edit access.", { exact: false }),
   ).toBeVisible();
   const month = page.getByRole("region", { name: "November 2026 calendar" });
   // A week row keeps a lane for its bars, so the expo is not "+1 more".

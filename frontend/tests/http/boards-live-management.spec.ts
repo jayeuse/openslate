@@ -516,6 +516,10 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
   await page.goto(`/boards?board=${boardId}&section=posts`);
   const manage = await openBoardSettings(page);
   await manage.getByRole("tab", { name: "Access", exact: true }).click();
+  // With no group chosen, Add group says why it waits.
+  await expect(
+    manage.getByRole("button", { name: "Add group", exact: true }),
+  ).toHaveAccessibleDescription("Choose a group first.");
   await manage
     .getByRole("combobox", { name: "Add a group", exact: true })
     .click();
@@ -1495,7 +1499,7 @@ test("Archive asks once with its consequence, Restore acts at once, and each say
     .click();
   const archive = page.getByRole("alertdialog", { name: "Archive board?" });
   await expect(archive).toContainText(
-    "Everyone can still read it; nobody can post.",
+    "People who can read it now still can; nobody can post.",
   );
   await expect(archive.getByRole("textbox")).toHaveCount(0);
   // The question sits inside Board settings: Escape closes it alone.
@@ -1709,4 +1713,26 @@ test("a reader sees why they cannot post and no Board settings, even from a link
   expect(
     api.reads.filter((path) => /\/(activity|preview-users|files)$/.test(path)),
   ).toEqual([]);
+});
+
+test("an archived board says so once, in its Archived chip, whose reason opens on focus and tap", async ({
+  page,
+}) => {
+  await installArchivedBoard(page);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const chip = page
+    .getByRole("button", { name: "Archived", exact: true })
+    .and(page.locator("[aria-describedby]"));
+  await expect(chip).toHaveAccessibleDescription(
+    "Archived boards are read-only.",
+  );
+  const tooltip = page.locator('[data-slot="tooltip-content"]');
+  await chip.focus();
+  await expect(tooltip).toHaveText("Archived boards are read-only.");
+  await page.keyboard.press("Escape");
+  await expect(tooltip).toHaveCount(0);
+  await chip.click();
+  await expect(tooltip).toHaveText("Archived boards are read-only.");
+  // No band above the page repeats it.
+  await expect(page.getByText(/archived and read-only/)).toHaveCount(0);
 });

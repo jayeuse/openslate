@@ -66,9 +66,9 @@ export function BoardEventSheetBody({
           </Fact>
         ) : null}
         {event.location ? <Fact label="Location">{event.location}</Fact> : null}
-        <Fact label="Reminders">
-          {reminders.length ? reminders.join(", ") : "None"}
-        </Fact>
+        {reminders.length ? (
+          <Fact label="Reminders">{reminders.join(", ")}</Fact>
+        ) : null}
         {author ? <Fact label="Added by">{author}</Fact> : null}
       </dl>
       {event.details ? (
@@ -282,6 +282,8 @@ export function BoardEventSheet({
                   <PersonCardPopover
                     personId={event.authorId}
                     unavailableLabel="Author unavailable"
+                    decoration="none"
+                    className="text-foreground font-medium"
                   />
                 }
               />

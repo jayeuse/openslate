@@ -22,6 +22,7 @@ export const PAGE_GUIDES = {
       "Kanban: cards move through stages. A card is an objective you name or a record you find. Drag it or use Move to stage; Undo puts it back.",
       "Gantt: drag a bar to change its dates. Changes wait for Save changes; Discard puts them back.",
       "My calendar shows the boards you can read in one calendar. Tick a calendar to show or hide it.",
+      "Keyboard: on the Kanban, Space lifts a card, the arrow keys move it, Space drops it and Escape puts it back. On the Gantt, Left and Right move a bar a day; Shift with Left or Right changes its due date.",
     ],
   },
   comms: {

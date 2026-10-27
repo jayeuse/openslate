@@ -4,6 +4,7 @@ import { useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FileText, Plus, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Input } from "@/components/ui/input";
 import {
   NativeSelect,
@@ -129,13 +130,18 @@ export function KanbanComposer({
       />
       {errorLine}
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-        <Button
-          type="submit"
-          className="min-h-11 xl:min-h-8"
-          disabled={pending || !title.trim()}
+        <DisabledReason
+          reason={title.trim() ? null : "Type a title first."}
+          stable
         >
-          {pending ? "Adding…" : "Add card"}
-        </Button>
+          <Button
+            type="submit"
+            className="min-h-11 xl:min-h-8"
+            disabled={pending}
+          >
+            {pending ? "Adding…" : "Add card"}
+          </Button>
+        </DisabledReason>
         <Button
           type="button"
           variant="ghost"

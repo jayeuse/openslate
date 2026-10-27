@@ -690,7 +690,7 @@ test("a focused bar's tooltip tells a writer the arrow keys, as its name does", 
   );
 });
 
-test("a board whose cards have no dates says so, and a writer adds dates from there", async ({
+test("a board whose cards have no dates says so as text, and a writer adds dates from the card's row", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -701,8 +701,12 @@ test("a board whose cards have no dates says so, and a writer adds dates from th
   await expect(
     gantt(page).getByText("No dated cards", { exact: true }),
   ).toBeVisible();
+  // One Add dates per card, each named for its card.
+  await expect(
+    gantt(page).getByRole("button", { name: "Add dates", exact: true }),
+  ).toHaveCount(0);
   await gantt(page)
-    .getByRole("button", { name: "Add dates", exact: true })
+    .getByRole("button", { name: "Add dates to Plan the Q4 reviews" })
     .click();
   const sheet = page.getByRole("dialog", {
     name: "Plan the Q4 reviews",

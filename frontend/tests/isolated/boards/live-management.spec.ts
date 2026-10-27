@@ -126,6 +126,10 @@ test("a project Board's Details rows come before Advanced, which holds Archive",
   const html = markup({ ...baseView, board, draft });
   expect(html.indexOf("Description")).toBeLessThan(html.indexOf("Advanced"));
   expect(html.indexOf("Advanced")).toBeLessThan(html.indexOf("Archive board"));
+  // Only a project board archives, and only its groups and admins read it.
+  expect(html).toContain(
+    "People who can read it now still can; nobody can post.",
+  );
   expect(html).toContain("Advanced");
   expect(html).toContain("Save changes");
   expect(boardUpdateForDraft(board, draft)).toEqual({
@@ -151,7 +155,7 @@ test("Save changes says there is nothing to save until the draft changes", () =>
 test("Archive asks once with its consequence and Restore acts at once", () => {
   expect(boardLifecycleConfirmation("archive")).toEqual({
     title: "Archive board?",
-    description: "Everyone can still read it; nobody can post.",
+    description: "People who can read it now still can; nobody can post.",
     action: "Archive board",
   });
   expect(boardLifecycleConfirmation("restore")).toBeNull();

@@ -322,6 +322,7 @@ export function DescriptionField({ context }: { context: CardFieldContext }) {
           <Textarea
             id={id}
             maxLength={5000}
+            data-long-text=""
             className="min-h-20"
             placeholder="Add a description"
             value={draft?.text ?? saved}

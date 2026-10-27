@@ -5,6 +5,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { MoreHorizontal, Plus } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -181,15 +182,20 @@ export function CardChecklist({ context }: { context: CardFieldContext }) {
               value={text}
               onChange={(event) => setText(event.currentTarget.value)}
             />
-            <Button
-              type="submit"
-              variant="outline"
-              className={cn(control, "shrink-0")}
-              disabled={!text.trim() || model.saving === "checklist:new"}
+            <DisabledReason
+              reason={text.trim() ? null : "Type an item first."}
+              stable
             >
-              <Plus aria-hidden="true" data-icon="inline-start" />
-              Add item
-            </Button>
+              <Button
+                type="submit"
+                variant="outline"
+                className={cn(control, "shrink-0")}
+                disabled={model.saving === "checklist:new"}
+              >
+                <Plus aria-hidden="true" data-icon="inline-start" />
+                Add item
+              </Button>
+            </DisabledReason>
           </form>
         ) : (
           <p className="text-muted-foreground text-sm">

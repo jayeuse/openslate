@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Alert } from "@/components/ui/alert";
 import { SearchSelect } from "@/components/ui/search-select";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
   NativeSelect,
@@ -557,21 +558,25 @@ export function ServerBackedBoardGroups({
                   ))}
                 </NativeSelect>
               </Field>
-              <Button
-                type="submit"
-                variant="outline"
-                className={control}
-                disabled={!adding.groupId}
-                pending={
-                  saving !== null &&
-                  !saved.groups.some(
-                    (entry) => entry.groupId === saving.groupId,
-                  )
-                }
-                pendingLabel="Adding…"
+              <DisabledReason
+                reason={adding.groupId ? null : "Choose a group first."}
+                stable
               >
-                Add group
-              </Button>
+                <Button
+                  type="submit"
+                  variant="outline"
+                  className={control}
+                  pending={
+                    saving !== null &&
+                    !saved.groups.some(
+                      (entry) => entry.groupId === saving.groupId,
+                    )
+                  }
+                  pendingLabel="Adding…"
+                >
+                  Add group
+                </Button>
+              </DisabledReason>
             </form>
           )}
           {result?.failed &&

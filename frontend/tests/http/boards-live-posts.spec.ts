@@ -2711,3 +2711,28 @@ test("the post list announces loading, then how many posts it holds", async ({
   // Beside an empty list, the pane holds no hint.
   await expect(page.getByText("Choose a post to read it.")).toHaveCount(0);
 });
+
+test("a post's body lines stop at 65 characters in a wide reading pane", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const api = await installPostBrowserApi(page);
+  api.setPublishedItems([]);
+  await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
+  const body = postPane(page, browserPost.title).getByText(browserPost.body, {
+    exact: true,
+  });
+  await expect(body).toBeVisible();
+  // The measure is in characters of the body's own font (BR38).
+  const characters = await body.evaluate((node) => {
+    const zero = document.createElement("span");
+    zero.style.font = getComputedStyle(node).font;
+    zero.style.position = "absolute";
+    zero.textContent = "0";
+    document.body.append(zero);
+    const ch = zero.getBoundingClientRect().width;
+    zero.remove();
+    return node.getBoundingClientRect().width / ch;
+  });
+  expect(characters).toBeLessThanOrEqual(65.5);
+});

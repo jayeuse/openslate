@@ -787,3 +787,18 @@ test("a phone day list counts its items, and an empty day says only that it is e
   ]);
   expect(one).toContain("Tue, Oct 27 · Today · 1 item</h3>");
 });
+
+test("the event sheet lists Reminders only when the event has some", () => {
+  const none = renderToStaticMarkup(
+    createElement(BoardEventSheetBody, {
+      event: { ...visibleOccurrence.event, reminders: [] },
+    }),
+  );
+  expect(none).not.toContain("Reminders");
+  expect(none).not.toContain("None");
+  const some = renderToStaticMarkup(
+    createElement(BoardEventSheetBody, { event: visibleOccurrence.event }),
+  );
+  expect(some).toContain("Reminders");
+  expect(some).toContain("1 day before");
+});

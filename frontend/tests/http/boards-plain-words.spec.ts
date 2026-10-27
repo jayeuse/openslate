@@ -149,7 +149,11 @@ test("Board settings uses plain words, and the purge reads Delete forever", asyn
     route.fulfill({ json: pageOf([], { limit: 25 }) }),
   );
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await expect(page.getByText(/archived and read-only/)).toBeVisible();
+  await expect(
+    page
+      .getByRole("button", { name: "Archived", exact: true })
+      .and(page.locator("[aria-describedby]")),
+  ).toHaveAccessibleDescription("Archived boards are read-only.");
   await expectPlainWords(page, "Archived board");
 
   await page.goto(`/boards?board=${boardId}&section=posts&settings=details`);

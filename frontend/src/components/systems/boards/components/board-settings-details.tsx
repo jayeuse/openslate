@@ -364,7 +364,7 @@ export function ServerBoardManagementDisplay({
         ) : (
           <div className="flex flex-col gap-2">
             <p className="text-muted-foreground text-sm">
-              Everyone can still read it; nobody can post.
+              People who can read it now still can; nobody can post.
             </p>
             <Button
               type="button"

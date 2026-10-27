@@ -89,15 +89,16 @@ export function BoardLevelChip({
 }
 
 /**
- * The header's level chip when it carries a reason (C2): a button that opens
- * the reason on hover, focus and tap, and that screen readers hear as its
- * description. Other chips stay plain text; OpenComms keeps its own chip.
+ * A header chip that carries a reason (C2): a button that opens the reason on
+ * hover, focus and tap, and that screen readers hear as its description. The
+ * reader's level chip and the Archived chip use it; other chips stay plain
+ * text; OpenComms keeps its own chip.
  */
-function HeaderLevelChip({
-  level,
+function HeaderReasonChip({
+  chip,
   reason,
 }: {
-  level: BoardAccessLevel;
+  chip: ReactNode;
   reason: string;
 }) {
   const id = useId();
@@ -115,7 +116,7 @@ function HeaderLevelChip({
             />
           }
         >
-          <BoardLevelChip level={level} />
+          {chip}
         </TooltipTrigger>
         <TooltipContent>{reason}</TooltipContent>
       </Tooltip>
@@ -171,17 +172,22 @@ export function BoardPageHeader({
         badges={
           <>
             {board.level === "read" ? (
-              <HeaderLevelChip
-                level={board.level}
+              <HeaderReasonChip
+                chip={<BoardLevelChip level={board.level} />}
                 reason={postingReason(board, guest)}
               />
             ) : (
               <BoardLevelChip level={board.level} />
             )}
             {board.status === "archived" ? (
-              <Badge variant="outline" className="shrink-0">
-                Archived
-              </Badge>
+              <HeaderReasonChip
+                chip={
+                  <Badge variant="outline" className="shrink-0">
+                    Archived
+                  </Badge>
+                }
+                reason="Archived boards are read-only."
+              />
             ) : null}
           </>
         }

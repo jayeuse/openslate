@@ -53,7 +53,7 @@ export function boardLifecycleConfirmation(
   return action === "archive"
     ? {
         title: "Archive board?",
-        description: "Everyone can still read it; nobody can post.",
+        description: "People who can read it now still can; nobody can post.",
         action: "Archive board",
       }
     : null;

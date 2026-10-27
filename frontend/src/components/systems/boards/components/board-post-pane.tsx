@@ -334,7 +334,7 @@ export function BoardPostPane({
         </p>
       </header>
       <div className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-5 py-5">
-        <p className="max-w-2xl text-sm leading-6 break-words whitespace-pre-wrap">
+        <p className="max-w-[65ch] text-sm leading-6 break-words whitespace-pre-wrap">
           {item.body}
         </p>
         {item.links.length > 0 ? (

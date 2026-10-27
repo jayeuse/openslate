@@ -1465,3 +1465,18 @@ test("an author links a Record using its off-page title field without crawling t
     content_revision: 2,
   });
 });
+
+test("from 1280 the post Message box keeps an 8rem box while Title stays slim", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await installBoardApi(page, () => true);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page.getByRole("button", { name: "New post" }).first().click();
+  const editor = page.getByRole("dialog", { name: "New post", exact: true });
+  const message = editor.getByLabel("Message", { exact: true });
+  await expect(message).toBeVisible();
+  expect((await message.boundingBox())!.height).toBeGreaterThanOrEqual(128);
+  const title = editor.getByLabel("Title", { exact: true });
+  expect((await title.boundingBox())!.height).toBe(32);
+});

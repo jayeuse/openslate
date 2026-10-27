@@ -156,9 +156,6 @@ export function GanttChart({
     return () => observer.disconnect();
   }, []);
   const names = phone ? 120 : 248;
-  const firstDatable = canWrite
-    ? (unscheduled.find((card) => card.record?.locked !== true) ?? null)
-    : null;
   const day = dayWidth(zoom, Math.max(0, width - names), window.days);
   const track = Math.round(day * window.days);
   const x = (offset: number) => offset * day;
@@ -635,8 +632,8 @@ export function GanttChart({
             />
           ) : null}
           {groups.map(groupRows)}
-          {/* Cards, but none dated: one line in the grid says so, and a
-              writer adds dates to the first card from it (C10). */}
+          {/* Cards, but none dated: one line in the grid says so. Each
+              card's row below holds its own Add dates (C10). */}
           {groups.length === 0 && unscheduled.length > 0 ? (
             <>
               <div
@@ -648,27 +645,7 @@ export function GanttChart({
               >
                 No dated cards
               </div>
-              <div
-                className={cn(
-                  "relative flex items-center border-b border-dotted",
-                  rowHeight,
-                )}
-              >
-                {firstDatable ? (
-                  <span
-                    className="bg-card sticky z-[1] flex h-full items-center px-1.5"
-                    style={{ left: names }}
-                  >
-                    <button
-                      type="button"
-                      className="text-action-text focus-visible:outline-ring inline-flex h-11 items-center rounded-sm px-1 text-xs font-medium outline-none hover:underline focus-visible:outline-2 xl:h-8"
-                      onClick={() => onAddDates(firstDatable)}
-                    >
-                      Add dates
-                    </button>
-                  </span>
-                ) : null}
-              </div>
+              <div className={cn("border-b border-dotted", rowHeight)} />
               <Gap />
             </>
           ) : null}

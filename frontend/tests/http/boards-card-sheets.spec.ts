@@ -169,6 +169,10 @@ test("a writer adds, ticks and reorders checklist items; the card counts them", 
   });
   const checklist = sheet.getByRole("region", { name: "Checklist" });
   await expect(checklist).toContainText("0/1");
+  // An empty item cannot be added, and Add item says why.
+  await expect(
+    checklist.getByRole("button", { name: "Add item" }),
+  ).toHaveAccessibleDescription("Type an item first.");
 
   await checklist
     .getByRole("textbox", { name: "New checklist item" })
@@ -654,4 +658,22 @@ test("a writer's long card title wraps in its field, and Enter saves it", async 
   await expect(field).toHaveValue(long);
   // One save: the field locking while it saves does not send it again.
   expect(cardPatches(api)).toEqual([{ revision: 1, title: long }]);
+});
+
+test("from 1280 a card's Description keeps an 8rem box while its other fields stay slim", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const renewal = wireCard("Renewal terms", stageIds.doing, 1024);
+  await installKanbanApi(page, { level: "write", cards: [renewal] });
+  await page.goto(kanbanHref(`card=${renewal.id}`));
+  const sheet = page.getByRole("dialog", {
+    name: "Renewal terms",
+    exact: true,
+  });
+  const description = sheet.getByRole("textbox", { name: "Description" });
+  await expect(description).toBeVisible();
+  expect((await description.boundingBox())!.height).toBeGreaterThanOrEqual(128);
+  const item = sheet.getByRole("textbox", { name: "New checklist item" });
+  expect((await item.boundingBox())!.height).toBe(32);
 });

@@ -895,6 +895,11 @@ html[data-density="spacious"]
     min-height: 4rem;
     padding-inline: 0.625rem;
   }
+  /* A long-text field (a post's Message, a card's Description) keeps room
+     to write: it opts out of the 4rem minimum, and only it. */
+  :is(#main-content .slim-ui, .slim-ui) [data-slot="textarea"][data-long-text] {
+    min-height: 8rem;
+  }
   /* A button with a disabled reason renders as the tooltip trigger, so it
      keeps its Button data-variant but not its data-slot. A Button sized by
      its content (h-auto: a list row or a disclosure header) is not a

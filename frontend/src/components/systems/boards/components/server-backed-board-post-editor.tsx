@@ -230,6 +230,7 @@ export function ServerBoardPostEditorDisplay({
           rows={7}
           value={form.body}
           disabled={view.pending}
+          data-long-text=""
           className="min-h-32"
           onChange={(event) =>
             onChange({ ...form, body: event.currentTarget.value })

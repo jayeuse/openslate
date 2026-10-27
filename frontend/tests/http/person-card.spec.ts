@@ -651,3 +651,27 @@ for (const surface of ["posts", "openview", "calendar", "platform"] as const) {
     }
   }
 }
+
+test("the event sheet names its author in plain ink, as the post pane does", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const api = await installPersonCardApi(page, "calendar", "member");
+  await page.goto(api.href);
+  const sheet = page.getByRole("dialog", {
+    name: "Equipment handover",
+    exact: true,
+  });
+  const author = trigger(sheet);
+  await expect(author).toBeVisible();
+  expect(
+    await author.evaluate((node) => ({
+      underlined: [node, ...node.querySelectorAll("*")].some((element) =>
+        getComputedStyle(element).textDecorationLine.includes("underline"),
+      ),
+      ink:
+        getComputedStyle(node).color ===
+        getComputedStyle(node.closest('[role="dialog"]')!).color,
+    })),
+  ).toEqual({ underlined: false, ink: true });
+});

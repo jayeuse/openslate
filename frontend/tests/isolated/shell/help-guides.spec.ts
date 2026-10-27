@@ -21,7 +21,16 @@ const guides: { href: string; title: string; tasks: RegExp[] }[] = [
       /checkpoint first/,
     ],
   },
-  { href: "/boards", title: "Boards", tasks: [/post/i, /calendar|event/i] },
+  {
+    href: "/boards",
+    title: "Boards",
+    tasks: [
+      /post/i,
+      /calendar|event/i,
+      /Space lifts a card, the arrow keys move it, Space drops it and Escape puts it back/,
+      /Left and Right move a bar a day; Shift with Left or Right changes its due date/,
+    ],
+  },
   {
     href: "/comms",
     title: "OpenComms",

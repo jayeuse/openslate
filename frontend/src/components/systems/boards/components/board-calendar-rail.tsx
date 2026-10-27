@@ -136,7 +136,7 @@ function CalendarGroup({
   const headingId = useId();
   return (
     <div className="flex flex-col gap-0.5">
-      <h3
+      <h2
         id={headingId}
         className="text-muted-foreground flex items-center justify-between px-1 pb-1 text-xs font-medium"
       >
@@ -146,7 +146,7 @@ function CalendarGroup({
             {count}
           </span>
         ) : null}
-      </h3>
+      </h2>
       <ul aria-labelledby={headingId} className="flex flex-col">
         {rows.map((row) => (
           <CalendarListItem key={row.id} row={row} actions={actions} />

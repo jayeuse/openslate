@@ -627,9 +627,6 @@ function ServerBackedBoardsContent() {
           </BoardEmpty>
         ) : (
           <>
-            {board.status === "archived" && (
-              <Alert>This board is archived and read-only.</Alert>
-            )}
             {section !== "calendar" && workspaceCalendar.isError && (
               <Alert variant="destructive">
                 <div className="flex flex-wrap items-center justify-between gap-2">

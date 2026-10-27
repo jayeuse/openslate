@@ -142,10 +142,28 @@ test("a writer adds a card and moves it by drag with Undo; nothing else changes"
   await expect(crew).toContainText("Expo");
   await expect(crew).toContainText("Overdue · Sep 20");
   await expect(crew).toContainText("1/3");
+  // Every word on a card is on the type scale, 12px at the least (Label),
+  // the assignee's initials included.
+  expect(
+    await crew.evaluate((card) =>
+      [...card.querySelectorAll("*")]
+        .filter((element) =>
+          [...element.childNodes].some(
+            (child) => child.nodeType === 3 && child.textContent?.trim(),
+          ),
+        )
+        .map((element) => parseFloat(getComputedStyle(element).fontSize))
+        .filter((size) => size < 12),
+    ),
+  ).toEqual([]);
 
   await stage(page, "To do")
     .getByRole("button", { name: "Add a card" })
     .click();
+  // An empty title cannot add a card, and Add card says why.
+  await expect(
+    page.getByRole("button", { name: "Add card", exact: true }),
+  ).toHaveAccessibleDescription("Type a title first.");
   await page
     .getByRole("textbox", { name: "Card title" })
     .fill("Order giveaways");

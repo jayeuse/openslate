@@ -120,7 +120,7 @@ function CardFace({
               <PersonAvatar
                 name={person.name}
                 avatarUrl={person.avatarUrl}
-                className="size-[22px] text-[9px]"
+                className="size-[22px] text-xs"
               />
             </span>
           ) : null}
