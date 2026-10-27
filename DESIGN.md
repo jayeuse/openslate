@@ -478,6 +478,8 @@ One exception, for dense rows: an Access People row may show a person's departme
 
 A second exception, for calendar month cells (Boards BR53, BR54): an item carries its calendar's mark without the calendar's name beside it. A timed event has a 3px rule in the color, an all-day event a tinted pill, a record source an outlined chip, and a card due date a dashed outlined chip with "Due" before the title. The name stands beside the color everywhere else: in the calendar list (the rail, or the Calendars popover below 1440px), in the item's accessible name and tooltip, and in the event sheet one click away. Titles stay in ink, never in the color.
 
+A third exception, for Gantt bars (Boards BR74): a bar carries its card's first label color without the label's name beside it. The name stands beside the color in the legend at the top of the chart, in the bar's accessible name and tooltip ("Update the Q4 price list, Pricing, Sep 1 to Sep 30"), and in the card sheet one click away.
+
 Correct: the module header shows the `--dept-n` mark, then the module name, in the department's frame under its named head.
 
 Correct: a month cell shows "Stock count 9:00" on Sales's 3px rule; its accessible name is "Stock count, 9:00 AM, Sales announcements"; the calendar list shows the Sales mark beside "Sales announcements".
