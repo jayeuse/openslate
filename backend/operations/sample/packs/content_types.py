@@ -31,6 +31,29 @@ class BoardFileSpec:
 
 
 @dataclass(frozen=True)
+class KanbanCardSpec:
+    """One demo card: an objective (``title``) or a record card (``record``, a logical ID)."""
+
+    stage: int  # index into ``KanbanSpec.stages``
+    title: str | None = None
+    description: str | None = None
+    record: str | None = None
+    labels: tuple[int, ...] = ()  # indexes into ``KanbanSpec.labels``
+    due_in_days: int | None = None  # from the run's anchor date
+    checklist: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class KanbanSpec:
+    """A demo Kanban on one Board: managers' stages and labels, writers' cards."""
+
+    board: str  # logical Board ID, for example ``department:sales``
+    stages: tuple[tuple[str, str | None], ...]  # name, colour
+    labels: tuple[tuple[str, str], ...]  # name, colour
+    cards: tuple[KanbanCardSpec, ...]
+
+
+@dataclass(frozen=True)
 class MoneySpec:
     key: str
     record: str
@@ -70,3 +93,4 @@ class ContentSpec:
     view_name: Callable[[str, str], str]
     dashboard_name: Callable[[str], str]
     report_names: Callable[[str, str, str | None], tuple[str, str]]
+    kanban: KanbanSpec | None = None

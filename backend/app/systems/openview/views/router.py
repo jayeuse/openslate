@@ -33,7 +33,7 @@ from app.systems.openview.views.schemas import (
     ViewRestore,
     ViewUpdate,
 )
-from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.query import invalid_view, validate_definition
 from app.systems.sandbox.records.query_schemas import QueryDefinition
@@ -168,11 +168,6 @@ def _validate_presentation(
     presentation: ViewPresentation,
     definition: QueryDefinition,
 ) -> None:
-    if presentation.layout == "timeline" and (
-        presentation.timeline_start_field_id is None or presentation.timeline_end_field_id is None
-    ):
-        raise invalid_view("Timeline presentation requires start and end fields")
-
     field_ids = {
         *presentation.column_field_ids,
         *presentation.pinned_field_ids,
@@ -181,11 +176,6 @@ def _validate_presentation(
             for field_id in (
                 presentation.primary_field_id,
                 presentation.secondary_field_id,
-                presentation.date_field_id,
-                presentation.timeline_start_field_id,
-                presentation.timeline_end_field_id,
-                presentation.timeline_deadline_field_id,
-                presentation.timeline_progress_field_id,
                 presentation.group_by_field_id,
             )
             if field_id is not None
@@ -196,35 +186,11 @@ def _validate_presentation(
     definition_field_ids = {reference.field_id for reference in definition.columns}
     if not field_ids.issubset(definition_field_ids):
         raise invalid_view("Presentation fields must be included in query columns")
-    fields = {
-        field.id: field
-        for field in db.scalars(
-            select(Field).where(Field.module_id == module_id, Field.id.in_(field_ids))
-        ).all()
-    }
-    if len(fields) != len(field_ids) or any(field.is_deleted for field in fields.values()):
+    fields = db.scalars(
+        select(Field).where(Field.module_id == module_id, Field.id.in_(field_ids))
+    ).all()
+    if len(fields) != len(field_ids) or any(field.is_deleted for field in fields):
         raise invalid_view("A presentation field is unavailable")
-    date_types = {FieldType.DATE, FieldType.DATETIME}
-    if (
-        presentation.date_field_id is not None
-        and fields[presentation.date_field_id].type not in date_types
-    ):
-        raise invalid_view("Calendar presentation requires a date or datetime field")
-    timeline_date_ids = {
-        field_id
-        for field_id in (
-            presentation.timeline_start_field_id,
-            presentation.timeline_end_field_id,
-            presentation.timeline_deadline_field_id,
-        )
-        if field_id is not None
-    }
-    if any(fields[field_id].type not in date_types for field_id in timeline_date_ids):
-        raise invalid_view("Timeline interval roles must be date or datetime fields")
-    if presentation.timeline_progress_field_id is not None and fields[
-        presentation.timeline_progress_field_id
-    ].type not in {FieldType.NUMBER, FieldType.DECIMAL, FieldType.INTEGER}:
-        raise invalid_view("Timeline progress must use a numeric field")
 
 
 def get_view(db: Session, user: User, view_id: UUID, *, write: bool = False) -> SavedView:

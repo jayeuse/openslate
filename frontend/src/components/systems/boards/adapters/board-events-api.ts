@@ -63,7 +63,7 @@ const safeCodes = new Map<string, { status: number; message: string }>([
   ],
   [
     "board_archived",
-    { status: 409, message: "Restore the Board before changing events" },
+    { status: 409, message: "Restore the board before changing events" },
   ],
   [
     "event_archived",
@@ -72,7 +72,7 @@ const safeCodes = new Map<string, { status: number; message: string }>([
   ["event_not_archived", { status: 409, message: "Archive the event first" }],
   [
     "event_limit_reached",
-    { status: 409, message: "The Board has too many active events" },
+    { status: 409, message: "The board has too many active events" },
   ],
   [
     "event_candidate_limit",
@@ -82,8 +82,8 @@ const safeCodes = new Map<string, { status: number; message: string }>([
     "event_occurrence_limit",
     { status: 409, message: "Narrow the event window" },
   ],
-  ["event_conflict", { status: 409, message: "Unable to save Board event" }],
-  ["event_invalid", { status: 409, message: "Stored Board event is invalid" }],
+  ["event_conflict", { status: 409, message: "Unable to save the event" }],
+  ["event_invalid", { status: 409, message: "The saved event is not valid" }],
 ]);
 
 function throwSafeEventError(status: number, detail: unknown): never {
@@ -134,9 +134,8 @@ function queryString(values: Record<string, string | number>): string {
   return query.toString();
 }
 
-async function listEvents(
+export async function listBoardEvents(
   rawBoardId: string,
-  mine: boolean,
   raw: BoardEventListOptions = {},
 ): Promise<BoardEventPage> {
   const boardId = uuid.parse(rawBoardId);
@@ -150,7 +149,7 @@ async function listEvents(
   };
   if (options.search !== undefined) values.search = options.search;
   const page = await eventJson(
-    `/boards/${boardId}/events${mine ? "/mine" : ""}?${queryString(values)}`,
+    `/boards/${boardId}/events?${queryString(values)}`,
     eventListWire,
   );
   if (page.items.some((item) => item.boardId !== boardId))
@@ -158,18 +157,16 @@ async function listEvents(
   return page;
 }
 
-export function listBoardEvents(
-  boardId: string,
-  options: BoardEventListOptions = {},
-): Promise<BoardEventPage> {
-  return listEvents(boardId, false, options);
-}
-
-export function listMyBoardEvents(
-  boardId: string,
-  options: BoardEventListOptions = {},
-): Promise<BoardEventPage> {
-  return listEvents(boardId, true, options);
+/**
+ * Whether a failed event read is a refusal, which Retry cannot change: the
+ * address names no event id (no read is sent), or the server refuses or
+ * does not know the event. Any other failure offers Retry.
+ */
+export function eventReadRefused(error: unknown): boolean {
+  return (
+    error instanceof z.ZodError ||
+    (error instanceof ApiError && [401, 403, 404].includes(error.status))
+  );
 }
 
 export async function readBoardEvent(

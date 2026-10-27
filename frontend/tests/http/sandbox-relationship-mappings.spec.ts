@@ -535,7 +535,7 @@ test("a 403 bindings read never becomes a draft-only lifecycle action", async ({
   ).toBeVisible();
   await expect(
     page.getByRole("button", {
-      name: "Permanently delete module",
+      name: "Delete module forever",
       exact: true,
     }),
   ).toHaveCount(0);
@@ -731,9 +731,16 @@ for (const orientation of ["outgoing", "incoming"] as const) {
       .getByRole("button", { name: "Close relationship", exact: true })
       .click();
     await expect(close).toBeHidden();
-    await (await action("Permanently delete")).click();
+    await (
+      await relationshipMenuItem(
+        page,
+        relationship.name,
+        orientation,
+        `Delete relationship ${relationship.name} forever, ${orientation}`,
+      )
+    ).click();
     const purge = page.getByRole("dialog", {
-      name: "Permanently delete relationship",
+      name: "Delete relationship forever",
       exact: true,
     });
     await purge.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -742,7 +749,14 @@ for (const orientation of ["outgoing", "incoming"] as const) {
       "reopen",
       "close",
     ]);
-    await (await action("Permanently delete")).click();
+    await (
+      await relationshipMenuItem(
+        page,
+        relationship.name,
+        orientation,
+        `Delete relationship ${relationship.name} forever, ${orientation}`,
+      )
+    ).click();
     await purge
       .getByLabel("Type the relationship name")
       .fill("Live equipment link");
@@ -750,7 +764,7 @@ for (const orientation of ["outgoing", "incoming"] as const) {
       .getByLabel("Administrator password")
       .fill("owned-test-password");
     await purge
-      .getByRole("button", { name: "Permanently delete", exact: true })
+      .getByRole("button", { name: "Delete relationship forever", exact: true })
       .click();
     await expect(purge).toBeHidden();
     await expect(
@@ -1025,7 +1039,7 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
   ).toBeVisible();
   await expect(
     settings.getByRole("button", {
-      name: "Permanently delete field",
+      name: "Delete field forever",
       exact: true,
     }),
   ).toBeVisible();
@@ -1103,10 +1117,10 @@ test("bound module purge reviews stale challenges and refreshes removal without 
     bindings: [binding],
   });
   await page
-    .getByRole("button", { name: "Permanently delete module", exact: true })
+    .getByRole("button", { name: "Delete module forever", exact: true })
     .click();
   const dialog = page.getByRole("dialog", {
-    name: "Permanently delete module",
+    name: "Delete module forever",
     exact: true,
   });
   await expect(dialog.getByText(/Last successful backup/)).toHaveText(
@@ -1125,7 +1139,7 @@ test("bound module purge reviews stale challenges and refreshes removal without 
   sandbox.workspace.purge_enabled = true;
   await sandbox.refreshWorkspace();
   await page
-    .getByRole("button", { name: "Permanently delete module", exact: true })
+    .getByRole("button", { name: "Delete module forever", exact: true })
     .click();
   await dialog
     .getByLabel("Type the module name", { exact: true })
@@ -1136,7 +1150,7 @@ test("bound module purge reviews stale challenges and refreshes removal without 
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(attempts).toBe(0);
   await page
-    .getByRole("button", { name: "Permanently delete module", exact: true })
+    .getByRole("button", { name: "Delete module forever", exact: true })
     .click();
   await expect(
     dialog.getByLabel("Administrator password", { exact: true }),
@@ -1148,7 +1162,7 @@ test("bound module purge reviews stale challenges and refreshes removal without 
     .getByLabel("Administrator password", { exact: true })
     .fill("owned-test-password");
   await dialog
-    .getByRole("button", { name: "Permanently delete", exact: true })
+    .getByRole("button", { name: "Delete module forever", exact: true })
     .click();
   await expect(dialog.getByRole("alert")).toContainText("changed");
   await dialog
@@ -1167,7 +1181,7 @@ test("bound module purge reviews stale challenges and refreshes removal without 
     .getByLabel("Administrator password", { exact: true })
     .fill("owned-test-password");
   await dialog
-    .getByRole("button", { name: "Permanently delete", exact: true })
+    .getByRole("button", { name: "Delete module forever", exact: true })
     .click();
   await expect(dialog).toBeHidden();
   await expect(
@@ -1224,7 +1238,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     ).toBeEnabled();
     await expect(
       page.getByRole("button", {
-        name: "Permanently delete module",
+        name: "Delete module forever",
         exact: true,
       }),
     ).toHaveCount(0);
@@ -1237,7 +1251,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     ).toBeEnabled();
     await expect(
       settings.getByRole("button", {
-        name: "Permanently delete field",
+        name: "Delete field forever",
         exact: true,
       }),
     ).toHaveCount(0);
@@ -1259,7 +1273,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
       ).toBeEnabled();
       await expect(
         page.getByRole("menuitem", {
-          name: `Permanently delete ${kind}`,
+          name: `Delete ${kind} forever`,
           exact: true,
         }),
       ).toHaveCount(0);
@@ -1280,7 +1294,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     ).toBeEnabled();
     await expect(
       page.getByRole("button", {
-        name: "Permanently delete department",
+        name: "Delete department forever",
         exact: true,
       }),
     ).toHaveCount(0);
@@ -1388,16 +1402,16 @@ test("a retained saved Chart query blocks bound field purge until repaired", asy
   });
   await fieldRowTrigger(settings, field.name).click();
   await settings
-    .getByRole("button", { name: "Permanently delete field", exact: true })
+    .getByRole("button", { name: "Delete field forever", exact: true })
     .click();
   const dialog = page.getByRole("dialog", {
-    name: "Permanently delete field",
+    name: "Delete field forever",
     exact: true,
   });
   await expect(dialog.getByText(detail, { exact: true })).toBeVisible();
   await expect(dialog).toContainText("1 chart");
   await expect(
-    dialog.getByRole("button", { name: "Permanently delete", exact: true }),
+    dialog.getByRole("button", { name: "Delete field forever", exact: true }),
   ).toBeDisabled();
   expect(requests).toEqual([]);
   expect(sandbox.documentWrites()).toBe(0);
@@ -1405,7 +1419,7 @@ test("a retained saved Chart query blocks bound field purge until repaired", asy
   // Another operator repairs the retained query; this slice has no Chart editor.
   retainedReferences = [];
   await settings
-    .getByRole("button", { name: "Permanently delete field", exact: true })
+    .getByRole("button", { name: "Delete field forever", exact: true })
     .click();
   await expect(dialog.getByText(detail, { exact: true })).toHaveCount(0);
   await dialog
@@ -1415,7 +1429,7 @@ test("a retained saved Chart query blocks bound field purge until repaired", asy
     .getByLabel("Administrator password", { exact: true })
     .fill("owned-test-password");
   await dialog
-    .getByRole("button", { name: "Permanently delete", exact: true })
+    .getByRole("button", { name: "Delete field forever", exact: true })
     .click();
   await expect(dialog).toBeHidden();
   expect(reviews).toBe(2);
@@ -1504,19 +1518,22 @@ test("the bound department outline reviews blockers and reopens with explicit co
   await row.click({ button: "right" });
   await page
     .getByRole("menuitem", {
-      name: "Permanently delete department",
+      name: "Delete department forever",
       exact: true,
     })
     .click();
   const purge = page.getByRole("dialog", {
-    name: "Permanently delete department",
+    name: "Delete department forever",
     exact: true,
   });
   await expect(purge).toContainText(
     "A configured trigger still depends on this department.",
   );
   await expect(
-    purge.getByRole("button", { name: "Permanently delete", exact: true }),
+    purge.getByRole("button", {
+      name: "Delete department forever",
+      exact: true,
+    }),
   ).toBeDisabled();
   await purge.getByRole("button", { name: "Cancel", exact: true }).click();
   await row.click({ button: "right" });

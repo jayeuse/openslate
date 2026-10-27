@@ -19,8 +19,7 @@ def test_reset_tables_match_every_orm_table() -> None:
 def test_reset_deletes_saved_charts_after_widgets_and_before_their_sources() -> None:
     order = reset_models.DELETE_ORDER
     assert "charts" in reset_models.NON_PRESERVED_TABLES
-    for widget_table in ("board_widgets", "dashboard_widgets"):
-        assert order.index(widget_table) < order.index("charts")
+    assert order.index("dashboard_widgets") < order.index("charts")
     for source_table in ("modules", "departments"):
         assert order.index("charts") < order.index(source_table)
 

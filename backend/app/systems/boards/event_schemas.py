@@ -12,8 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 from app.common.listing import SortOrder, StandardListRequest, StandardListResponse
 from app.systems.boards.content_links import ContentLink
 from app.systems.boards.event_occurrences import MAX_EVENT_OCCURRENCES
+from app.systems.boards.models import BoardScope
 
 MAX_WINDOW_DAYS = 42
+MAX_REQUESTED_BOARDS = 100
 
 
 ReminderTiming = Literal["start", "15m", "1d"]
@@ -246,7 +248,7 @@ class EventMutationResponse(BaseModel):
     board_revision: int
 
 
-class OccurrenceRequest(BaseModel):
+class _OccurrenceWindow(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     window_start: date
@@ -272,14 +274,61 @@ class OccurrenceRequest(BaseModel):
         return self
 
 
-class OccurrenceResponse(BaseModel):
+class OccurrenceRequest(_OccurrenceWindow):
+    pass
+
+
+class CrossBoardOccurrenceRequest(_OccurrenceWindow):
+    """The shared list page limit (at most 100) applies to the merged occurrences."""
+
+    board_id: list[UUID] = Field(default_factory=list, max_length=MAX_REQUESTED_BOARDS)
+
+
+class OccurrenceSummary(BaseModel):
+    """One occurrence without its event: the calendar's next-event pointer."""
+
     id: str
     event_id: str
     start: str
     end: str
     date: str
+
+
+class OccurrenceResponse(OccurrenceSummary):
     event: EventResponse
 
 
 class OccurrenceListResponse(StandardListResponse[OccurrenceResponse]):
     board_revision: int
+    next_occurrence: OccurrenceSummary | None
+
+
+class OccurrenceBoard(BaseModel):
+    id: UUID
+    name: str
+    scope: BoardScope
+    department_id: UUID | None
+
+
+class CrossBoardOccurrenceResponse(OccurrenceResponse):
+    board: OccurrenceBoard
+
+
+class BoardOccurrenceStatus(StrEnum):
+    OK = "ok"
+    CANDIDATE_LIMIT = "candidate_limit"
+    OCCURRENCE_LIMIT = "occurrence_limit"
+    UNAVAILABLE = "unavailable"
+
+
+class BoardOccurrenceState(BaseModel):
+    """One requested or readable Board; a refused Board says only ``unavailable``."""
+
+    board_id: UUID
+    revision: int | None
+    status: BoardOccurrenceStatus
+    next_occurrence: OccurrenceSummary | None
+
+
+class CrossBoardOccurrenceListResponse(StandardListResponse[CrossBoardOccurrenceResponse]):
+    boards: list[BoardOccurrenceState]

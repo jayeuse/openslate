@@ -330,7 +330,7 @@ Correct: the Triplicate block sets `--button-edge: var(--action); --button-ink: 
 
 Wrong: `[data-theme="triplicate"] [data-slot="button"][data-variant="outline"] { border-color: var(--action); color: var(--action); }` (every outline button turns blue, and no call site can change it back).
 
-**The Advanced Last Rule.** A panel shows the controls that its common task needs. Every other control goes in one closed **Advanced** block (`AdvancedSection`), the last block of the panel. Advanced remembers its state for each viewer, and when closed its header counts the controls whose value differs from the default ("Advanced · 2 set"). An error inside a closed Advanced block opens it for that render (`forceOpen`) without storing the choice, so the person sees the field that failed. Lifecycle actions (Close, Reopen, Delete, Permanently delete) always live in Advanced. A control that applies only in one case appears only in that case.
+**The Advanced Last Rule.** A panel shows the controls that its common task needs. Every other control goes in one closed **Advanced** block (`AdvancedSection`), the last block of the panel. Advanced remembers its state for each viewer, and when closed its header counts the controls whose value differs from the default ("Advanced · 2 set"). An error inside a closed Advanced block opens it for that render (`forceOpen`) without storing the choice, so the person sees the field that failed. Lifecycle actions (Close, Reopen, Delete, Delete forever) always live in Advanced. A control that applies only in one case appears only in that case.
 
 Correct: The module panel shows the name, the field list, and "Add field", then "Advanced · 1 set" (closed).
 
@@ -476,9 +476,17 @@ Wrong: Triplicate sets `--action` to its navy form ink, so a link looks like bod
 
 One exception, for dense rows: an Access People row may show a person's department marks with a count ("■■■ 3") when the names are in the row's accessible text and in the person sheet one click away. A single department still shows its name.
 
+A second exception, for calendar month cells (Boards BR53, BR54): an item carries its calendar's mark without the calendar's name beside it. A timed event has a 3px rule in the color, an all-day event a tinted pill, a record source an outlined chip, and a card due date a dashed outlined chip with "Due" before the title. The name stands beside the color everywhere else: in the calendar list (the rail, or the Calendars popover below 1440px), in the item's accessible name and tooltip, and in the event sheet one click away. Titles stay in ink, never in the color.
+
+A third exception, for Gantt bars (Boards BR74): a bar carries its card's first label color without the label's name beside it. The name stands beside the color in the legend at the top of the chart, in the bar's accessible name and tooltip ("Update the Q4 price list, Pricing, Sep 1 to Sep 30"), and in the card sheet one click away.
+
 Correct: the module header shows the `--dept-n` mark, then the module name, in the department's frame under its named head.
 
+Correct: a month cell shows "Stock count 9:00" on Sales's 3px rule; its accessible name is "Stock count, 9:00 AM, Sales announcements"; the calendar list shows the Sales mark beside "Sales announcements".
+
 Wrong: a legend that says "purple = Commerce" and cards with only a purple edge.
+
+Wrong: a month view with colored chips, no calendar list, and accessible names without the calendar, so a viewer learns the colors from a legend.
 
 **The AA Everywhere Rule.** Every text pair is at least 4.5:1, and focus rings and control borders are at least 3:1, in all eight look modes. The guard also checks `--data-ink` on card and background, `--button-ink` on card, and the canvas pairs: module ink, type ink, field ink, and line label ink on their fills; department ink on each `--dept-n-band`; module ink on each `--dept-n-card`; and field ink and type ink on each `--dept-n-module` and `--dept-n-stripe`.
 

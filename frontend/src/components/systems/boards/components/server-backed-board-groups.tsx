@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { Alert } from "@/components/ui/alert";
 import { SearchSelect } from "@/components/ui/search-select";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
+import { Field, FieldLabel } from "@/components/ui/field";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -17,16 +20,21 @@ import {
   type BoardAccessLevel,
   type BoardGroups,
 } from "../adapters/board-management-api";
+import { BoardLevelChip } from "./board-page-header";
 
+/** The level chip's words (D2); the values stay the server's. */
 const LEVELS: { value: BoardAccessLevel; label: string; hint: string }[] = [
-  { value: "read", label: "Read", hint: "sees posts, events and widgets" },
-  { value: "write", label: "Write", hint: "also adds posts and events" },
+  { value: "read", label: "Read", hint: "sees posts, events and cards" },
+  { value: "write", label: "Post", hint: "also adds posts, events and cards" },
   {
     value: "manage",
-    label: "Manage",
-    hint: "also pins posts, changes widgets and other people's posts",
+    label: "Manager",
+    hint: "also edits stages and labels, and pins posts",
   },
 ];
+
+const control = "min-h-11 xl:min-h-8";
+const selectControl = "[&_select]:min-h-11 xl:[&_select]:min-h-8";
 
 type Entry = BoardGroups["groups"][number];
 type GroupChoice = { id: string; name: string };
@@ -36,30 +44,31 @@ type Loaded =
   | { status: "error"; error: string }
   | { status: "ready"; data: BoardGroups };
 
-function sameEntries(left: Entry[], right: Entry[]): boolean {
-  return (
-    left.length === right.length &&
-    left.every(
-      (entry, index) =>
-        entry.groupId === right[index].groupId &&
-        entry.level === right[index].level,
-    )
-  );
-}
+/** The change being saved; its row shows "Saving…" and only it locks. */
+type Saving = { groupId: string; next: Entry[] };
+/** The last result, said beside its row (or under the add form). */
+type RowResult = { groupId: string; text: string; failed: boolean };
+/** A removed group and its place, for Undo. */
+type Removed = { entry: Entry; index: number };
 
-function saveError(error: unknown): string {
+function saveError(error: unknown): { text: string; reload: boolean } {
   if (error instanceof ApiError && error.status === 409)
     return error.code === "group_unavailable"
-      ? "A chosen group was removed. Reload the groups and try again."
-      : "This Board changed. Reload the groups before you save.";
+      ? {
+          text: "That group was removed. The list is read again.",
+          reload: true,
+        }
+      : { text: "Someone changed this board first.", reload: true };
   if (error instanceof ApiError && error.status === 403)
-    return "Only an administrator can change the groups of a Board.";
-  return "The groups could not be saved. Try again.";
+    return { text: "Only an admin can change these groups.", reload: false };
+  return { text: "The groups could not be saved. Try again.", reload: false };
 }
 
 /**
- * The groups of a project Board and their levels. Board managers see them;
- * only administrators change them.
+ * The groups of a project board and their levels (D1). Each change saves at
+ * once with the board revision, as the Access grants list does: add, a level,
+ * and Remove, which offers Undo. Board managers see the groups; only admins
+ * change them.
  */
 export function ServerBackedBoardGroups({
   boardId,
@@ -78,7 +87,6 @@ export function ServerBackedBoardGroups({
   const [loaded, setLoaded] = useState<{ key: string; value: Loaded } | null>(
     null,
   );
-  const [draft, setDraft] = useState<Entry[] | null>(null);
   const [choices, setChoices] = useState<{
     key: string;
     items: GroupChoice[];
@@ -105,10 +113,16 @@ export function ServerBackedBoardGroups({
     groupId: string;
     level: BoardAccessLevel;
   }>({ groupId: "", level: "read" });
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [saving, setSaving] = useState<Saving | null>(null);
+  const savingRef = useRef(false);
+  const [result, setResult] = useState<RowResult | null>(null);
+  const [removed, setRemoved] = useState<Removed | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  /** Where focus goes once the list has drawn (R5). */
+  const [focusTarget, setFocusTarget] = useState<string | null>(null);
+  const levelRefs = useRef(new Map<string, HTMLSelectElement>());
   const key = `${boardId}:${reloadKey}`;
+  const addId = `${id}-group`;
 
   useEffect(() => {
     let current = true;
@@ -116,7 +130,6 @@ export function ServerBackedBoardGroups({
       (data) => {
         if (!current) return;
         setLoaded({ key, value: { status: "ready", data } });
-        setDraft(null);
       },
       () => {
         if (!current) return;
@@ -193,54 +206,129 @@ export function ServerBackedBoardGroups({
 
   const state: Loaded =
     loaded?.key === key ? loaded.value : { status: "loading" };
-  const saved = state.status === "ready" ? state.data : null;
-  const entries = draft ?? saved?.groups ?? [];
-  const dirty = saved !== null && !sameEntries(entries, saved.groups);
+  // A re-read keeps the last list on screen (last good), but nothing saves
+  // on its old revision meanwhile.
+  const lastGood =
+    loaded?.value.status === "ready" && loaded.value.data.boardId === boardId
+      ? loaded.value.data
+      : null;
+  const saved = state.status === "ready" ? state.data : lastGood;
+  const rereading = state.status === "loading" && saved !== null;
+  // While a change saves, the list shows it; a failure puts the saved back.
+  const entries = saving?.next ?? saved?.groups ?? [];
+
+  useEffect(() => {
+    if (focusTarget === null) return;
+    const target =
+      focusTarget === "add"
+        ? document.getElementById(addId)
+        : levelRefs.current.get(focusTarget);
+    if (!target) return;
+    target.focus();
+    setFocusTarget(null);
+  }, [focusTarget, entries, addId]);
+
   const editable = isAdmin && boardActive && saved !== null;
   const currentChoices = choices?.key === choicesKey ? choices : null;
   const available = (currentChoices?.items ?? []).filter(
     (choice) => !entries.some((entry) => entry.groupId === choice.id),
   );
 
-  function change(next: Entry[]) {
-    setDraft(next);
-    setNotice(null);
-    setError(null);
+  /** Sends the whole list with the board revision; one save at a time. */
+  async function save(
+    next: Entry[],
+    groupId: string,
+    after: { removed?: Removed; focus?: string },
+  ) {
+    if (!saved || savingRef.current || rereading) return false;
+    savingRef.current = true;
+    setSaving({ groupId, next });
+    setResult(null);
+    setRemoved(null);
+    setListError(null);
+    try {
+      const data = await replaceBoardGroups(boardId, {
+        revision: saved.revision,
+        groups: next.map((entry) => ({
+          groupId: entry.groupId,
+          level: entry.level,
+        })),
+      });
+      setLoaded({ key, value: { status: "ready", data } });
+      if (after.removed) setRemoved(after.removed);
+      else setResult({ groupId, text: "Saved.", failed: false });
+      if (after.focus) setFocusTarget(after.focus);
+      onChanged?.();
+      return true;
+    } catch (failure) {
+      const { text, reload } = saveError(failure);
+      if (reload) {
+        // The board moved on: read the groups and the board again.
+        setListError(text);
+        setReloadKey((value) => value + 1);
+        onChanged?.();
+      } else setResult({ groupId, text, failed: true });
+      return false;
+    } finally {
+      savingRef.current = false;
+      setSaving(null);
+    }
   }
 
   function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!saved) return;
     const choice =
       available.find((item) => item.id === adding.groupId) ??
       (selectedGroup?.id === adding.groupId ? selectedGroup : null);
-    if (entries.some((entry) => entry.groupId === adding.groupId)) return;
-    if (!choice) return;
-    change([
-      ...entries,
-      { groupId: choice.id, name: choice.name, level: adding.level },
-    ]);
+    if (!choice || entries.some((entry) => entry.groupId === choice.id)) return;
+    // Add group turns off once nothing is chosen: focus waits on the picker.
+    document.getElementById(addId)?.focus();
+    const level = adding.level;
     setAdding({ groupId: "", level: "read" });
     setSelectedGroup(null);
+    void save(
+      [...saved.groups, { groupId: choice.id, name: choice.name, level }],
+      choice.id,
+      {},
+    );
   }
 
-  async function save() {
-    if (!saved || pending || !dirty) return;
-    setPending(true);
-    setError(null);
-    try {
-      const result = await replaceBoardGroups(boardId, {
-        revision: saved.revision,
-        groups: entries.map(({ groupId, level }) => ({ groupId, level })),
-      });
-      setLoaded({ key, value: { status: "ready", data: result } });
-      setDraft(null);
-      setNotice("Board groups saved.");
-      onChanged?.();
-    } catch (failure) {
-      setError(saveError(failure));
-    } finally {
-      setPending(false);
-    }
+  function changeLevel(entry: Entry, level: BoardAccessLevel) {
+    if (!saved || level === entry.level) return;
+    void save(
+      saved.groups.map((item) =>
+        item.groupId === entry.groupId ? { ...item, level } : item,
+      ),
+      entry.groupId,
+      {},
+    );
+  }
+
+  function remove(entry: Entry) {
+    if (!saved || savingRef.current) return;
+    const index = saved.groups.findIndex(
+      (item) => item.groupId === entry.groupId,
+    );
+    // Focus moves before the row goes: the next row, the one before, or
+    // the picker when no row is left.
+    const neighbour = saved.groups[index + 1] ?? saved.groups[index - 1];
+    const target = neighbour
+      ? levelRefs.current.get(neighbour.groupId)
+      : document.getElementById(addId);
+    target?.focus();
+    void save(
+      saved.groups.filter((item) => item.groupId !== entry.groupId),
+      entry.groupId,
+      { removed: { entry, index } },
+    );
+  }
+
+  function undo() {
+    if (!saved || !removed) return;
+    const next = [...saved.groups];
+    next.splice(Math.min(removed.index, next.length), 0, removed.entry);
+    void save(next, removed.entry.groupId, { focus: removed.entry.groupId });
   }
 
   return (
@@ -249,15 +337,18 @@ export function ServerBackedBoardGroups({
       className="border-border space-y-4 border-t pt-5"
     >
       <div>
-        <h3 id={`${id}-title`} className="text-sm font-medium">
+        <h3
+          id={`${id}-title`}
+          data-slot="section-title"
+          className="text-sm font-medium"
+        >
           Groups
         </h3>
         <p className="text-muted-foreground mt-1 text-sm">
-          Members of these groups open this Board. A person in more than one
-          group gets the highest level.
+          A person in several groups gets the highest level.
         </p>
       </div>
-      {state.status === "loading" && (
+      {state.status === "loading" && !rereading && (
         <p role="status" className="text-muted-foreground text-sm">
           Loading groups…
         </p>
@@ -268,7 +359,7 @@ export function ServerBackedBoardGroups({
           <Button
             type="button"
             variant="outline"
-            className="mt-3 min-h-11"
+            className={cn(control, "mt-3")}
             onClick={() => setReloadKey((value) => value + 1)}
           >
             Retry
@@ -279,85 +370,137 @@ export function ServerBackedBoardGroups({
         <>
           {entries.length === 0 ? (
             <p className="text-muted-foreground rounded-md border border-dashed p-4 text-sm">
-              No groups yet. Only administrators open this Board.
+              No groups yet. Only admins open this board.
             </p>
           ) : (
             <ul aria-label="Board groups" className="divide-border divide-y">
-              {entries.map((entry, index) => (
-                <li
-                  key={entry.groupId}
-                  className="flex min-w-0 flex-wrap items-center justify-between gap-2 py-2"
-                >
-                  <span className="min-w-0 flex-1 text-sm font-medium break-words">
-                    {entry.name}
-                  </span>
-                  {editable ? (
-                    <div className="flex items-center gap-2">
-                      <NativeSelect
-                        aria-label={`Level for ${entry.name}`}
-                        className="[&_select]:min-h-11"
-                        value={entry.level}
-                        disabled={pending}
-                        onChange={(event) =>
-                          change(
-                            entries.map((item, position) =>
-                              position === index
-                                ? {
-                                    ...item,
-                                    level: event.target
-                                      .value as BoardAccessLevel,
-                                  }
-                                : item,
-                            ),
-                          )
-                        }
-                      >
-                        {LEVELS.map((level) => (
-                          <NativeSelectOption
-                            key={level.value}
-                            value={level.value}
+              {entries.map((entry) => {
+                const busy = saving?.groupId === entry.groupId;
+                const shown = result?.groupId === entry.groupId ? result : null;
+                const line = busy
+                  ? "Saving…"
+                  : shown && !shown.failed
+                    ? shown.text
+                    : "";
+                return (
+                  <li
+                    key={entry.groupId}
+                    aria-busy={busy || undefined}
+                    className="flex min-w-0 flex-col gap-1 py-2 xl:py-1"
+                  >
+                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                      <span className="min-w-0 flex-1 text-sm break-words">
+                        <span className="font-medium">{entry.name}</span>
+                        {line ? (
+                          <span
+                            aria-hidden="true"
+                            className="text-muted-foreground"
                           >
-                            {level.label}
-                          </NativeSelectOption>
-                        ))}
-                      </NativeSelect>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="min-h-11"
-                        disabled={pending}
-                        aria-label={`Remove ${entry.name}`}
-                        onClick={() =>
-                          change(
-                            entries.filter(
-                              (item) => item.groupId !== entry.groupId,
-                            ),
-                          )
-                        }
-                      >
-                        Remove
-                      </Button>
+                            {" · "}
+                          </span>
+                        ) : null}
+                        {/* Kept mounted, so only its words change. */}
+                        <span
+                          role="status"
+                          className="text-muted-foreground empty:sr-only"
+                        >
+                          {line}
+                        </span>
+                      </span>
+                      {editable ? (
+                        <div className="flex items-center gap-2">
+                          <NativeSelect
+                            ref={(node) => {
+                              if (node)
+                                levelRefs.current.set(entry.groupId, node);
+                              else levelRefs.current.delete(entry.groupId);
+                            }}
+                            aria-label={`Level for ${entry.name}`}
+                            className={selectControl}
+                            value={entry.level}
+                            aria-disabled={busy || undefined}
+                            // Locked while it saves, but focusable: a
+                            // disabled control would drop focus (R5).
+                            onChange={(event) =>
+                              changeLevel(
+                                entry,
+                                event.target.value as BoardAccessLevel,
+                              )
+                            }
+                          >
+                            {LEVELS.map((level) => (
+                              <NativeSelectOption
+                                key={level.value}
+                                value={level.value}
+                              >
+                                {level.label}
+                              </NativeSelectOption>
+                            ))}
+                          </NativeSelect>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className={control}
+                            aria-disabled={busy || undefined}
+                            aria-label={`Remove access for ${entry.name}`}
+                            onClick={() => {
+                              if (!busy) remove(entry);
+                            }}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ) : (
+                        <BoardLevelChip level={entry.level} />
+                      )}
                     </div>
-                  ) : (
-                    <span className="text-muted-foreground text-sm capitalize">
-                      {entry.level}
-                    </span>
-                  )}
-                </li>
-              ))}
+                    {shown?.failed ? (
+                      <p role="alert" className="text-danger-text text-sm">
+                        {shown.text}
+                      </p>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
+          {/* The list's own line, kept mounted: a removal with Undo
+              (Undo inside a sheet, DESIGN). */}
+          <p
+            className="text-muted-foreground text-sm empty:sr-only"
+            role="status"
+          >
+            {removed ? (
+              <>
+                Removed {removed.entry.name} ·{" "}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={cn(control, "px-2")}
+                  onClick={undo}
+                >
+                  Undo
+                </Button>
+              </>
+            ) : null}
+          </p>
+          {listError ? (
+            <p role="alert" className="text-danger-text text-sm">
+              {listError}
+            </p>
+          ) : null}
           {editable && (
             <form
               onSubmit={add}
               className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end"
             >
-              <div className="min-w-0 flex-1 space-y-1">
+              <div className="min-w-0 flex-1">
                 <SearchSelect
-                  id={`${id}-group`}
+                  id={addId}
                   label="Add a group"
                   value={adding.groupId}
                   placeholder="Choose a group"
+                  popupClassName="slim-ui"
                   options={available.map((choice) => ({
                     value: choice.id,
                     label: choice.name,
@@ -383,7 +526,6 @@ export function ServerBackedBoardGroups({
                         offset: currentChoices.nextOffset,
                       });
                   }}
-                  disabled={pending}
                   onValueChange={(value) => {
                     const choice =
                       available.find((item) => item.id === value) ??
@@ -396,15 +538,12 @@ export function ServerBackedBoardGroups({
                   }}
                 />
               </div>
-              <div className="space-y-1">
-                <label htmlFor={`${id}-level`} className="text-sm font-medium">
-                  Level
-                </label>
+              <Field>
+                <FieldLabel htmlFor={`${id}-level`}>Level</FieldLabel>
                 <NativeSelect
                   id={`${id}-level`}
-                  className="w-full [&_select]:min-h-11"
+                  className={cn("w-full", selectControl)}
                   value={adding.level}
-                  disabled={pending}
                   onChange={(event) =>
                     setAdding({
                       ...adding,
@@ -418,17 +557,34 @@ export function ServerBackedBoardGroups({
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
-              </div>
-              <Button
-                type="submit"
-                variant="outline"
-                className="min-h-11"
-                disabled={pending || !adding.groupId}
+              </Field>
+              <DisabledReason
+                reason={adding.groupId ? null : "Choose a group first."}
+                stable
               >
-                Add group
-              </Button>
+                <Button
+                  type="submit"
+                  variant="outline"
+                  className={control}
+                  pending={
+                    saving !== null &&
+                    !saved.groups.some(
+                      (entry) => entry.groupId === saving.groupId,
+                    )
+                  }
+                  pendingLabel="Adding…"
+                >
+                  Add group
+                </Button>
+              </DisabledReason>
             </form>
           )}
+          {result?.failed &&
+          !entries.some((entry) => entry.groupId === result.groupId) ? (
+            <p role="alert" className="text-danger-text text-sm">
+              {result.text}
+            </p>
+          ) : null}
           {editable && (
             <dl className="text-muted-foreground grid gap-1 text-sm">
               {LEVELS.map((level) => (
@@ -443,48 +599,8 @@ export function ServerBackedBoardGroups({
           )}
           {!isAdmin && (
             <p className="text-muted-foreground text-sm">
-              Only an administrator changes these groups.
+              Only an admin can change these groups.
             </p>
-          )}
-          {error && <Alert variant="destructive">{error}</Alert>}
-          {notice && (
-            <p role="status" className="text-sm">
-              {notice}
-            </p>
-          )}
-          {editable && (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                className="min-h-11"
-                disabled={pending || !dirty}
-                onClick={() => void save()}
-              >
-                {pending ? "Saving…" : "Save groups"}
-              </Button>
-              {dirty && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="min-h-11"
-                  disabled={pending}
-                  onClick={() => change(saved.groups)}
-                >
-                  Discard changes
-                </Button>
-              )}
-              {error && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={pending}
-                  onClick={() => setReloadKey((value) => value + 1)}
-                >
-                  Reload groups
-                </Button>
-              )}
-            </div>
           )}
         </>
       )}

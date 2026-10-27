@@ -15,7 +15,7 @@ from app.systems.access.policy.models import Group
 from app.systems.access.users.models import User
 from app.systems.boards import lifecycle_router
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardWidget
+from app.systems.boards.models import Board, BoardGroup
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog
@@ -90,15 +90,6 @@ def _board_graph(
     db.flush()
     children = [
         BoardGroup(org_id=board.org_id, board_id=board.id, group_id=group.id, level="read"),
-        BoardWidget(
-            org_id=board.org_id,
-            board_id=board.id,
-            module_id=module.id,
-            name="Source records",
-            position=0,
-            widget_type="records",
-            config={},
-        ),
         BoardEvent(
             org_id=board.org_id,
             board_id=board.id,
@@ -261,7 +252,7 @@ def test_confirmed_board_purge_deletes_its_children_but_preserves_sources_and_au
     assert result.headers["Cache-Control"] == "no-store"
     assert result.json()["impact"]["impact_digest"] == preview.json()["impact"]["impact_digest"]
     assert db.get(Board, board.id) is None
-    for model in (BoardGroup, BoardWidget, BoardEvent, BoardPost, BoardPostRevision):
+    for model in (BoardGroup, BoardEvent, BoardPost, BoardPostRevision):
         assert db.get(model, children[model.__tablename__]) is None
     assert db.get(Record, record.id) is not None
     assert db.get(Department, department.id) is not None
@@ -405,7 +396,7 @@ def test_board_purge_rolls_back_child_deletes_on_commit_failure(
     assert failed.status_code == 409
     assert failed.json()["detail"]["code"] == "board_purge_conflict"
     assert db.get(Board, board.id) is not None
-    for model in (BoardGroup, BoardWidget, BoardEvent, BoardPost, BoardPostRevision):
+    for model in (BoardGroup, BoardEvent, BoardPost, BoardPostRevision):
         assert db.get(model, children[model.__tablename__]) is not None
 
 

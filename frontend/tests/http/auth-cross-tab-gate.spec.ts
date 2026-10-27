@@ -60,7 +60,7 @@ test("MFA gate stays accessible over an unrelated dialog and restores its same-a
   await page.keyboard.press("Escape");
 });
 
-test("MFA gate stays accessible over an alert dialog and restores its typed confirmation without a write", async ({
+test("MFA gate stays accessible over an alert dialog and keeps it open without a write", async ({
   page,
 }) => {
   const id = "00000000-0000-4000-8000-000000000301";
@@ -111,22 +111,23 @@ test("MFA gate stays accessible over an alert dialog and restores its typed conf
     });
   });
   const state = await mockMfa(page, { verified: true, aal2: true });
-  await page.goto(`/boards?board=${id}&section=overview`);
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page.goto(`/boards?board=${id}&section=posts`);
   await page
-    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+    .getByRole("button", { name: "Board settings", exact: true })
     .click();
-  await page
-    .getByRole("dialog", { name: "Manage Board", exact: true })
-    .getByRole("button", { name: "Archive Board", exact: true })
-    .click();
-  const confirmation = page.getByRole("alertdialog", {
-    name: "Archive Board?",
+  const settings = page.getByRole("dialog", {
+    name: "Pending dispatch",
     exact: true,
   });
-  await confirmation
-    .getByLabel("Type “Pending dispatch” to confirm", { exact: true })
-    .fill("Pending dispatch");
+  await settings.getByRole("button", { name: /^Advanced/ }).click();
+  await settings
+    .getByRole("button", { name: "Archive board", exact: true })
+    .click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Archive board?",
+    exact: true,
+  });
+  await expect(confirmation).toBeVisible();
   state.actors.get(mfaUserA)!.assurance = "aal1";
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
   const gate = page.getByRole("dialog", {
@@ -140,10 +141,8 @@ test("MFA gate stays accessible over an alert dialog and restores its typed conf
   await gate.getByRole("button", { name: "Verify code", exact: true }).click();
   await expect(gate).toBeHidden();
   await expect(
-    confirmation.getByLabel("Type “Pending dispatch” to confirm", {
-      exact: true,
-    }),
-  ).toHaveValue("Pending dispatch");
+    confirmation.getByRole("button", { name: "Archive board", exact: true }),
+  ).toBeEnabled();
   expect(writes).toEqual([]);
   await confirmation
     .getByRole("button", { name: "Cancel", exact: true })

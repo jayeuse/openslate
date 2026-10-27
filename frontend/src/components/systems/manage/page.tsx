@@ -936,7 +936,7 @@ function ManageContent() {
         caught.code === "purge_disabled";
       setLogoError(
         purgeDisabled
-          ? "Permanent delete is turned off on this server."
+          ? "Delete forever is turned off on this server."
           : apiErrorMessage(
               caught,
               "The logo could not be checked. Try again.",

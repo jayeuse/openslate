@@ -1,12 +1,9 @@
-"""Authenticated Board copy, sharing, edit, and purge route actions."""
+"""Authenticated Board creation, sharing, edit, and purge route actions."""
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import Any
-
-import httpx
 
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import (
@@ -26,6 +23,7 @@ from operations.sample.phases.actions import (
 
 BOARD_EXECUTION_ROUTES = frozenset(
     {
+        ("POST", "/api/boards"),
         ("POST", "/api/boards/{board_id}/archive"),
         ("POST", "/api/boards/{board_id}/purge/preview"),
         ("POST", "/api/boards/{board_id}/purge"),
@@ -47,141 +45,41 @@ def _board_id(action: PhaseAction, context: PhaseExecutionContext, *, step: str)
     return _mapped_id(context, "control_boards", key, step=step)
 
 
-def _raw_configuration(
-    action: PhaseAction,
-    context: PhaseExecutionContext,
-    source_id: str,
-    *,
-    on_substep: PhaseSubstep | None,
-) -> bytes:
-    step = "export_board_configuration"
-    if on_substep:
-        on_substep(step)
-    response = _client(context, action.actor_key, step=step).request(
-        "GET", f"/api/boards/{source_id}/configuration"
-    )
-    content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-    if (
-        response.status_code != 200
-        or content_type != "application/json"
-        or response.headers.get("Content-Disposition")
-        != 'attachment; filename="board-configuration.json"'
-        or not 0 < len(response.content) <= 1024 * 1024
-    ):
-        raise SamplePhaseActionError(
-            "Board configuration could not be exported",
-            step=step,
-            status_code=response.status_code,
-            request_id=_request_id(response),
-        )
-    try:
-        bundle = json.loads(response.content)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise SamplePhaseActionError("Board configuration is invalid", step=step) from None
-    if (
-        not isinstance(bundle, dict)
-        or bundle.get("kind") != "openslate-board"
-        or bundle.get("version") != 3
-        or not isinstance(bundle.get("configuration"), dict)
-    ):
-        raise SamplePhaseActionError("Board configuration is invalid", step=step)
-    return response.content
-
-
-def _request_bytes(
-    action: PhaseAction,
-    context: PhaseExecutionContext,
-    evidence: list[dict[str, object]],
-    *,
-    path: str,
-    content: bytes,
-    on_substep: PhaseSubstep | None,
-) -> httpx.Response:
-    step = "import_board"
-    if on_substep:
-        on_substep(step)
-    actor_id = _id(context.user_ids, action.actor_key, label="user", step=step)
-    response = _client(context, action.actor_key, step=step).request(
-        "POST",
-        path,
-        content=content,
-        headers={"Content-Type": "application/octet-stream"},
-    )
-    request_id = _request_id(response)
-    evidence.append(
-        {
-            "step": step,
-            "actor_key": action.actor_key,
-            "actor_id": actor_id,
-            "method": "POST",
-            "path": path,
-            "expected_status": 201,
-            "status_code": response.status_code,
-            "request_id": request_id,
-            "primary_entity_type": "boards",
-            "primary_entity_id": None,
-            "primary_action": "create",
-            "expected_audit_rows": 1,
-            "related_entity_types": ["board_widgets"],
-        }
-    )
-    if response.status_code != 201:
-        raise SamplePhaseActionError(
-            f"Planned phase request returned HTTP {response.status_code}",
-            step=step,
-            status_code=response.status_code,
-            request_id=request_id,
-        )
-    if request_id is None:
-        raise SamplePhaseActionError("Board import has no request ID", step=step)
-    return response
-
-
-def _create_copy(
+def _create_board(
     action: PhaseAction,
     context: PhaseExecutionContext,
     evidence: list[dict[str, object]],
     mappings: list[dict[str, str]],
     *,
     on_substep: PhaseSubstep | None,
-    imported: bool,
 ) -> dict[str, object]:
-    source_key = action.values.get("source_board_key")
-    if not isinstance(source_key, str):
-        raise SamplePhaseActionError("Planned Board source is invalid", step="create_board_copy")
-    source_id = _mapped_id(context, "boards", source_key, step="create_board_copy")
-    if imported:
-        payload = _raw_configuration(action, context, source_id, on_substep=on_substep)
-        response = _request_bytes(
-            action,
-            context,
-            evidence,
-            path="/api/boards/import",
-            content=payload,
-            on_substep=on_substep,
-        )
-        step = "import_board"
-    else:
-        response = _request(
-            action,
-            context,
-            evidence,
-            actor_key=action.actor_key,
-            method="POST",
-            path=f"/api/boards/{source_id}/duplicate",
-            step="duplicate_board",
-            expected=201,
-            on_substep=on_substep,
-            primary_entity_type="boards",
-            primary_action="create",
-            expected_audit_rows=1,
-            related_entity_types=("board_widgets",),
-        )
-        step = "duplicate_board"
+    step = "create_control_board"
+    name, description = action.values.get("name"), action.values.get("description")
+    if not isinstance(name, str) or not isinstance(description, str):
+        raise SamplePhaseActionError("Planned Board text is invalid", step=step)
+    response = _request(
+        action,
+        context,
+        evidence,
+        actor_key=action.actor_key,
+        method="POST",
+        path="/api/boards",
+        step=step,
+        expected=201,
+        on_substep=on_substep,
+        json_body={"name": name, "description": description},
+        primary_entity_type="boards",
+        primary_action="create",
+        expected_audit_rows=1,
+    )
     body = _read_json(response, step=step, request_id=_request_id(response))
     board_id = _id({"board": body.get("id")}, "board", label="Board", step=step)
-    if body.get("scope") != "project" or body.get("status") != "active":
-        raise SamplePhaseActionError("Board copy did not match its plan", step=step)
+    if (
+        body.get("scope") != "project"
+        or body.get("status") != "active"
+        or body.get("name") != name
+    ):
+        raise SamplePhaseActionError("Created Board did not match its plan", step=step)
     evidence[-1]["primary_entity_id"] = board_id
     _record_mapping(
         context,
@@ -451,14 +349,8 @@ def execute_board_action(
     operation = action.values.get("operation")
     evidence: list[dict[str, object]] = []
     mappings: list[dict[str, str]] = []
-    if operation == "board_duplicate":
-        return _create_copy(
-            action, context, evidence, mappings, on_substep=on_substep, imported=False
-        )
-    if operation == "board_import":
-        return _create_copy(
-            action, context, evidence, mappings, on_substep=on_substep, imported=True
-        )
+    if operation == "board_create":
+        return _create_board(action, context, evidence, mappings, on_substep=on_substep)
     if operation == "board_share":
         return _share_copy(action, context, evidence, mappings, on_substep=on_substep)
     if operation == "board_patch":

@@ -44,16 +44,7 @@ export type {
   BoardGroups,
   BoardGroupsInput,
 };
-export type {
-  PortableBoardBundle,
-  BoardConfigurationDownload,
-  BoardScope,
-  BoardAccessLevel,
-} from "./board-management-schemas";
-export {
-  downloadBoardConfiguration,
-  importBoardConfiguration,
-} from "./board-configuration-api";
+export type { BoardScope, BoardAccessLevel } from "./board-management-schemas";
 
 export async function listBoards(
   raw: BoardListOptions = {},
@@ -176,21 +167,6 @@ export async function purgeBoard(
   );
   assertLifecyclePurgeResultFor(result, "board", boardId);
   return result;
-}
-
-export async function duplicateBoardStructure(
-  rawBoardId: string,
-): Promise<BoardManagementBoard> {
-  const boardId = uuidSchema.parse(rawBoardId);
-  const board = await safeBoardJson(
-    `/boards/${encodeURIComponent(boardId)}/duplicate`,
-    boardSchema,
-    {
-      method: "POST",
-    },
-  );
-  if (board.id === boardId) throw new ApiContractError();
-  return board;
 }
 
 export async function readBoardGroups(

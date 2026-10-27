@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import Select, exists, func, literal, select, union
+from sqlalchemy import Select, exists, func, literal, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Bundle, Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -24,8 +24,6 @@ from app.systems.access.policy.checks import (
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import effective_levels
 from app.systems.access.users.models import User
-from app.systems.boards.access import visible_board_clause
-from app.systems.boards.models import Board, BoardWidget
 from app.systems.openview.charts.models import Chart
 from app.systems.openview.charts.schemas import (
     ChartDefinition,
@@ -296,23 +294,12 @@ def response(chart: Chart) -> ChartResponse:
 
 
 def in_use(db: Session, chart_id: UUID) -> bool:
-    return bool(db.scalar(select(exists().where(BoardWidget.chart_id == chart_id)))) or bool(
-        db.scalar(select(exists().where(DashboardWidget.chart_id == chart_id)))
-    )
+    return bool(db.scalar(select(exists().where(DashboardWidget.chart_id == chart_id))))
 
 
 def incompatible_uses(db: Session, chart_id: UUID, chart_type: str) -> bool:
     category = chart_type if chart_type in {"summary", "workload", "records"} else "chart"
     return bool(
-        db.scalar(
-            select(
-                exists().where(
-                    BoardWidget.chart_id == chart_id,
-                    BoardWidget.widget_type != category,
-                )
-            )
-        )
-    ) or bool(
         db.scalar(
             select(
                 exists().where(
@@ -330,25 +317,8 @@ def usage(
     chart_id: UUID,
     params: ChartUsageRequest,
 ) -> ChartUsageResponse:
-    unrestricted = effective_levels(db, actor).unrestricted
-    board_visible = (
-        literal(True)
-        if unrestricted
-        else (
-            visible_board_clause(db, actor)
-            & Board.is_deleted.is_(False) & Board.deleted_at.is_(None)
-        )
-    )
     dashboard_visible = department_filter(db, actor, Dashboard.department_id)
-    targets = union(
-        select(
-            literal("board").label("kind"),
-            Board.id.label("id"),
-            Board.name.label("name"),
-            board_visible.label("visible"),
-        )
-        .join(BoardWidget, BoardWidget.board_id == Board.id)
-        .where(BoardWidget.chart_id == chart_id),
+    targets = (
         select(
             literal("dashboard").label("kind"),
             Dashboard.id.label("id"),
@@ -356,8 +326,10 @@ def usage(
             dashboard_visible.label("visible"),
         )
         .join(DashboardWidget, DashboardWidget.dashboard_id == Dashboard.id)
-        .where(DashboardWidget.chart_id == chart_id),
-    ).subquery()
+        .where(DashboardWidget.chart_id == chart_id)
+        .distinct()
+        .subquery()
+    )
     statement: Select[tuple[Any]] = select(
         Bundle("usage", targets.c.kind, targets.c.id, targets.c.name)
     ).where(targets.c.visible.is_(True))

@@ -1,4 +1,6 @@
+import { Temporal } from "@js-temporal/polyfill";
 import { ApiError } from "@/lib/api";
+import { datetimeInputToUtc, datetimeOffsets } from "@/lib/date-time";
 import type {
   BoardPost,
   BoardPostPage,
@@ -66,55 +68,67 @@ export function emptyState(
   };
 }
 
-function localTimeValue(timestamp: string | null): string {
+/**
+ * A post's times are typed and shown in the workspace's zone (the display
+ * region's), as the list and the reading pane show them: one zone, never
+ * the browser's.
+ */
+function localTimeValue(timestamp: string | null, timezone: string): string {
   if (timestamp === null) return "";
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return "";
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const seconds = date.getSeconds() === 0 ? "" : `:${pad(date.getSeconds())}`;
-  return `${String(date.getFullYear()).padStart(4, "0")}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}${seconds}`;
+  try {
+    const local = Temporal.Instant.from(timestamp)
+      .toZonedDateTimeISO(timezone)
+      .toPlainDateTime();
+    return local.toString({
+      smallestUnit: local.second === 0 ? "minute" : "second",
+    });
+  } catch {
+    return "";
+  }
 }
 
-export function postLocalScheduleValue(item: BoardPost | null): string {
-  return item?.status === "scheduled" ? localTimeValue(item.publishAt) : "";
+export function postLocalScheduleValue(
+  item: BoardPost | null,
+  timezone: string,
+): string {
+  return item?.status === "scheduled"
+    ? localTimeValue(item.publishAt, timezone)
+    : "";
 }
 
-function localTime(value: string): Date | null {
-  const parts =
-    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(
-      value,
-    );
-  const date = new Date(value);
-  if (!parts || !Number.isFinite(date.getTime())) return null;
-  const [, year, month, day, hour, minute, second = "0", fraction = ""] = parts;
-  const milliseconds = Number(fraction.padEnd(3, "0") || "0");
-  if (
-    date.getFullYear() !== Number(year) ||
-    date.getMonth() + 1 !== Number(month) ||
-    date.getDate() !== Number(day) ||
-    date.getHours() !== Number(hour) ||
-    date.getMinutes() !== Number(minute) ||
-    date.getSeconds() !== Number(second) ||
-    date.getMilliseconds() !== milliseconds
-  )
+/** The instant of a typed local time, or null when that time is not valid
+ * or does not exist in the zone (a clock change skips it). A time that
+ * occurs twice is its earlier instant. */
+function localTime(value: string, timezone: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/.test(value))
     return null;
-  return date;
+  const offsets = datetimeOffsets(value, timezone);
+  if (offsets.length === 0) return null;
+  try {
+    return new Date(datetimeInputToUtc(value, timezone, offsets[0]));
+  } catch {
+    return null;
+  }
 }
 
-export function postExpiryTimeToUtc(value: string): string | null {
+export function postExpiryTimeToUtc(
+  value: string,
+  timezone: string,
+): string | null {
   if (!value) return null;
-  const date = localTime(value);
+  const date = localTime(value, timezone);
   if (!date) throw new Error("Invalid local expiry time");
   return date.toISOString();
 }
 
 export function postScheduleTimeToUtc(
   value: string,
+  timezone: string,
   now: number = Date.now(),
   expiresAt: string | null = null,
 ): PostScheduleTimeResult {
   if (!value) return { ok: false, reason: "required" };
-  const date = localTime(value);
+  const date = localTime(value, timezone);
   if (!date) return { ok: false, reason: "invalid" };
   if (date.getTime() <= now) return { ok: false, reason: "past" };
   const expiration = expiresAt === null ? Number.NaN : Date.parse(expiresAt);
@@ -172,7 +186,7 @@ export function editorFailure(
     return {
       ...emptyState(state.key, state.boardRevision),
       status: "denied",
-      error: "Post editing is unavailable. Check your Board access.",
+      error: "You cannot post on this board.",
     };
   if (error instanceof ApiError && error.status === 409)
     return {
@@ -188,13 +202,13 @@ export function editorFailure(
   };
 }
 
-export function formFor(item: BoardPost): PostEditorForm {
+export function formFor(item: BoardPost, timezone: string): PostEditorForm {
   return {
     title: item.title,
     body: item.body,
     links: item.links.map((link) => ({ ...link })),
     pinned: item.pinned,
-    expiresLocal: localTimeValue(item.expiresAt),
+    expiresLocal: localTimeValue(item.expiresAt, timezone),
   };
 }
 
@@ -257,10 +271,20 @@ export function samePostContent(left: BoardPost, right: BoardPost): boolean {
 export function dirty(
   form: PostEditorForm | null,
   item: BoardPost | null,
+  timezone: string,
 ): boolean {
   if (!form) return false;
-  if (!item) return true;
-  const original = formFor(item);
+  // A new post holds something to lose once it has text, a link, a pin, or
+  // an expiry; a blank one closes without asking.
+  if (!item)
+    return (
+      form.title.trim() !== "" ||
+      form.body.trim() !== "" ||
+      form.links.length > 0 ||
+      form.pinned ||
+      form.expiresLocal !== ""
+    );
+  const original = formFor(item, timezone);
   return (
     form.title !== original.title ||
     form.body !== original.body ||
@@ -285,6 +309,7 @@ export function postPatchForForm(
   selected: BoardPost,
   form: PostEditorForm,
   boardRevision: number,
+  timezone: string,
   canManage = false,
 ): BoardPostPatchInput {
   if (selected.postRevision === null) throw new Error("Not an editable draft");
@@ -297,8 +322,8 @@ export function postPatchForForm(
     ...(canManage && form.pinned !== selected.pinned
       ? { pinned: form.pinned }
       : {}),
-    ...(form.expiresLocal !== localTimeValue(selected.expiresAt)
-      ? { expiresAt: postExpiryTimeToUtc(form.expiresLocal) }
+    ...(form.expiresLocal !== localTimeValue(selected.expiresAt, timezone)
+      ? { expiresAt: postExpiryTimeToUtc(form.expiresLocal, timezone) }
       : {}),
   };
 }
@@ -309,6 +334,7 @@ export function resolveEditorRefresh(
   page: BoardPostPage,
   verified: BoardPost | null,
   hadSelection: boolean,
+  timezone: string,
 ): PostEditorState {
   const currentDraft = verified?.id === state.selected?.id ? verified : null;
   const revisionChanged =
@@ -318,8 +344,9 @@ export function resolveEditorRefresh(
     currentDraft !== null &&
     (state.conflict ||
       (revisionChanged &&
-        (dirty(state.form, state.selected) ||
-          state.scheduleLocal !== postLocalScheduleValue(state.selected))));
+        (dirty(state.form, state.selected, timezone) ||
+          state.scheduleLocal !==
+            postLocalScheduleValue(state.selected, timezone))));
   return {
     ...state,
     status: "ready",
@@ -329,14 +356,14 @@ export function resolveEditorRefresh(
     selected: conflict ? state.selected : currentDraft,
     form: currentDraft
       ? revisionChanged && !conflict
-        ? formFor(currentDraft)
+        ? formFor(currentDraft, timezone)
         : state.form
       : hadSelection
         ? null
         : state.form,
     scheduleLocal: currentDraft
       ? revisionChanged && !conflict
-        ? postLocalScheduleValue(currentDraft)
+        ? postLocalScheduleValue(currentDraft, timezone)
         : state.scheduleLocal
       : hadSelection
         ? ""

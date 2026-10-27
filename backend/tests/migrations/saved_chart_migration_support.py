@@ -39,7 +39,6 @@ class ChartMigrationFixture:
     def clean(self) -> None:
         with self.owner.begin() as connection:
             for table, column, identity in (
-                ("board_widgets", "board_id", self.ids["board"]),
                 ("dashboard_widgets", "dashboard_id", self.ids["dashboard"]),
                 ("charts", "module_id", self.ids["module"]),
                 ("dashboards", "id", self.ids["dashboard"]),

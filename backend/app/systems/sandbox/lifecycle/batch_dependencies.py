@@ -15,11 +15,14 @@ from app.systems.platform.files.models import File
 from app.systems.sandbox.lifecycle.access_dependencies import (
     load_group_access_purge_dependencies,
 )
+from app.systems.sandbox.lifecycle.board_calendar_source_dependencies import (
+    load_calendar_source_purge_dependencies,
+)
+from app.systems.sandbox.lifecycle.board_card_dependencies import (
+    load_board_card_purge_dependencies,
+)
 from app.systems.sandbox.lifecycle.board_record_link_dependencies import (
     load_board_record_link_purge_dependencies,
-)
-from app.systems.sandbox.lifecycle.board_widget_dependencies import (
-    load_board_widget_purge_dependencies,
 )
 from app.systems.sandbox.lifecycle.chart_dependencies import load_chart_purge_dependencies
 from app.systems.sandbox.lifecycle.dashboard_dependencies import (
@@ -135,6 +138,12 @@ def load_purge_dependencies(
     record_link_blockers = [
         blocker for blocker in record_link_blockers if blocker.entity_id not in cascade_link_ids
     ]
+    card_rows, card_ids, card_board_ids = load_board_card_purge_dependencies(
+        db, record_ids, module_ids, department_board_ids["boards"], fingerprint
+    )
+    source_rows, source_ids, source_board_ids = load_calendar_source_purge_dependencies(
+        db, field_ids, module_ids, department_board_ids["boards"], fingerprint
+    )
     report_rows, report_blockers, report_ids = load_report_purge_dependencies(
         db, module_ids, record_ids, fingerprint
     )
@@ -156,20 +165,6 @@ def load_purge_dependencies(
     chart_rows, chart_blockers, charts = load_chart_purge_dependencies(
         db, widget_module_ids, target_field, scope.modules, fingerprint
     )
-    board_widget_rows, board_widget_blockers, board_widget_ids = (
-        load_board_widget_purge_dependencies(
-            db, widget_module_ids, target_field, fingerprint, charts
-        )
-    )
-    department_owned_widget_ids = set(department_board_ids["board_widgets"])
-    board_widget_rows = [
-        row for row in board_widget_rows if row.entity_id not in department_owned_widget_ids
-    ]
-    board_widget_blockers = [
-        blocker
-        for blocker in board_widget_blockers
-        if blocker.entity_id not in department_owned_widget_ids
-    ]
     dashboard_rows, dashboard_blockers, dashboard_ids = load_dashboard_purge_dependencies(
         db,
         department_ids,
@@ -308,10 +303,10 @@ def load_purge_dependencies(
         else []
     )
     rows = access_rows + board_rows
-    rows += record_link_rows + report_rows + board_widget_rows + chart_rows
+    rows += record_link_rows + card_rows + source_rows + report_rows + chart_rows
     blockers = board_blockers + record_link_blockers
     blockers += _comms_reference_blockers(db, record_ids, module_ids)
-    blockers += report_blockers + board_widget_blockers + chart_blockers
+    blockers += report_blockers + chart_blockers
     for file in files:
         state = row_state("files", file)
         state.byte_count = file.actual_size or file.expected_size
@@ -428,8 +423,16 @@ def load_purge_dependencies(
                 sorted(
                     set(department_board_ids["boards"])
                     | record_link_board_ids
-                    | set(board_widget_ids["boards"])
+                    | card_board_ids
+                    | source_board_ids
                 )
+            ),
+            **{
+                key: tuple(sorted(set(department_board_ids[key]) | set(card_ids[key])))
+                for key in card_ids
+            },
+            "board_calendar_sources": tuple(
+                sorted(set(department_board_ids["board_calendar_sources"]) | set(source_ids))
             ),
             **record_link_ids,
             "board_record_links": tuple(
@@ -442,12 +445,6 @@ def load_purge_dependencies(
                 sorted(
                     set(department_board_ids["board_post_revision_record_links"])
                     | set(record_link_ids["board_post_revision_record_links"])
-                )
-            ),
-            "board_widgets": tuple(
-                sorted(
-                    set(department_board_ids["board_widgets"])
-                    | set(board_widget_ids["board_widgets"])
                 )
             ),
             **report_ids,

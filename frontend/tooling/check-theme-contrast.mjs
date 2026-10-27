@@ -47,6 +47,12 @@ const PAIRS = [
   // Rows a Test run changed take the action tint on the canvas.
   ["canvas-field-ink", "action-tint", 4.5],
   ["canvas-type-ink", "action-tint", 4.5],
+  // Board Kanban (BR66, BR67): stage names, counts, "Add a card", the WIP
+  // overrun count and "Show 16 more" sit on the board surface.
+  ["foreground", "canvas-background", 4.5],
+  ["muted-foreground", "canvas-background", 4.5],
+  ["warn-text", "canvas-background", 4.5],
+  ["action-text", "canvas-background", 4.5],
   ["data-ink", "card", 4.5],
   ["data-ink", "background", 4.5],
   ["button-ink", "card", 4.5],
@@ -194,6 +200,151 @@ for (const [mode, tokens] of Object.entries(modes)) {
     }
   }
 }
+
+// Calendar tints (Boards): `color-mix(in oklab, <calendar> p%, var(--card))`
+// behind text. The calendar is a department mark or neutral ink-muted.
+// Week blocks: muted time and place on the 22% fill. Month pills and
+// all-day bars: ink on the 32% fill and its 42% hover.
+function toLinear(channel) {
+  return channel <= 0.04045
+    ? channel / 12.92
+    : ((channel + 0.055) / 1.055) ** 2.4;
+}
+function fromLinear(channel) {
+  const value =
+    channel <= 0.0031308
+      ? channel * 12.92
+      : 1.055 * channel ** (1 / 2.4) - 0.055;
+  return Math.min(1, Math.max(0, value));
+}
+function toOklab(hex) {
+  const [r, g, b] = [0, 2, 4].map((i) =>
+    toLinear(parseInt(hex.slice(1 + i, 3 + i), 16) / 255),
+  );
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+function fromOklab([L, A, B]) {
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+  const s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
+  const rgb = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+  return `#${rgb
+    .map((channel) =>
+      Math.round(fromLinear(channel) * 255)
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
+/** `color-mix(in oklab, a <percent>%, b)` for opaque hex colors. */
+function mixOklab(a, percent, b) {
+  const [x, y] = [toOklab(a), toOklab(b)];
+  const t = percent / 100;
+  return fromOklab(x.map((value, index) => value * t + y[index] * (1 - t)));
+}
+
+const CALENDAR_TINTS = [
+  ["muted-foreground", 22],
+  ["foreground", 32],
+  ["foreground", 42],
+];
+const CALENDARS = ["dept-1", "dept-2", "dept-3", "dept-4", "ink-muted"];
+const lowest = new Map();
+for (const [mode, tokens] of Object.entries(modes)) {
+  for (const calendar of CALENDARS)
+    for (const [fg, percent] of CALENDAR_TINTS) {
+      const fill = mixOklab(
+        resolve(tokens, calendar),
+        percent,
+        resolve(tokens, "card"),
+      );
+      const ratio = contrast(resolve(tokens, fg), fill);
+      const pair = `--${fg} on --${calendar} ${percent}% over --card`;
+      const known = lowest.get(`${fg} ${percent}`);
+      if (!known || ratio < known.ratio)
+        lowest.set(`${fg} ${percent}`, { ratio, mode, pair });
+      const ok = ratio >= 4.5;
+      if (!ok) failures += 1;
+      if (!ok || process.argv.includes("--verbose"))
+        console.log(
+          `${ok ? "ok  " : "FAIL"} ${mode.padEnd(16)} ${pair}: ${ratio.toFixed(2)} (needs 4.5)`,
+        );
+    }
+}
+// Board Kanban tints: label chips are ink on a chart series at 22% over the
+// card (BR69); a locked card is muted ink on the sunken fill at 60% over the
+// card; the drop slot's words are action text on the target stage's 65%
+// action tint over the board surface. The Gantt's group summary bar (BR73,
+// BR74) carries the group name in ink on ink-muted at 28% over the card; the
+// name keeps that 28% behind it over the 60% checklist segment, where ink
+// falls under 4.5:1 in three dark looks.
+const KANBAN_TINTS = [
+  ...[1, 2, 3, 4, 5].map((n) => ["foreground", `chart-${n}`, 22, "card"]),
+  ["muted-foreground", "surface-sunken", 60, "card"],
+  ["action-text", "action-tint", 65, "canvas-background"],
+  ["foreground", "ink-muted", 28, "card"],
+];
+for (const [mode, tokens] of Object.entries(modes))
+  for (const [fg, tint, percent, ground] of KANBAN_TINTS) {
+    const fill = mixOklab(
+      resolve(tokens, tint),
+      percent,
+      resolve(tokens, ground),
+    );
+    const ratio = contrast(resolve(tokens, fg), fill);
+    const pair = `--${fg} on --${tint} ${percent}% over --${ground}`;
+    const key = `${fg} ${tint.startsWith("chart-") ? "chart" : `${tint} ${percent}`}`;
+    const known = lowest.get(key);
+    if (!known || ratio < known.ratio) lowest.set(key, { ratio, mode, pair });
+    const ok = ratio >= 4.5;
+    if (!ok) failures += 1;
+    if (!ok || process.argv.includes("--verbose"))
+      console.log(
+        `${ok ? "ok  " : "FAIL"} ${mode.padEnd(16)} ${pair}: ${ratio.toFixed(2)} (needs 4.5)`,
+      );
+  }
+// Gantt bar edges (BR74, WCAG 1.4.11): each bar's 1px edge is 3:1 on the
+// card. A summary or a bar with no label has an ink-muted edge; a label bar
+// has its series, and `--chart-2`, under 3:1 on light cards, mixes 80% with
+// ink (board-gantt-chart.tsx `barEdge`).
+const GANTT_EDGES = [
+  ["ink-muted", null],
+  ["chart-1", null],
+  ["chart-2", "ink"],
+  ["chart-3", null],
+  ["chart-4", null],
+  ["chart-5", null],
+];
+for (const [mode, tokens] of Object.entries(modes))
+  for (const [edge, mix] of GANTT_EDGES) {
+    const color = mix
+      ? mixOklab(resolve(tokens, edge), 80, resolve(tokens, mix))
+      : resolve(tokens, edge);
+    const ratio = contrast(color, resolve(tokens, "card"));
+    const pair = `Gantt edge --${edge}${mix ? ` 80% with --${mix}` : ""} on --card`;
+    const known = lowest.get(pair);
+    if (!known || ratio < known.ratio) lowest.set(pair, { ratio, mode, pair });
+    const ok = ratio >= 3;
+    if (!ok) failures += 1;
+    if (!ok || process.argv.includes("--verbose"))
+      console.log(
+        `${ok ? "ok  " : "FAIL"} ${mode.padEnd(16)} ${pair}: ${ratio.toFixed(2)} (needs 3)`,
+      );
+  }
+if (process.argv.includes("--verbose"))
+  for (const { ratio, mode, pair } of lowest.values())
+    console.log(`lowest ${pair}: ${ratio.toFixed(2)} (${mode})`);
 
 if (failures > 0) {
   console.error(`${failures} theme check(s) failed.`);

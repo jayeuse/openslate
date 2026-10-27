@@ -11,9 +11,11 @@ from uuid6 import uuid7
 from app.core.base_model import utc_now
 from app.systems.access.policy.models import GroupAccess
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
+from app.systems.boards.calendar_source_models import BoardCalendarSource
 from app.systems.boards.department_boards import sync_department_board
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardWidget
+from app.systems.boards.kanban_models import BoardLabel, BoardStage
+from app.systems.boards.models import Board, BoardGroup
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
@@ -30,6 +32,7 @@ from app.systems.platform.files.models import File
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.lifecycle.board_card_dependencies import CARD_ROW_MODELS
 from app.systems.sandbox.lifecycle.design_sync import document_row, synchronize_design
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleError,
@@ -61,12 +64,15 @@ _LOCK_MODELS: tuple[tuple[str, type[Any]], ...] = (
     ("group_access", GroupAccess),
     ("boards", Board),
     ("board_groups", BoardGroup),
-    ("board_widgets", BoardWidget),
     ("board_events", BoardEvent),
     ("board_event_reminders", BoardEventReminder),
     ("board_posts", BoardPost),
     ("board_attachments", BoardAttachment),
     ("board_record_links", BoardRecordLink),
+    *CARD_ROW_MODELS[::-1],
+    ("board_calendar_sources", BoardCalendarSource),
+    ("board_stages", BoardStage),
+    ("board_labels", BoardLabel),
     ("board_files", File),
     ("scheduled_work", ScheduledWork),
     ("in_app_notifications", InAppNotification),
@@ -150,10 +156,31 @@ def _transition_instances(db: Session, plan: LifecyclePlan) -> list[Any]:
     return instances
 
 
-def _delete_department_board_children(db: Session, plan: LifecyclePlan) -> None:
-    """Remove every inventoried child of a Department Board before its sources."""
+def _delete_rows(
+    db: Session, plan: LifecyclePlan, models: tuple[tuple[str, type[Any]], ...]
+) -> None:
+    rows_by_type: dict[str, list[UUID]] = {}
+    for row in plan.rows:
+        rows_by_type.setdefault(row.entity_type, []).append(row.entity_id)
+    for entity_type, model in models:
+        for entity_id in rows_by_type.get(entity_type, ()):
+            instance = db.get(model, entity_id)
+            if instance is None:
+                raise LifecycleUnavailable("Lifecycle operation row is no longer available")
+            db.delete(instance)
+        db.flush()
 
+
+def _delete_department_board_children(db: Session, plan: LifecyclePlan) -> None:
+    """Remove every inventoried child of a Department Board before its sources.
+
+    Other purges remove only the record cards that point at their Records. Every
+    purge removes the calendar sources it lists (its fields, modules or Boards).
+    """
+
+    _delete_rows(db, plan, (("board_calendar_sources", BoardCalendarSource),))
     if plan.target_type is not LifecycleTargetType.DEPARTMENT:
+        _delete_rows(db, plan, CARD_ROW_MODELS)
         return
 
     child_models: tuple[tuple[str, type[Any]], ...] = (
@@ -163,24 +190,16 @@ def _delete_department_board_children(db: Session, plan: LifecyclePlan) -> None:
         ("board_post_revision_record_links", BoardPostRevisionRecordLink),
         ("board_attachments", BoardAttachment),
         ("board_record_links", BoardRecordLink),
+        *CARD_ROW_MODELS,
+        ("board_stages", BoardStage),
+        ("board_labels", BoardLabel),
         ("board_post_revisions", BoardPostRevision),
         ("board_groups", BoardGroup),
-        ("board_widgets", BoardWidget),
         ("board_event_reminders", BoardEventReminder),
         ("board_events", BoardEvent),
         ("board_posts", BoardPost),
     )
-    rows_by_type: dict[str, list[UUID]] = {}
-    for row in plan.rows:
-        rows_by_type.setdefault(row.entity_type, []).append(row.entity_id)
-
-    for entity_type, model in child_models:
-        for entity_id in rows_by_type.get(entity_type, ()):
-            instance = db.get(model, entity_id)
-            if instance is None:
-                raise LifecycleUnavailable("Lifecycle operation row is no longer available")
-            db.delete(instance)
-        db.flush()
+    _delete_rows(db, plan, child_models)
 
 
 def _delete_record_trigger_history(db: Session, plan: LifecyclePlan) -> None:

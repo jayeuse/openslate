@@ -27,8 +27,10 @@ test("each department's Dashboard row opens its home dashboard, read once per mo
   // breadcrumb follow it (BD1).
   await expect(page).toHaveURL(homeUrl);
   const group = page.getByRole("list", { name: "Field service pages" });
+  // The group reads Dashboard, Announcements, then its modules (Boards BR1).
   await expect(group.getByRole("link")).toHaveText([
     "Dashboard",
+    "Announcements",
     "Equipment",
     "Quality checks",
   ]);

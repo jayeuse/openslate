@@ -25,8 +25,11 @@ const userFieldId = "00000000-0000-4000-8000-000000000003";
 const eligibleUserId = "00000000-0000-4000-8000-000000000004";
 const viewId = "00000000-0000-4000-8000-000000000005";
 const departmentId = "00000000-0000-4000-8000-000000000007";
+// Date fields stay in the catalog; only the layouts that placed records by
+// them are gone (BR77).
 const timelineStartFieldId = "00000000-0000-4000-8000-000000000008";
 const timelineEndFieldId = "00000000-0000-4000-8000-000000000009";
+const statusFieldId = "00000000-0000-4000-8000-00000000000a";
 
 const definition: OpenViewQueryDefinition = {
   version: 1,
@@ -46,12 +49,11 @@ const definition: OpenViewQueryDefinition = {
   searchFields: [{ fieldId, expectedType: "text" }],
 };
 
-const timelineDefinition: OpenViewQueryDefinition = {
+const gridDefinition: OpenViewQueryDefinition = {
   ...definition,
   columns: [
     ...definition.columns,
-    { fieldId: timelineStartFieldId, expectedType: "date" },
-    { fieldId: timelineEndFieldId, expectedType: "datetime" },
+    { fieldId: statusFieldId, expectedType: "select" },
   ],
 };
 
@@ -65,21 +67,13 @@ const presentation = {
   cardSize: "compact" as const,
   primaryFieldId: fieldId,
   secondaryFieldId: null,
-  dateFieldId: null,
   groupByFieldId: null,
-  timelineStartFieldId: null,
-  timelineEndFieldId: null,
-  timelineDeadlineFieldId: null,
-  timelineProgressFieldId: null,
-  dateRange: "month" as const,
-  scale: null,
 };
 
-const timelinePresentation = {
+const gridPresentation = {
   ...presentation,
-  layout: "timeline" as const,
-  timelineStartFieldId,
-  timelineEndFieldId,
+  layout: "grid" as const,
+  groupByFieldId: statusFieldId,
 };
 
 const viewResponse = {
@@ -114,14 +108,7 @@ const viewResponse = {
     card_size: "compact",
     primary_field_id: fieldId,
     secondary_field_id: null,
-    date_field_id: null,
     group_by_field_id: null,
-    timeline_start_field_id: null,
-    timeline_end_field_id: null,
-    timeline_deadline_field_id: null,
-    timeline_progress_field_id: null,
-    date_range: "month",
-    scale: null,
   },
   can_edit: true,
   revision: 7,
@@ -130,21 +117,19 @@ const viewResponse = {
   updated_at: "2026-09-23T00:00:00Z",
 };
 
-const timelineViewResponse = {
+const gridViewResponse = {
   ...viewResponse,
   definition: {
     ...viewResponse.definition,
     columns: [
       ...viewResponse.definition.columns,
-      { field_id: timelineStartFieldId, expected_type: "date" },
-      { field_id: timelineEndFieldId, expected_type: "datetime" },
+      { field_id: statusFieldId, expected_type: "select" },
     ],
   },
   presentation: {
     ...viewResponse.presentation,
-    layout: "timeline",
-    timeline_start_field_id: timelineStartFieldId,
-    timeline_end_field_id: timelineEndFieldId,
+    layout: "grid",
+    group_by_field_id: statusFieldId,
   },
 };
 
@@ -376,71 +361,19 @@ test("lists only module-scoped assignable user labels without caching", async ()
   }
 });
 
-test("maps saved-view responses with omitted timeline fields", async () => {
-  const legacyPresentation = Object.fromEntries(
-    Object.entries(viewResponse.presentation).filter(
-      ([key]) => !key.startsWith("timeline_"),
-    ),
+test("a saved view whose layout the page no longer has reads as Table", async () => {
+  const mock = installFetch(() =>
+    Response.json({
+      ...viewResponse,
+      presentation: { ...viewResponse.presentation, layout: "kanban" },
+    }),
   );
-  const legacyPresentationDomain = Object.fromEntries(
-    Object.entries(presentation).filter(([key]) => !key.startsWith("timeline")),
-  );
-  const legacyView = {
-    ...viewResponse,
-    presentation: legacyPresentation,
-  };
-  const mock = installFetch(() => Response.json(legacyView));
   try {
     const savedView = await getOpenViewSavedView(viewId);
     expect(savedView).toMatchObject({ isDefault: true });
     expect(savedView).not.toHaveProperty("audience");
     expect(savedView).not.toHaveProperty("ownerId");
-    expect(savedView.presentation).toEqual(legacyPresentationDomain);
-    expect(savedView.presentation).not.toHaveProperty("timelineStartFieldId");
-    expect(savedView.presentation).not.toHaveProperty("timelineEndFieldId");
-    expect(savedView.presentation).not.toHaveProperty(
-      "timelineDeadlineFieldId",
-    );
-    expect(savedView.presentation).not.toHaveProperty(
-      "timelineProgressFieldId",
-    );
-  } finally {
-    mock.restore();
-  }
-});
-
-test("defaults omitted Timeline presentation fields to null on the wire", async () => {
-  const legacyPresentation = {
-    version: 1 as const,
-    layout: "table" as const,
-    columnFieldIds: [fieldId],
-    pinnedFieldIds: [fieldId],
-    density: "comfortable" as const,
-    wrap: true,
-    cardSize: "compact" as const,
-    primaryFieldId: fieldId,
-    secondaryFieldId: null,
-    dateFieldId: null,
-    groupByFieldId: null,
-    dateRange: "month" as const,
-    scale: null,
-  };
-  const mock = installFetch(() => Response.json(viewResponse));
-  try {
-    await createOpenViewSavedView({
-      moduleId,
-      name: "Legacy layout",
-      definition,
-      presentation: legacyPresentation,
-    });
-    expect(
-      JSON.parse(String(mock.requests[0]?.init?.body)).presentation,
-    ).toMatchObject({
-      timeline_start_field_id: null,
-      timeline_end_field_id: null,
-      timeline_deadline_field_id: null,
-      timeline_progress_field_id: null,
-    });
+    expect(savedView.presentation).toEqual(presentation);
   } finally {
     mock.restore();
   }
@@ -468,14 +401,14 @@ test("requests archived saved views when the restore list includes deleted views
   }
 });
 
-test("sends a backend-valid Timeline view and the module default with explicit revisions", async () => {
+test("sends a backend-valid grouped Grid view and the module default with explicit revisions", async () => {
   const saved: OpenViewSavedView = {
     id: viewId,
     moduleId,
     name: "Urgent queue",
     isDefault: true,
-    definition: timelineDefinition,
-    presentation: timelinePresentation,
+    definition: gridDefinition,
+    presentation: gridPresentation,
     canEdit: true,
     revision: 7,
     isDeleted: false,
@@ -484,25 +417,25 @@ test("sends a backend-valid Timeline view and the module default with explicit r
   };
   const mock = installFetch((_input, init) => {
     if (init?.method === "DELETE") return new Response(null, { status: 204 });
-    return Response.json(timelineViewResponse);
+    return Response.json(gridViewResponse);
   });
   try {
     const createdView = await createOpenViewSavedView({
       moduleId,
       name: saved.name,
       isDefault: true,
-      definition: timelineDefinition,
-      presentation: timelinePresentation,
+      definition: gridDefinition,
+      presentation: gridPresentation,
     });
-    expect(createdView.definition).toEqual(timelineDefinition);
-    expect(createdView.presentation).toMatchObject(timelinePresentation);
+    expect(createdView.definition).toEqual(gridDefinition);
+    expect(createdView.presentation).toMatchObject(gridPresentation);
     await updateOpenViewSavedView({
       id: viewId,
       revision: 7,
       name: "Updated queue",
       isDefault: false,
-      definition: timelineDefinition,
-      presentation: timelinePresentation,
+      definition: gridDefinition,
+      presentation: gridPresentation,
     });
     await archiveOpenViewSavedView({ id: viewId, revision: 7 });
     await restoreOpenViewSavedView({ id: viewId, revision: 8 });
@@ -525,8 +458,7 @@ test("sends a backend-valid Timeline view and the module default with explicit r
           logic: "or",
           columns: [
             { field_id: fieldId, expected_type: "text" },
-            { field_id: timelineStartFieldId, expected_type: "date" },
-            { field_id: timelineEndFieldId, expected_type: "datetime" },
+            { field_id: statusFieldId, expected_type: "select" },
           ],
           filters: [
             {
@@ -545,7 +477,7 @@ test("sends a backend-valid Timeline view and the module default with explicit r
         },
         presentation: {
           version: 1,
-          layout: "timeline",
+          layout: "grid",
           column_field_ids: [fieldId],
           pinned_field_ids: [fieldId],
           density: "comfortable",
@@ -553,14 +485,7 @@ test("sends a backend-valid Timeline view and the module default with explicit r
           card_size: "compact",
           primary_field_id: fieldId,
           secondary_field_id: null,
-          date_field_id: null,
-          timeline_start_field_id: timelineStartFieldId,
-          timeline_end_field_id: timelineEndFieldId,
-          timeline_deadline_field_id: null,
-          timeline_progress_field_id: null,
-          group_by_field_id: null,
-          date_range: "month",
-          scale: null,
+          group_by_field_id: statusFieldId,
         },
       }),
     );

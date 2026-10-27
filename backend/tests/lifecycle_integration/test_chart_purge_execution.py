@@ -9,11 +9,11 @@ from uuid6 import uuid7
 
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
-from app.systems.boards.models import Board, BoardScope, BoardWidget
+from app.systems.boards.models import Board, BoardScope
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.charts.models import Chart
-from app.systems.openview.dashboards.models import Dashboard
+from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.lifecycle.exceptions import LifecyclePreflightError, LifecycleUnavailable
@@ -66,25 +66,13 @@ def _closed_scope(world, target):
                 board_id = board.id
                 db.commit()
             with world.client("admin") as client:
-                response = client.post(
-                    f"/api/boards/{board_id}/widgets",
-                    json={
-                        "revision": 1,
-                        "widget": {
-                            "name": "Owned saved source",
-                            "widget_type": "chart",
-                            "module_id": str(world.module_id),
-                            "chart_id": str(world.charts[0]),
-                            "config": None,
-                            "size": "S",
-                            "pinned": True,
-                        },
-                    },
-                )
-                assert response.status_code == 201, response.text
+                response = world.attachment(client)
+                assert response.status_code == 200, response.text
                 with AuditSession(world.runtime) as db:
                     widget_id = db.scalar(
-                        select(BoardWidget.id).where(BoardWidget.board_id == board_id)
+                        select(DashboardWidget.id).where(
+                            DashboardWidget.dashboard_id == world.dashboard_id
+                        )
                     )
             assert widget_id is not None
         with world.client("admin") as client:
@@ -100,9 +88,6 @@ def _closed_scope(world, target):
                 connection.execute(
                     text("DELETE FROM audit_logs WHERE entity_id = ANY(:ids)"),
                     {"ids": [board_id, widget_id] if widget_id else [board_id]},
-                )
-                connection.execute(
-                    text("DELETE FROM board_widgets WHERE board_id = :id"), {"id": board_id}
                 )
                 connection.execute(text("DELETE FROM boards WHERE id = :id"), {"id": board_id})
 
@@ -136,14 +121,12 @@ def _snapshot(world, board_id=None):
                         column.name: getattr(row, column.name) for column in model.__table__.columns
                     }
                 )
-        values["widgets"] = (
-            [
-                (row.id, row.chart_id, row.size, row.pinned)
-                for row in db.scalars(select(BoardWidget).where(BoardWidget.board_id == board_id))
-            ]
-            if board_id
-            else []
-        )
+        values["widgets"] = [
+            (row.id, row.chart_id, row.column_span, row.row_span)
+            for row in db.scalars(
+                select(DashboardWidget).where(DashboardWidget.dashboard_id == world.dashboard_id)
+            )
+        ]
         values["audit"] = [
             row.id
             for row in db.scalars(
@@ -163,7 +146,7 @@ def test_owned_parent_purge_removes_widgets_then_all_retained_charts_and_sources
     with _closed_scope(world, target) as (identifier, board_id, widget_id):
         plan = _plan(world, target, identifier)
         if widget_id is not None:
-            assert widget_id in plan.scope_ids["board_widgets"]
+            assert widget_id in plan.scope_ids["dashboard_widgets"]
         context = _context(world)
         with _admin_request(world, context) as db:
             execute_lifecycle(db, plan)
@@ -183,7 +166,7 @@ def test_owned_parent_purge_removes_widgets_then_all_retained_charts_and_sources
             if board_id is not None:
                 assert (
                     observer.get(Board, board_id) is None
-                    and observer.get(BoardWidget, widget_id) is None
+                    and observer.get(DashboardWidget, widget_id) is None
                 )
                 assert observer.get(Dashboard, world.dashboard_id) is None
             else:
@@ -238,7 +221,7 @@ def test_busy_scope_refuses_without_partial_write_and_releases_earlier_locks(
         model, row_id = {
             "chart": (Chart, world.charts[0]),
             "module": (Module, world.module_id),
-            "consumer": (BoardWidget, widget_id),
+            "consumer": (DashboardWidget, widget_id),
         }[resource]
         with world.runtime.connect() as holder:
             holder_pid = holder.scalar(text("SELECT pg_backend_pid()"))

@@ -117,12 +117,17 @@ test("the sidebar lists readable departments in Sandbox order with their module 
   ).toHaveCount(0);
   await departments.getByRole("button", { name: "Sales", exact: true }).click();
   const salesPages = nav.getByRole("list", { name: "Sales pages" });
-  // The department's home dashboard comes first, then its module pages (BD1).
+  // The department's home dashboard comes first, then its Announcements
+  // (BR1), then its module pages (BD1).
   await expect(salesPages.getByRole("link")).toHaveText([
     "Dashboard",
+    "Announcements",
     "Contacts",
     "Quotes",
   ]);
+  await expect(
+    salesPages.getByRole("link", { name: "Announcements", exact: true }),
+  ).toHaveAttribute("href", `/boards?department=${ids.sales}`);
   await expect(
     salesPages.getByRole("link", { name: "Dashboard", exact: true }),
   ).toHaveAttribute(

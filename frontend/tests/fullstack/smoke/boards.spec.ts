@@ -9,25 +9,29 @@ test("A department Board post is written and published @boards", async ({
   page,
 }) => {
   const title = `Smoke check: targets ${Date.now()}`;
-  await openWorkspace(page, "/boards?section=posts");
-  await page.getByRole("button", { name: "Switch board" }).click();
-  await page.getByRole("combobox", { name: "Board", exact: true }).click();
-  await page.getByRole("option", { name: "Sales" }).click();
+  await openWorkspace(page, "/boards?section=all");
+  await page
+    .getByRole("list", { name: "All boards" })
+    .getByRole("link", { name: /^Sales/ })
+    .click();
   await expect(
-    page.getByRole("heading", { name: "Sales", level: 1 }),
+    page.getByRole("heading", { name: "Sales announcements", level: 1 }),
   ).toBeVisible();
   await page
-    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("navigation", { name: "Sales announcements views" })
     .getByRole("link", { name: "Posts" })
     .click();
-  await page.getByRole("button", { name: /New post/ }).click();
-  const editor = page.getByRole("dialog");
+  await page
+    .getByRole("button", { name: /New post/ })
+    .first()
+    .click();
+  const editor = page.getByRole("dialog", { name: "New post" });
   await editor.getByLabel("Title").fill(title);
   await editor
     .getByRole("textbox", { name: "Message" })
     .fill("Targets are posted on the shared drive.");
   await editor.getByRole("button", { name: "Save draft" }).click();
-  await editor.getByRole("button", { name: /^Publish/ }).click();
+  await editor.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
 });
 
@@ -78,16 +82,24 @@ test("A Board calendar shows a seeded event in its month @boards", async ({
     page,
     `/boards?board=${encodeURIComponent(sales.id)}&section=calendar`,
   );
-  const calendar = page.getByRole("region", { name: "Board calendar" });
-  await page.getByRole("button", { name: "Agenda" }).click();
   const move = page.getByRole("button", {
     name: steps < 0 ? "Previous month" : "Next month",
+    exact: true,
   });
   for (let step = 0; step < Math.abs(steps); step += 1) await move.click();
   await expect(
-    calendar.getByRole("heading", { name: target, exact: true }),
+    page.getByRole("heading", { name: target, exact: true }),
   ).toBeVisible();
-  await expect(calendar.getByText(seeded.title).first()).toBeVisible();
+  // The month grid is a region named for its month.
+  const calendar = page.getByRole("region", { name: `${target} calendar` });
+  // A one-day seeded event is a pill in its day, or behind that day's
+  // "+n more" when the day is full.
+  await expect(
+    calendar
+      .getByRole("button", { name: `${seeded.title},` })
+      .or(calendar.getByRole("button", { name: / more on / }))
+      .first(),
+  ).toBeVisible();
 });
 
 type SeededAttachment = { id: string; filename: string };
@@ -134,12 +146,10 @@ test("A seeded Board post shows its attachment and downloads it @boards", async 
   const postsPath = `/boards?board=${encodeURIComponent(found.boardId)}&section=posts`;
   await openWorkspace(page, postsPath);
   await page.goto(`${postsPath}&post=${encodeURIComponent(found.postId)}`);
-  const reader = page.getByRole("dialog", { name: found.title });
+  // The post opens in the reading pane beside the list; its files are listed.
+  const reader = page.getByRole("article", { name: found.title, exact: true });
   await expect(reader).toBeVisible();
-  const attachments = reader.getByRole("region", { name: "Post attachments" });
-  await attachments
-    .getByRole("button", { name: "Attachments", exact: true })
-    .click();
+  const attachments = reader.getByRole("region", { name: "Files" });
   const downloadButton = attachments.getByRole("button", {
     name: `Download ${found.file.filename}`,
     exact: true,

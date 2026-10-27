@@ -115,6 +115,36 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Layouts OpenView no longer has (BR77); an old address names them. */
+const REMOVED_LAYOUTS = new Set(["kanban", "calendar", "timeline"]);
+/** Their settings, which an old address may still carry. */
+const REMOVED_PRESENTATION_KEYS = [
+  "dateFieldId",
+  "timelineStartFieldId",
+  "timelineEndFieldId",
+  "timelineDeadlineFieldId",
+  "timelineProgressFieldId",
+  "dateRange",
+  "scale",
+];
+
+/**
+ * An old address with a removed layout opens Table and keeps its other
+ * changes; the removed layouts' own settings are dropped.
+ */
+function currentPresentationChanges(
+  changes: Record<string, unknown>,
+): Record<string, unknown> {
+  const current = Object.fromEntries(
+    Object.entries(changes).filter(
+      ([key]) => !REMOVED_PRESENTATION_KEYS.includes(key),
+    ),
+  );
+  if (typeof current.layout === "string" && REMOVED_LAYOUTS.has(current.layout))
+    current.layout = "table";
+  return current;
+}
+
 function referencesKnownFields(
   definition: OpenViewQueryDefinition,
   presentation: OpenViewPresentation,
@@ -134,12 +164,7 @@ function referencesKnownFields(
     ...presentation.pinnedFieldIds,
     presentation.primaryFieldId,
     presentation.secondaryFieldId,
-    presentation.dateFieldId,
     presentation.groupByFieldId,
-    presentation.timelineStartFieldId,
-    presentation.timelineEndFieldId,
-    presentation.timelineDeadlineFieldId,
-    presentation.timelineProgressFieldId,
   ];
   return presentationIds.every((id) => id == null || types.has(id));
 }
@@ -168,7 +193,7 @@ export function parseTemporaryView(
   });
   const presentation = presentationSchema.safeParse({
     ...base.presentation,
-    ...p,
+    ...currentPresentationChanges(p),
   });
   if (!definition.success || !presentation.success) return null;
   return {

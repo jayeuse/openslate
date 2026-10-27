@@ -49,18 +49,27 @@ from app.systems.access.policy.configuration_router import router as access_poli
 from app.systems.boards.access_preview_router import router as board_access_preview_router
 from app.systems.boards.activity_router import router as board_activity_router
 from app.systems.boards.attachment_router import router as board_attachments_router
+from app.systems.boards.calendar_source_router import router as calendar_sources_router
+from app.systems.boards.card_activity_router import router as board_card_activity_router
+from app.systems.boards.card_batch_router import router as board_card_batch_router
+from app.systems.boards.card_router import router as board_cards_router
+from app.systems.boards.checklist_router import router as board_checklist_router
+from app.systems.boards.cross_board_occurrence_router import (
+    router as board_occurrences_router,
+)
+from app.systems.boards.due_card_router import router as board_due_cards_router
 from app.systems.boards.event_author_router import router as board_event_authors_router
 from app.systems.boards.event_router import router as board_events_router
 from app.systems.boards.group_router import router as board_groups_router
+from app.systems.boards.label_router import router as board_labels_router
 from app.systems.boards.lifecycle_router import router as board_lifecycle_router
-from app.systems.boards.portability_router import router as board_portability_router
 from app.systems.boards.post_author_router import router as board_post_authors_router
 from app.systems.boards.post_manage_state_router import router as board_post_manage_router
 from app.systems.boards.post_revision_router import router as board_post_revisions_router
 from app.systems.boards.post_router import router as board_posts_router
 from app.systems.boards.record_link_router import router as board_record_links_router
 from app.systems.boards.router import router as boards_router
-from app.systems.boards.widget_router import router as board_widgets_router
+from app.systems.boards.stage_router import router as board_stages_router
 from app.systems.comms.jobs.worker import scheduling_worker as comms_scheduler
 from app.systems.comms.realtime.publisher import install_publication
 from app.systems.comms.router import router as comms_router
@@ -372,15 +381,22 @@ def create_app() -> FastAPI:
     app.include_router(record_import_router, prefix="/api")
     app.include_router(record_queries_router, prefix="/api")
     app.include_router(records_router, prefix="/api")
-    app.include_router(board_portability_router, prefix="/api")
     app.include_router(board_access_preview_router, prefix="/api")
     app.include_router(board_activity_router, prefix="/api")
     app.include_router(board_groups_router, prefix="/api")
     app.include_router(board_lifecycle_router, prefix="/api")
-    app.include_router(board_widgets_router, prefix="/api")
     app.include_router(board_event_authors_router, prefix="/api")
+    app.include_router(board_occurrences_router, prefix="/api")
+    app.include_router(board_due_cards_router, prefix="/api")
+    app.include_router(calendar_sources_router, prefix="/api")
     app.include_router(board_events_router, prefix="/api")
     app.include_router(board_record_links_router, prefix="/api")
+    app.include_router(board_stages_router, prefix="/api")
+    app.include_router(board_labels_router, prefix="/api")
+    app.include_router(board_card_batch_router, prefix="/api")
+    app.include_router(board_cards_router, prefix="/api")
+    app.include_router(board_checklist_router, prefix="/api")
+    app.include_router(board_card_activity_router, prefix="/api")
     app.include_router(board_post_authors_router, prefix="/api")
     app.include_router(board_post_manage_router, prefix="/api")
     app.include_router(board_post_revisions_router, prefix="/api")

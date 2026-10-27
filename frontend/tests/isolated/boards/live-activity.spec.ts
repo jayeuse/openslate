@@ -7,7 +7,10 @@ import type {
   BoardToolsPage,
 } from "../../../src/components/systems/boards/adapters/board-tools-api";
 import { ServerBoardActivityDisplay } from "../../../src/components/systems/boards/components/server-backed-board-activity";
-import { isSelectedBoardActivityOpen } from "../../../src/components/systems/boards/components/server-backed-boards";
+import {
+  boardActivitySentence,
+  boardActivityTime,
+} from "../../../src/components/systems/boards/domain/board-settings";
 import {
   boardActivityFailure,
   transitionBoardActivity,
@@ -21,14 +24,21 @@ const activityId = "00000000-0000-4000-8000-000000000003";
 const entry: BoardActivity = {
   id: activityId,
   createdAt: "2026-09-23T04:00:00Z",
-  kind: "widget",
+  kind: "group",
   action: "update",
-  summary: "Board widget updated",
+  summary: "Board groups changed",
   actorLabel: "Team <script>member</script>",
+  group: null,
+};
+const namedEntry: BoardActivity = {
+  ...entry,
+  id: "00000000-0000-4000-8000-000000000004",
+  action: "create",
+  group: { name: "Internal <b>Audit</b>", level: "read", previousLevel: null },
 };
 const page: BoardToolsPage<BoardActivity> = {
-  items: [entry],
-  pagination: { limit: 25, offset: 0, count: 1, total: 26, hasMore: true },
+  items: [entry, namedEntry],
+  pagination: { limit: 25, offset: 0, count: 2, total: 26, hasMore: true },
 };
 const initial: BoardActivityState = {
   key: null,
@@ -38,15 +48,15 @@ const initial: BoardActivityState = {
   error: null,
 };
 
-test("Board Activity renders only sanitized summaries with server totals and a clear empty state", () => {
+test("Board Activity renders sentence rows without ids and names why it is empty", () => {
   const html = renderToStaticMarkup(
     createElement(ServerBoardActivityDisplay, { page }),
   );
-  expect(html).toContain("Board widget updated");
-  expect(html).toContain("Showing 1–1 of 26");
+  expect(html).toContain("Changed groups");
+  expect(html).toContain("Added Internal &lt;b&gt;Audit&lt;/b&gt; · Read");
   expect(html).toContain("Team &lt;script&gt;member&lt;/script&gt;");
   expect(html).not.toContain(activityId);
-  expect(html).not.toContain("sample-board");
+  expect(html).not.toContain("<script>");
 
   const empty = renderToStaticMarkup(
     createElement(ServerBoardActivityDisplay, {
@@ -56,8 +66,85 @@ test("Board Activity renders only sanitized summaries with server totals and a c
       },
     }),
   );
-  expect(empty).toContain("No Board activity yet");
-  expect(empty).not.toContain("Board widget updated");
+  expect(empty).toContain("No activity yet");
+  expect(empty).toContain(
+    "Changes to this board&#x27;s details and groups show here.",
+  );
+  expect(empty).not.toContain("Changed groups");
+});
+
+test("each Activity row reads as a verb with its dot", () => {
+  expect(
+    [
+      { kind: "board" as const, action: "create" as const, group: null },
+      { kind: "board" as const, action: "update" as const, group: null },
+      { kind: "board" as const, action: "delete" as const, group: null },
+      { kind: "group" as const, action: "create" as const, group: null },
+      { kind: "group" as const, action: "delete" as const, group: null },
+    ].map(boardActivitySentence),
+  ).toEqual([
+    { verb: "Created board", tone: "flow" },
+    { verb: "Changed details", tone: "action" },
+    { verb: "Deleted board", tone: "danger" },
+    { verb: "Changed groups", tone: "action" },
+    { verb: "Changed groups", tone: "action" },
+  ]);
+});
+
+test("a group row names the group and its level in the level words", () => {
+  const group = (
+    action: BoardActivity["action"],
+    name: string | null,
+    level: "read" | "write" | "manage" | null,
+    previousLevel: "read" | "write" | "manage" | null,
+  ) =>
+    boardActivitySentence({
+      kind: "group",
+      action,
+      group: { name, level, previousLevel },
+    });
+  expect(group("create", "Internal Audit", "read", null)).toEqual({
+    verb: "Added Internal Audit · Read",
+    tone: "flow",
+  });
+  expect(group("update", "Internal Audit", "manage", "write")).toEqual({
+    verb: "Changed Internal Audit · Post → Manager",
+    tone: "action",
+  });
+  expect(group("delete", "Field Crew", null, "write")).toEqual({
+    verb: "Removed Field Crew",
+    tone: "danger",
+  });
+  // A group deleted since keeps its row without a name.
+  expect(group("create", null, "manage", null).verb).toBe(
+    "Added a removed group · Manager",
+  );
+  expect(group("delete", null, null, "read").verb).toBe(
+    "Removed a removed group",
+  );
+});
+
+test("an Activity row's time drops the zone, and the year within the current year", () => {
+  const utc = { timezone: "UTC", locale: "en-US" };
+  const now = new Date("2026-10-27T12:00:00Z");
+  // This year: no year and no zone; the tooltip keeps the full time.
+  expect(boardActivityTime("2026-09-24T09:30:00Z", utc, now)).toEqual({
+    text: "Sep 24, 9:30 AM",
+    full: "Thursday, September 24, 2026 at 9:30:00 AM UTC",
+  });
+  // An earlier year keeps its year.
+  expect(boardActivityTime("2025-12-30T09:30:00Z", utc, now).text).toBe(
+    "Dec 30, 2025, 9:30 AM",
+  );
+  // The year is the workspace's: New Year's Eve in UTC is already this year
+  // in Manila.
+  expect(
+    boardActivityTime(
+      "2025-12-31T23:30:00Z",
+      { timezone: "Asia/Manila", locale: "en-US" },
+      new Date("2026-01-01T12:00:00Z"),
+    ).text,
+  ).toBe("Jan 1, 7:30 AM");
 });
 
 test("Board Activity clears denied and switched history and ignores stale completion", () => {
@@ -66,7 +153,7 @@ test("Board Activity clears denied and switched history and ignores stale comple
     transitionBoardActivity(initial, { type: "begin", key, sequence: 1 }),
     { type: "resolve", key, sequence: 1, data: page },
   );
-  expect(ready.data?.items[0]?.summary).toBe("Board widget updated");
+  expect(ready.data?.items[0]?.summary).toBe("Board groups changed");
 
   for (const status of [401, 403, 404]) {
     const denied = transitionBoardActivity(ready, {
@@ -125,14 +212,6 @@ test("Board Activity retains same-page last-good only after transient failure", 
     ...boardActivityFailure(new Error("Unexpected raw audit payload")),
   });
   expect(contractFailure.data).toBeNull();
-});
-
-test("Activity selection closes for a different, denied, or refreshed Board", () => {
-  const selection = { boardId, detailSequence: 7 };
-  expect(isSelectedBoardActivityOpen(selection, boardId, 7)).toBe(true);
-  expect(isSelectedBoardActivityOpen(selection, otherBoardId, 8)).toBe(false);
-  expect(isSelectedBoardActivityOpen(selection, null, 8)).toBe(false);
-  expect(isSelectedBoardActivityOpen(selection, boardId, 8)).toBe(false);
 });
 
 test("Activity endpoint denial signals closing while transient failure keeps the panel available", () => {

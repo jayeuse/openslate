@@ -12,6 +12,10 @@ import {
   currentNavigationKey,
   getWorkspaceNavigation,
 } from "../../src/components/workspace-navigation";
+import {
+  announcementsHref,
+  currentAnnouncementsDepartmentId,
+} from "../../src/components/boards-navigation-model";
 
 // docs/specs/openview-department-pages.md, DA2–DA8.
 
@@ -113,4 +117,37 @@ test("a department's Dashboard row opens its home dashboard and marks that depar
   expect(
     currentDashboardDepartmentId("/boards", params("section=dashboards")),
   ).toBeNull();
+});
+
+test("a department's Announcements row opens its board by department and marks that department alone", () => {
+  expect(announcementsHref("sales")).toBe("/boards?department=sales");
+  const params = (search: string) => new URLSearchParams(search);
+  // Every tab of the department's board keeps the row current (BR1, BR41).
+  expect(
+    currentAnnouncementsDepartmentId("/boards", params("department=sales")),
+  ).toBe("sales");
+  expect(
+    currentAnnouncementsDepartmentId(
+      "/boards",
+      params("department=sales&section=calendar&event=e1"),
+    ),
+  ).toBe("sales");
+  // A Board id, Company, All boards and other pages mark no department.
+  expect(
+    currentAnnouncementsDepartmentId("/boards", params("board=b1")),
+  ).toBeNull();
+  expect(currentAnnouncementsDepartmentId("/boards", params(""))).toBeNull();
+  expect(
+    currentAnnouncementsDepartmentId("/boards", params("section=all")),
+  ).toBeNull();
+  expect(
+    currentAnnouncementsDepartmentId(
+      "/openview",
+      params("section=dashboards&department=sales"),
+    ),
+  ).toBeNull();
+  // Each department's board is its own place, so the fill glides to it.
+  expect(
+    currentNavigationKey("/boards", params("department=sales&section=posts")),
+  ).toBe("boards:department:sales");
 });

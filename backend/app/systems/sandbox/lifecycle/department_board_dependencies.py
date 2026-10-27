@@ -8,8 +8,16 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
+from app.systems.boards.calendar_source_models import BoardCalendarSource
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardWidget
+from app.systems.boards.kanban_models import (
+    BoardCard,
+    BoardCardChecklistItem,
+    BoardCardLabel,
+    BoardLabel,
+    BoardStage,
+)
+from app.systems.boards.models import Board, BoardGroup
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
@@ -28,12 +36,17 @@ from app.systems.sandbox.lifecycle.schemas import (
 
 _DIRECT_CHILDREN: tuple[tuple[str, type[Any]], ...] = (
     ("board_groups", BoardGroup),
-    ("board_widgets", BoardWidget),
     ("board_events", BoardEvent),
     ("board_event_reminders", BoardEventReminder),
     ("board_posts", BoardPost),
     ("board_attachments", BoardAttachment),
     ("board_record_links", BoardRecordLink),
+    ("board_stages", BoardStage),
+    ("board_labels", BoardLabel),
+    ("board_cards", BoardCard),
+    ("board_card_labels", BoardCardLabel),
+    ("board_card_checklist_items", BoardCardChecklistItem),
+    ("board_calendar_sources", BoardCalendarSource),
     ("files", File),
 )
 
@@ -42,12 +55,17 @@ _EMPTY_IDS = {
     for key in (
         "boards",
         "board_groups",
-        "board_widgets",
         "board_events",
         "board_event_reminders",
         "board_posts",
         "board_attachments",
         "board_record_links",
+        "board_stages",
+        "board_labels",
+        "board_cards",
+        "board_card_labels",
+        "board_card_checklist_items",
+        "board_calendar_sources",
         "board_files",
         "scheduled_work",
         "in_app_notifications",
@@ -223,12 +241,18 @@ def load_department_board_purge_dependencies(
     ids: dict[str, tuple[UUID, ...]] = {
         "boards": board_ids,
         "board_groups": tuple(row.id for row in children["board_groups"]),
-        "board_widgets": tuple(row.id for row in children["board_widgets"]),
         "board_events": tuple(row.id for row in children["board_events"]),
         "board_event_reminders": reminder_ids,
         "board_posts": post_ids,
         "board_attachments": tuple(row.id for row in children["board_attachments"]),
         "board_record_links": tuple(row.id for row in children["board_record_links"]),
+        **{
+            key: tuple(row.id for row in children[key])
+            for key in (
+                "board_stages", "board_labels", "board_cards", "board_card_labels",
+                "board_card_checklist_items", "board_calendar_sources",
+            )
+        },
         "board_files": tuple(row.id for row in children["files"]),
         "scheduled_work": work_ids,
         "in_app_notifications": tuple(row.id for row in notifications),

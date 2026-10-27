@@ -368,7 +368,8 @@
 }
 
 /* The canvas frame carries steel uprights on both sides. */
-[data-theme="stockroom"] [data-skin="canvas-frame"]::after {
+[data-theme="stockroom"]
+  :is([data-skin="canvas-frame"], [data-skin="board-surface"])::after {
   content: "";
   position: absolute;
   inset: 0;

@@ -3,13 +3,14 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../../src/lib/api";
 import type { BoardPostPage } from "../../../src/components/systems/boards/adapters/board-posts-api";
-import { ServerBoardPostReaderContent } from "../../../src/components/systems/boards/components/server-board-post-feed-display";
+import { BoardPostPane } from "../../../src/components/systems/boards/components/board-post-pane";
 import {
   postFeedQueryForSort,
   postFeedKey,
   postFeedFailure,
   postAuthorChoiceFailure,
   loadPublishedPostFeed,
+  loadPostList,
   initialPostAuthorsState,
   transitionPostAuthors,
   transitionPostFeed,
@@ -305,8 +306,19 @@ test("published post revision renders its validated external links safely", () =
     ],
   };
   const html = renderToStaticMarkup(
-    createElement(ServerBoardPostReaderContent, {
-      post: linked.items[0],
+    createElement(BoardPostPane, {
+      state: { kind: "post", post: linked.items[0] },
+      region: { timezone: "UTC", locale: "en-US" },
+      authorLabel: "Avery",
+      canEdit: false,
+      actions: [],
+      busy: false,
+      onEdit: () => undefined,
+      onAction: () => undefined,
+      onBack: () => undefined,
+      onMenuOpen: () => undefined,
+      focusTitle: false,
+      onTitleFocused: () => undefined,
     }),
   );
   expect(html).toContain("Policy &lt;script&gt;update&lt;/script&gt;");
@@ -446,4 +458,86 @@ test("post feed retains same-board last-good only for transient failure", () => 
     ...postFeedFailure(new Error("Invalid response")),
   });
   expect(contractFailure.data).toBeNull();
+});
+
+test("scheduled and draft lists split one complete draft read before paging", async () => {
+  const working = (id: number, status: "draft" | "scheduled") => ({
+    ...wirePost,
+    id: `00000000-0000-4000-8000-${String(100 + id).padStart(12, "0")}`,
+    title: `${status} ${id}`,
+    status,
+    publish_at: status === "scheduled" ? "2035-01-01T00:00:00Z" : null,
+    post_revision: 2,
+    publication_number: null,
+    published_at: null,
+  });
+  const all = Array.from({ length: 130 }, (_, index) =>
+    working(index, index % 3 === 0 ? "scheduled" : "draft"),
+  );
+  const mock = installFetch((path) => {
+    const query = new URL(path, "https://example.test").searchParams;
+    const offset = Number(query.get("offset"));
+    const limit = Number(query.get("limit"));
+    const items = all.slice(offset, offset + limit);
+    return Response.json({
+      items,
+      pagination: wirePagination({
+        limit,
+        offset,
+        count: items.length,
+        total: all.length,
+        has_more: offset + items.length < all.length,
+      }),
+      board_revision: 4,
+    });
+  });
+  try {
+    const scheduled = await loadPostList(boardId, "scheduled", 25, "plan");
+    expect(mock.paths).toEqual([
+      `/api/boards/${boardId}/posts?view=draft&limit=100&offset=0&sort_by=updated_at&sort_order=desc&search=plan`,
+      `/api/boards/${boardId}/posts?view=draft&limit=100&offset=100&sort_by=updated_at&sort_order=desc&search=plan`,
+    ]);
+    expect(scheduled.pagination).toEqual({
+      limit: 25,
+      offset: 25,
+      count: 19,
+      total: 44,
+      hasMore: false,
+    });
+    expect(scheduled.items[0]?.title).toBe("scheduled 75");
+    expect(scheduled.items.every((post) => post.status === "scheduled")).toBe(
+      true,
+    );
+
+    const drafts = await loadPostList(boardId, "drafts", 0);
+    expect(drafts.pagination).toMatchObject({ count: 25, total: 86 });
+    expect(drafts.items.every((post) => post.status === "draft")).toBe(true);
+  } finally {
+    mock.restore();
+  }
+  expect(
+    postFeedKey(boardId, 0, authorId, "", null, undefined, "drafts"),
+  ).not.toBe(
+    postFeedKey(boardId, 0, authorId, "", null, undefined, "scheduled"),
+  );
+});
+
+test("the archived list is one server page of the archive view", async () => {
+  const archived = {
+    ...wirePost,
+    status: "archived",
+    post_revision: 3,
+    publication_number: null,
+    published_at: null,
+  };
+  const mock = installFetch(() => Response.json(wirePage([archived])));
+  try {
+    const loaded = await loadPostList(boardId, "archived", 0);
+    expect(loaded.items[0]?.status).toBe("archived");
+    expect(mock.paths).toEqual([
+      `/api/boards/${boardId}/posts?view=archive&limit=25&offset=0&sort_by=updated_at&sort_order=desc`,
+    ]);
+  } finally {
+    mock.restore();
+  }
 });

@@ -1,10 +1,10 @@
-import type { Page } from "./test";
+import type { Locator, Page } from "./test";
 import { isEventStream, signedInAs } from "./test";
 import { wirePagination } from "../../helpers/pagination";
 import { wireBoard } from "../../helpers/wire";
 
 // The Board shell's API, mocked for HTTP specs: an authorized administrator,
-// two Boards, and empty posts, events and widgets. A spec registers its own
+// two Boards, and empty posts and events. A spec registers its own
 // narrower `page.route` after this one; later routes win.
 
 export const boardId = "00000000-0000-4000-8000-000000000011";
@@ -132,12 +132,6 @@ export async function installBoardApi(
         items: [],
         pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
       });
-    if (path === `/api/boards/${boardId}/widgets`)
-      return reply(200, {
-        items: [],
-        pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
-        board_revision: 1,
-      });
     if (path === `/api/boards/${boardId}`)
       return isAllowed()
         ? reply(200, visibleBoard)
@@ -145,4 +139,244 @@ export async function installBoardApi(
     if (path === `/api/boards/${otherBoard.id}`) return reply(200, otherBoard);
     return reply(404, { detail: "Not available in this route test" });
   });
+}
+
+// A Board directory for the sidebar, header and All boards journeys: the
+// Company board, the Sales department's board, two active project boards and
+// an archived one, with Sales readable in the sidebar (one module). Install it
+// after `installBoardApi`; it answers every Board read itself.
+export const directoryIds = {
+  company: "00000000-0000-4000-8000-000000000031",
+  sales: "00000000-0000-4000-8000-000000000032",
+  fleet: "00000000-0000-4000-8000-000000000033",
+  renewal: "00000000-0000-4000-8000-000000000034",
+  launch: "00000000-0000-4000-8000-000000000035",
+  salesDepartment: "00000000-0000-4000-8000-0000000d0001",
+  financeDepartment: "00000000-0000-4000-8000-0000000d0002",
+  contacts: "00000000-0000-4000-8000-0000000d0011",
+};
+
+const stamp = "2026-09-23T00:00:00Z";
+const directoryBoard = (
+  id: string,
+  name: string,
+  scope: "company" | "department" | "project",
+  level: "read" | "write" | "manage",
+  extra: { department_id?: string; status?: "active" | "archived" } = {},
+) =>
+  wireBoard({
+    id,
+    name,
+    description: null,
+    scope,
+    level,
+    created_at: stamp,
+    updated_at: stamp,
+    ...extra,
+  });
+
+export function directoryBoards(level: "read" | "write" | "manage") {
+  return [
+    directoryBoard(directoryIds.company, "Company", "company", level),
+    directoryBoard(directoryIds.sales, "Sales", "department", level, {
+      department_id: directoryIds.salesDepartment,
+    }),
+    directoryBoard(directoryIds.fleet, "Fleet Reliability", "project", level),
+    directoryBoard(directoryIds.renewal, "Customer Renewal", "project", level),
+    directoryBoard(directoryIds.launch, "Spring Launch", "project", level, {
+      status: "archived",
+    }),
+  ];
+}
+
+export type BoardDirectory = {
+  boards: ReturnType<typeof directoryBoards>;
+  /** Published posts per Board id. */
+  posts: Record<string, unknown[]>;
+  /** Every `/api/boards` list query, as its search string. */
+  listQueries: string[];
+  /** Every Board detail read, by id. */
+  detailReads: string[];
+};
+
+export async function installBoardDirectory(
+  page: Page,
+  options: {
+    level?: "read" | "write" | "manage";
+    posts?: Record<string, unknown[]>;
+  } = {},
+): Promise<BoardDirectory> {
+  const level = options.level ?? "manage";
+  const directory: BoardDirectory = {
+    boards: directoryBoards(level),
+    posts: options.posts ?? {},
+    listQueries: [],
+    detailReads: [],
+  };
+  const access = {
+    read: readerAccess,
+    write: authorAccess,
+    manage: managerAccess,
+  }[level];
+  const listPage = (items: unknown[], limit: number, offset = 0) => ({
+    items,
+    pagination: wirePagination({
+      limit,
+      offset,
+      count: items.length,
+      total: items.length,
+    }),
+  });
+  await page.route(
+    (url) => url.pathname === "/api/departments",
+    (route) =>
+      route.fulfill({
+        json: listPage(
+          [
+            ["Sales", directoryIds.salesDepartment],
+            ["Finance", directoryIds.financeDepartment],
+          ].map(([name, id]) => ({
+            id,
+            department_name: name,
+            created_at: stamp,
+            updated_at: stamp,
+            deleted_at: null,
+            is_deleted: false,
+            performed_by: null,
+          })),
+          100,
+        ),
+      }),
+  );
+  await page.route(
+    (url) => url.pathname === "/api/views/data-sources",
+    (route) =>
+      route.fulfill({
+        json: listPage(
+          [
+            {
+              id: directoryIds.contacts,
+              name: "Contacts",
+              department_id: directoryIds.salesDepartment,
+              title_field_id: null,
+            },
+          ],
+          100,
+        ),
+      }),
+  );
+  await page.route("**/api/boards**", (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+    if (path === "/api/boards" && route.request().method() === "GET") {
+      directory.listQueries.push(url.search);
+      const status = url.searchParams.get("status") ?? "active";
+      const scope = url.searchParams.get("scope");
+      const department = url.searchParams.get("department_id");
+      const search = url.searchParams.get("search")?.toLowerCase();
+      const limit = Number(url.searchParams.get("limit") ?? 25);
+      const items = directory.boards
+        .filter((entry) => status === "all" || entry.status === status)
+        .filter((entry) => !scope || entry.scope === scope)
+        .filter((entry) => !department || entry.department_id === department)
+        .filter((entry) => !search || entry.name.toLowerCase().includes(search))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return route.fulfill({ json: listPage(items, limit) });
+    }
+    const match = /^\/api\/boards\/([^/]+)(\/.*)?$/.exec(path);
+    const entry = directory.boards.find(
+      (candidate) => candidate.id === match?.[1],
+    );
+    if (!match || !entry) return route.fallback();
+    const rest = match[2] ?? "";
+    if (rest === "") {
+      directory.detailReads.push(entry.id);
+      return route.fulfill({ json: entry });
+    }
+    if (rest === "/my-access") return route.fulfill({ json: access });
+    if (rest === "/posts") {
+      const view = url.searchParams.get("view");
+      const items =
+        view === "published" ? (directory.posts[entry.id] ?? []) : [];
+      return route.fulfill({
+        json: { ...listPage(items, 25), board_revision: 1 },
+      });
+    }
+    if (rest === "/events/occurrences")
+      return route.fulfill({
+        json: { ...listPage([], 100), board_revision: 1 },
+      });
+    if (rest === "/post-authors" || rest === "/files")
+      return route.fulfill({ json: listPage([], 25) });
+    return route.fallback();
+  });
+  return directory;
+}
+
+// One published post on the `installBoardApi` board, with its reading pane's
+// reads (files and linked records, both empty). Install it after that API.
+export const publishedPostId = "00000000-0000-4000-8000-00000000d701";
+export const publishedPost = {
+  id: publishedPostId,
+  board_id: boardId,
+  author_id: userId,
+  title: "Use the new loading bay",
+  body: "The east gate closes on Monday.",
+  links: [],
+  status: "published",
+  publish_at: "2026-09-23T00:00:00Z",
+  expires_at: null,
+  pinned: false,
+  post_revision: null,
+  board_revision: 1,
+  publication_number: 1,
+  published_at: "2026-09-23T00:00:00Z",
+  edited: false,
+  created_at: "2026-09-23T00:00:00Z",
+  updated_at: "2026-09-23T00:00:00Z",
+};
+
+export async function installPublishedPost(page: Page) {
+  const prefix = `/api/boards/${boardId}/posts`;
+  // Files and linked records answer with the flat page their reads expect.
+  const noItems = (limit: number) => ({
+    items: [],
+    limit,
+    offset: 0,
+    has_more: false,
+  });
+  await page.route(`**${prefix}**`, (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === prefix)
+      return route.fulfill({
+        json: {
+          items:
+            url.searchParams.get("view") === "published" ? [publishedPost] : [],
+          pagination: wirePagination({
+            limit: 25,
+            count: url.searchParams.get("view") === "published" ? 1 : 0,
+            total: url.searchParams.get("view") === "published" ? 1 : 0,
+          }),
+          board_revision: 1,
+        },
+      });
+    if (url.pathname === `${prefix}/${publishedPostId}`)
+      return route.fulfill({ json: publishedPost });
+    if (url.pathname === `${prefix}/${publishedPostId}/attachments`)
+      return route.fulfill({ json: noItems(25) });
+    if (url.pathname === `${prefix}/${publishedPostId}/record-links`)
+      return route.fulfill({ json: noItems(20) });
+    return route.fallback();
+  });
+}
+
+/** Opens the published post and waits for its pane's file and link reads. */
+export async function openPublishedPost(page: Page, row: Locator) {
+  const read = (part: string) =>
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        `/api/boards/${boardId}/posts/${publishedPostId}/${part}`,
+    );
+  await Promise.all([read("attachments"), read("record-links"), row.click()]);
 }

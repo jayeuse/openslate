@@ -2483,11 +2483,53 @@
         "title": "BoardAccessPreview",
         "type": "object"
       },
+      "BoardActivityGroup": {
+        "description": "``name`` is null once the group is deleted; ``level`` is null for a removal and\n``previous_level`` is null for an add.",
+        "properties": {
+          "level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "previous_level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "level",
+          "previous_level"
+        ],
+        "title": "BoardActivityGroup",
+        "type": "object"
+      },
       "BoardActivityKind": {
         "enum": [
           "board",
-          "group",
-          "widget"
+          "group"
         ],
         "title": "BoardActivityKind",
         "type": "string"
@@ -2533,6 +2575,16 @@
             "title": "Created At",
             "type": "string"
           },
+          "group": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoardActivityGroup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -2552,7 +2604,8 @@
           "kind",
           "action",
           "summary",
-          "actor_label"
+          "actor_label",
+          "group"
         ],
         "title": "BoardActivityResponse",
         "type": "object"
@@ -2728,6 +2781,117 @@
         "title": "BoardListResponse",
         "type": "object"
       },
+      "BoardOccurrenceState": {
+        "description": "One requested or readable Board; a refused Board says only ``unavailable``.",
+        "properties": {
+          "board_id": {
+            "format": "uuid",
+            "title": "Board Id",
+            "type": "string"
+          },
+          "next_occurrence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OccurrenceSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BoardOccurrenceStatus"
+          }
+        },
+        "required": [
+          "board_id",
+          "revision",
+          "status",
+          "next_occurrence"
+        ],
+        "title": "BoardOccurrenceState",
+        "type": "object"
+      },
+      "BoardOccurrenceStatus": {
+        "enum": [
+          "ok",
+          "candidate_limit",
+          "occurrence_limit",
+          "unavailable"
+        ],
+        "title": "BoardOccurrenceStatus",
+        "type": "string"
+      },
+      "BoardPerson": {
+        "description": "Only person card fields that every member, guests included, sees.",
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "avatar_url"
+        ],
+        "title": "BoardPerson",
+        "type": "object"
+      },
+      "BoardPersonList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BoardPerson"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "BoardPersonList",
+        "type": "object"
+      },
+      "BoardPersonSort": {
+        "enum": [
+          "display_name"
+        ],
+        "title": "BoardPersonSort",
+        "type": "string"
+      },
       "BoardResponse": {
         "description": "A Board and the reader's own level on it.",
         "properties": {
@@ -2892,411 +3056,6 @@
         "title": "BoardUpdate",
         "type": "object"
       },
-      "BoardWidgetConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "aggregation": {
-            "default": "count",
-            "enum": [
-              "count",
-              "sum",
-              "average",
-              "min",
-              "max",
-              "distinct"
-            ],
-            "title": "Aggregation",
-            "type": "string"
-          },
-          "fields": {
-            "items": {
-              "$ref": "#/components/schemas/app__systems__sandbox__records__query_schemas__FieldReference"
-            },
-            "maxItems": 24,
-            "title": "Fields",
-            "type": "array"
-          },
-          "filters": {
-            "items": {
-              "$ref": "#/components/schemas/QueryFilter"
-            },
-            "maxItems": 8,
-            "title": "Filters",
-            "type": "array"
-          },
-          "logic": {
-            "default": "and",
-            "enum": [
-              "and",
-              "or"
-            ],
-            "title": "Logic",
-            "type": "string"
-          },
-          "metric": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/app__systems__sandbox__records__query_schemas__FieldReference"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "refresh": {
-            "default": "manual",
-            "enum": [
-              "manual",
-              "one-minute",
-              "five-minutes"
-            ],
-            "title": "Refresh",
-            "type": "string"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          },
-          "visualization": {
-            "default": "bar",
-            "enum": [
-              "bar",
-              "line",
-              "pie"
-            ],
-            "title": "Visualization",
-            "type": "string"
-          }
-        },
-        "title": "BoardWidgetConfig",
-        "type": "object"
-      },
-      "BoardWidgetListResponse": {
-        "properties": {
-          "board_revision": {
-            "title": "Board Revision",
-            "type": "integer"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/BoardWidgetResponse"
-            },
-            "maxItems": 12,
-            "title": "Items",
-            "type": "array"
-          },
-          "pagination": {
-            "$ref": "#/components/schemas/PaginationMetadata"
-          }
-        },
-        "required": [
-          "items",
-          "pagination",
-          "board_revision"
-        ],
-        "title": "BoardWidgetListResponse",
-        "type": "object"
-      },
-      "BoardWidgetMutationResponse": {
-        "properties": {
-          "board_revision": {
-            "title": "Board Revision",
-            "type": "integer"
-          },
-          "widget": {
-            "$ref": "#/components/schemas/BoardWidgetResponse"
-          }
-        },
-        "required": [
-          "widget",
-          "board_revision"
-        ],
-        "title": "BoardWidgetMutationResponse",
-        "type": "object"
-      },
-      "BoardWidgetOrder": {
-        "additionalProperties": false,
-        "properties": {
-          "revision": {
-            "minimum": 1.0,
-            "title": "Revision",
-            "type": "integer"
-          },
-          "widget_ids": {
-            "items": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "maxItems": 12,
-            "minItems": 1,
-            "title": "Widget Ids",
-            "type": "array"
-          }
-        },
-        "required": [
-          "revision",
-          "widget_ids"
-        ],
-        "title": "BoardWidgetOrder",
-        "type": "object"
-      },
-      "BoardWidgetOrderResponse": {
-        "properties": {
-          "board_revision": {
-            "title": "Board Revision",
-            "type": "integer"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/BoardWidgetResponse"
-            },
-            "maxItems": 12,
-            "title": "Items",
-            "type": "array"
-          }
-        },
-        "required": [
-          "items",
-          "board_revision"
-        ],
-        "title": "BoardWidgetOrderResponse",
-        "type": "object"
-      },
-      "BoardWidgetResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "board_id": {
-            "format": "uuid",
-            "title": "Board Id",
-            "type": "string"
-          },
-          "chart_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Chart Id"
-          },
-          "config": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BoardWidgetConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardChartConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardAggregateConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardRecordsConfig"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Config"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "module_id": {
-            "format": "uuid",
-            "title": "Module Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "pinned": {
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "position": {
-            "exclusiveMaximum": 12.0,
-            "minimum": 0.0,
-            "title": "Position",
-            "type": "integer"
-          },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          },
-          "widget_type": {
-            "enum": [
-              "summary",
-              "workload",
-              "records",
-              "chart"
-            ],
-            "title": "Widget Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "board_id",
-          "name",
-          "widget_type",
-          "module_id",
-          "position",
-          "size",
-          "pinned",
-          "chart_id",
-          "config",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "BoardWidgetResponse",
-        "type": "object"
-      },
-      "BoardWidgetRevision": {
-        "additionalProperties": false,
-        "properties": {
-          "revision": {
-            "minimum": 1.0,
-            "title": "Revision",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "revision"
-        ],
-        "title": "BoardWidgetRevision",
-        "type": "object"
-      },
-      "BoardWidgetSort": {
-        "enum": [
-          "position",
-          "created_at"
-        ],
-        "title": "BoardWidgetSort",
-        "type": "string"
-      },
-      "BoardWidgetSpec": {
-        "additionalProperties": false,
-        "properties": {
-          "chart_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Chart Id"
-          },
-          "config": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BoardWidgetConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardChartConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardAggregateConfig"
-              },
-              {
-                "$ref": "#/components/schemas/DashboardRecordsConfig"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Config"
-          },
-          "module_id": {
-            "format": "uuid",
-            "title": "Module Id",
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 80,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "pinned": {
-            "default": false,
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "size": {
-            "default": "M",
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "widget_type": {
-            "enum": [
-              "summary",
-              "workload",
-              "records",
-              "chart"
-            ],
-            "title": "Widget Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "widget_type",
-          "module_id"
-        ],
-        "title": "BoardWidgetSpec",
-        "type": "object"
-      },
-      "BoardWidgetWrite": {
-        "additionalProperties": false,
-        "properties": {
-          "revision": {
-            "minimum": 1.0,
-            "title": "Revision",
-            "type": "integer"
-          },
-          "widget": {
-            "$ref": "#/components/schemas/BoardWidgetSpec"
-          }
-        },
-        "required": [
-          "revision",
-          "widget"
-        ],
-        "title": "BoardWidgetWrite",
-        "type": "object"
-      },
       "BootstrapResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3332,6 +3091,99 @@
           "conversations"
         ],
         "title": "BootstrapResponse",
+        "type": "object"
+      },
+      "CalendarSourceCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "date_field_id": {
+            "format": "uuid",
+            "title": "Date Field Id",
+            "type": "string"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "module_id",
+          "date_field_id"
+        ],
+        "title": "CalendarSourceCreate",
+        "type": "object"
+      },
+      "CalendarSourceList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CalendarSourceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CalendarSourceList",
+        "type": "object"
+      },
+      "CalendarSourceResponse": {
+        "properties": {
+          "date_field_id": {
+            "format": "uuid",
+            "title": "Date Field Id",
+            "type": "string"
+          },
+          "department_id": {
+            "format": "uuid",
+            "title": "Department Id",
+            "type": "string"
+          },
+          "field_name": {
+            "title": "Field Name",
+            "type": "string"
+          },
+          "field_type": {
+            "enum": [
+              "date",
+              "datetime"
+            ],
+            "title": "Field Type",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          },
+          "module_name": {
+            "title": "Module Name",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "module_id",
+          "module_name",
+          "department_id",
+          "date_field_id",
+          "field_name",
+          "field_type",
+          "position"
+        ],
+        "title": "CalendarSourceResponse",
         "type": "object"
       },
       "CapabilityCheck": {
@@ -3555,6 +3407,794 @@
         ],
         "title": "CapabilityPreview",
         "type": "object"
+      },
+      "CardActivityKind": {
+        "enum": [
+          "card",
+          "label",
+          "checklist"
+        ],
+        "title": "CardActivityKind",
+        "type": "string"
+      },
+      "CardActivityListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CardActivityResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "CardActivityListResponse",
+        "type": "object"
+      },
+      "CardActivityResponse": {
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/AuditAction"
+          },
+          "actor_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Label"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CardActivityKind"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "kind",
+          "action",
+          "summary",
+          "actor_label"
+        ],
+        "title": "CardActivityResponse",
+        "type": "object"
+      },
+      "CardActivitySort": {
+        "enum": [
+          "created_at"
+        ],
+        "title": "CardActivitySort",
+        "type": "string"
+      },
+      "CardBatchDates": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CardDates"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CardBatchDates",
+        "type": "object"
+      },
+      "CardBatchDatesResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "forbidden": "#/components/schemas/CardDatesForbidden",
+                  "stale": "#/components/schemas/CardDatesStale",
+                  "updated": "#/components/schemas/CardDatesUpdated"
+                },
+                "propertyName": "status"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CardDatesUpdated"
+                },
+                {
+                  "$ref": "#/components/schemas/CardDatesStale"
+                },
+                {
+                  "$ref": "#/components/schemas/CardDatesForbidden"
+                }
+              ]
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "CardBatchDatesResponse",
+        "type": "object"
+      },
+      "CardDates": {
+        "additionalProperties": false,
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "start_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start On"
+          }
+        },
+        "required": [
+          "card_id",
+          "revision",
+          "start_on",
+          "due_on"
+        ],
+        "title": "CardDates",
+        "type": "object"
+      },
+      "CardDatesForbidden": {
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "forbidden",
+            "default": "forbidden",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id"
+        ],
+        "title": "CardDatesForbidden",
+        "type": "object"
+      },
+      "CardDatesStale": {
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "stale",
+            "default": "stale",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id"
+        ],
+        "title": "CardDatesStale",
+        "type": "object"
+      },
+      "CardDatesUpdated": {
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "start_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start On"
+          },
+          "status": {
+            "const": "updated",
+            "default": "updated",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id",
+          "revision",
+          "start_on",
+          "due_on"
+        ],
+        "title": "CardDatesUpdated",
+        "type": "object"
+      },
+      "CardDetail": {
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "board_id": {
+            "format": "uuid",
+            "title": "Board Id",
+            "type": "string"
+          },
+          "checklist": {
+            "$ref": "#/components/schemas/ChecklistProgress"
+          },
+          "checklist_items": {
+            "items": {
+              "$ref": "#/components/schemas/ChecklistItemResponse"
+            },
+            "title": "Checklist Items",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "objective",
+              "record"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Label Ids",
+            "type": "array"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "record": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordSummary"
+              },
+              {
+                "$ref": "#/components/schemas/LockedRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "stage_id": {
+            "format": "uuid",
+            "title": "Stage Id",
+            "type": "string"
+          },
+          "start_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start On"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "board_id",
+          "stage_id",
+          "kind",
+          "title",
+          "rank",
+          "assignee_id",
+          "start_on",
+          "due_on",
+          "label_ids",
+          "checklist",
+          "archived_at",
+          "revision",
+          "created_at",
+          "updated_at",
+          "record",
+          "description",
+          "checklist_items"
+        ],
+        "title": "CardDetail",
+        "type": "object"
+      },
+      "CardListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CardResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "CardListResponse",
+        "type": "object"
+      },
+      "CardPatch": {
+        "additionalProperties": false,
+        "description": "Fields, a move (stage and position) and dates in one revisioned change.",
+        "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
+          },
+          "label_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label Ids"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "stage_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Id"
+          },
+          "start_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start On"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "CardPatch",
+        "type": "object"
+      },
+      "CardRecordField": {
+        "properties": {
+          "field_id": {
+            "format": "uuid",
+            "title": "Field Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field_id",
+          "name",
+          "value"
+        ],
+        "title": "CardRecordField",
+        "type": "object"
+      },
+      "CardResponse": {
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "board_id": {
+            "format": "uuid",
+            "title": "Board Id",
+            "type": "string"
+          },
+          "checklist": {
+            "$ref": "#/components/schemas/ChecklistProgress"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "objective",
+              "record"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Label Ids",
+            "type": "array"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "record": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordSummary"
+              },
+              {
+                "$ref": "#/components/schemas/LockedRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "stage_id": {
+            "format": "uuid",
+            "title": "Stage Id",
+            "type": "string"
+          },
+          "start_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start On"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "board_id",
+          "stage_id",
+          "kind",
+          "title",
+          "rank",
+          "assignee_id",
+          "start_on",
+          "due_on",
+          "label_ids",
+          "checklist",
+          "archived_at",
+          "revision",
+          "created_at",
+          "updated_at",
+          "record"
+        ],
+        "title": "CardResponse",
+        "type": "object"
+      },
+      "CardRestore": {
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "stage_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Id"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "CardRestore",
+        "type": "object"
+      },
+      "CardSort": {
+        "enum": [
+          "rank",
+          "due_on",
+          "start_on",
+          "created_at"
+        ],
+        "title": "CardSort",
+        "type": "string"
       },
       "Category": {
         "additionalProperties": false,
@@ -4151,10 +4791,7 @@
             "type": "string"
           },
           "kind": {
-            "enum": [
-              "board",
-              "dashboard"
-            ],
+            "const": "dashboard",
             "title": "Kind",
             "type": "string"
           },
@@ -4221,6 +4858,155 @@
           "kind"
         ],
         "title": "CheckboxFieldConfig",
+        "type": "object"
+      },
+      "ChecklistCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ChecklistCreate",
+        "type": "object"
+      },
+      "ChecklistItemResponse": {
+        "properties": {
+          "card_id": {
+            "format": "uuid",
+            "title": "Card Id",
+            "type": "string"
+          },
+          "done": {
+            "title": "Done",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "card_id",
+          "text",
+          "done",
+          "position",
+          "revision"
+        ],
+        "title": "ChecklistItemResponse",
+        "type": "object"
+      },
+      "ChecklistItems": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChecklistItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ChecklistItems",
+        "type": "object"
+      },
+      "ChecklistOrder": {
+        "additionalProperties": false,
+        "properties": {
+          "item_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Item Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "item_ids"
+        ],
+        "title": "ChecklistOrder",
+        "type": "object"
+      },
+      "ChecklistPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "done": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "ChecklistPatch",
+        "type": "object"
+      },
+      "ChecklistProgress": {
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "done",
+          "total"
+        ],
+        "title": "ChecklistProgress",
         "type": "object"
       },
       "CommsExportCreate": {
@@ -5395,6 +6181,75 @@
           "decision"
         ],
         "title": "CreationCheck",
+        "type": "object"
+      },
+      "CrossBoardOccurrenceListResponse": {
+        "properties": {
+          "boards": {
+            "items": {
+              "$ref": "#/components/schemas/BoardOccurrenceState"
+            },
+            "title": "Boards",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CrossBoardOccurrenceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination",
+          "boards"
+        ],
+        "title": "CrossBoardOccurrenceListResponse",
+        "type": "object"
+      },
+      "CrossBoardOccurrenceResponse": {
+        "properties": {
+          "board": {
+            "$ref": "#/components/schemas/OccurrenceBoard"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "event": {
+            "$ref": "#/components/schemas/EventResponse"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event_id",
+          "start",
+          "end",
+          "date",
+          "event",
+          "board"
+        ],
+        "title": "CrossBoardOccurrenceResponse",
         "type": "object"
       },
       "CurrentOrganizationResponse": {
@@ -7049,6 +7904,179 @@
           "issues"
         ],
         "title": "DocumentResponse",
+        "type": "object"
+      },
+      "DueCardListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DueCardResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "DueCardListResponse",
+        "type": "object"
+      },
+      "DueCardResponse": {
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "board": {
+            "$ref": "#/components/schemas/OccurrenceBoard"
+          },
+          "board_id": {
+            "format": "uuid",
+            "title": "Board Id",
+            "type": "string"
+          },
+          "checklist": {
+            "$ref": "#/components/schemas/ChecklistProgress"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "objective",
+              "record"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Label Ids",
+            "type": "array"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "record": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordSummary"
+              },
+              {
+                "$ref": "#/components/schemas/LockedRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "stage_id": {
+            "format": "uuid",
+            "title": "Stage Id",
+            "type": "string"
+          },
+          "start_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start On"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "board_id",
+          "stage_id",
+          "kind",
+          "title",
+          "rank",
+          "assignee_id",
+          "start_on",
+          "due_on",
+          "label_ids",
+          "checklist",
+          "archived_at",
+          "revision",
+          "created_at",
+          "updated_at",
+          "record",
+          "board"
+        ],
+        "title": "DueCardResponse",
         "type": "object"
       },
       "DuplicateRequest": {
@@ -9908,6 +10936,155 @@
         "type": "string"
       },
       "JsonValue": {},
+      "LabelCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "enum": [
+              "chart-1",
+              "chart-2",
+              "chart-3",
+              "chart-4",
+              "chart-5"
+            ],
+            "title": "Color",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "color"
+        ],
+        "title": "LabelCreate",
+        "type": "object"
+      },
+      "LabelListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LabelResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "LabelListResponse",
+        "type": "object"
+      },
+      "LabelPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "enum": [
+                  "chart-1",
+                  "chart-2",
+                  "chart-3",
+                  "chart-4",
+                  "chart-5"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "LabelPatch",
+        "type": "object"
+      },
+      "LabelResponse": {
+        "properties": {
+          "board_id": {
+            "format": "uuid",
+            "title": "Board Id",
+            "type": "string"
+          },
+          "color": {
+            "enum": [
+              "chart-1",
+              "chart-2",
+              "chart-3",
+              "chart-4",
+              "chart-5"
+            ],
+            "title": "Color",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "board_id",
+          "name",
+          "color",
+          "position",
+          "revision"
+        ],
+        "title": "LabelResponse",
+        "type": "object"
+      },
+      "LabelSort": {
+        "enum": [
+          "position",
+          "name"
+        ],
+        "title": "LabelSort",
+        "type": "string"
+      },
       "LayoutBox": {
         "additionalProperties": false,
         "properties": {
@@ -10808,6 +11985,19 @@
           "link_previews"
         ],
         "title": "LiveMessage",
+        "type": "object"
+      },
+      "LockedRecord": {
+        "description": "A Record the viewer cannot read, or one in the trash: nothing about it.",
+        "properties": {
+          "locked": {
+            "const": true,
+            "default": true,
+            "title": "Locked",
+            "type": "boolean"
+          }
+        },
+        "title": "LockedRecord",
         "type": "object"
       },
       "LoginRequest": {
@@ -11738,6 +12928,139 @@
         "title": "NumberFieldConfig",
         "type": "object"
       },
+      "ObjectiveCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
+          },
+          "kind": {
+            "const": "objective",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Label Ids",
+            "type": "array"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "stage_id": {
+            "format": "uuid",
+            "title": "Stage Id",
+            "type": "string"
+          },
+          "start_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start On"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "stage_id",
+          "title"
+        ],
+        "title": "ObjectiveCreate",
+        "type": "object"
+      },
+      "OccurrenceBoard": {
+        "properties": {
+          "department_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/BoardScope"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "scope",
+          "department_id"
+        ],
+        "title": "OccurrenceBoard",
+        "type": "object"
+      },
       "OccurrenceListResponse": {
         "properties": {
           "board_revision": {
@@ -11751,6 +13074,16 @@
             "title": "Items",
             "type": "array"
           },
+          "next_occurrence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OccurrenceSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pagination": {
             "$ref": "#/components/schemas/PaginationMetadata"
           }
@@ -11758,7 +13091,8 @@
         "required": [
           "items",
           "pagination",
-          "board_revision"
+          "board_revision",
+          "next_occurrence"
         ],
         "title": "OccurrenceListResponse",
         "type": "object"
@@ -11798,6 +13132,40 @@
           "event"
         ],
         "title": "OccurrenceResponse",
+        "type": "object"
+      },
+      "OccurrenceSummary": {
+        "description": "One occurrence without its event: the calendar's next-event pointer.",
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event_id",
+          "start",
+          "end",
+          "date"
+        ],
+        "title": "OccurrenceSummary",
         "type": "object"
       },
       "OrganizationChannel": {
@@ -12514,109 +13882,6 @@
         "title": "PinRequest",
         "type": "object"
       },
-      "PortableAggregateConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "pinned": {
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "query": {
-            "$ref": "#/components/schemas/PortableGroupedQuery"
-          },
-          "refresh": {
-            "const": "manual",
-            "title": "Refresh",
-            "type": "string"
-          },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "size",
-          "refresh",
-          "pinned",
-          "query"
-        ],
-        "title": "PortableAggregateConfig",
-        "type": "object"
-      },
-      "PortableBoardBundle": {
-        "additionalProperties": false,
-        "properties": {
-          "configuration": {
-            "$ref": "#/components/schemas/PortableBoardConfiguration"
-          },
-          "kind": {
-            "const": "openslate-board",
-            "title": "Kind",
-            "type": "string"
-          },
-          "version": {
-            "const": 3,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "kind",
-          "version",
-          "configuration"
-        ],
-        "title": "PortableBoardBundle",
-        "type": "object"
-      },
-      "PortableBoardConfiguration": {
-        "additionalProperties": false,
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "maxLength": 240,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "name": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "widgets": {
-            "items": {
-              "$ref": "#/components/schemas/PortableWidget"
-            },
-            "maxItems": 12,
-            "title": "Widgets",
-            "type": "array"
-          }
-        },
-        "required": [
-          "name",
-          "description",
-          "widgets"
-        ],
-        "title": "PortableBoardConfiguration",
-        "type": "object"
-      },
       "PortableBundle": {
         "additionalProperties": false,
         "properties": {
@@ -12670,476 +13935,6 @@
           "schemaVersion"
         ],
         "title": "PortableBundle",
-        "type": "object"
-      },
-      "PortableChartConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "chart_type": {
-            "enum": [
-              "bar",
-              "line",
-              "pie"
-            ],
-            "title": "Chart Type",
-            "type": "string"
-          },
-          "pinned": {
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "query": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableGroupedQuery"
-              },
-              {
-                "$ref": "#/components/schemas/PortableDateQuery"
-              }
-            ],
-            "title": "Query"
-          },
-          "refresh": {
-            "const": "manual",
-            "title": "Refresh",
-            "type": "string"
-          },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "size",
-          "refresh",
-          "pinned",
-          "chart_type",
-          "query"
-        ],
-        "title": "PortableChartConfig",
-        "type": "object"
-      },
-      "PortableDateQuery": {
-        "additionalProperties": false,
-        "properties": {
-          "aggregation": {
-            "default": "count",
-            "enum": [
-              "count",
-              "sum",
-              "average",
-              "min",
-              "max",
-              "distinct"
-            ],
-            "title": "Aggregation",
-            "type": "string"
-          },
-          "bucket": {
-            "default": "day",
-            "enum": [
-              "day",
-              "week",
-              "month",
-              "quarter",
-              "year"
-            ],
-            "title": "Bucket",
-            "type": "string"
-          },
-          "date_field": {
-            "$ref": "#/components/schemas/PortableFieldReference"
-          },
-          "definition": {
-            "$ref": "#/components/schemas/PortableQueryDefinition"
-          },
-          "from_date": {
-            "format": "date",
-            "title": "From Date",
-            "type": "string"
-          },
-          "measure": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableFieldReference"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "mode": {
-            "const": "date_series",
-            "title": "Mode",
-            "type": "string"
-          },
-          "to_date": {
-            "format": "date",
-            "title": "To Date",
-            "type": "string"
-          }
-        },
-        "required": [
-          "definition",
-          "mode",
-          "date_field",
-          "from_date",
-          "to_date"
-        ],
-        "title": "PortableDateQuery",
-        "type": "object"
-      },
-      "PortableFieldReference": {
-        "additionalProperties": false,
-        "properties": {
-          "expected_type": {
-            "$ref": "#/components/schemas/FieldType"
-          },
-          "name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "expected_type"
-        ],
-        "title": "PortableFieldReference",
-        "type": "object"
-      },
-      "PortableGroupedQuery": {
-        "additionalProperties": false,
-        "properties": {
-          "aggregation": {
-            "default": "count",
-            "enum": [
-              "count",
-              "sum",
-              "average",
-              "min",
-              "max",
-              "distinct"
-            ],
-            "title": "Aggregation",
-            "type": "string"
-          },
-          "date_field": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableFieldReference"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "definition": {
-            "$ref": "#/components/schemas/PortableQueryDefinition"
-          },
-          "dimension": {
-            "$ref": "#/components/schemas/PortableFieldReference"
-          },
-          "from_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "From Date"
-          },
-          "measure": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableFieldReference"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "mode": {
-            "const": "groups",
-            "title": "Mode",
-            "type": "string"
-          },
-          "to_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "To Date"
-          }
-        },
-        "required": [
-          "definition",
-          "mode",
-          "dimension"
-        ],
-        "title": "PortableGroupedQuery",
-        "type": "object"
-      },
-      "PortableQueryDefinition": {
-        "additionalProperties": false,
-        "properties": {
-          "columns": {
-            "items": {
-              "$ref": "#/components/schemas/PortableFieldReference"
-            },
-            "maxItems": 100,
-            "title": "Columns",
-            "type": "array"
-          },
-          "deleted": {
-            "default": "exclude",
-            "enum": [
-              "exclude",
-              "include",
-              "only"
-            ],
-            "title": "Deleted",
-            "type": "string"
-          },
-          "filters": {
-            "items": {
-              "$ref": "#/components/schemas/PortableQueryFilter"
-            },
-            "maxItems": 10,
-            "title": "Filters",
-            "type": "array"
-          },
-          "logic": {
-            "default": "and",
-            "enum": [
-              "and",
-              "or"
-            ],
-            "title": "Logic",
-            "type": "string"
-          },
-          "search": {
-            "anyOf": [
-              {
-                "maxLength": 240,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Search"
-          },
-          "search_fields": {
-            "items": {
-              "$ref": "#/components/schemas/PortableFieldReference"
-            },
-            "maxItems": 100,
-            "title": "Search Fields",
-            "type": "array"
-          },
-          "sort": {
-            "items": {
-              "$ref": "#/components/schemas/PortableQuerySort"
-            },
-            "maxItems": 3,
-            "title": "Sort",
-            "type": "array"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "title": "PortableQueryDefinition",
-        "type": "object"
-      },
-      "PortableQueryFilter": {
-        "additionalProperties": false,
-        "properties": {
-          "expected_type": {
-            "$ref": "#/components/schemas/FieldType"
-          },
-          "name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "operator": {
-            "enum": [
-              "eq",
-              "neq",
-              "lt",
-              "lte",
-              "gt",
-              "gte",
-              "contains",
-              "prefix",
-              "suffix",
-              "in",
-              "empty",
-              "not_empty",
-              "blank",
-              "not_blank"
-            ],
-            "title": "Operator",
-            "type": "string"
-          },
-          "value": {
-            "anyOf": [
-              {
-                "maxLength": 4000,
-                "type": "string"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "integer"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "items": {
-                  "anyOf": [
-                    {
-                      "maxLength": 4000,
-                      "type": "string"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ]
-                },
-                "maxItems": 100,
-                "minItems": 1,
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value"
-          }
-        },
-        "required": [
-          "name",
-          "expected_type",
-          "operator"
-        ],
-        "title": "PortableQueryFilter",
-        "type": "object"
-      },
-      "PortableQuerySort": {
-        "additionalProperties": false,
-        "properties": {
-          "direction": {
-            "default": "asc",
-            "enum": [
-              "asc",
-              "desc"
-            ],
-            "title": "Direction",
-            "type": "string"
-          },
-          "expected_type": {
-            "$ref": "#/components/schemas/FieldType"
-          },
-          "name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "expected_type"
-        ],
-        "title": "PortableQuerySort",
-        "type": "object"
-      },
-      "PortableRecordsConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "pinned": {
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "query": {
-            "$ref": "#/components/schemas/PortableRecordsQuery"
-          },
-          "refresh": {
-            "const": "manual",
-            "title": "Refresh",
-            "type": "string"
-          },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "size",
-          "refresh",
-          "pinned",
-          "query"
-        ],
-        "title": "PortableRecordsConfig",
-        "type": "object"
-      },
-      "PortableRecordsQuery": {
-        "additionalProperties": false,
-        "properties": {
-          "definition": {
-            "$ref": "#/components/schemas/PortableQueryDefinition"
-          }
-        },
-        "required": [
-          "definition"
-        ],
-        "title": "PortableRecordsQuery",
         "type": "object"
       },
       "PortableVersion": {
@@ -13201,175 +13996,6 @@
           "date"
         ],
         "title": "PortableVersion",
-        "type": "object"
-      },
-      "PortableWidget": {
-        "additionalProperties": false,
-        "properties": {
-          "config": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableWidgetConfig"
-              },
-              {
-                "$ref": "#/components/schemas/PortableChartConfig"
-              },
-              {
-                "$ref": "#/components/schemas/PortableAggregateConfig"
-              },
-              {
-                "$ref": "#/components/schemas/PortableRecordsConfig"
-              }
-            ],
-            "title": "Config"
-          },
-          "name": {
-            "maxLength": 80,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "source": {
-            "$ref": "#/components/schemas/PortableWidgetSource"
-          },
-          "widget_type": {
-            "enum": [
-              "summary",
-              "workload",
-              "records",
-              "chart"
-            ],
-            "title": "Widget Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "widget_type",
-          "source",
-          "config"
-        ],
-        "title": "PortableWidget",
-        "type": "object"
-      },
-      "PortableWidgetConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "aggregation": {
-            "default": "count",
-            "enum": [
-              "count",
-              "sum",
-              "average",
-              "min",
-              "max",
-              "distinct"
-            ],
-            "title": "Aggregation",
-            "type": "string"
-          },
-          "fields": {
-            "items": {
-              "$ref": "#/components/schemas/PortableFieldReference"
-            },
-            "maxItems": 24,
-            "title": "Fields",
-            "type": "array"
-          },
-          "filters": {
-            "items": {
-              "$ref": "#/components/schemas/PortableQueryFilter"
-            },
-            "maxItems": 8,
-            "title": "Filters",
-            "type": "array"
-          },
-          "logic": {
-            "enum": [
-              "and",
-              "or"
-            ],
-            "title": "Logic",
-            "type": "string"
-          },
-          "metric": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortableFieldReference"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "pinned": {
-            "title": "Pinned",
-            "type": "boolean"
-          },
-          "refresh": {
-            "enum": [
-              "manual",
-              "one-minute",
-              "five-minutes"
-            ],
-            "title": "Refresh",
-            "type": "string"
-          },
-          "size": {
-            "enum": [
-              "S",
-              "M",
-              "L",
-              "half",
-              "full"
-            ],
-            "title": "Size",
-            "type": "string"
-          },
-          "visualization": {
-            "enum": [
-              "bar",
-              "line",
-              "pie"
-            ],
-            "title": "Visualization",
-            "type": "string"
-          }
-        },
-        "required": [
-          "fields",
-          "filters",
-          "logic",
-          "metric",
-          "visualization",
-          "size",
-          "refresh",
-          "pinned"
-        ],
-        "title": "PortableWidgetConfig",
-        "type": "object"
-      },
-      "PortableWidgetSource": {
-        "additionalProperties": false,
-        "properties": {
-          "department_name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Department Name",
-            "type": "string"
-          },
-          "module_name": {
-            "maxLength": 150,
-            "minLength": 1,
-            "title": "Module Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "department_name",
-          "module_name"
-        ],
-        "title": "PortableWidgetSource",
         "type": "object"
       },
       "PostAuthorChoice": {
@@ -14219,7 +14845,12 @@
         "type": "object"
       },
       "PreviewUser": {
+        "description": "``display_name`` is the chooser label; it falls back to the username.",
         "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -14232,7 +14863,8 @@
         },
         "required": [
           "id",
-          "username"
+          "username",
+          "display_name"
         ],
         "title": "PreviewUser",
         "type": "object"
@@ -14259,6 +14891,7 @@
       },
       "PreviewUserSort": {
         "enum": [
+          "display_name",
           "username"
         ],
         "title": "PreviewUserSort",
@@ -15365,6 +15998,90 @@
         "title": "RecordBatchUpdated",
         "type": "object"
       },
+      "RecordCardCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
+          },
+          "kind": {
+            "const": "record",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Label Ids",
+            "type": "array"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "record_id": {
+            "format": "uuid",
+            "title": "Record Id",
+            "type": "string"
+          },
+          "stage_id": {
+            "format": "uuid",
+            "title": "Stage Id",
+            "type": "string"
+          },
+          "start_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start On"
+          }
+        },
+        "required": [
+          "kind",
+          "stage_id",
+          "record_id"
+        ],
+        "title": "RecordCardCreate",
+        "type": "object"
+      },
       "RecordCreate": {
         "additionalProperties": false,
         "properties": {
@@ -15977,6 +16694,62 @@
         ],
         "title": "RecordSortField",
         "type": "string"
+      },
+      "RecordSummary": {
+        "description": "What a reader of the Record sees on the card, computed for this viewer now.",
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/CardRecordField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "locked": {
+            "const": false,
+            "default": false,
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          },
+          "module_name": {
+            "title": "Module Name",
+            "type": "string"
+          },
+          "record_id": {
+            "format": "uuid",
+            "title": "Record Id",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CardRecordField"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "record_id",
+          "module_id",
+          "module_name",
+          "title",
+          "fields",
+          "status"
+        ],
+        "title": "RecordSummary",
+        "type": "object"
       },
       "RecordUpdate": {
         "additionalProperties": false,
@@ -17350,6 +18123,21 @@
           "body"
         ],
         "title": "RevisionResponse",
+        "type": "object"
+      },
+      "RevisionWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "RevisionWrite",
         "type": "object"
       },
       "RunnerResponse": {
@@ -19713,6 +20501,334 @@
           "desc"
         ],
         "title": "SortOrder",
+        "type": "string"
+      },
+      "StageArchive": {
+        "additionalProperties": false,
+        "properties": {
+          "cards": {
+            "enum": [
+              "move",
+              "archive"
+            ],
+            "title": "Cards",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "target_stage_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Stage Id"
+          }
+        },
+        "required": [
+          "revision",
+          "cards"
+        ],
+        "title": "StageArchive",
+        "type": "object"
+      },
+      "StageCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "card_sort": {
+            "default": "manual",
+            "enum": [
+              "manual",
+              "due",
+              "newest",
+              "title"
+            ],
+            "title": "Card Sort",
+            "type": "string"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "enum": [
+                  "chart-1",
+                  "chart-2",
+                  "chart-3",
+                  "chart-4",
+                  "chart-5"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "wip_limit": {
+            "anyOf": [
+              {
+                "maximum": 999.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wip Limit"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "StageCreate",
+        "type": "object"
+      },
+      "StageItems": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StageResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "StageItems",
+        "type": "object"
+      },
+      "StageListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StageResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StageListResponse",
+        "type": "object"
+      },
+      "StageOrder": {
+        "additionalProperties": false,
+        "properties": {
+          "stage_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Stage Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stage_ids"
+        ],
+        "title": "StageOrder",
+        "type": "object"
+      },
+      "StagePatch": {
+        "additionalProperties": false,
+        "properties": {
+          "card_sort": {
+            "anyOf": [
+              {
+                "enum": [
+                  "manual",
+                  "due",
+                  "newest",
+                  "title"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Sort"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "enum": [
+                  "chart-1",
+                  "chart-2",
+                  "chart-3",
+                  "chart-4",
+                  "chart-5"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "wip_limit": {
+            "anyOf": [
+              {
+                "maximum": 999.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wip Limit"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "StagePatch",
+        "type": "object"
+      },
+      "StageResponse": {
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "board_id": {
+            "format": "uuid",
+            "title": "Board Id",
+            "type": "string"
+          },
+          "card_count": {
+            "title": "Card Count",
+            "type": "integer"
+          },
+          "card_sort": {
+            "enum": [
+              "manual",
+              "due",
+              "newest",
+              "title"
+            ],
+            "title": "Card Sort",
+            "type": "string"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "enum": [
+                  "chart-1",
+                  "chart-2",
+                  "chart-3",
+                  "chart-4",
+                  "chart-5"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "wip_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wip Limit"
+          }
+        },
+        "required": [
+          "id",
+          "board_id",
+          "name",
+          "color",
+          "wip_limit",
+          "card_sort",
+          "position",
+          "revision",
+          "archived_at",
+          "card_count"
+        ],
+        "title": "StageResponse",
+        "type": "object"
+      },
+      "StageSort": {
+        "enum": [
+          "position"
+        ],
+        "title": "StageSort",
         "type": "string"
       },
       "StandardListResponse_Annotated_Union_LiveMessage__Tombstone___FieldInfo_annotation_NoneType__required_True__discriminator__state____": {
@@ -22430,29 +23546,6 @@
             "title": "Column Field Ids",
             "type": "array"
           },
-          "date_field_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Date Field Id"
-          },
-          "date_range": {
-            "default": "month",
-            "enum": [
-              "week",
-              "month",
-              "quarter",
-              "year"
-            ],
-            "title": "Date Range",
-            "type": "string"
-          },
           "density": {
             "default": "comfortable",
             "enum": [
@@ -22479,9 +23572,6 @@
             "enum": [
               "table",
               "grid",
-              "kanban",
-              "calendar",
-              "timeline",
               "gallery"
             ],
             "title": "Layout",
@@ -22508,21 +23598,6 @@
             ],
             "title": "Primary Field Id"
           },
-          "scale": {
-            "anyOf": [
-              {
-                "enum": [
-                  "month",
-                  "list"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scale"
-          },
           "secondary_field_id": {
             "anyOf": [
               {
@@ -22534,54 +23609,6 @@
               }
             ],
             "title": "Secondary Field Id"
-          },
-          "timeline_deadline_field_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Timeline Deadline Field Id"
-          },
-          "timeline_end_field_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Timeline End Field Id"
-          },
-          "timeline_progress_field_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Timeline Progress Field Id"
-          },
-          "timeline_start_field_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Timeline Start Field Id"
           },
           "version": {
             "const": 1,
@@ -28107,10 +29134,65 @@
         ]
       }
     },
-    "/api/boards/import": {
-      "post": {
-        "operationId": "import_board_configuration_api_boards_import_post",
+    "/api/boards/cards/due": {
+      "get": {
+        "description": "Sorted by due date, Board, rank and ID; one page of the merged list.",
+        "operationId": "list_my_due_cards_api_boards_cards_due_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "assignee",
+            "required": false,
+            "schema": {
+              "const": "me",
+              "default": "me",
+              "title": "Assignee",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
           {
             "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
             "in": "header",
@@ -28130,24 +29212,12 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/octet-stream": {
-              "schema": {
-                "contentMediaType": "application/octet-stream",
-                "title": "Raw",
-                "type": "string"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
-          "201": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BoardResponse"
+                  "$ref": "#/components/schemas/DueCardListResponse"
                 }
               }
             },
@@ -28169,7 +29239,138 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Import Board Configuration",
+        "summary": "List My Due Cards",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
+    "/api/boards/occurrences": {
+      "get": {
+        "operationId": "list_cross_board_occurrences_api_boards_occurrences_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window_start",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Window Start",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window_end",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Window End",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "board_id",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "title": "Board Id",
+              "type": "array"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrossBoardOccurrenceListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Cross Board Occurrences",
         "tags": [
           "boards"
         ]
@@ -28609,9 +29810,9 @@
         ]
       }
     },
-    "/api/boards/{board_id}/configuration": {
+    "/api/boards/{board_id}/calendar-sources": {
       "get": {
-        "operationId": "export_board_configuration_api_boards__board_id__configuration_get",
+        "operationId": "list_board_calendar_sources_api_boards__board_id__calendar_sources_get",
         "parameters": [
           {
             "in": "path",
@@ -28647,7 +29848,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PortableBoardBundle"
+                  "$ref": "#/components/schemas/CalendarSourceList"
                 }
               }
             },
@@ -28669,15 +29870,13 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Export Board Configuration",
+        "summary": "List Board Calendar Sources",
         "tags": [
-          "boards"
+          "calendar sources"
         ]
-      }
-    },
-    "/api/boards/{board_id}/duplicate": {
+      },
       "post": {
-        "operationId": "duplicate_board_api_boards__board_id__duplicate_post",
+        "operationId": "add_board_calendar_source_api_boards__board_id__calendar_sources_post",
         "parameters": [
           {
             "in": "path",
@@ -28708,12 +29907,22 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarSourceCreate"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "201": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BoardResponse"
+                  "$ref": "#/components/schemas/CalendarSourceResponse"
                 }
               }
             },
@@ -28735,9 +29944,1932 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Duplicate Board",
+        "summary": "Add Board Calendar Source",
         "tags": [
-          "boards"
+          "calendar sources"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/calendar-sources/{source_id}": {
+      "delete": {
+        "operationId": "remove_board_calendar_source_api_boards__board_id__calendar_sources__source_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Board Calendar Source",
+        "tags": [
+          "calendar sources"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards": {
+      "get": {
+        "description": "Cards for the Kanban (one stage at a time) and the Gantt and calendar (by due).",
+        "operationId": "list_board_cards_api_boards__board_id__cards_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CardSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stage_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stage Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignee",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "const": "me",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assignee"
+            }
+          },
+          {
+            "in": "query",
+            "name": "label",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Label",
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "due_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Due From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "due_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Due To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Archived",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Board Cards",
+        "tags": [
+          "board kanban"
+        ]
+      },
+      "post": {
+        "operationId": "create_board_card_api_boards__board_id__cards_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "discriminator": {
+                  "mapping": {
+                    "objective": "#/components/schemas/ObjectiveCreate",
+                    "record": "#/components/schemas/RecordCardCreate"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ObjectiveCreate"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RecordCardCreate"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Board Card",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/batch-dates": {
+      "post": {
+        "operationId": "batch_card_dates_api_boards__board_id__cards_batch_dates_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CardBatchDates"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardBatchDatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Batch Card Dates",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}": {
+      "get": {
+        "operationId": "read_board_card_api_boards__board_id__cards__card_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Board Card",
+        "tags": [
+          "board kanban"
+        ]
+      },
+      "patch": {
+        "description": "Change fields, move (stage and position) and set dates in one revisioned save.",
+        "operationId": "update_board_card_api_boards__board_id__cards__card_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CardPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Board Card",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/activity": {
+      "get": {
+        "operationId": "list_card_activity_api_boards__board_id__cards__card_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CardActivitySort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "desc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardActivityListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Card Activity",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/archive": {
+      "post": {
+        "operationId": "archive_board_card_api_boards__board_id__cards__card_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevisionWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Archive Board Card",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/attachments": {
+      "get": {
+        "description": "An objective card's files; an archived card keeps and lists them.",
+        "operationId": "list_card_attachments_api_boards__board_id__cards__card_id__attachments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Card Attachments",
+        "tags": [
+          "board attachments"
+        ]
+      },
+      "post": {
+        "description": "``content_revision`` is the card's revision; any writer of the Board may attach.",
+        "operationId": "attach_card_file_api_boards__board_id__cards__card_id__attachments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachmentLink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Attach Card File",
+        "tags": [
+          "board attachments"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/attachments/{file_id}": {
+      "delete": {
+        "operationId": "detach_card_file_api_boards__board_id__cards__card_id__attachments__file_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "File Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachmentRevision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Detach Card File",
+        "tags": [
+          "board attachments"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/attachments/{file_id}/content": {
+      "get": {
+        "operationId": "download_card_file_api_boards__board_id__cards__card_id__attachments__file_id__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "File Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Download Card File",
+        "tags": [
+          "board attachments"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/checklist": {
+      "post": {
+        "operationId": "add_checklist_item_api_boards__board_id__cards__card_id__checklist_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChecklistCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChecklistItemResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Checklist Item",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/checklist/order": {
+      "put": {
+        "description": "Set the order of every item; the list must name each item exactly once.",
+        "operationId": "order_checklist_api_boards__board_id__cards__card_id__checklist_order_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChecklistOrder"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChecklistItems"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Order Checklist",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/record-links": {
+      "get": {
+        "description": "An objective card's linked records; a record card refuses (409).",
+        "operationId": "list_card_record_links_api_boards__board_id__cards__card_id__record_links_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordLinkList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Card Record Links",
+        "tags": [
+          "board record links"
+        ]
+      },
+      "post": {
+        "description": "``content_revision`` is the card's revision; any writer of the Board may link.",
+        "operationId": "create_card_record_link_api_boards__board_id__cards__card_id__record_links_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordLinkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordLinkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Card Record Link",
+        "tags": [
+          "board record links"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/record-links/{link_id}": {
+      "delete": {
+        "operationId": "delete_card_record_link_api_boards__board_id__cards__card_id__record_links__link_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordLinkRevision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Card Record Link",
+        "tags": [
+          "board record links"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/cards/{card_id}/restore": {
+      "post": {
+        "description": "Restore to the end of its stage, or of ``stage_id`` when its stage is archived.",
+        "operationId": "restore_board_card_api_boards__board_id__cards__card_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CardRestore"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Board Card",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/checklist/{item_id}": {
+      "delete": {
+        "operationId": "delete_checklist_item_api_boards__board_id__checklist__item_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevisionWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Checklist Item",
+        "tags": [
+          "board kanban"
+        ]
+      },
+      "patch": {
+        "operationId": "update_checklist_item_api_boards__board_id__checklist__item_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChecklistPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChecklistItemResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Checklist Item",
+        "tags": [
+          "board kanban"
         ]
       }
     },
@@ -31274,6 +34406,384 @@
         ]
       }
     },
+    "/api/boards/{board_id}/labels": {
+      "get": {
+        "operationId": "list_board_labels_api_boards__board_id__labels_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/LabelSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Board Labels",
+        "tags": [
+          "board kanban"
+        ]
+      },
+      "post": {
+        "operationId": "create_board_label_api_boards__board_id__labels_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Board Label",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/labels/{label_id}": {
+      "delete": {
+        "description": "Remove the label and take it off every card that carries it.",
+        "operationId": "delete_board_label_api_boards__board_id__labels__label_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "label_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Label Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevisionWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Board Label",
+        "tags": [
+          "board kanban"
+        ]
+      },
+      "patch": {
+        "operationId": "update_board_label_api_boards__board_id__labels__label_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "label_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Label Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Board Label",
+        "tags": [
+          "board kanban"
+        ]
+      }
+    },
     "/api/boards/{board_id}/my-access": {
       "get": {
         "description": "Return only the authenticated actor's level on the Board.",
@@ -31336,6 +34846,147 @@
           }
         ],
         "summary": "My Board Access",
+        "tags": [
+          "boards"
+        ]
+      }
+    },
+    "/api/boards/{board_id}/people": {
+      "get": {
+        "description": "The active people who can read the Board now, for its writers and managers.",
+        "operationId": "list_board_people_api_boards__board_id__people_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Board Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/BoardPersonSort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sort By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deleted",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DeletedFilter",
+              "default": "exclude"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardPersonList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Board People",
         "tags": [
           "boards"
         ]
@@ -33695,9 +37346,10 @@
         ]
       }
     },
-    "/api/boards/{board_id}/widgets": {
+    "/api/boards/{board_id}/stages": {
       "get": {
-        "operationId": "list_board_widgets_api_boards__board_id__widgets_get",
+        "description": "Active stages in board order, each with its active card count.",
+        "operationId": "list_board_stages_api_boards__board_id__stages_get",
         "parameters": [
           {
             "in": "path",
@@ -33714,7 +37366,7 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 25,
+              "default": 20,
               "maximum": 100,
               "minimum": 1,
               "title": "Limit",
@@ -33739,7 +37391,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/BoardWidgetSort"
+                  "$ref": "#/components/schemas/StageSort"
                 },
                 {
                   "type": "null"
@@ -33807,7 +37459,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BoardWidgetListResponse"
+                  "$ref": "#/components/schemas/StageListResponse"
                 }
               }
             },
@@ -33829,13 +37481,13 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Board Widgets",
+        "summary": "List Board Stages",
         "tags": [
-          "boards"
+          "board kanban"
         ]
       },
       "post": {
-        "operationId": "create_board_widget_api_boards__board_id__widgets_post",
+        "operationId": "create_board_stage_api_boards__board_id__stages_post",
         "parameters": [
           {
             "in": "path",
@@ -33870,7 +37522,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BoardWidgetWrite"
+                "$ref": "#/components/schemas/StageCreate"
               }
             }
           },
@@ -33881,7 +37533,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BoardWidgetMutationResponse"
+                  "$ref": "#/components/schemas/StageResponse"
                 }
               }
             },
@@ -33903,15 +37555,16 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Create Board Widget",
+        "summary": "Create Board Stage",
         "tags": [
-          "boards"
+          "board kanban"
         ]
       }
     },
-    "/api/boards/{board_id}/widgets/order": {
+    "/api/boards/{board_id}/stages/order": {
       "put": {
-        "operationId": "reorder_board_widgets_api_boards__board_id__widgets_order_put",
+        "description": "Set the order of every active stage; the list must name each exactly once.",
+        "operationId": "order_board_stages_api_boards__board_id__stages_order_put",
         "parameters": [
           {
             "in": "path",
@@ -33946,7 +37599,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BoardWidgetOrder"
+                "$ref": "#/components/schemas/StageOrder"
               }
             }
           },
@@ -33957,7 +37610,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BoardWidgetOrderResponse"
+                  "$ref": "#/components/schemas/StageItems"
                 }
               }
             },
@@ -33979,92 +37632,15 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Reorder Board Widgets",
+        "summary": "Order Board Stages",
         "tags": [
-          "boards"
+          "board kanban"
         ]
       }
     },
-    "/api/boards/{board_id}/widgets/{widget_id}": {
-      "delete": {
-        "operationId": "delete_board_widget_api_boards__board_id__widgets__widget_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Board Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "widget_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Widget Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "revision",
-            "required": true,
-            "schema": {
-              "minimum": 1,
-              "title": "Revision",
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-            "in": "header",
-            "name": "X-Org",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
-              "title": "X-Org"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Delete Board Widget",
-        "tags": [
-          "boards"
-        ]
-      },
+    "/api/boards/{board_id}/stages/{stage_id}": {
       "patch": {
-        "operationId": "update_board_widget_api_boards__board_id__widgets__widget_id__patch",
+        "operationId": "update_board_stage_api_boards__board_id__stages__stage_id__patch",
         "parameters": [
           {
             "in": "path",
@@ -34078,11 +37654,11 @@
           },
           {
             "in": "path",
-            "name": "widget_id",
+            "name": "stage_id",
             "required": true,
             "schema": {
               "format": "uuid",
-              "title": "Widget Id",
+              "title": "Stage Id",
               "type": "string"
             }
           },
@@ -34109,7 +37685,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BoardWidgetWrite"
+                "$ref": "#/components/schemas/StagePatch"
               }
             }
           },
@@ -34120,7 +37696,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BoardWidgetMutationResponse"
+                  "$ref": "#/components/schemas/StageResponse"
                 }
               }
             },
@@ -34142,15 +37718,16 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Update Board Widget",
+        "summary": "Update Board Stage",
         "tags": [
-          "boards"
+          "board kanban"
         ]
       }
     },
-    "/api/boards/{board_id}/widgets/{widget_id}/duplicate": {
+    "/api/boards/{board_id}/stages/{stage_id}/archive": {
       "post": {
-        "operationId": "duplicate_board_widget_api_boards__board_id__widgets__widget_id__duplicate_post",
+        "description": "Archive a stage; its active cards move to another active stage or archive too.",
+        "operationId": "archive_board_stage_api_boards__board_id__stages__stage_id__archive_post",
         "parameters": [
           {
             "in": "path",
@@ -34164,11 +37741,11 @@
           },
           {
             "in": "path",
-            "name": "widget_id",
+            "name": "stage_id",
             "required": true,
             "schema": {
               "format": "uuid",
-              "title": "Widget Id",
+              "title": "Stage Id",
               "type": "string"
             }
           },
@@ -34195,18 +37772,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BoardWidgetRevision"
+                "$ref": "#/components/schemas/StageArchive"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "201": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BoardWidgetMutationResponse"
+                  "$ref": "#/components/schemas/StageResponse"
                 }
               }
             },
@@ -34228,9 +37805,9 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Duplicate Board Widget",
+        "summary": "Archive Board Stage",
         "tags": [
-          "boards"
+          "board kanban"
         ]
       }
     },
@@ -50133,6 +53710,185 @@
         "summary": "Retry Job",
         "tags": [
           "jobs"
+        ]
+      }
+    },
+    "/api/me/calendar-sources": {
+      "get": {
+        "operationId": "list_my_calendar_sources_api_me_calendar_sources_get",
+        "parameters": [
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarSourceList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List My Calendar Sources",
+        "tags": [
+          "calendar sources"
+        ]
+      },
+      "post": {
+        "operationId": "add_my_calendar_source_api_me_calendar_sources_post",
+        "parameters": [
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarSourceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarSourceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add My Calendar Source",
+        "tags": [
+          "calendar sources"
+        ]
+      }
+    },
+    "/api/me/calendar-sources/{source_id}": {
+      "delete": {
+        "operationId": "remove_my_calendar_source_api_me_calendar_sources__source_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove My Calendar Source",
+        "tags": [
+          "calendar sources"
         ]
       }
     },

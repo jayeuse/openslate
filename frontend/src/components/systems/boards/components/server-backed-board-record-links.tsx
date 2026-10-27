@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { subscribeWorkspaceInvalidations } from "@/components/systems/shared/adapters/invalidation-events";
 import { invalidatesRecords } from "@/components/systems/openview/adapters/openview-queries";
 import {
@@ -27,7 +32,15 @@ import {
 } from "../adapters/board-record-links-api";
 
 type Props =
-  | { access: "read"; target: BoardRecordLinkTarget }
+  | {
+      access: "read";
+      target: BoardRecordLinkTarget;
+      /**
+       * The reading pane's form: a "Linked records" section that shows only
+       * when the content has links (BR12).
+       */
+      hideWhenEmpty?: boolean;
+    }
   | {
       access: "edit";
       target: BoardEditableRecordLinkTarget;
@@ -42,7 +55,7 @@ function errorText(error: unknown): string {
     if (error.status === 409)
       return "This content changed. Reload the editor and try again.";
     if ([401, 403, 404].includes(error.status))
-      return "This Board, content or Record is no longer available to you.";
+      return "This board, content or record is no longer available to you.";
   }
   return "Record links could not be updated. Try again.";
 }
@@ -66,6 +79,7 @@ export function recordTitleForLink(
 }
 
 export function ServerBoardRecordLinks(props: Props) {
+  const fieldId = useId();
   const editable = props.access === "edit" ? props : null;
   const kind = props.target.kind;
   const boardId = props.target.boardId;
@@ -73,9 +87,9 @@ export function ServerBoardRecordLinks(props: Props) {
   const view = props.target.kind === "post" ? props.target.view : null;
   const target = useMemo<BoardRecordLinkTarget>(
     () =>
-      kind === "event"
-        ? { kind, boardId, contentId }
-        : { kind, boardId, contentId, view: view ?? "published" },
+      kind === "post"
+        ? { kind, boardId, contentId, view: view ?? "published" }
+        : { kind, boardId, contentId },
     [kind, boardId, contentId, view],
   );
   const [items, setItems] = useState<BoardRecordLink[]>([]);
@@ -277,10 +291,25 @@ export function ServerBoardRecordLinks(props: Props) {
   }
 
   const selectedRecord = records.find((record) => record.id === recordId);
+  const paneSection = props.access === "read" && props.hideWhenEmpty === true;
+  if (
+    paneSection &&
+    (listStatus === "loading" || (listStatus === "ready" && items.length === 0))
+  )
+    return null;
   return (
-    <section aria-label="Record links" className="space-y-3">
-      <h4 className="text-sm font-semibold">Record links</h4>
-      {listStatus === "loading" && <p role="status">Loading linked Records…</p>}
+    <section
+      aria-label={paneSection ? "Linked records" : "Record links"}
+      className="space-y-3"
+    >
+      {paneSection ? (
+        <h3 data-slot="section-title" className="text-sm font-medium">
+          Linked records
+        </h3>
+      ) : (
+        <h4 className="text-sm font-semibold">Record links</h4>
+      )}
+      {listStatus === "loading" && <p role="status">Loading linked records…</p>}
       {listStatus === "error" && (
         <Alert variant="destructive">
           Record links could not be loaded.{" "}
@@ -295,7 +324,7 @@ export function ServerBoardRecordLinks(props: Props) {
       )}
       {listStatus === "ready" &&
         (items.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No linked Records.</p>
+          <p className="text-muted-foreground text-sm">No linked records.</p>
         ) : (
           <ul className="space-y-2">
             {items.map((item) => (
@@ -331,13 +360,14 @@ export function ServerBoardRecordLinks(props: Props) {
         ))}
       {editable && !editable.locked && items.length < 20 && (
         <div className="space-y-3 rounded-md border p-3">
-          <p className="text-sm font-medium">Link an existing Record</p>
-          <label className="block space-y-1 text-sm">
-            <span>Data source</span>
-            <select
-              data-slot="select"
-              aria-label="Record data source"
-              className="border-input bg-background min-h-11 w-full rounded-md border px-3"
+          <p className="text-sm font-medium">Link an existing record</p>
+          {/* "Module", the word the rest of the product uses (C5). */}
+          <Field>
+            <FieldLabel htmlFor={`${fieldId}-module`}>Module</FieldLabel>
+            <NativeSelect
+              id={`${fieldId}-module`}
+              aria-label="Record module"
+              className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-8"
               value={moduleId}
               onChange={(event) => {
                 setModuleId(event.currentTarget.value);
@@ -346,18 +376,16 @@ export function ServerBoardRecordLinks(props: Props) {
                 setTitleField(null);
               }}
             >
-              <option value="">Choose a data source</option>
+              <NativeSelectOption value="">Choose a module</NativeSelectOption>
               {sources.map((source) => (
-                <option key={source.id} value={source.id}>
+                <NativeSelectOption key={source.id} value={source.id}>
                   {source.name}
-                </option>
+                </NativeSelectOption>
               ))}
-            </select>
-          </label>
+            </NativeSelect>
+          </Field>
           {sourceError && (
-            <Alert variant="destructive">
-              Data sources could not be loaded.
-            </Alert>
+            <Alert variant="destructive">Modules could not be loaded.</Alert>
           )}
           <div className="flex gap-2">
             <Button
@@ -366,7 +394,7 @@ export function ServerBoardRecordLinks(props: Props) {
               disabled={sourceOffset === 0}
               onClick={() => setSourceOffset(Math.max(0, sourceOffset - 25))}
             >
-              Previous sources
+              Previous modules
             </Button>
             <Button
               type="button"
@@ -374,13 +402,13 @@ export function ServerBoardRecordLinks(props: Props) {
               disabled={!sourceHasMore}
               onClick={() => setSourceOffset(sourceOffset + 25)}
             >
-              Next sources
+              Next modules
             </Button>
           </div>
           {moduleId && (
             <>
               <label className="block space-y-1 text-sm">
-                <span>Search Records</span>
+                <span>Search records</span>
                 <Input
                   className="bg-background text-foreground min-h-11 rounded-md"
                   maxLength={240}
@@ -393,7 +421,7 @@ export function ServerBoardRecordLinks(props: Props) {
                 />
               </label>
               {recordStatus === "loading" && (
-                <p role="status">Loading Records…</p>
+                <p role="status">Loading records…</p>
               )}
               {recordStatus === "error" && (
                 <Alert variant="destructive">
@@ -402,29 +430,33 @@ export function ServerBoardRecordLinks(props: Props) {
               )}
               {recordStatus === "ready" && (
                 <>
-                  <label className="block space-y-1 text-sm">
-                    <span>Record</span>
-                    <select
-                      data-slot="select"
+                  <Field>
+                    <FieldLabel htmlFor={`${fieldId}-record`}>
+                      Record
+                    </FieldLabel>
+                    <NativeSelect
+                      id={`${fieldId}-record`}
                       aria-label="Record to link"
-                      className="border-input bg-background min-h-11 w-full rounded-md border px-3"
+                      className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-8"
                       value={recordId}
                       onChange={(event) => {
                         const id = event.currentTarget.value;
                         setRecordId(id);
                       }}
                     >
-                      <option value="">Choose a Record</option>
+                      <NativeSelectOption value="">
+                        Choose a record
+                      </NativeSelectOption>
                       {records.map((record) => (
-                        <option key={record.id} value={record.id}>
+                        <NativeSelectOption key={record.id} value={record.id}>
                           {recordTitleForLink(record, titleField)}
-                        </option>
+                        </NativeSelectOption>
                       ))}
-                    </select>
-                  </label>
+                    </NativeSelect>
+                  </Field>
                   {records.length === 0 && (
                     <p className="text-muted-foreground text-sm">
-                      No Records match on this page.
+                      No records match on this page.
                     </p>
                   )}
                   <div className="flex gap-2">
@@ -436,7 +468,7 @@ export function ServerBoardRecordLinks(props: Props) {
                         setRecordOffset(Math.max(0, recordOffset - 25))
                       }
                     >
-                      Previous Records
+                      Previous records
                     </Button>
                     <Button
                       type="button"
@@ -444,7 +476,7 @@ export function ServerBoardRecordLinks(props: Props) {
                       disabled={!recordHasMore}
                       onClick={() => setRecordOffset(recordOffset + 25)}
                     >
-                      Next Records
+                      Next records
                     </Button>
                   </div>
                 </>
@@ -457,7 +489,7 @@ export function ServerBoardRecordLinks(props: Props) {
             disabled={!selectedRecord || pending}
             onClick={() => void mutate("add")}
           >
-            Link Record
+            Link record
           </Button>
         </div>
       )}

@@ -1,4 +1,4 @@
-import { authMeBody, expect, test } from "./helpers/test";
+import { authMeBody, expect, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -15,7 +15,7 @@ import {
 import { pageOf } from "../helpers/pagination";
 import { wireField, wireRecord } from "../helpers/wire";
 
-test("Board menu keeps administration reachable without crowding the section", async ({
+test("Board settings holds a board's details, access and activity, and All boards offers a new project board", async ({
   page,
 }) => {
   await installBoardApi(page, () => true);
@@ -29,51 +29,36 @@ test("Board menu keeps administration reachable without crowding the section", a
       json: pageOf([], { limit: 25 }),
     }),
   );
-  await page.goto(`/boards?board=${boardId}&section=overview`);
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page.goto("/boards?section=all");
   await page
-    .getByRole("menuitem", { name: "New project Board", exact: true })
+    .getByRole("button", { name: "New project board", exact: true })
     .click();
   await expect(
-    page.getByRole("dialog", { name: "New project Board" }),
+    page.getByRole("dialog", { name: "New project board" }),
   ).toBeVisible();
   await page
-    .getByRole("dialog", { name: "New project Board" })
-    .getByRole("button", { name: "Close", exact: true })
-    .first()
+    .getByRole("dialog", { name: "New project board" })
+    .getByRole("button", { name: "Close new project board", exact: true })
     .click();
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page
+    .getByRole("button", { name: "Board settings", exact: true })
+    .click();
+  const settings = page.getByRole("dialog", { name: board.name, exact: true });
   // The exact list leaves no room for a retired item (access grants,
-  // templates, favorites, a home Board).
-  await expect(page.getByRole("menuitem")).toHaveText([
-    "Manage Board and groups",
-    "Preview access",
-    "View activity",
-    "New project Board",
-    "Configurations",
+  // templates, favorites, a home Board, a new Board).
+  await expect(settings.getByRole("tab")).toHaveText([
+    "Details",
+    "Access",
+    "Activity",
   ]);
-  await page
-    .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
-    .click();
-  const manage = page.getByRole("dialog", { name: "Manage Board" });
-  await expect(manage).toBeVisible();
+  await settings.getByRole("tab", { name: "Access", exact: true }).click();
   await expect(
-    manage.getByText("No groups yet. Only administrators open this Board."),
-  ).toBeVisible();
-  await manage
-    .getByRole("button", { name: "Close", exact: true })
-    .first()
-    .click();
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
-  await page
-    .getByRole("menuitem", { name: "Configurations", exact: true })
-    .click();
-  await expect(
-    page.getByRole("dialog", { name: "Board configurations" }),
+    settings.getByText("No groups yet. Only admins open this board."),
   ).toBeVisible();
 });
 
-test("a member reading a Board sees no Board menu and no manager actions", async ({
+test("a member reading a Board sees no Board settings and no manager actions", async ({
   page,
 }) => {
   await installBoardApi(page, () => true);
@@ -94,14 +79,82 @@ test("a member reading a Board sees no Board menu and no manager actions", async
   await page.route(`**/api/boards/${boardId}/my-access`, (route) =>
     route.fulfill({ json: readerAccess }),
   );
-  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Board menu", exact: true }),
+    page.getByRole("button", { name: "Board settings", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Manage widgets" }),
+    page.getByRole("button", { name: "Manage posts", exact: true }),
   ).toHaveCount(0);
+});
+
+test("a cold /boards opens Posts for a member reader without widget, record or field reads", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true, readerAccess);
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: authMeBody({
+        id: userId,
+        role: "member",
+        access: [],
+        default_organization_blocked: null,
+      }),
+    }),
+  );
+  const published = "2026-09-24T00:00:00Z";
+  const post = {
+    id: "00000000-0000-4000-8000-000000000021",
+    board_id: boardId,
+    author_id: userId,
+    title: "Dock rota for Friday",
+    body: "Shifts start at 7.",
+    links: [],
+    status: "published",
+    publish_at: published,
+    expires_at: null,
+    pinned: false,
+    post_revision: null,
+    board_revision: 1,
+    publication_number: 1,
+    published_at: published,
+    edited: false,
+    created_at: published,
+    updated_at: published,
+  };
+  await page.route(`**/api/boards/${boardId}/posts?**`, (route) => {
+    const view = new URL(route.request().url()).searchParams.get("view");
+    return route.fulfill({
+      json: {
+        ...pageOf(view === "published" ? [post] : [], { limit: 25 }),
+        board_revision: 1,
+      },
+    });
+  });
+  const retired: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      /\/widgets(\/|$)/.test(path) ||
+      path === "/api/records/query" ||
+      path.startsWith("/api/fields/")
+    )
+      retired.push(path);
+  });
+
+  await page.goto("/boards");
+
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("board") === boardId &&
+      url.searchParams.get("section") === "posts",
+  );
+  await expect(
+    page.getByRole("link", { name: "Posts", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(page.getByText(post.title)).toBeVisible();
+  expect(retired).toEqual([]);
 });
 
 test("read-only Boards viewers cannot open the post editor", async ({
@@ -121,7 +174,7 @@ test("read-only Boards viewers cannot open the post editor", async ({
   await page.goto(`/boards?board=${boardId}&section=posts`);
   await access;
   await expect(
-    page.getByRole("heading", { name: "Published posts", exact: true }),
+    page.getByRole("region", { name: "Posts", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "New post", exact: true }),
@@ -132,12 +185,15 @@ test("visible Boards route opens authorized server Board and keeps section URL",
   page,
 }) => {
   await installBoardApi(page, () => true);
-  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
 
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
   await expect(page.getByText(board.description)).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Switch board" }),
+    page.getByRole("heading", {
+      level: 1,
+      name: `${board.name} announcements`,
+    }),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Calendar", exact: true }).click();
@@ -154,66 +210,50 @@ test("visible Boards route clears the last Board when access is revoked", async 
   page,
 }) => {
   let allowed = true;
+  await installOpenViewEventSource(page);
   await installBoardApi(page, () => allowed);
-  await page.goto(`/boards?board=${boardId}&section=overview`);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
 
   allowed = false;
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  // A change to the Board arrives on the live stream (BR7).
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "boards",
+    board_id: boardId,
+  });
   await expect(
-    page.getByText("Board unavailable. Choose another Board or retry."),
+    page.getByText("It may have been removed, or you may not have access."),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: board.name })).toHaveCount(0);
   await expect(page.getByText(board.description)).toHaveCount(0);
 });
 
-test("the Board type filter asks the server for that scope", async ({
-  page,
-}) => {
-  await installBoardApi(page, () => true);
-  await page.goto(`/boards?board=${boardId}&section=overview`);
-  await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
-  await page.getByRole("button", { name: "Switch board" }).click();
-  const listed = page.waitForRequest(
-    (request) =>
-      new URL(request.url()).pathname === "/api/boards" &&
-      new URL(request.url()).searchParams.get("scope") === "department",
-  );
-  await page.getByRole("combobox", { name: "Board type" }).click();
-  await page.getByRole("option", { name: "Departments" }).click();
-  await listed;
-});
-
-test("unsaved Event draft asks before changing Board or section", async ({
+test("an unsaved event draft asks before it closes, then the board navigates freely", async ({
   page,
 }) => {
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=calendar`);
   await page.getByRole("button", { name: "New event" }).click();
-  await expect(page.getByRole("heading", { name: "New event" })).toBeVisible();
-
-  await page.getByRole("link", { name: "Overview", exact: true }).click();
-  await expect(page).toHaveURL(`/boards?board=${boardId}&section=calendar`);
-  await expect(
-    page.getByRole("alertdialog", { name: "Discard unsaved Board changes?" }),
-  ).toBeVisible();
-
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "New event" })).toBeVisible();
-  await page.getByRole("button", { name: "Switch board" }).click();
-  await page.getByRole("combobox", { name: "Board", exact: true }).click();
-  await page.getByRole("option", { name: /Second live board/ }).click();
-  await expect(page).toHaveURL(`/boards?board=${boardId}&section=calendar`);
-  await expect(
-    page.getByRole("alertdialog", { name: "Discard unsaved Board changes?" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Discard changes" }).click();
-  await expect(page).toHaveURL(
-    `/boards?board=${otherBoard.id}&section=overview`,
-  );
-  await expect(page.getByRole("heading", { name: "New event" })).toHaveCount(0);
+  const editor = page.getByRole("dialog", { name: "New event" });
+  await editor.getByLabel("Event title").fill("Draft to keep");
+  await editor.getByRole("button", { name: "Close event editor" }).click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Discard unsaved event changes?",
+  });
+  await expect(confirmation).toBeVisible();
+  await confirmation
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(editor.getByLabel("Event title")).toHaveValue("Draft to keep");
+  await editor.getByRole("button", { name: "Close event editor" }).click();
+  await confirmation.getByRole("button", { name: "Discard changes" }).click();
+  await expect(editor).toBeHidden();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Second live board", exact: true })
+    .click();
+  await expect(page).toHaveURL(`/boards?board=${otherBoard.id}&section=posts`);
 });
-
 test("Calendar uses Workspace today and reaches later occurrences", async ({
   page,
 }) => {
@@ -295,17 +335,25 @@ test("Calendar uses Workspace today and reaches later occurrences", async ({
     page.getByRole("heading", { name: "September 2026" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /View .*Sep 25/ }),
+    page.getByRole("button", { name: "Fri, Sep 25, show week", exact: true }),
   ).toHaveAttribute("aria-current", "date");
-  await page.getByRole("button", { name: "Load next 100 events" }).click();
-  await expect(page.getByText("101 occurrences")).toBeVisible();
-  expect(requests.some((item) => item.offset === "100")).toBe(true);
+  // A busy month is read to its end, so its last event is one click away.
+  await expect
+    .poll(() => requests.some((item) => item.offset === "100"))
+    .toBe(true);
+  await page.getByRole("button", { name: /^\d+ more on Thu, Sep 24$/ }).click();
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: /^Late occurrence,/ }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByLabel("Search events").fill("missing");
-  await expect(page.getByText("No events on this day.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Earlier 1,/ })).toHaveCount(
+    0,
+  );
   expect(requests.some((item) => item.search === "missing")).toBe(true);
   await page.getByLabel("Search events").fill("");
   await expect(
-    page.getByRole("button", { name: "Load next 100 events" }),
+    page.getByRole("button", { name: /^\d+ more on Thu, Sep 24$/ }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Next month" }).click();
   await expect(
@@ -318,27 +366,29 @@ test("Calendar uses Workspace today and reaches later occurrences", async ({
   expect(requests.some((item) => item.start === "2026-10-01")).toBe(true);
 });
 
-test("compact Calendar enters Agenda and permits manual Month selection", async ({
+test("a phone Calendar opens on the day list and permits Month", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=calendar`);
-  await expect(page.getByRole("button", { name: "Agenda" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(
+    page.getByRole("button", { name: "Week", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Month", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Month", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("view") === "month",
+  );
 });
-
 test.describe("Boards workspace regional activity", () => {
   test.use({ locale: "en-US", timezoneId: "UTC" });
-  test("Board activity retains its timezone label while formatting the workspace timestamp", async ({
+  test("Board activity formats the workspace timestamp and keeps its zone in the tooltip", async ({
     page,
   }) => {
+    await page.clock.setFixedTime(new Date("2026-10-27T12:00:00Z"));
     await installBoardApi(page, () => true);
     await page.route("**/api/workspace", (route) =>
       route.fulfill({
@@ -365,6 +415,7 @@ test.describe("Boards workspace regional activity", () => {
               action: "update",
               summary: "Regional activity",
               actor_label: "Regional test actor",
+              group: null,
             },
           ],
           { limit: 25 },
@@ -372,23 +423,26 @@ test.describe("Boards workspace regional activity", () => {
       }),
     );
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    await page.getByRole("button", { name: "Board menu", exact: true }).click();
     await page
-      .getByRole("menuitem", { name: "View activity", exact: true })
+      .getByRole("button", { name: "Board settings", exact: true })
       .click();
     const activity = page.getByRole("dialog", {
-      name: "Board activity",
+      name: board.name,
       exact: true,
     });
+    await activity.getByRole("tab", { name: "Activity", exact: true }).click();
     await expect(
-      activity.getByText("Regional activity", { exact: true }),
-    ).toBeVisible();
-    await expect(activity.locator("time")).toHaveText(
-      /22 sept\. 2026.*17:00.*(?:UTC|GMT).*7/,
+      activity.getByRole("list", { name: "Board activity", exact: true }),
+    ).toContainText("Changed details · Regional test actor");
+    // This year's rows drop the year and the zone; the tooltip keeps both.
+    await expect(activity.locator("time")).toHaveText("22 sept., 17:00");
+    await expect(activity.locator("time")).toHaveAttribute(
+      "title",
+      /mardi 22 septembre 2026.*17:00.*(?:UTC|GMT).*7/,
     );
   });
 
-  test("Calendar main Refresh replaces a held cold workspace read", async ({
+  test("a live workspace change replaces a held cold workspace read on Calendar", async ({
     page,
   }) => {
     await installOpenViewEventSource(page);
@@ -462,16 +516,19 @@ test.describe("Boards workspace regional activity", () => {
       await page.goto(`/boards?board=${boardId}&section=calendar`);
       await firstStarted;
       await expect(
-        page.getByRole("heading", { name: board.name, exact: true }),
+        page.getByRole("heading", {
+          name: `${board.name} announcements`,
+          exact: true,
+        }),
       ).toBeVisible();
-      const refresh = page.getByRole("button", {
-        name: "Refresh",
+      await sendOpenViewEvent(page, "invalidate", {
+        entity: "workspace_profiles",
+      });
+      await expect.poll(() => workspaceReads).toBeGreaterThan(1);
+      const latest = page.getByRole("button", {
+        name: "Sat, Sep 26, show week",
         exact: true,
       });
-      await expect(refresh).toBeEnabled();
-      await refresh.click();
-      await expect.poll(() => workspaceReads).toBeGreaterThan(1);
-      const latest = page.getByRole("button", { name: /View .*Sep 26/ });
       await expect(latest).toHaveAttribute("aria-current", "date");
       oldReleased = true;
       releaseOld();
@@ -485,10 +542,11 @@ test.describe("Boards workspace regional activity", () => {
     }
   });
 
-  test("Calendar manual Refresh and rollover keep the selected day and last-good settings", async ({
+  test("Calendar live workspace changes and rollover keep the chosen month and last-good settings", async ({
     page,
   }) => {
     await page.clock.install({ time: new Date("2026-09-25T12:00:00Z") });
+    await installOpenViewEventSource(page);
     await installBoardApi(page, () => true);
     let today = "2026-09-25";
     let failRegionalRead = false;
@@ -509,36 +567,46 @@ test.describe("Boards workspace regional activity", () => {
           }),
     );
     await page.goto(`/boards?board=${boardId}&section=calendar`);
-    const chosen = page.getByRole("button", { name: /View .*Sep 27/ });
-    await chosen.click();
+    const todayMark = (name: string) =>
+      page.getByRole("button", { name: `${name}, show week`, exact: true });
+    await expect(todayMark("Fri, Sep 25")).toHaveAttribute(
+      "aria-current",
+      "date",
+    );
     today = "2026-09-26";
-    const refresh = page.getByRole("button", { name: "Refresh", exact: true });
-    await refresh.click();
-    await expect(
-      page.getByRole("button", { name: /View .*Sep 26/ }),
-    ).toHaveAttribute("aria-current", "date");
-    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+    const refresh = () =>
+      sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" });
+    await refresh();
+    await expect(todayMark("Sat, Sep 26")).toHaveAttribute(
+      "aria-current",
+      "date",
+    );
+    await page.getByRole("button", { name: "Next month" }).click();
+    const october = page.getByRole("heading", {
+      name: "October 2026",
+      exact: true,
+    });
+    await expect(october).toBeVisible();
     failRegionalRead = true;
     today = "2026-09-27";
-    await refresh.click();
+    await refresh();
     const retry = page.getByRole("button", {
-      name: "Retry Workspace date",
+      name: "Retry date",
       exact: true,
     });
     await expect(retry).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /View .*Sep 26/ }),
-    ).toHaveAttribute("aria-current", "date");
-    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+    await expect(october).toBeVisible();
     failRegionalRead = false;
     await retry.click();
-    await expect(chosen).toHaveAttribute("aria-current", "date");
+    await expect(retry).toHaveCount(0);
+    await expect(october).toBeVisible();
     today = "2026-09-28";
     await page.clock.runFor(60_000);
-    await expect(
-      page.getByRole("button", { name: /View .*Sep 28/ }),
-    ).toHaveAttribute("aria-current", "date");
-    await expect(chosen).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Today", exact: true }).click();
+    await expect(todayMark("Mon, Sep 28")).toHaveAttribute(
+      "aria-current",
+      "date",
+    );
   });
 });
 
@@ -547,9 +615,12 @@ test("post editor retains a canceled close and discards only on confirmation", a
 }) => {
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "New post", exact: true }).click();
+  await page
+    .getByRole("button", { name: "New post", exact: true })
+    .first()
+    .click();
   const editor = page.getByRole("dialog", {
-    name: "Post editor",
+    name: "New post",
     exact: true,
   });
   await editor.getByLabel("Title", { exact: true }).fill("Draft to keep");
@@ -569,12 +640,11 @@ test("post editor retains a canceled close and discards only on confirmation", a
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(editor).toBeHidden();
-  await page.getByRole("button", { name: "Switch board" }).click();
-  await page.getByRole("combobox", { name: "Board", exact: true }).click();
-  await page.getByRole("option", { name: /Second live board/ }).click();
-  await expect(page).toHaveURL(
-    `/boards?board=${otherBoard.id}&section=overview`,
-  );
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Second live board", exact: true })
+    .click();
+  await expect(page).toHaveURL(`/boards?board=${otherBoard.id}&section=posts`);
 });
 
 test("a live refresh keeps an open post draft mounted and editable", async ({
@@ -583,9 +653,12 @@ test("a live refresh keeps an open post draft mounted and editable", async ({
   await installOpenViewEventSource(page);
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "New post", exact: true }).click();
+  await page
+    .getByRole("button", { name: "New post", exact: true })
+    .first()
+    .click();
   const editor = page.getByRole("dialog", {
-    name: "Post editor",
+    name: "New post",
     exact: true,
   });
   const title = editor.getByLabel("Title", { exact: true });
@@ -615,15 +688,15 @@ test("a live refresh keeps an open post draft mounted and editable", async ({
   release();
   await expect(title).toHaveValue("Draft to keep");
   await expect(
-    editor.getByText("Loading editable posts…", { exact: true }),
+    editor.getByText("Opening the post…", { exact: true }),
   ).toHaveCount(0);
 });
 
 test("the post editor has no audience choice", async ({ page }) => {
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "New post" }).click();
-  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
+  await page.getByRole("button", { name: "New post" }).first().click();
+  const editor = page.getByRole("dialog", { name: "New post", exact: true });
   await expect(editor.getByLabel("Title", { exact: true })).toBeVisible();
   await expect(editor.getByRole("combobox", { name: "Audience" })).toHaveCount(
     0,
@@ -647,11 +720,15 @@ test("an author sets reminder timings on a new event", async ({ page }) => {
   });
   await page.goto(`/boards?board=${boardId}&section=calendar`);
   await page.getByRole("button", { name: "New event" }).click();
-  const editor = page.getByRole("form", { name: "Create Board event" });
+  const editor = page.getByRole("form", { name: "Create event" });
   await editor.getByLabel("Event title").fill("Shift handover");
   await expect(editor.getByText("Reminders", { exact: true })).toBeVisible();
-  await editor.getByRole("checkbox", { name: "1 day before" }).click();
-  await editor.getByRole("checkbox", { name: "When it starts" }).click();
+  // The 44px row is the target; the box inside is drawn, not native.
+  await editor.getByText("1 day before", { exact: true }).click();
+  await editor.getByText("When it starts", { exact: true }).click();
+  await expect(
+    editor.getByRole("checkbox", { name: "1 day before" }),
+  ).toBeChecked();
   await editor.getByRole("button", { name: "Create event" }).click();
   await expect.poll(() => created).not.toBeNull();
   expect(created).toMatchObject({
@@ -659,100 +736,6 @@ test("an author sets reminder timings on a new event", async ({ page }) => {
     reminders: ["1d", "start"],
   });
   expect(created).not.toHaveProperty("audience");
-});
-
-test("My events refreshes after saving and when the current tab reselects it", async ({
-  page,
-}) => {
-  await installBoardApi(page, () => true);
-  const eventId = "00000000-0000-4000-8000-000000000015";
-  let title = "My planning meeting";
-  let revision = 1;
-  let listRequests = 0;
-  const event = () => ({
-    id: eventId,
-    board_id: boardId,
-    author_id: userId,
-    title,
-    details: "",
-    location: "",
-    links: [],
-    all_day: true,
-    start_date: "2026-09-25",
-    end_date: "2026-09-25",
-    start_at: null,
-    end_at: null,
-    timezone_name: "UTC",
-    recurrence: "none",
-    repeat_until: null,
-    reminders: [],
-    archived: false,
-    revision,
-    board_revision: 1,
-    created_at: "2026-09-25T00:00:00Z",
-    updated_at: "2026-09-25T00:00:00Z",
-  });
-  await page.route("**/api/boards/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === `/api/boards/${boardId}/events/mine`) {
-      listRequests += 1;
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          ...pageOf([event()], { limit: 25 }),
-          board_revision: 1,
-        }),
-      });
-    }
-    // A background resync re-reads the event under an open editor.
-    if (
-      path === `/api/boards/${boardId}/events/${eventId}` &&
-      route.request().method() === "GET"
-    )
-      return route.fulfill({ json: event() });
-    if (
-      path === `/api/boards/${boardId}/events/${eventId}` &&
-      route.request().method() === "PATCH"
-    ) {
-      const body = route.request().postDataJSON() as { title: string };
-      title = body.title;
-      revision += 1;
-      return route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: eventId,
-          event_revision: revision,
-          board_revision: 2,
-        }),
-      });
-    }
-    return route.fallback();
-  });
-
-  await page.goto(`/boards?board=${boardId}&section=calendar`);
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events" }).click();
-  const myEvents = page.getByRole("region", { name: "My events" });
-  await myEvents
-    .getByRole("button", { name: "Edit My planning meeting" })
-    .click();
-  const editor = page.getByRole("form", { name: "Edit Board event" });
-  await editor.getByLabel("Event title").fill("My planning meeting updated");
-  await editor.getByRole("button", { name: "Save event" }).click();
-  await expect(
-    myEvents.getByRole("button", { name: "Edit My planning meeting updated" }),
-  ).toBeVisible();
-
-  const beforeReselect = listRequests;
-  title = "My planning meeting externally updated";
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events" }).click();
-  await expect(
-    myEvents.getByRole("button", {
-      name: "Edit My planning meeting externally updated",
-    }),
-  ).toBeVisible();
-  expect(listRequests).toBeGreaterThan(beforeReselect);
 });
 
 test("an event author can archive their event, while another author's event stays protected", async ({
@@ -858,40 +841,40 @@ test("an event author can archive their event, while another author's event stay
     },
   );
 
+  await page.route(
+    new RegExp(`/api/boards/${boardId}/events/(${eventId}|${otherEventId})$`),
+    (route) => {
+      const id = new URL(route.request().url()).pathname.split("/").at(-1)!;
+      return route.fulfill({
+        json:
+          id === eventId
+            ? event(eventId, userId, "My planning session", archived ? 2 : 1)
+            : event(
+                otherEventId,
+                otherAuthorId,
+                "Team planning session",
+                archived ? 2 : 1,
+              ),
+      });
+    },
+  );
   await page.goto(`/boards?board=${boardId}&section=calendar`);
-  const selectedEvents = page.getByRole("region", {
-    name: "Fri, Sep 25 events",
-  });
-  await selectedEvents.getByText("View event", { exact: true }).nth(0).click();
-  await selectedEvents.getByText("View event", { exact: true }).nth(1).click();
+  const month = page.getByRole("region", { name: "September 2026 calendar" });
+  await month.getByRole("button", { name: /^Team planning session,/ }).click();
+  const teamSheet = page.getByRole("dialog", { name: "Team planning session" });
+  await teamSheet.getByRole("button", { name: "More event actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
   await expect(
-    selectedEvents.getByRole("button", {
-      name: "Archive My planning session",
-    }),
-  ).toBeVisible();
-  await expect(
-    selectedEvents.getByRole("button", {
-      name: "Archive Team planning session",
-    }),
+    page.getByRole("menuitem", { name: "Archive event" }),
   ).toHaveCount(0);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Agenda", exact: true }).click();
-  const agendaEvents = page.getByRole("region", {
-    name: "September 2026 events",
-  });
-  await expect(
-    agendaEvents.getByRole("button", {
-      name: "Archive My planning session",
-    }),
-  ).toBeVisible();
-  await expect(
-    agendaEvents.getByRole("button", {
-      name: "Archive Team planning session",
-    }),
-  ).toHaveCount(0);
-  await agendaEvents
-    .getByRole("button", { name: "Archive My planning session" })
+  await page.keyboard.press("Escape");
+  await teamSheet.getByRole("button", { name: "Close event" }).click();
+  await month.getByRole("button", { name: /^My planning session,/ }).click();
+  await page
+    .getByRole("dialog", { name: "My planning session" })
+    .getByRole("button", { name: "More event actions" })
     .click();
+  await page.getByRole("menuitem", { name: "Archive event" }).click();
   const confirmation = page.getByRole("alertdialog", {
     name: "Archive event?",
   });
@@ -919,10 +902,9 @@ test("an event author can archive their event, while another author's event stay
   expect(response.status()).toBe(200);
   await expect(page.getByText("Event archived.")).toBeVisible();
   await expect(
-    agendaEvents.getByRole("button", {
-      name: "Archive My planning session",
-    }),
+    month.getByRole("button", { name: /^My planning session,/ }),
   ).toHaveCount(0);
+  await expect(page).toHaveURL((url) => !url.searchParams.has("event"));
   expect(archiveBody).toEqual({ board_revision: 1, event_revision: 1 });
 });
 
@@ -1007,11 +989,35 @@ test("Board Record link labels refresh after linked module invalidations", async
     },
   );
 
+  await page.route(`**/api/boards/${boardId}/events/${eventId}`, (route) =>
+    route.fulfill({
+      json: {
+        id: eventId,
+        board_id: boardId,
+        author_id: userId,
+        title: "Equipment handover",
+        details: "",
+        location: "",
+        links: [],
+        all_day: true,
+        start_date: "2026-09-25",
+        end_date: "2026-09-25",
+        start_at: null,
+        end_at: null,
+        timezone_name: "UTC",
+        recurrence: "none",
+        repeat_until: null,
+        reminders: [],
+        archived: false,
+        revision: 1,
+        board_revision: 1,
+        created_at: "2026-09-25T00:00:00Z",
+        updated_at: "2026-09-25T00:00:00Z",
+      },
+    }),
+  );
   await page.goto(`/boards?board=${boardId}&section=calendar`);
-  const selectedEvents = page.getByRole("region", {
-    name: "Fri, Sep 25 events",
-  });
-  await selectedEvents.getByText("View event", { exact: true }).click();
+  await page.getByRole("button", { name: /^Equipment handover,/ }).click();
   await expect(
     page.getByRole("link", { name: "Cooling manifold" }),
   ).toBeVisible();
@@ -1050,114 +1056,8 @@ test("Board Record link labels refresh after linked module invalidations", async
   ).toHaveCount(0);
 });
 
-test("Board record widgets refresh user labels after eligibility invalidation", async ({
-  page,
-}) => {
-  const moduleId = "00000000-0000-4000-8000-000000000061";
-  const widgetId = "00000000-0000-4000-8000-000000000062";
-  const assigneeFieldId = "00000000-0000-4000-8000-000000000063";
-  const assigneeId = "00000000-0000-4000-8000-000000000064";
-  await installBoardApi(page, () => true, readerAccess);
-  await installOpenViewEventSource(page);
-  let assigneeLabel = "Alex Reader";
-  let recordQueries = 0;
-
-  await page.route(`**/api/boards/${boardId}/widgets**`, (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        ...pageOf(
-          [
-            {
-              id: widgetId,
-              board_id: boardId,
-              name: "Assignment queue",
-              widget_type: "records",
-              module_id: moduleId,
-              position: 0,
-              size: "M",
-              pinned: false,
-              chart_id: null,
-              config: {
-                version: 1,
-                fields: [{ field_id: assigneeFieldId, expected_type: "user" }],
-                filters: [],
-                logic: "and",
-                metric: null,
-                visualization: "bar",
-                refresh: "manual",
-              },
-              created_at: "2026-09-25T00:00:00Z",
-              updated_at: "2026-09-25T00:00:00Z",
-            },
-          ],
-          { limit: 12 },
-        ),
-        board_revision: 1,
-      }),
-    }),
-  );
-  await page.route(`**/api/fields/${assigneeFieldId}`, (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        id: assigneeFieldId,
-        module_id: moduleId,
-        name: "Assignee",
-        type: "user",
-        required: false,
-        position: 0,
-        config: { kind: "user" },
-        is_deleted: false,
-      }),
-    }),
-  );
-  await page.route("**/api/records/query", (route) => {
-    recordQueries += 1;
-    return route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify(
-        pageOf(
-          [
-            wireRecord({
-              id: "00000000-0000-4000-8000-000000000065",
-              module_id: moduleId,
-              data: { [assigneeFieldId]: assigneeId },
-              display_values: { [assigneeFieldId]: assigneeLabel },
-              created_at: "2026-09-25T00:00:00Z",
-              updated_at: "2026-09-25T00:00:00Z",
-              performed_by: userId,
-            }),
-          ],
-          { limit: 5 },
-        ),
-      ),
-    });
-  });
-
-  await page.goto(`/boards?board=${boardId}&section=overview`);
-  await expect(page.getByText("Alex Reader", { exact: true })).toBeVisible();
-  const beforeInvalidation = recordQueries;
-  await expect(page.getByText(assigneeId, { exact: true })).toHaveCount(0);
-
-  assigneeLabel = "Unavailable user";
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "group_access",
-    module_id: moduleId,
-  });
-
-  await expect.poll(() => recordQueries).toBeGreaterThan(beforeInvalidation);
-  await expect(
-    page.getByText("Unavailable user", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Alex Reader", { exact: true })).toHaveCount(0);
-  await expect(page.getByText(assigneeId, { exact: true })).toHaveCount(0);
-});
-
-test("an author can archive their own editable post with current revisions", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
+/** An author's published post, another author's, and their revisions. */
+async function installAuthorPosts(page: Page, archiveStatus: 200 | 409) {
   await installBoardApi(page, () => true, authorAccess);
   const postId = "00000000-0000-4000-8000-000000000041";
   const otherPostId = "00000000-0000-4000-8000-000000000042";
@@ -1174,18 +1074,17 @@ test("an author can archive their own editable post with current revisions", asy
     publish_at: now,
     expires_at: null,
     pinned: false,
-    post_revision: 3,
+    post_revision: null,
     board_revision: 1,
-    publication_number: null,
-    published_at: null,
+    publication_number: 1,
+    published_at: now,
     edited: false,
     created_at: now,
     updated_at: now,
   });
   const ownPost = post(postId, userId, "My editable notice");
   const otherPost = post(otherPostId, otherAuthorId, "Another author's notice");
-  let archived = false;
-  let archiveBody: unknown = null;
+  const state = { archived: false, archiveBody: null as unknown };
   await page.route(`**/api/boards/${boardId}/posts**`, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -1197,162 +1096,110 @@ test("an author can archive their own editable post with current revisions", asy
         body: JSON.stringify(body),
       });
     if (path === `/api/boards/${boardId}/posts` && request.method() === "GET") {
-      const view = url.searchParams.get("view");
       const items =
-        view === "editable"
-          ? archived
+        url.searchParams.get("view") === "published"
+          ? state.archived
             ? [otherPost]
             : [ownPost, otherPost]
           : [];
       return reply(200, { ...pageOf(items, { limit: 25 }), board_revision: 1 });
     }
-    if (
-      path === `/api/boards/${boardId}/posts/${postId}` &&
-      request.method() === "GET"
-    )
-      return archived
-        ? reply(404, { detail: "Post not found" })
-        : reply(200, ownPost);
+    for (const item of [ownPost, otherPost])
+      if (path === `/api/boards/${boardId}/posts/${item.id}`)
+        return state.archived && item === ownPost
+          ? reply(404, { detail: "Post not found" })
+          : reply(200, item);
+    if (path === `/api/boards/${boardId}/posts/${postId}/manage-state`)
+      return reply(200, {
+        id: postId,
+        status: "published",
+        board_revision: 1,
+        post_revision: 3,
+        published_before: true,
+      });
     if (
       path === `/api/boards/${boardId}/posts/${postId}/archive` &&
       request.method() === "POST"
     ) {
-      archiveBody = request.postDataJSON();
-      archived = true;
-      return reply(200, {
-        id: postId,
-        post_revision: 4,
-        board_revision: 2,
-      });
+      state.archiveBody = request.postDataJSON();
+      if (archiveStatus === 409)
+        return reply(409, {
+          detail: {
+            code: "stale_post_revision",
+            message: "Post changed; reload before saving",
+          },
+        });
+      state.archived = true;
+      return reply(200, { id: postId, post_revision: 4, board_revision: 2 });
     }
+    if (path.endsWith("/attachments") || path.endsWith("/record-links"))
+      return reply(200, { items: [], limit: 25, offset: 0, has_more: false });
     return reply(404, { detail: "Unmocked author post route" });
   });
+  return { postId, otherPostId, state };
+}
 
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "More post actions" }).click();
-  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
-  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
-  const ownPostChoice = editor.getByRole("button", {
-    name: "My editable notice · Published",
-  });
-  await expect(ownPostChoice).toBeVisible();
-  await expect(
-    editor.getByRole("button", { name: /Another author's notice/ }),
-  ).toHaveCount(0);
-  await ownPostChoice.click();
-  const archiveButton = editor.getByRole("button", {
-    name: "Archive post",
-    exact: true,
-  });
-  await expect(archiveButton).toBeVisible();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(archiveButton).toBeVisible();
-  await archiveButton.scrollIntoViewIfNeeded();
-  const confirmation = page.getByRole("alertdialog", {
-    name: "Archive post?",
-  });
-  await archiveButton.click();
-  await expect(confirmation).toBeVisible();
-  const archivedResponse = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname ===
-        `/api/boards/${boardId}/posts/${postId}/archive` &&
-      response.request().method() === "POST",
-  );
-  await confirmation
-    .getByRole("button", { name: "Archive post", exact: true })
-    .click();
-  const response = await archivedResponse;
-  expect(response.status()).toBe(200);
-  await expect(editor.getByText("Post archived.")).toBeVisible();
-  await expect(ownPostChoice).toHaveCount(0);
-  expect(archiveBody).toEqual({ board_revision: 1, post_revision: 3 });
-});
-
-test("a stale author post archive preserves the selected post and local form", async ({
+test("an author archives their own post from the reading pane with current revisions", async ({
   page,
 }) => {
-  await installBoardApi(page, () => true, authorAccess);
-  const postId = "00000000-0000-4000-8000-000000000051";
-  const now = "2026-09-25T00:00:00Z";
-  const ownPost = {
-    id: postId,
-    board_id: boardId,
-    author_id: userId,
-    title: "My notice",
-    body: "Keep this saved text.",
-    links: [],
-    status: "published",
-    publish_at: now,
-    expires_at: null,
-    pinned: false,
-    post_revision: 3,
-    board_revision: 1,
-    publication_number: null,
-    published_at: null,
-    edited: false,
-    created_at: now,
-    updated_at: now,
-  };
-  await page.route(`**/api/boards/${boardId}/posts**`, async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    const path = url.pathname;
-    const reply = (status: number, body: unknown) =>
-      route.fulfill({
-        status,
-        contentType: "application/json",
-        body: JSON.stringify(body),
-      });
-    if (path === `/api/boards/${boardId}/posts` && request.method() === "GET") {
-      const items =
-        url.searchParams.get("view") === "editable" ? [ownPost] : [];
-      return reply(200, { ...pageOf(items, { limit: 25 }), board_revision: 1 });
-    }
-    if (
-      path === `/api/boards/${boardId}/posts/${postId}` &&
-      request.method() === "GET"
-    )
-      return reply(200, ownPost);
-    if (
-      path === `/api/boards/${boardId}/posts/${postId}/archive` &&
-      request.method() === "POST"
-    )
-      return reply(409, {
-        detail: {
-          code: "stale_post_revision",
-          message: "Post changed; reload before saving",
-        },
-      });
-    return reply(404, { detail: "Unmocked author post route" });
-  });
+  const api = await installAuthorPosts(page, 200);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(
+    `/boards?board=${boardId}&section=posts&post=${api.otherPostId}`,
+  );
+  const other = page.getByRole("article", { name: "Another author's notice" });
+  await other.getByRole("button", { name: "More post actions" }).click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Copy link"]);
+  await page.keyboard.press("Escape");
+  await expect(other.getByRole("button", { name: "Edit" })).toHaveCount(0);
 
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "More post actions" }).click();
-  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
-  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
-  await editor.getByRole("button", { name: "My notice · Published" }).click();
-  const title = editor.getByLabel("Title", { exact: true });
-  const archiveButton = editor.getByRole("button", {
-    name: "Archive post",
-    exact: true,
-  });
-  await expect(archiveButton).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/boards?board=${boardId}&section=posts&post=${api.postId}`);
+  const own = page.getByRole("article", { name: "My editable notice" });
+  await own.getByRole("button", { name: "More post actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
   const confirmation = page.getByRole("alertdialog", {
     name: "Archive post?",
   });
-  await archiveButton.click();
+  await expect(confirmation).toBeVisible();
   await confirmation
     .getByRole("button", { name: "Archive post", exact: true })
     .click();
+  await expect(page.getByText("Post archived", { exact: true })).toBeVisible();
+  expect(api.state.archiveBody).toEqual({
+    board_revision: 1,
+    post_revision: 3,
+  });
+  await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
   await expect(
-    editor.getByText(/Post changed; reload before saving/),
-  ).toBeVisible();
-  await expect(title).toHaveValue("My notice");
+    page
+      .getByRole("region", { name: "Posts", exact: true })
+      .getByText("My editable notice"),
+  ).toHaveCount(0);
+});
+
+test("a stale archive keeps the post open and says it changed elsewhere", async ({
+  page,
+}) => {
+  const api = await installAuthorPosts(page, 409);
+  await page.goto(`/boards?board=${boardId}&section=posts&post=${api.postId}`);
+  const own = page.getByRole("article", { name: "My editable notice" });
+  await own.getByRole("button", { name: "More post actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
+  await page
+    .getByRole("alertdialog", { name: "Archive post?" })
+    .getByRole("button", { name: "Archive post", exact: true })
+    .click();
   await expect(
-    editor.getByRole("button", { name: "My notice · Published" }),
+    page
+      .getByText(
+        "This post changed elsewhere. Refresh posts before trying again.",
+        { exact: true },
+      )
+      .first(),
   ).toBeVisible();
-  await expect(archiveButton).toBeDisabled();
+  await expect(page.getByText("Post archived", { exact: true })).toHaveCount(0);
+  await expect(own).toBeVisible();
 });
 
 test("an author links a Record using its off-page title field without crawling the catalog", async ({
@@ -1532,11 +1379,12 @@ test("an author links a Record using its off-page title field without crawling t
     });
   });
 
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "More post actions" }).click();
-  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
-  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
-  await editor.getByRole("button", { name: "Request handoff" }).click();
+  await page.goto(`/boards?board=${boardId}&section=posts&show=drafts`);
+  await page
+    .getByRole("article", { name: "Request handoff", exact: true })
+    .getByRole("button", { name: "Edit", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", { name: "Edit post", exact: true });
   const links = editor.getByRole("region", { name: "Record links" });
   await expect(links).toContainText("Record links could not be loaded.");
   await expect
@@ -1546,43 +1394,41 @@ test("an author links a Record using its off-page title field without crawling t
         .filter({ hasText: "Record links could not be loaded." }),
     )
     .toHaveAttribute("data-variant", "destructive");
-  await expect(links).not.toContainText("No linked Records.");
+  await expect(links).not.toContainText("No linked records.");
   await expect(links).not.toContainText("Private failure canary");
   expect(submitted).toBeNull();
   listUnavailable = false;
   await links.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
-    links.getByText("No linked Records.", { exact: true }),
+    links.getByText("No linked records.", { exact: true }),
   ).toBeVisible();
 
   await links
-    .getByRole("button", { name: "Next sources", exact: true })
+    .getByRole("button", { name: "Next modules", exact: true })
     .click();
-  await expect(links).toContainText("Data sources could not be loaded.");
+  await expect(links).toContainText("Modules could not be loaded.");
   await expect
     .soft(
       links
         .getByRole("alert")
-        .filter({ hasText: "Data sources could not be loaded." }),
+        .filter({ hasText: "Modules could not be loaded." }),
     )
     .toHaveAttribute("data-variant", "destructive");
   await expect(links).not.toContainText("Private failure canary");
   expect(submitted).toBeNull();
   sourcePageUnavailable = false;
   await links
-    .getByRole("button", { name: "Previous sources", exact: true })
+    .getByRole("button", { name: "Previous modules", exact: true })
     .click();
+  await expect(links.getByText("Modules could not be loaded.")).toHaveCount(0);
   await expect(
-    links.getByText("Data sources could not be loaded."),
-  ).toHaveCount(0);
-  await expect(
-    links.getByRole("button", { name: "Previous sources", exact: true }),
+    links.getByRole("button", { name: "Previous modules", exact: true }),
   ).toBeDisabled();
   await expect(
-    links.getByRole("button", { name: "Next sources", exact: true }),
+    links.getByRole("button", { name: "Next modules", exact: true }),
   ).toBeEnabled();
 
-  await links.getByLabel("Record data source").selectOption(moduleId);
+  await links.getByLabel("Record module").selectOption(moduleId);
   await expect(links).toContainText("Records could not be loaded.");
   await expect
     .soft(
@@ -1593,17 +1439,17 @@ test("an author links a Record using its off-page title field without crawling t
     .toHaveAttribute("data-variant", "destructive");
   await expect(links).not.toContainText("Private failure canary");
   await expect(
-    links.getByRole("button", { name: "Link Record", exact: true }),
+    links.getByRole("button", { name: "Link record", exact: true }),
   ).toBeDisabled();
   expect(queryColumns).toEqual([]);
   await expect(links).not.toContainText("Private title canary");
   expect(submitted).toBeNull();
   titleUnavailable = false;
-  await links.getByLabel("Search Records", { exact: true }).fill("Request");
+  await links.getByLabel("Search records", { exact: true }).fill("Request");
   await expect.poll(() => queryColumns.length).toBeGreaterThan(0);
   await expect(links).toContainText("Records could not be loaded.");
   recordsUnavailable = false;
-  await links.getByLabel("Search Records", { exact: true }).fill("Request 27");
+  await links.getByLabel("Search records", { exact: true }).fill("Request 27");
   await expect(links.getByLabel("Record to link")).toBeVisible();
   await expect(links.getByText("Records could not be loaded.")).toHaveCount(0);
   await links.getByLabel("Record to link").selectOption(recordId);
@@ -1615,7 +1461,7 @@ test("an author links a Record using its off-page title field without crawling t
       columns.some((column) => column.field_id === fieldId),
     ),
   ).toBe(true);
-  await links.getByRole("button", { name: "Link Record" }).click();
+  await links.getByRole("button", { name: "Link record" }).click();
   await expect(links.getByRole("link", { name: "Request 27" })).toBeVisible();
   await expect(links.getByRole("status")).toHaveText("Record linked.");
   expect(submitted).toEqual({
@@ -1623,4 +1469,19 @@ test("an author links a Record using its off-page title field without crawling t
     board_revision: 1,
     content_revision: 2,
   });
+});
+
+test("from 1280 the post Message box keeps an 8rem box while Title stays slim", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await installBoardApi(page, () => true);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page.getByRole("button", { name: "New post" }).first().click();
+  const editor = page.getByRole("dialog", { name: "New post", exact: true });
+  const message = editor.getByLabel("Message", { exact: true });
+  await expect(message).toBeVisible();
+  expect((await message.boundingBox())!.height).toBeGreaterThanOrEqual(128);
+  const title = editor.getByLabel("Title", { exact: true });
+  expect((await title.boundingBox())!.height).toBe(32);
 });

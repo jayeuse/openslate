@@ -317,20 +317,26 @@ test("record field ids on a page are listed once, and their names label the chan
 });
 
 // Every table the server audits (`__audit_enabled__` is not False), read
-// from backend/app/systems on 2026-10-24.
+// from backend/app/systems on 2026-10-24 (the five Kanban tables, 2026-10-27).
 const AUDITED_TABLES = [
   "backup_export_operations",
   "backup_policies",
   "backup_runs",
   "board_attachments",
+  "board_calendar_sources",
+  "board_card_checklist_items",
+  "board_card_labels",
+  "board_cards",
   "board_event_reminders",
   "board_events",
   "board_groups",
+  "board_labels",
   "board_post_revision_attachments",
   "board_post_revision_record_links",
   "board_post_revisions",
   "board_posts",
   "board_record_links",
+  "board_stages",
   "board_widgets",
   "boards",
   "charts",
@@ -391,7 +397,7 @@ const AUDITED_TABLES = [
 ];
 
 test("every audited table has its own Area option, never a shared Other", () => {
-  expect(AUDITED_TABLES).toHaveLength(69);
+  expect(AUDITED_TABLES).toHaveLength(75);
   const labels = AUDITED_TABLES.map(auditKindLabel);
   const repeated = labels.filter(
     (label, index) => labels.indexOf(label) !== index,
@@ -403,6 +409,13 @@ test("every audited table has its own Area option, never a shared Other", () => 
     "Conversation members · OpenComms",
   );
   expect(auditKindLabel("board_posts")).toBe("Posts · Boards");
+  expect(auditKindLabel("board_calendar_sources")).toBe(
+    "Calendar record sources · Boards",
+  );
+  expect(auditKindLabel("board_cards")).toBe("Cards · Boards");
+  expect(auditKindLabel("board_card_checklist_items")).toBe(
+    "Checklist items · Boards",
+  );
   expect(auditKindLabel("platform_operators")).toBe(
     "Installation owners · Manage",
   );

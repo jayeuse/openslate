@@ -1,4 +1,8 @@
-"""Contextual Record shortcuts without copying source Record data."""
+"""Contextual Record shortcuts without copying source Record data.
+
+Posts, events and objective cards own links; a record card's links belong to its
+Record (``attachment_service._content`` refuses it).
+"""
 
 from uuid import UUID
 
@@ -16,6 +20,7 @@ from app.systems.boards.attachment_service import (
     _displayed,
     _draft,
     _hidden,
+    owners,
 )
 from app.systems.boards.post_models import BoardPost
 from app.systems.boards.record_link_models import (
@@ -29,6 +34,8 @@ from app.systems.sandbox.records.models import Record
 
 
 def _owner_filter(kind: str, content_id: UUID) -> ColumnElement[bool]:
+    if kind == "card":
+        return BoardRecordLink.card_id == content_id
     return (
         BoardRecordLink.event_id == content_id
         if kind == "event"
@@ -176,8 +183,7 @@ def link_record(
     link = BoardRecordLink(
         org_id=board.org_id,
         board_id=board_id,
-        event_id=content_id if kind == "event" else None,
-        post_id=content_id if kind == "post" else None,
+        **owners(kind, content_id),
         record_id=record.id,
         module_id=record.module_id,
     )

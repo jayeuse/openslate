@@ -294,16 +294,202 @@
     "path": "/api/users/{param}"
   },
   {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-configuration-api.ts",
-    "function": "downloadBoardConfiguration",
-    "method": "GET",
-    "path": "/api/boards/{param}/configuration"
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "addBoardCalendarSource",
+    "method": "POST",
+    "path": "/api/boards/{param}/calendar-sources"
   },
   {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-configuration-api.ts",
-    "function": "importBoardConfiguration",
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "addMyCalendarSource",
     "method": "POST",
-    "path": "/api/boards/import"
+    "path": "/api/me/calendar-sources"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "listBoardCalendarSources",
+    "method": "GET",
+    "path": "/api/boards/{param}/calendar-sources"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "listMyCalendarSources",
+    "method": "GET",
+    "path": "/api/me/calendar-sources"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "removeBoardCalendarSource",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/calendar-sources/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-calendar-sources-api.ts",
+    "function": "removeMyCalendarSource",
+    "method": "DELETE",
+    "path": "/api/me/calendar-sources/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "addChecklistItem",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/{param}/checklist"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "deleteChecklistItem",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/checklist/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "listCardActivity",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}/activity"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "orderChecklist",
+    "method": "PUT",
+    "path": "/api/boards/{param}/cards/{param}/checklist/order"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "readCardRecord",
+    "method": "GET",
+    "path": "/api/records/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "readCardSheet",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "saveCardFields",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/cards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-card-sheet-api.ts",
+    "function": "updateChecklistItem",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/checklist/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-due-cards-api.ts",
+    "function": "listMyDueCards",
+    "method": "GET",
+    "path": "/api/boards/cards/due"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "archiveKanbanCard",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "archiveKanbanStage",
+    "method": "POST",
+    "path": "/api/boards/{param}/stages/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "createKanbanLabel",
+    "method": "POST",
+    "path": "/api/boards/{param}/labels"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "createKanbanStage",
+    "method": "POST",
+    "path": "/api/boards/{param}/stages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "createObjectiveCard",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "createRecordCard",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "deleteKanbanLabel",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/labels/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "listBoardCards",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "listKanbanLabels",
+    "method": "GET",
+    "path": "/api/boards/{param}/labels"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "listKanbanStages",
+    "method": "GET",
+    "path": "/api/boards/{param}/stages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "moveKanbanCard",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/cards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "orderKanbanStages",
+    "method": "PUT",
+    "path": "/api/boards/{param}/stages/order"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "readKanbanRecordValues",
+    "method": "GET",
+    "path": "/api/records/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "restoreKanbanCard",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "saveCardDates",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/batch-dates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "setKanbanCardLabels",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/cards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "updateKanbanLabel",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/labels/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "updateKanbanStage",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/stages/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
@@ -328,12 +514,6 @@
     "function": "listBoardEvents",
     "method": "GET",
     "path": "/api/boards/{param}/events"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
-    "function": "listMyBoardEvents",
-    "method": "GET",
-    "path": "/api/boards/{param}/events/mine"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",
@@ -450,6 +630,30 @@
     "path": "/api/boards/{param}/files/{param}/content"
   },
   {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "attachBoardFile",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/{param}/attachments"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "detachBoardFile",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/cards/{param}/attachments/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "downloadBoardAttachment",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}/attachments/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "listBoardAttachments",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}/attachments"
+  },
+  {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
     "function": "archiveBoard",
     "method": "POST",
@@ -460,12 +664,6 @@
     "function": "createBoard",
     "method": "POST",
     "path": "/api/boards"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
-    "function": "duplicateBoardStructure",
-    "method": "POST",
-    "path": "/api/boards/{param}/duplicate"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-management-api.ts",
@@ -514,6 +712,18 @@
     "function": "updateBoard",
     "method": "PATCH",
     "path": "/api/boards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-my-calendar-api.ts",
+    "function": "listCrossBoardOccurrences",
+    "method": "GET",
+    "path": "/api/boards/occurrences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-people-api.ts",
+    "function": "listBoardPeople",
+    "method": "GET",
+    "path": "/api/boards/{param}/people"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-post-author-api.ts",
@@ -636,6 +846,24 @@
     "path": "/api/boards/{param}/posts/{param}/record-links/{param}"
   },
   {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "addBoardRecordLink",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/{param}/record-links"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "listBoardRecordLinks",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}/record-links"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-record-links-api.ts",
+    "function": "removeBoardRecordLink",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/cards/{param}/record-links/{param}"
+  },
+  {
     "adapter": "frontend/src/components/systems/boards/adapters/board-tools-api.ts",
     "function": "getBoardAccessPreview",
     "method": "GET",
@@ -658,42 +886,6 @@
     "function": "listBoardPreviewUsers",
     "method": "GET",
     "path": "/api/boards/{param}/preview-users"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "createBoardWidget",
-    "method": "POST",
-    "path": "/api/boards/{param}/widgets"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "deleteBoardWidget",
-    "method": "DELETE",
-    "path": "/api/boards/{param}/widgets/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "duplicateBoardWidget",
-    "method": "POST",
-    "path": "/api/boards/{param}/widgets/{param}/duplicate"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "listBoardWidgets",
-    "method": "GET",
-    "path": "/api/boards/{param}/widgets"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "reorderBoardWidgets",
-    "method": "PUT",
-    "path": "/api/boards/{param}/widgets/order"
-  },
-  {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-widgets-api.ts",
-    "function": "updateBoardWidget",
-    "method": "PATCH",
-    "path": "/api/boards/{param}/widgets/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-workspace-date-api.ts",
@@ -1924,12 +2116,6 @@
     "function": "updateOpenViewRecord",
     "method": "PATCH",
     "path": "/api/records/{param}"
-  },
-  {
-    "adapter": "frontend/src/components/systems/openview/adapters/records-api.ts",
-    "function": "updateOpenViewRecordMoves",
-    "method": "POST",
-    "path": "/api/records/batch-update"
   },
   {
     "adapter": "frontend/src/components/systems/openview/adapters/records-export-api.ts",

@@ -34,7 +34,6 @@ AUDIENCE_SCOPED = ["reports", "report_runs", "report_run_rows", "report_schedule
 BOARD_CHILDREN = [
     "boards",
     "board_groups",
-    "board_widgets",
     "board_events",
     "board_event_reminders",
     "board_posts",
@@ -43,6 +42,12 @@ BOARD_CHILDREN = [
     "board_post_revision_record_links",
     "board_attachments",
     "board_record_links",
+    "board_stages",
+    "board_cards",
+    "board_labels",
+    "board_card_labels",
+    "board_card_checklist_items",
+    "board_calendar_sources",
 ]
 
 

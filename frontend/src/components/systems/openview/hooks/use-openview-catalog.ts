@@ -74,12 +74,7 @@ export function selectedFieldIds(
         ...presentation.pinnedFieldIds,
         presentation.primaryFieldId,
         presentation.secondaryFieldId,
-        presentation.dateFieldId,
         presentation.groupByFieldId,
-        presentation.timelineStartFieldId,
-        presentation.timelineEndFieldId,
-        presentation.timelineDeadlineFieldId,
-        presentation.timelineProgressFieldId,
       ].filter((id): id is string => Boolean(id)),
     ),
   ];

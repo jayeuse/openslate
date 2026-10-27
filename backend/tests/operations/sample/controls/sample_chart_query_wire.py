@@ -1,4 +1,4 @@
-"""Independent rich authored-widget states and portable name/label expectations."""
+"""Independent rich authored Dashboard states and reply/receipt corruption helpers."""
 
 import json
 from copy import deepcopy
@@ -87,13 +87,8 @@ def corrupt_boundary_receipts(result, fault):
 
 
 def rich_setup(setup):
-    dataset, action, context, original, directory = setup
+    dataset, action, context, _, directory = setup
     wire = RichChartWire()
-    wire.field_name, wire.module_name, wire.department_name = (
-        original.field_name,
-        original.module_name,
-        original.department_name,
-    )
     for client in context.clients.values():
         client._client._transport = httpx.MockTransport(wire)
     return dataset, action, context, wire, directory
@@ -105,11 +100,6 @@ def rich_queries(module_id):
     status = {"field_id": identity("rich:status"), "expected_type": "select"}
     date = {"field_id": identity("rich:date"), "expected_type": "date"}
     owner = {"field_id": identity("rich:owner"), "expected_type": "user"}
-    named_title = {"name": "Title", "expected_type": "text"}
-    named_amount = {"name": "Amount", "expected_type": "number"}
-    named_status = {"name": "Status", "expected_type": "select"}
-    named_date = {"name": "Occurred", "expected_type": "date"}
-    named_owner = {"name": "Owner", "expected_type": "user"}
     definition = {
         "version": 1,
         "columns": [title, amount, status, date],
@@ -131,24 +121,6 @@ def rich_queries(module_id):
         "deleted": "include",
         "search": "North",
         "search_fields": [title, status],
-    }
-    portable_definition = {
-        "version": 1,
-        "columns": [named_title, named_amount, named_status, named_date],
-        "filters": [
-            {**named_status, "operator": "in", "value": ["Active", "Open"]},
-            {**named_owner, "operator": "empty", "value": None},
-            {**named_owner, "operator": "not_empty", "value": None},
-            *[
-                {**named_title, "operator": "contains", "value": value}
-                for value in ["North", "East", "West", "South", "Coast", "Hill", "Port"]
-            ],
-        ],
-        "logic": "or",
-        "sort": [{**named_amount, "direction": "desc"}, {**named_title, "direction": "asc"}],
-        "deleted": "include",
-        "search": "North",
-        "search_fields": [named_title, named_status],
     }
     live = [
         {
@@ -175,63 +147,22 @@ def rich_queries(module_id):
         },
         {"module_id": module_id, "definition": definition},
     ]
-    portable = [
-        {
-            "mode": "groups",
-            "definition": portable_definition,
-            "dimension": named_status,
-            "aggregation": "sum",
-            "measure": named_amount,
-            "date_field": named_date,
-            "from_date": "2026-01-01",
-            "to_date": "2026-03-31",
-        },
-        {
-            "mode": "date_series",
-            "definition": portable_definition,
-            "aggregation": "count",
-            "measure": None,
-            "date_field": named_date,
-            "from_date": "2020-01-01",
-            "to_date": "2030-12-31",
-            "bucket": "quarter",
-        },
-        {"definition": portable_definition},
-    ]
-    return deepcopy(live), deepcopy(portable)
+    return deepcopy(live)
 
 
 class RichChartWire(ChartWire):
     def __init__(self):
         super().__init__()
-        live, self.portable_queries = rich_queries(self.module_id)
+        live = rich_queries(self.module_id)
         configs = [
             {"version": 1, "chart_type": "bar", "query": live[0]},
             {"version": 1, "chart_type": "line", "query": live[1]},
             {"version": 1, "query": live[2]},
         ]
-        self.widgets[self.source_board_id] = []
         self.dashboards[self.source_dashboard_id]["widgets"] = []
-        for index, (kind, size, cells, config) in enumerate(
-            zip(
-                ["chart", "chart", "records"],
-                ["S", "M", "L"],
-                [(0, 0), (2, 0), (2, 2)],
-                configs,
-                strict=True,
-            )
+        for index, (kind, cells, config) in enumerate(
+            zip(["chart", "chart", "records"], [(0, 0), (2, 0), (2, 2)], configs, strict=True)
         ):
-            row = self.widget(
-                self.source_board_id,
-                "rich:widget:" + str(index),
-                config,
-                None,
-                size,
-                index != 1,
-                index,
-            )
-            row.update(name="Rich source " + str(index), widget_type=kind)
-            self.widgets[self.source_board_id].append(row)
             self.dashboards[self.source_dashboard_id]["widgets"].append(
                 {
                     "id": identity("rich:dashboard:" + str(index)),
@@ -244,61 +175,11 @@ class RichChartWire(ChartWire):
                     "updated_at": STAMP,
                 }
             )
-        self.source_before = deepcopy((self.boards, self.widgets, self.dashboards))
+        self.source_before = deepcopy(self.dashboards)
         self.corrupt = None
-        self.source_chart = {
-            "id": identity("rich:source:chart"),
-            "module_id": self.module_id,
-            "department_id": self.department_id,
-            "name": "Authored records instructions",
-            "chart_type": "records",
-            "query": live[2],
-            "revision": 7,
-            "is_deleted": False,
-            "created_at": STAMP,
-            "updated_at": STAMP,
-        }
-
-    def add_reference_source(self):
-        row = self.widget(
-            self.source_board_id, "rich:source:ref", None, self.source_chart["id"], "L", False, 3
-        )
-        row.update(name="Authored reference", widget_type="records")
-        self.widgets[self.source_board_id].append(row)
-        self.source_before = deepcopy((self.boards, self.widgets, self.dashboards))
-
-    def portable(self):
-        bundle = super().portable()
-        for index, query in enumerate(self.portable_queries):
-            row = bundle["configuration"]["widgets"][index]
-            row["config"] = {
-                "version": 1,
-                "query": deepcopy(query),
-                "size": ["S", "M", "L"][index],
-                "pinned": index != 1,
-                "refresh": "manual",
-                **({"chart_type": ["bar", "line"][index]} if index < 2 else {}),
-            }
-        if len(self.widgets[self.source_board_id]) == 4:
-            bundle["configuration"]["widgets"][3]["config"] = {
-                "version": 1,
-                "query": deepcopy(self.portable_queries[2]),
-                "size": "L",
-                "pinned": False,
-                "refresh": "manual",
-            }
-        return bundle
 
     def __call__(self, request):
         method, path = request.method, request.url.path
-        if path == "/api/charts/" + self.source_chart["id"] and method == "GET":
-            self.sequence += 1
-            self.seen.append((method, path))
-            return httpx.Response(
-                200,
-                headers={"X-Request-ID": identity("request:" + str(self.sequence))},
-                json=deepcopy(self.source_chart),
-            )
         if (path == "/api/dashboards" and method == "POST") or (
             path == "/api/dashboards/" + self.dashboard_id and method == "PATCH"
         ):
@@ -359,23 +240,4 @@ class RichChartWire(ChartWire):
             if method == "POST":
                 headers["Location"] = "/api/dashboards/" + self.dashboard_id
             return httpx.Response(status, headers=headers, json=response_row)
-        response = super().__call__(request)
-        if path.endswith("/duplicate"):
-            for index, row in enumerate(self.widgets[self.board_id]):
-                row.update(id=identity("rich:copy:board:" + str(index)), board_id=self.board_id)
-            if self.corrupt == "board_copy":
-                self.widgets[self.board_id][0]["pinned"] = False
-        if path == "/api/boards/import" and self.corrupt == "import_source":
-            self.widgets[self.import_id][0]["config"]["query"]["aggregation"] = "average"
-        if path == "/api/boards/import" and len(self.widgets[self.source_board_id]) == 4:
-            self.widgets[self.import_id][3]["config"] = {
-                "version": 1,
-                "query": deepcopy(self.source_chart["query"]),
-            }
-        if path == f"/api/boards/{self.board_id}/widgets" and method == "POST":
-            position = len(self.widgets[self.source_board_id])
-            self.widgets[self.board_id][-1]["position"] = position
-            body = response.json()
-            body["widget"]["position"] = position
-            response = httpx.Response(response.status_code, headers=response.headers, json=body)
-        return response
+        return super().__call__(request)

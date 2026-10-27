@@ -21,14 +21,13 @@ from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.boards.models import Board, BoardGroup
+from app.systems.boards.models import BoardGroup
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.dashboards.models import Dashboard
 from app.systems.sandbox.fields.models import Field, FieldType
 from tests.boards.support import client as board_client
-from tests.boards.support import grant, project_board
-from tests.charts.chart_route_support import ChartWorld
+from tests.boards.support import project_board
 from tests.conftest import _assert_alembic_head, guarded_create_engine
 from tests.live_session_support import with_live_session
 from tests.organization_scope_support import scoped_override
@@ -39,13 +38,6 @@ from tests.sandbox_designs.fixtures import create_document
 
 def client(db: Session, actor: User, *routers: APIRouter) -> TestClient:
     return with_live_session(board_client(db, actor, *routers), db, actor)
-
-
-def managed_board(world: ChartWorld, *actor_names: str) -> Board:
-    board = project_board(world.db)
-    grant(world.db, board, [world.users[name] for name in actor_names], AccessLevel.MANAGE)
-    world.db.commit()
-    return board
 
 
 class ReferenceRaceWorld:
@@ -146,37 +138,22 @@ class ReferenceRaceWorld:
     def client(self, actor: str = "member") -> TestClient:
         return TestClient(self.app, headers={"x-reference-actor": actor})
 
-    def attachment(self, client: TestClient, kind: str = "board", chart_ids=None):
+    def attachment(self, client: TestClient, chart_ids=None):
         ids = self.charts[:1] if chart_ids is None else chart_ids
-        specs = [
-            {"widget_type": "chart", "chart_id": str(identifier), "config": None, "size": "S"}
-            for identifier in ids
+        placed = [
+            {
+                "widget_type": "chart",
+                "chart_id": str(identifier),
+                "config": None,
+                "grid_column": 2 * (index % 2),
+                "grid_row": 2 * (index // 2),
+                "column_span": 2,
+                "row_span": 2,
+            }
+            for index, identifier in enumerate(ids)
         ]
-        if kind == "dashboard":
-            placed = [
-                {
-                    **{key: value for key, value in spec.items() if key != "size"},
-                    "grid_column": 2 * (index % 2),
-                    "grid_row": 2 * (index // 2),
-                    "column_span": 2,
-                    "row_span": 2,
-                }
-                for index, spec in enumerate(specs)
-            ]
-            return client.patch(
-                f"/api/dashboards/{self.dashboard_id}", json={"revision": 1, "widgets": placed}
-            )
-        return client.post(
-            f"/api/boards/{self.board_id}/widgets",
-            json={
-                "revision": 1,
-                "widget": {
-                    **specs[0],
-                    "name": "Race widget",
-                    "module_id": str(self.module_id),
-                    "pinned": True,
-                },
-            },
+        return client.patch(
+            f"/api/dashboards/{self.dashboard_id}", json={"revision": 1, "widgets": placed}
         )
 
     def cleanup(self) -> None:
@@ -212,7 +189,6 @@ class ReferenceRaceWorld:
                 {"actors": list(self.actors.values()), "ids": list(entity_ids)},
             )
             for table, column, ids in (
-                ("board_widgets", "board_id", [self.board_id]),
                 ("dashboard_widgets", "dashboard_id", [self.dashboard_id]),
                 ("board_groups", "board_id", [self.board_id]),
                 ("dashboards", "id", [self.dashboard_id]),

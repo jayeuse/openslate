@@ -481,7 +481,7 @@ def _received(row: _FanOut, events: list[InvalidationEvent]) -> dict[str, list[o
         pytest.param(_files, id="files"),
         *(
             pytest.param(lambda entity=entity: _board(entity), id=entity)
-            for entity in ["boards", "board_posts", "board_events", "board_widgets"]
+            for entity in ["boards", "board_posts", "board_events"]
         ),
         *(
             pytest.param(lambda entity=entity: _dashboard(entity), id=entity)

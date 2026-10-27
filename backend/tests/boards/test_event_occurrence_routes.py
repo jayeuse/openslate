@@ -268,3 +268,59 @@ def test_timed_event_reads_and_occurrences_survive_non_utc_postgres_session(
         "2026-03-08T07:30:00Z",
         "2026-03-09T06:30:00Z",
     ]
+
+
+@pytest.mark.integration
+def test_event_occurrences_name_the_next_occurrence_over_the_same_candidates(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db)
+    board = Board(org_id=organization(db).id,
+                  scope="project", name=f"Next calendar {uuid7().hex[:12]}", status="active")
+    other = Board(org_id=organization(db).id,
+                  scope="project", name=f"Other calendar {uuid7().hex[:12]}", status="active")
+    db.add_all((board, other))
+    db.flush()
+    board_group(db, board, [owner], AccessLevel.READ)
+
+    def add(target: Board, title: str, day: date, **values: object) -> BoardEvent:
+        event = BoardEvent(
+            org_id=target.org_id, board_id=target.id, author_id=owner.id, title=title,
+            all_day=True, start_date=day, end_date=day, timezone_name="UTC", **values,
+        )
+        db.add(event)
+        return event
+
+    add(board, "Review in window", date(2026, 11, 10))
+    later = add(board, "Review later", date(2026, 12, 14))
+    soon = add(board, "Standup", date(2026, 11, 2), recurrence="weekly",
+               repeat_until=date(2027, 3, 1))
+    add(board, "Review archived", date(2026, 12, 1), archived=True)
+    add(board, "Review deleted", date(2026, 12, 2), is_deleted=True,
+        deleted_at=datetime.now(UTC))
+    add(other, "Review elsewhere", date(2026, 12, 1))
+    add(board, "Review far away", date(2028, 1, 1))
+    db.commit()
+
+    root = f"/api/boards/{board.id}/events/occurrences"
+    client = board_client(db, owner, router)
+    november = {"window_start": "2026-11-01", "window_end": "2026-11-30"}
+    page = client.get(root, params={**november, "limit": 1})
+    assert page.status_code == 200, page.text
+    assert page.json()["pagination"]["total"] == 6
+    assert page.json()["next_occurrence"] == {
+        "id": f"{soon.id}:2026-12-07",
+        "event_id": str(soon.id),
+        "start": "2026-12-07",
+        "end": "2026-12-07",
+        "date": "2026-12-07",
+    }
+    searched = client.get(root, params={**november, "search": "Review"})
+    assert searched.status_code == 200
+    assert searched.json()["next_occurrence"]["event_id"] == str(later.id)
+    # The last window day is inside the window, so the next start is the day after it.
+    edge = client.get(root, params={"window_start": "2026-12-01", "window_end": "2026-12-14",
+                                    "search": "Review"})
+    assert edge.json()["next_occurrence"] is None
+    assert [item["event_id"] for item in edge.json()["items"]] == [str(later.id)]

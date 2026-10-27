@@ -21,6 +21,8 @@ _PRIVATE_INVALIDATION_ENTITIES = frozenset(
         "board_post_revision_record_links",
         "board_attachments",
         "board_record_links",
+        "board_card_labels",
+        "board_card_checklist_items",
         "dashboard_widgets",
         "comms_capability_grants",
         "comms_categories",
@@ -80,7 +82,18 @@ _ENTITY_ONLY_ENTITIES = frozenset(
 MODULE_SCOPED_ENTITIES = frozenset(
     {"charts", "fields", "modules", "records", "relationship_edges", "saved_views"}
 )
-BOARD_SCOPED_ENTITIES = frozenset({"boards", "board_posts", "board_events", "board_widgets"})
+BOARD_SCOPED_ENTITIES = frozenset(
+    {
+        "boards",
+        "board_posts",
+        "board_events",
+        "board_stages",
+        "board_cards",
+        "board_labels",
+        # A personal source has no Board, so it publishes nothing (a private row).
+        "board_calendar_sources",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)

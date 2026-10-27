@@ -153,7 +153,6 @@ def assert_empty_content(admin: SampleClient, boards: list[Mapping[str, Any]]) -
     for view in ("editable", "archive"):
         _empty(admin, f"{base}/posts", {"view": view})
     _empty(admin, f"{base}/events", {"archived": "all"})
-    _empty(admin, f"{base}/widgets")
     _empty(admin, f"{base}/files")
     _empty(admin, "/api/views", {"deleted": "include"})
     _empty(admin, "/api/dashboards", {"deleted": "include"})
@@ -181,7 +180,6 @@ def prepare_content(
         clients=clients,
         departments=departments,
         modules=modules,
-        fields=fields,
         groups=groups,
         organization=organization,
     )
@@ -214,11 +212,15 @@ def finish_content(
     seed: int,
     organization: OrganizationPack | None = None,
 ) -> Mapping[str, int]:
-    """Finish remaining Board work, then leads build views, dashboards and reports."""
+    """Finish remaining Board work and the demo Kanban, then leads build views,
+    dashboards and reports."""
+    from operations.sample.population.board_kanban import seed_kanban
     from operations.sample.population.openview import populate_openview
 
     entries = queue.flush(records)
     pack = organization or default_pack()
+    kanban = seed_kanban(admin, boards=queue.boards, clients=clients, records=records,
+                         anchor_date=anchor_date, organization=pack)  # fmt: skip
     writers = {key: clients.get(pack.content.data.leads[key], admin) for key in departments}
     openview = populate_openview(
         admin,
@@ -231,7 +233,7 @@ def finish_content(
         actor_clients=clients,
         organization=pack,
     )
-    return {**board_counts, **entries, **openview}
+    return {**board_counts, **entries, **kanban, **openview}
 
 
 def verify_content(
@@ -260,7 +262,6 @@ def verify_content(
     expected = run_manifest.get("expected", {})
     content_keys = (
         "boards",
-        "widgets",
         "posts",
         "events",
         "reminders",
@@ -269,6 +270,10 @@ def verify_content(
         "project_group_grants",
         "post_publications",
         "publication_revisions",
+        "kanban_stages",
+        "kanban_labels",
+        "kanban_cards",
+        "kanban_checklist_items",
         "views",
         "dashboards",
         "dashboard_widgets",

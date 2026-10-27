@@ -1,4 +1,9 @@
 import type { AuthMe } from "@/lib/auth-api";
+import {
+  allBoardsHref,
+  boardsPlace,
+  companyBoardHref,
+} from "@/components/boards-navigation-model";
 
 export type WorkspaceNavigationItem = {
   id: string;
@@ -45,11 +50,12 @@ const workspaceNavigationDefinitions = [
     description: "Team pages and events",
     pathname: "/boards",
     queryKey: "section",
-    defaultItem: "overview",
+    // The static rows; the project boards join them from the board list
+    // (boards-navigation-model.ts, BR2).
+    defaultItem: "company",
     items: [
-      { id: "overview", label: "Overview" },
-      { id: "posts", label: "Posts" },
-      { id: "calendar", label: "Calendar" },
+      { id: "company", label: "Company" },
+      { id: "all", label: "All boards" },
     ],
   },
   {
@@ -237,6 +243,10 @@ function sectionFor(
   access: AccessNavigation = "all",
 ): string {
   if (definition.id === "access" && access === "groups") return "groups";
+  // A Boards place is a board (Company, a department's, a project's) or All
+  // boards; only Company and All boards are static rows.
+  if (definition.id === "boards")
+    return boardsPlace(definition.pathname, params)?.kind ?? "company";
   const requested = params.get(definition.queryKey);
   const normalizedRequested =
     definition.id === "sandbox" && requested
@@ -281,10 +291,6 @@ function paramsFor(
         if (key !== "section") params.append(key, value);
       }
     }
-    if (definition.id === "boards") {
-      const board = searchParams.get("board");
-      if (board) params.set("board", board);
-    }
     if (definition.id === "platform") {
       const department = searchParams.get("department");
       if (department) params.set("department", department);
@@ -317,10 +323,15 @@ export function getWorkspaceNavigation(
       auditManager,
     ).map((item) => ({
       ...item,
-      href: href(
-        definition.pathname,
-        paramsFor(definition, item.id, pathname, searchParams),
-      ),
+      href:
+        definition.id === "boards"
+          ? item.id === "all"
+            ? allBoardsHref
+            : companyBoardHref
+          : href(
+              definition.pathname,
+              paramsFor(definition, item.id, pathname, searchParams),
+            ),
     }));
     if (items.length === 0) return [];
     // The workspace link opens its default section, or the first section
@@ -433,6 +444,11 @@ export function currentNavigationKey(
     return `openview:dashboard:${searchParams.get("department") ?? ""}`;
   if (definition.id === "openview" && section === "views")
     return `openview:module:${searchParams.get("module") ?? ""}`;
+  // Each board is its own place, so the fill glides between them.
+  const board = boardsPlace(pathname, searchParams);
+  if (board?.kind === "department")
+    return `boards:department:${board.departmentId}`;
+  if (board?.kind === "board") return `boards:board:${board.boardId}`;
   return `${definition.id}:${section}`;
 }
 

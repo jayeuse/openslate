@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
-import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import { listBoardEventOccurrences } from "../adapters/board-events-api";
 import type { BoardEventOccurrencePage } from "../adapters/board-events-api";
 
@@ -30,44 +29,6 @@ export type CalendarEvent =
       error: string;
       retain: boolean;
     };
-
-function monthDate(month: string): Date {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
-    throw new Error("Invalid calendar month");
-  const [year, part] = month.split("-").map(Number);
-  return new Date(Date.UTC(year, part - 1, 1, 12));
-}
-
-function dateKey(date: Date): string {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-}
-
-/** The label uses the workspace format; without a region it is the plain month. */
-export function calendarWindowForMonth(
-  month: string,
-  region?: WorkspaceRegion,
-): CalendarWindow {
-  const first = monthDate(month);
-  const last = new Date(
-    Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0, 12),
-  );
-  return {
-    start: dateKey(first),
-    end: dateKey(last),
-    label: region
-      ? formatWorkspaceDate(dateKey(first), region, {
-          month: "long",
-          year: "numeric",
-        })
-      : month,
-  };
-}
-
-export function shiftCalendarMonth(month: string, amount: number): string {
-  const date = monthDate(month);
-  date.setUTCMonth(date.getUTCMonth() + amount);
-  return dateKey(date).slice(0, 7);
-}
 
 export function transitionCalendarState(
   state: CalendarState,
@@ -202,7 +163,7 @@ export function useServerBoardEvents(
             sequence: request,
             error:
               error instanceof ApiError && error.status < 500
-                ? "Calendar unavailable. Ask a Board manager to check your access, or retry."
+                ? "Calendar unavailable. Ask a board manager to check your access, or retry."
                 : "Could not refresh this calendar. Try again.",
             retain: retainOnFailure(error),
           }),

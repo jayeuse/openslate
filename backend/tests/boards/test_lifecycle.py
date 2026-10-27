@@ -10,7 +10,7 @@ from uuid6 import uuid7
 from app.systems.access.policy.models import Group
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardStatus, BoardWidget
+from app.systems.boards.models import Board, BoardGroup, BoardStatus
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
@@ -127,15 +127,6 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
     owned_record = Record(org_id=owned_module.org_id, module_id=owned_module.id, data={})
     db.add(owned_record)
     db.flush()
-    owned_widget = BoardWidget(
-        org_id=board.org_id,
-        board_id=board.id,
-        module_id=owned_module.id,
-        name="Owned records",
-        position=1,
-        widget_type="records",
-        config={},
-    )
 
     now = datetime.now(UTC)
     reminder = BoardEventReminder(
@@ -216,7 +207,7 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
         next_attempt_at=now,
         state=WorkState.SUCCEEDED,
     )
-    db.add_all([owned_widget, attachment, revision_attachment, record_link, owned_record_link])
+    db.add_all([attachment, revision_attachment, record_link, owned_record_link])
     db.flush()
     db.add_all([revision_link, owned_revision_link, post_work, reminder_work])
     db.flush()
@@ -245,8 +236,6 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
         ("modules", owned_module.id),
         ("records", owned_record.id),
         ("board_groups", board_group.id),
-        ("board_widgets", child_ids["board_widgets"]),
-        ("board_widgets", owned_widget.id),
         ("board_events", event.id),
         ("board_event_reminders", reminder.id),
         ("board_posts", post.id),
@@ -277,8 +266,6 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
         ("modules", owned_module.id),
         ("records", owned_record.id),
         ("board_groups", board_group.id),
-        ("board_widgets", child_ids["board_widgets"]),
-        ("board_widgets", owned_widget.id),
         ("board_events", event.id),
         ("board_event_reminders", reminder.id),
         ("board_posts", post.id),
@@ -315,8 +302,6 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
         (Record, owned_record.id),
         (Board, board.id),
         (BoardGroup, board_group.id),
-        (BoardWidget, child_ids["board_widgets"]),
-        (BoardWidget, owned_widget.id),
         (BoardEvent, event.id),
         (BoardEventReminder, reminder.id),
         (BoardPost, post.id),

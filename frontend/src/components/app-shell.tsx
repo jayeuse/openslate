@@ -145,6 +145,8 @@ export function AppShell({
   const isModule =
     isModulePage(pathname, searchParams) ||
     (pathname === "/openview" && searchParams.get("section") === "dashboards");
+  // Boards is a still page from 1280px too; only its panels scroll (BR8).
+  const isBoards = pathname === "/boards";
   const suspended = useWorkspaceInteractionSuspended();
   const queryClient = useQueryClient();
   const brandQuery = useQuery({
@@ -612,7 +614,7 @@ export function AppShell({
                   ? "flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden"
                   : isSandbox
                     ? "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7 xl:flex xl:h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-col xl:overflow-hidden"
-                    : isManage || isModule
+                    : isManage || isModule || isBoards
                       ? "min-h-[calc(100vh-3.5rem)] p-3 sm:px-5 sm:py-3 xl:flex xl:h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-col xl:overflow-hidden"
                       : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
               )}

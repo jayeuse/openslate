@@ -470,7 +470,7 @@ export function SandboxInspectorOutline({
               disabled={pending || live.disabled || editingId !== null}
               onClick={() => void onPurge({ kind, id })}
             >
-              Permanently delete {kind}
+              Delete {kind} forever
             </ContextMenuItem>
           ) : null}
           {onDuplicate ? (

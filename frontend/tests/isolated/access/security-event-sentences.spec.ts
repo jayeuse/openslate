@@ -392,15 +392,15 @@ const typeRows: {
   },
   {
     type: "lifecycle.record_purge",
-    label: "Permanent record deletion",
+    label: "Record deleted forever",
     patch: {
       subject_id: operation,
       metadata: { trigger_history_rows_removed: 3 },
     },
-    success: "Mara permanently deleted a record.",
+    success: "Mara deleted a record forever.",
     unfinished: {
       outcome: "failure",
-      sentence: "Permanent record deletion by Mara failed.",
+      sentence: "Delete forever by Mara failed.",
     },
   },
   {

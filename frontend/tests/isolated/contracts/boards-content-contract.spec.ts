@@ -5,7 +5,6 @@ import {
   purgeBoardEvent,
   listBoardEventOccurrences,
   listBoardEvents,
-  listMyBoardEvents,
   readBoardEvent,
   restoreBoardEvent,
   updateBoardEvent,
@@ -86,6 +85,13 @@ const occurrence = {
   date: "2026-01-02",
   event: timedEvent,
 };
+const nextOccurrence = {
+  id: `${eventId}:2026-02-02T03:00:00Z`,
+  event_id: eventId,
+  start: "2026-02-02T03:00:00Z",
+  end: "2026-02-02T04:00:00Z",
+  date: "2026-02-02",
+};
 const draftPost = {
   id: postId,
   board_id: boardId,
@@ -122,16 +128,6 @@ describeContracts("Boards: events, posts, files and record links", [
       }),
     responses: {
       "GET /api/boards/{board_id}/events": {
-        items: [timedEvent],
-        pagination: page,
-      },
-    },
-  },
-  {
-    name: "listMyBoardEvents",
-    run: () => listMyBoardEvents(boardId, { search: "pump" }),
-    responses: {
-      "GET /api/boards/{board_id}/events/mine": {
         items: [timedEvent],
         pagination: page,
       },
@@ -246,6 +242,7 @@ describeContracts("Boards: events, posts, files and record links", [
     responses: {
       "GET /api/boards/{board_id}/events/occurrences": {
         items: [occurrence],
+        next_occurrence: nextOccurrence,
         pagination: page,
       },
     },

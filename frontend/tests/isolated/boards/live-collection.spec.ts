@@ -3,19 +3,15 @@ import { ApiError } from "../../../src/lib/api";
 import type { BoardManagementBoard } from "../../../src/components/systems/boards/adapters/board-management-api";
 import {
   applyBoardMutationToDetail,
-  boardListKey,
   boardUrl,
+  canonicalBoardUrl,
   chooseBoardCandidate,
   invalidateBoardResourcesIfAuthorizationDenied,
   parseBoardRoute,
   transitionResource,
   type ResourceState,
 } from "../../../src/components/systems/boards/hooks/use-server-boards";
-import {
-  boardSearchEmptyCopy,
-  isSelectedBoardPostManagerOpen,
-  isSelectedBoardWidgetManagerOpen,
-} from "../../../src/components/systems/boards/components/server-backed-boards";
+import { boardSettingsTab } from "../../../src/components/systems/boards/domain/board-settings";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const homeId = "00000000-0000-4000-8000-000000000002";
@@ -33,69 +29,16 @@ const activeBoard: BoardManagementBoard = {
   updatedAt: "2026-09-23T00:00:00Z",
 };
 
-test("Board search keys distinguish server-filtered pages without losing status and offset", () => {
-  expect(boardListKey("active", 0, null)).not.toBe(
-    boardListKey("active", 0, "Operations"),
-  );
-  expect(boardListKey("active", 0, "Operations")).not.toBe(
-    boardListKey("active", 25, "Operations"),
-  );
-  expect(boardListKey("active", 0, "Operations")).not.toBe(
-    boardListKey("archived", 0, "Operations"),
-  );
-  expect(boardListKey("active", 0, null, "department")).not.toBe(
-    boardListKey("active", 0, null, "project"),
-  );
-});
-
-test("archived search matches prompt selection instead of claiming no Boards match", () => {
+test("an archived Board alone is not opened by default", () => {
   const route = parseBoardRoute("");
-  for (const status of ["archived", "all"] as const) {
-    const matches = [
-      {
-        id: archivedId,
-        scope: "project" as const,
-        status: "archived" as const,
-      },
-    ];
-    expect(chooseBoardCandidate(route, matches)).toBeNull();
-    const copy = boardSearchEmptyCopy(
-      "Payroll",
-      matches.length,
-      matches.length,
-    );
-    expect(copy.title, status).toBe("Choose a matching Board");
-    expect(copy.description).toContain("switcher");
-    expect(copy.description).not.toContain("Try another search");
-  }
-  expect(boardSearchEmptyCopy("Payroll", 0, 0).title).toBe(
-    "No Boards match your search",
-  );
-});
-
-test("an empty later Board page with positive total points to Previous, not no matches", () => {
-  const copy = boardSearchEmptyCopy("Payroll", 0, 3);
-  expect(copy.title).toBe("No Boards on this page");
-  expect(copy.description).toContain("Previous");
-  expect(copy.description).not.toContain("No Boards match");
-  expect(boardSearchEmptyCopy(null, 0, 3).title).toBe("No Boards on this page");
-});
-
-test("widget manager stays open across same-Board refresh and closes on Board switch", () => {
-  expect(isSelectedBoardWidgetManagerOpen(boardId, boardId)).toBe(true);
-  expect(isSelectedBoardWidgetManagerOpen(boardId, archivedId)).toBe(false);
-  expect(isSelectedBoardWidgetManagerOpen(boardId, null)).toBe(false);
-});
-
-test("post manager stays open across same-Board refresh but closes outside that section", () => {
-  expect(isSelectedBoardPostManagerOpen(boardId, boardId, "posts")).toBe(true);
-  expect(isSelectedBoardPostManagerOpen(boardId, archivedId, "posts")).toBe(
-    false,
-  );
-  expect(isSelectedBoardPostManagerOpen(boardId, boardId, "overview")).toBe(
-    false,
-  );
-  expect(isSelectedBoardPostManagerOpen(boardId, null, "posts")).toBe(false);
+  const matches = [
+    {
+      id: archivedId,
+      scope: "project" as const,
+      status: "archived" as const,
+    },
+  ];
+  expect(chooseBoardCandidate(route, matches)).toBeNull();
 });
 
 test("explicit Board URL retains its UUID outside the page and fails closed on invalid IDs", () => {
@@ -114,15 +57,15 @@ test("explicit Board URL retains its UUID outside the page and fails closed on i
     source: "explicit",
   });
   const invalid = parseBoardRoute(
-    "?board=sample-board-organization&section=overview",
+    "?board=sample-board-organization&section=calendar",
   );
-  expect(invalid).toEqual({ kind: "invalid-board", section: "overview" });
+  expect(invalid).toEqual({ kind: "invalid-board", section: "calendar" });
   expect(
     chooseBoardCandidate(invalid, [
       { id: boardId, scope: "company", status: "active" },
     ]),
   ).toBeNull();
-  expect(parseBoardRoute("?board=&section=overview").kind).toBe(
+  expect(parseBoardRoute("?board=&section=calendar").kind).toBe(
     "invalid-board",
   );
   expect(parseBoardRoute(`?board=${boardId}&board=${homeId}`).kind).toBe(
@@ -317,4 +260,113 @@ test("transient errors do not globally clear retained Board resources", () => {
     "A different Board on this page",
     "Selected Board outside page",
   ]);
+});
+
+test("each Board has one address: Company without an id, a department by its department, a project by its id", () => {
+  const departmentId = "00000000-0000-4000-8000-0000000000d1";
+  const company = { id: homeId, scope: "company" as const, departmentId: null };
+  const sales = {
+    id: archivedId,
+    scope: "department" as const,
+    departmentId,
+  };
+  const project = {
+    id: boardId,
+    scope: "project" as const,
+    departmentId: null,
+  };
+  // Other parameters (a post, an event, anything else) stay; the Board's
+  // address replaces only the Board part (BR41).
+  expect(
+    canonicalBoardUrl(
+      company,
+      "posts",
+      `?board=${homeId}&section=posts&post=p1`,
+    ),
+  ).toBe("/boards?section=posts&post=p1");
+  expect(
+    canonicalBoardUrl(
+      sales,
+      "calendar",
+      `?board=${archivedId}&section=calendar&event=e1&keep=chosen`,
+    ),
+  ).toBe(
+    `/boards?department=${departmentId}&section=calendar&event=e1&keep=chosen`,
+  );
+  expect(canonicalBoardUrl(sales, "posts", "?section=overview")).toBe(
+    `/boards?department=${departmentId}&section=posts`,
+  );
+  expect(canonicalBoardUrl(project, "posts", `?post=p1&board=${boardId}`)).toBe(
+    `/boards?board=${boardId}&section=posts&post=p1`,
+  );
+
+  expect(
+    parseBoardRoute(`?department=${departmentId}&section=calendar`),
+  ).toEqual({ kind: "department", departmentId, section: "calendar" });
+  // All boards is a page without a Board; with a Board, `all` is no section.
+  expect(parseBoardRoute("?section=all")).toEqual({ kind: "all" });
+  expect(parseBoardRoute(`?section=all&board=${boardId}`)).toEqual({
+    kind: "board",
+    boardId,
+    section: null,
+  });
+  expect(parseBoardRoute("?department=sales").kind).toBe("invalid-board");
+  expect(
+    parseBoardRoute(`?department=${departmentId}&board=${boardId}`).kind,
+  ).toBe("invalid-board");
+
+  const route = parseBoardRoute(`?department=${departmentId}`);
+  const listed = [
+    { id: homeId, scope: "company" as const, status: "active" as const },
+    {
+      id: archivedId,
+      scope: "department" as const,
+      departmentId,
+      status: "active" as const,
+    },
+  ];
+  expect(chooseBoardCandidate(route, listed)).toEqual({
+    id: archivedId,
+    source: "list",
+  });
+  // The open Board answers before the list does, so a replace reads nothing.
+  expect(
+    chooseBoardCandidate(route, [], { ...sales, status: "active" }),
+  ).toEqual({ id: archivedId, source: "list" });
+  expect(chooseBoardCandidate(route, listed.slice(0, 1))).toBeNull();
+  expect(
+    chooseBoardCandidate(parseBoardRoute("?section=all"), listed),
+  ).toBeNull();
+});
+
+test("Board settings opens on the tab in the address and keeps it on the board's own address", () => {
+  expect(boardSettingsTab("?section=posts&settings=details")).toBe("details");
+  expect(boardSettingsTab("settings=access")).toBe("access");
+  expect(boardSettingsTab("?settings=activity&post=p1")).toBe("activity");
+  // A closed sheet, an unknown tab, or two tabs keep the sheet closed.
+  for (const search of [
+    "?section=posts",
+    "?settings=",
+    "?settings=overview",
+    "?settings=Details",
+    "?settings=details&settings=access",
+  ])
+    expect(boardSettingsTab(search)).toBeNull();
+  // A new project board opens on Access (BR30), and the replace that gives a
+  // board its one address keeps the open tab.
+  const project = {
+    id: boardId,
+    scope: "project" as const,
+    departmentId: null,
+  };
+  expect(canonicalBoardUrl(project, "posts", "settings=access")).toBe(
+    `/boards?board=${boardId}&section=posts&settings=access`,
+  );
+  expect(
+    canonicalBoardUrl(
+      { id: homeId, scope: "company" as const, departmentId: null },
+      "calendar",
+      `?board=${homeId}&settings=activity`,
+    ),
+  ).toBe("/boards?section=calendar&settings=activity");
 });

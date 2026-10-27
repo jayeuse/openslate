@@ -34,7 +34,7 @@ test("a member who follows a Sandbox link sees that it is not available, with a 
   ).toBeVisible();
   await expect(
     page.getByRole("main").getByRole("link", { name: "Go to Boards" }),
-  ).toHaveAttribute("href", "/boards?section=overview");
+  ).toHaveAttribute("href", "/boards");
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
   await expect(
     page

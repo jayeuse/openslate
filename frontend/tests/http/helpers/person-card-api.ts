@@ -106,10 +106,7 @@ async function installSurface(
         card_size: "comfortable",
         primary_field_id: titleField,
         secondary_field_id: userField,
-        date_field_id: null,
         group_by_field_id: null,
-        date_range: "month",
-        scale: null,
       },
       created_at: stamp,
       updated_at: stamp,
@@ -284,13 +281,24 @@ async function installSurface(
       });
     if (path === `${prefix}/events/${cardEvent}`)
       return route.fulfill({ json: event });
+    if (path === `${prefix}/events/00000000-0000-4000-8000-000000000920`)
+      return route.fulfill({
+        json: {
+          ...event,
+          id: "00000000-0000-4000-8000-000000000920",
+          title: "Workshop briefing",
+        },
+      });
     if (path.endsWith("/attachments") || path.endsWith("/record-links"))
       return route.fulfill({
         json: { items: [], limit: 20, offset: 0, has_more: false },
       });
     return route.fallback();
   });
-  return `/boards?board=${boardId}&section=${surface === "posts" ? "posts" : "calendar"}`;
+  // The author's card is in the event sheet, which `?event=` opens.
+  return surface === "posts"
+    ? `/boards?board=${boardId}&section=posts`
+    : `/boards?board=${boardId}&section=calendar&event=${cardEvent}`;
 }
 
 export async function installPersonCardApi(

@@ -347,7 +347,8 @@
 }
 
 /* The canvas is the board inside its frame. */
-[data-theme="whiteboard"] [data-skin="canvas-frame"]::after {
+[data-theme="whiteboard"]
+  :is([data-skin="canvas-frame"], [data-skin="board-surface"])::after {
   content: "";
   position: absolute;
   inset: 0;

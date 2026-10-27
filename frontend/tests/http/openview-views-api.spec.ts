@@ -7,7 +7,6 @@ import {
   type Page,
   type Route,
 } from "./helpers/test";
-import { profilePreferences } from "./helpers/profile-api";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -893,7 +892,7 @@ type SavedView = {
   definition: QueryDefinition;
   presentation: {
     version: 1;
-    layout: "table" | "grid" | "kanban" | "calendar" | "timeline" | "gallery";
+    layout: "table" | "grid" | "gallery";
     column_field_ids: string[];
     pinned_field_ids: string[];
     density: "comfortable" | "compact";
@@ -901,14 +900,7 @@ type SavedView = {
     card_size: "comfortable" | "compact";
     primary_field_id: string | null;
     secondary_field_id: string | null;
-    date_field_id: string | null;
-    timeline_start_field_id?: string | null;
-    timeline_end_field_id?: string | null;
-    timeline_deadline_field_id?: string | null;
-    timeline_progress_field_id?: string | null;
     group_by_field_id: string | null;
-    date_range: "week" | "month" | "quarter" | "year";
-    scale: "month" | "list" | null;
   };
   revision: number;
   is_deleted: boolean;
@@ -947,10 +939,7 @@ function baseView(): SavedView {
       card_size: "comfortable",
       primary_field_id: nameFieldId,
       secondary_field_id: null,
-      date_field_id: null,
       group_by_field_id: null,
-      date_range: "month",
-      scale: null,
     },
     created_at: "2026-09-23T00:00:00Z",
     updated_at: "2026-09-23T00:00:00Z",
@@ -1002,7 +991,6 @@ async function installViewsApi(
     cardFieldsNotInColumns?: boolean;
     additionalViews?: SavedView[];
     deepViewBeyondBound?: boolean;
-    calendarDateTimeValue?: string;
     weekStart?: "monday" | "sunday";
   } = {},
 ) {
@@ -1045,45 +1033,9 @@ async function installViewsApi(
   if (options.initialLayout) {
     saved = {
       ...saved,
-      definition: {
-        ...saved.definition,
-        columns:
-          options.initialLayout === "timeline"
-            ? [
-                ...saved.definition.columns,
-                { field_id: timelineStartFieldId, expected_type: "date" },
-                { field_id: timelineEndFieldId, expected_type: "date" },
-                { field_id: timelineDeadlineFieldId, expected_type: "date" },
-                {
-                  field_id: timelineTimestampDeadlineFieldId,
-                  expected_type: "datetime",
-                },
-                { field_id: timelineProgressFieldId, expected_type: "decimal" },
-              ]
-            : options.initialLayout === "calendar"
-              ? [
-                  ...saved.definition.columns,
-                  {
-                    field_id: calendarDateFieldId,
-                    expected_type: "datetime",
-                  },
-                ]
-              : saved.definition.columns,
-        ...(options.initialLayout === "kanban" ? { search: null } : {}),
-      },
       presentation: {
         ...saved.presentation,
         layout: options.initialLayout,
-        ...(options.initialLayout === "timeline"
-          ? {
-              timeline_start_field_id: timelineStartFieldId,
-              timeline_end_field_id: timelineEndFieldId,
-              timeline_deadline_field_id: timelineDeadlineFieldId,
-              timeline_progress_field_id: timelineProgressFieldId,
-            }
-          : options.initialLayout === "calendar"
-            ? { date_field_id: calendarDateFieldId }
-            : {}),
       },
     };
   }
@@ -1150,8 +1102,6 @@ async function installViewsApi(
     selected_group?:
       { kind: "value"; value: string } | { kind: "unspecified" } | null;
   }[] = [];
-  const windowQueryRequests: Record<string, unknown>[] = [];
-  let failNextWindowQuery = false;
   const workspace = {
     display_name: "OpenSlate",
     mark: "OS",
@@ -1179,26 +1129,6 @@ async function installViewsApi(
       "In service",
     ),
   );
-  const windowRows = Array.from({ length: 26 }, (_, index) => {
-    const item = record(
-      `00000000-0000-4000-8000-${(index + 200).toString().padStart(12, "0")}`,
-      `Window equipment ${String(index + 1).padStart(2, "0")}`,
-      "In service",
-    );
-    return {
-      ...item,
-      data: {
-        ...item.data,
-        [timelineStartFieldId]: index === 0 ? "2026-08-29" : "2026-09-01",
-        [timelineEndFieldId]: index === 0 ? "2026-09-04" : "2026-09-10",
-        [calendarDateFieldId]:
-          options.calendarDateTimeValue ?? "2026-09-01T18:30:00.000Z",
-        [timelineDeadlineFieldId]: "2026-09-06",
-        [timelineProgressFieldId]: index === 0 ? "40.50" : "50.00",
-        [timelineTimestampDeadlineFieldId]: "2026-09-06T18:30:00.000Z",
-      },
-    };
-  });
   await page.route("**/api/workspace", (route) =>
     route.fulfill(
       workspaceFailure
@@ -1591,9 +1521,6 @@ async function installViewsApi(
       ...(kanbanRows.some((row) => row.id.toLowerCase() === search)
         ? kanbanRows
         : []),
-      ...(windowRows.some((row) => row.id.toLowerCase() === search)
-        ? windowRows
-        : []),
     ].filter(
       (row) =>
         row.id !== deniedRecordId &&
@@ -1701,62 +1628,8 @@ async function installViewsApi(
       }),
     });
   });
-  await page.route("**/api/records/window-query", async (route: Route) => {
-    const body = route.request().postDataJSON() as Record<string, unknown>;
-    windowQueryRequests.push(body);
-    if (failNextWindowQuery) {
-      failNextWindowQuery = false;
-      return route.fulfill({
-        status: 503,
-        contentType: "application/json",
-        body: JSON.stringify({ detail: "Window query temporarily failed." }),
-      });
-    }
-    const definition = body.definition as QueryDefinition;
-    const selectedFieldIds = new Set(
-      definition.columns.map(({ field_id }) => field_id),
-    );
-    const undated = record(
-      recordTwoId,
-      "Unscheduled equipment",
-      "Inspection due",
-    );
-    const allRows =
-      body.scope === "undated" || body.scope === "unscheduled"
-        ? [
-            {
-              ...undated,
-              data: {
-                ...undated.data,
-                [calendarDateFieldId]: null,
-                [timelineStartFieldId]: null,
-                [timelineEndFieldId]: null,
-              },
-            },
-          ]
-        : windowRows;
-    const limit = Number(body.limit ?? 25);
-    const offset = Number(body.offset ?? 0);
-    const items = allRows.slice(offset, offset + limit).map((item) => ({
-      ...item,
-      data: Object.fromEntries(
-        Object.entries(item.data).filter(([id]) => selectedFieldIds.has(id)),
-      ),
-    }));
-    const includesDatetime = definition.columns.some(
-      ({ expected_type }) => expected_type === "datetime",
-    );
-    return route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        ...pageOf(items, { limit, offset, total: allRows.length }),
-        timezone: includesDatetime ? "Asia/Manila" : null,
-      }),
-    });
-  });
   return {
     workspace,
-    windowRows,
     failWorkspaceRead: (failed: boolean) => {
       workspaceFailure = failed;
     },
@@ -1812,10 +1685,6 @@ async function installViewsApi(
     groupedQueryRequests,
     failNextGroupedQuery: () => {
       failNextGroupedQuery = true;
-    },
-    windowQueryRequests,
-    failNextWindowQuery: () => {
-      failNextWindowQuery = true;
     },
   };
 }
@@ -1971,84 +1840,6 @@ test("membership View filters select choices by label and submit stable IDs", as
     },
   ]);
 });
-
-for (const layout of ["kanban", "calendar", "timeline"] as const) {
-  test(`${layout} does not query incomplete filters and sends typed membership values`, async ({
-    page,
-  }) => {
-    const api = await installViewsApi(page, { initialLayout: layout });
-    await page.goto(
-      `/openview?section=views&module=${moduleId}&view=${viewId}`,
-    );
-    const layoutDialog = await openLayoutSettings(page);
-    await expect(layoutDialog.getByLabel("Presentation layout")).toHaveValue(
-      layout,
-    );
-    if (layout === "kanban") {
-      await layoutDialog
-        .getByRole("combobox", { name: "Group lanes by" })
-        .selectOption(nameFieldId);
-      await expect
-        .poll(() => api.groupedQueryRequests.length)
-        .toBeGreaterThan(0);
-    } else {
-      await expect
-        .poll(() => api.windowQueryRequests.length)
-        .toBeGreaterThan(0);
-    }
-    await closeDialog(layoutDialog);
-    const requests =
-      layout === "kanban" ? api.groupedQueryRequests : api.windowQueryRequests;
-    const initialRequestCount = requests.length;
-
-    await addFilterForField(page, statusFieldId);
-    const filtersRegion = await openFilters(page);
-    await expect(
-      filtersRegion.getByText(
-        "Complete this condition or remove it before saving.",
-      ),
-    ).toBeVisible();
-    expect(
-      requests
-        .slice(initialRequestCount)
-        .some((request) =>
-          (request.definition as QueryDefinition).filters.some(
-            (filter) => filter.value === "",
-          ),
-        ),
-    ).toBe(false);
-
-    await filtersRegion
-      .getByRole("combobox", { name: "Condition" })
-      .selectOption("in");
-    expect(
-      requests
-        .slice(initialRequestCount)
-        .some((request) =>
-          (request.definition as QueryDefinition).filters.some(
-            (filter) => filter.operator === "in" && filter.value === "",
-          ),
-        ),
-    ).toBe(false);
-    const value = filtersRegion.getByRole("group", { name: "Value" });
-    await value.getByRole("checkbox", { name: "In service" }).check();
-    await value.getByRole("checkbox", { name: "Inspection due" }).check();
-    await expect
-      .poll(() =>
-        requests.some((request) => {
-          const definition = request.definition as QueryDefinition;
-          return definition.filters.some(
-            (filter) =>
-              filter.field_id === statusFieldId &&
-              filter.operator === "in" &&
-              JSON.stringify(filter.value) ===
-                JSON.stringify([inServiceChoiceId, inspectionDueChoiceId]),
-          );
-        }),
-      )
-      .toBe(true);
-  });
-}
 
 test("switching scalar and membership View filters clears incompatible values", async ({
   page,
@@ -2886,43 +2677,6 @@ for (const layout of ["table", "grid", "gallery"] as const) {
   });
 }
 
-for (const layout of ["calendar", "timeline"] as const) {
-  test(`${layout} preserves saved general grouping as inactive while querying its window`, async ({
-    page,
-  }) => {
-    const api = await installViewsApi(page, {
-      initialLayout: layout,
-      initialGroupByFieldId: statusFieldId,
-    });
-
-    await page.goto(
-      `/openview?section=views&module=${moduleId}&view=${viewId}`,
-    );
-    const settings = await openLayoutSettings(page);
-    const layoutLabel = layout === "calendar" ? "Calendar" : "Timeline";
-    await expect(
-      settings.getByText(
-        `General grouping is inactive in ${layoutLabel}; the saved group field is preserved.`,
-      ),
-    ).toBeVisible();
-    await expect(settings.getByLabel("Group records by")).toHaveCount(0);
-    await closeDialog(settings);
-
-    await page.getByLabel("Window starts").fill("2026-09-01");
-    await page.getByLabel("Window ends").fill("2026-09-30");
-    await expect
-      .poll(() => api.windowQueryRequests.at(-1))
-      .toMatchObject({
-        mode: layout,
-        scope: "window",
-        from_date: "2026-09-01",
-        to_date: "2026-09-30",
-      });
-    expect(api.groupedQueryRequests).toHaveLength(0);
-    expect(api.saved().presentation.group_by_field_id).toBe(statusFieldId);
-  });
-}
-
 test("saved table presentation controls persist and drive the rendered table", async ({
   page,
 }) => {
@@ -3364,20 +3118,13 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
   );
 
   const initialRevision = api.saved().revision;
-  // The Layout menu lists the six layouts (OD4).
+  // The Layout menu lists Table, Grid and Gallery only (BR77).
   await page.getByRole("button", { name: /^Layout: / }).click();
-  for (const layout of [
+  await expect(page.getByRole("menuitemradio")).toHaveText([
     "Table",
     "Grid",
     "Gallery",
-    "Kanban",
-    "Calendar",
-    "Timeline",
-  ]) {
-    await expect(
-      page.getByRole("menuitemradio", { name: layout, exact: true }),
-    ).toBeVisible();
-  }
+  ]);
   await page.keyboard.press("Escape");
   const sort = page.getByRole("combobox", { name: "Sort" });
   await sort.selectOption(statusFieldId + ":desc");
@@ -3463,49 +3210,6 @@ test("Views exposes its filter, column, and layout editors on demand", async ({
     serialFieldId,
   ]);
 });
-
-for (const layout of ["calendar", "timeline"] as const) {
-  test(`${layout} record details navigate across the server page and close back to it`, async ({
-    page,
-  }) => {
-    const api = await installViewsApi(page, { initialLayout: layout });
-    await page.goto(
-      "/openview?section=views&module=" + moduleId + "&view=" + viewId,
-    );
-    await page.getByLabel("Window starts").fill("2026-09-01");
-    await page.getByLabel("Window ends").fill("2026-09-30");
-    await expect(
-      page.getByRole("button", { name: "Open record: Window equipment 25" }),
-    ).toBeVisible();
-
-    await page
-      .getByRole("button", { name: "Open record: Window equipment 25" })
-      .click();
-    const details = page.getByRole("dialog", { name: "Record details" });
-    await expect(
-      details.getByRole("heading", { name: "Window equipment 25" }),
-    ).toBeVisible();
-    await expect(
-      details.getByRole("button", { name: "Next record" }),
-    ).toBeEnabled();
-    await details.getByRole("button", { name: "Next record" }).click();
-    await expect(
-      details.getByRole("heading", { name: "Window equipment 26" }),
-    ).toBeVisible();
-    await expect.poll(() => api.windowQueryRequests.at(-1)?.offset).toBe(25);
-
-    await details.getByRole("button", { name: "Close" }).click();
-    await expect
-      .poll(() => new URL(page.url()).searchParams.get("record"))
-      .toBeNull();
-    await expect(
-      page.getByRole("button", { name: "Open record: Window equipment 26" }),
-    ).toBeVisible();
-    await expect(
-      page.getByText("Showing 26–26 of 26 matching records"),
-    ).toBeVisible();
-  });
-}
 
 test("Views inspector follows the filtered page in both directions and reopens safe links through record authorization", async ({
   page,
@@ -3738,437 +3442,6 @@ test("closing record details returns to the page reached through inspector navig
   ).toBeVisible();
 });
 
-test("Kanban uses paginated server lane counts and only pages the selected lane", async ({
-  page,
-}) => {
-  const api = await installViewsApi(page, { initialLayout: "kanban" });
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  const settings = await openLayoutSettings(page);
-  const groupField = settings.getByRole("combobox", { name: "Group lanes by" });
-  await expect(groupField).toBeVisible();
-  await expect(
-    groupField.getByRole("option", { name: "Serial number" }),
-  ).toHaveCount(0);
-  let lanesUnavailable = true;
-  // Keep the dependency unavailable across draft-driven reads until explicit recovery.
-  await page.route("**/api/records/grouped-query", (route) => {
-    if (lanesUnavailable)
-      return route.fulfill({
-        status: 500,
-        json: { detail: "Private grouped failure canary" },
-      });
-    return route.fallback();
-  });
-  await groupField.selectOption(nameFieldId);
-  await closeDialog(settings);
-  const kanban = page.getByRole("region", {
-    name: "Kanban results",
-    exact: true,
-  });
-  await expect(kanban.getByRole("alert")).toContainText(
-    "The last successful page remains visible when available.",
-  );
-  // New presentation check is soft so the same RED also reaches privacy.
-  await expect
-    .soft(kanban.getByRole("alert"))
-    .toHaveAttribute("data-variant", "destructive");
-  await expect(kanban).not.toContainText("Private grouped failure canary");
-  await expect(kanban.getByRole("alert")).toContainText(
-    "Kanban lanes could not be loaded.",
-  );
-  await expect(
-    kanban.getByText("No lanes match this view.", { exact: true }),
-  ).toHaveCount(0);
-  lanesUnavailable = false;
-  await kanban
-    .getByRole("button", { name: "Retry lanes", exact: true })
-    .click();
-  await expect(page.getByText("Lanes 1–12 of 13").first()).toBeVisible();
-  await page.getByRole("button", { name: "Save view", exact: true }).click();
-  await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "“Equipment register” was saved." }),
-  ).toBeVisible();
-  expect(api.saved().presentation).toMatchObject({
-    layout: "kanban",
-    group_by_field_id: nameFieldId,
-  });
-
-  await expect(page.getByText("Lanes 1–12 of 13").first()).toBeVisible();
-  expect(api.groupedQueryRequests[0]).toMatchObject({
-    group_by: { field_id: nameFieldId, expected_type: "text" },
-    limit: 25,
-    offset: 0,
-    group_limit: 12,
-    group_offset: 0,
-    selected_group: null,
-  });
-  await page
-    .getByRole("navigation", { name: "Kanban lane pages" })
-    .getByRole("button", { name: "Go to next page" })
-    .click();
-  await expect(page.getByText("Lanes 13–13 of 13").first()).toBeVisible();
-  expect(api.groupedQueryRequests.at(-1)).toMatchObject({
-    group_offset: 12,
-    selected_group: null,
-  });
-  const lane = page.getByRole("button", {
-    name: "In service, 26 records",
-  });
-  await expect(lane).toBeVisible();
-  expect((await lane.boundingBox())?.height).toBeGreaterThanOrEqual(44);
-  await lane.focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByText("Showing 1–25 of 26 records").first(),
-  ).toBeVisible();
-  const laneRecords = page.getByRole("list", { name: "Kanban lane records" });
-  await expect(laneRecords.getByRole("listitem")).toHaveCount(25);
-  await expect(
-    laneRecords.getByText("Do not surface this query-only field", {
-      exact: true,
-    }),
-  ).toHaveCount(0);
-  expect(api.groupedQueryRequests.at(-1)).toMatchObject({
-    limit: 25,
-    offset: 0,
-    group_limit: 12,
-    group_offset: 12,
-    selected_group: { kind: "value", value: "In service" },
-  });
-  api.failNextGroupedQuery();
-  await page
-    .getByRole("navigation", { name: "Kanban lane record pages" })
-    .getByRole("button", { name: "Go to next page" })
-    .click();
-  await expect(kanban.getByRole("alert")).toHaveAttribute(
-    "data-variant",
-    "destructive",
-  );
-  await expect(kanban.getByRole("alert")).toContainText(
-    "Kanban lanes could not be loaded.",
-  );
-  await expect(kanban).not.toContainText("Private grouped failure canary");
-  await expect(
-    page.getByText("Showing 1–25 of 26 records").first(),
-  ).toBeVisible();
-  await expect(laneRecords.getByRole("listitem")).toHaveCount(25);
-  await page.getByRole("button", { name: "Retry lane records" }).click();
-  await expect(
-    page.getByText("Showing 26–26 of 26 records").first(),
-  ).toBeVisible();
-  await expect(laneRecords.getByRole("listitem")).toHaveCount(1);
-  expect(api.groupedQueryRequests.at(-1)).toMatchObject({
-    offset: 25,
-    group_offset: 12,
-    selected_group: { kind: "value", value: "In service" },
-  });
-  expect(api.recordQueryRequests).toHaveLength(0);
-
-  const groupedRequestsBeforeInvalidation = api.groupedQueryRequests.length;
-  await api.triggerInvalidation("records");
-  await expect
-    .poll(() => api.groupedQueryRequests.length)
-    .toBe(groupedRequestsBeforeInvalidation + 1);
-  expect(api.groupedQueryRequests.at(-1)).toMatchObject({
-    offset: 25,
-    group_offset: 12,
-    selected_group: { kind: "value", value: "In service" },
-  });
-
-  const linkedRecordId = "00000000-0000-4000-8000-000000000125";
-  const groupedRequestCount = api.groupedQueryRequests.length;
-  await laneRecords
-    .getByRole("button", { name: "Open record: In service" })
-    .click();
-  await expect(page).toHaveURL(new RegExp(`record=${linkedRecordId}`));
-  const linkedRecord = page.getByRole("dialog", { name: "Record details" });
-  await expect(linkedRecord).toBeVisible();
-  await expect(
-    linkedRecord.getByRole("heading", { name: "In service" }),
-  ).toBeVisible();
-  expect(api.recordQueryRequests).toHaveLength(1);
-  expect(api.groupedQueryRequests).toHaveLength(groupedRequestCount);
-  expect(api.groupedQueryRequests.at(-1)).toMatchObject({
-    selected_group: { kind: "value", value: "In service" },
-  });
-  await linkedRecord.getByRole("button", { name: "Close" }).click();
-  await expect(laneRecords.getByRole("listitem")).toHaveCount(1);
-});
-
-test.describe("organization calendar week start", () => {
-  test.use({
-    timezoneId: "UTC",
-  });
-  for (const weekStart of ["monday", "sunday"] as const) {
-    test(`OpenView ${weekStart} preference aligns the initial week query and month columns`, async ({
-      page,
-    }) => {
-      await page.clock.setFixedTime(new Date("2026-09-20T12:00:00Z"));
-      const api = await installViewsApi(page, {
-        initialLayout: "calendar",
-        initialPresentation: { date_range: "week", scale: "month" },
-        weekStart,
-      });
-      await page.goto(
-        `/openview?section=views&module=${moduleId}&view=${viewId}`,
-      );
-      await expect(page.getByLabel("Window starts")).toHaveValue(
-        weekStart === "monday" ? "2026-09-14" : "2026-09-20",
-      );
-      await expect(page.getByLabel("Window ends")).toHaveValue(
-        weekStart === "monday" ? "2026-09-20" : "2026-09-26",
-      );
-      await expect
-        .poll(() => api.windowQueryRequests.at(-1))
-        .toMatchObject({
-          from_date: weekStart === "monday" ? "2026-09-14" : "2026-09-20",
-          to_date: weekStart === "monday" ? "2026-09-20" : "2026-09-26",
-        });
-      const calendar = page.getByRole("region", {
-        name: "September 2026 calendar",
-        exact: true,
-      });
-      await expect(calendar).toBeVisible();
-      await expect(
-        calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
-      ).toHaveText(
-        weekStart === "monday"
-          ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-          : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-      );
-      const tuesday = await calendar
-        .getByText("Tue", { exact: true })
-        .boundingBox();
-      const firstDay = await calendar
-        .getByText("1", { exact: true })
-        .boundingBox();
-      expect(tuesday).not.toBeNull();
-      expect(firstDay).not.toBeNull();
-      expect(
-        Math.abs(
-          firstDay!.x + firstDay!.width / 2 - (tuesday!.x + tuesday!.width / 2),
-        ),
-      ).toBeLessThan(2);
-    });
-  }
-
-  test("OpenView waits for organization settings, retries failures, and retains a manual range during preference refresh", async ({
-    page,
-  }) => {
-    await page.clock.setFixedTime(new Date("2026-09-20T12:00:00Z"));
-    const api = await installViewsApi(page, {
-      initialLayout: "calendar",
-      initialPresentation: { date_range: "week", scale: "month" },
-      weekStart: "sunday",
-    });
-    api.failWorkspaceRead(true);
-    await page.goto(
-      `/openview?section=views&module=${moduleId}&view=${viewId}`,
-    );
-    await expect(
-      page.getByRole("button", {
-        name: "Retry calendar settings",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(page.getByLabel("Window starts")).toHaveCount(0);
-    expect(api.windowQueryRequests).toEqual([]);
-
-    api.failWorkspaceRead(false);
-    await page
-      .getByRole("button", { name: "Retry calendar settings", exact: true })
-      .click();
-    await expect(page.getByLabel("Window starts")).toHaveValue("2026-09-20");
-    await page.getByLabel("Window starts").fill("2026-09-01");
-    await page.getByLabel("Window ends").fill("2026-09-30");
-    await expect(
-      page.getByRole("button", {
-        name: "Open record: Window equipment 01",
-        exact: true,
-      }),
-    ).toBeVisible();
-    api.failWorkspaceRead(true);
-    await api.triggerInvalidation("workspace_profiles");
-    await expect(
-      page.getByRole("button", {
-        name: "Retry calendar settings",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(page.getByLabel("Window starts")).toHaveValue("2026-09-01");
-    await expect(page.getByLabel("Window ends")).toHaveValue("2026-09-30");
-    await expect(
-      page.getByRole("button", {
-        name: "Open record: Window equipment 01",
-        exact: true,
-      }),
-    ).toBeVisible();
-
-    api.workspace.week_start = "monday";
-    api.failWorkspaceRead(false);
-    await page
-      .getByRole("button", { name: "Retry calendar settings", exact: true })
-      .click();
-    const calendar = page.getByRole("region", {
-      name: "September 2026 calendar",
-      exact: true,
-    });
-    await expect(
-      calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
-    ).toHaveText(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
-    await expect(page.getByLabel("Window starts")).toHaveValue("2026-09-01");
-    await expect(page.getByLabel("Window ends")).toHaveValue("2026-09-30");
-    await expect
-      .poll(() => api.windowQueryRequests.at(-1))
-      .toMatchObject({ from_date: "2026-09-01", to_date: "2026-09-30" });
-  });
-});
-
-test("Calendar displays workspace-local window matches, pages results, and retries failures", async ({
-  page,
-}) => {
-  const api = await installViewsApi(page, { initialLayout: "calendar" });
-
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
-    viewId,
-  );
-  await expectLayoutFromSettings(page, "calendar");
-  await page.getByLabel("Window starts").fill("2026-09-01");
-  await page.getByLabel("Window ends").fill("2026-09-30");
-  await expect(
-    page.getByRole("heading", { name: "Sep 2, 2026" }).first(),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Open record: Window equipment 01" }),
-  ).toBeVisible();
-  await expect(page.getByText("Workspace timezone: Asia/Manila")).toBeVisible();
-  expect(api.windowQueryRequests.at(-1)).toMatchObject({
-    mode: "calendar",
-    scope: "window",
-    module_id: moduleId,
-    date_field: {
-      field_id: calendarDateFieldId,
-      expected_type: "datetime",
-    },
-    from_date: "2026-09-01",
-    to_date: "2026-09-30",
-  });
-
-  api.failNextWindowQuery();
-  await page
-    .getByRole("navigation", { name: "Date window record pages" })
-    .getByRole("button", { name: "Go to next page" })
-    .click();
-  await expect(
-    page.getByRole("alert").filter({
-      hasText: "Window records could not be loaded.",
-    }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Open record: Window equipment 01" }),
-  ).toBeVisible();
-  await expect(page.getByText(/showing previous page 1–25/i)).toBeVisible();
-  await page.getByRole("button", { name: "Retry window records" }).click();
-  await expect(
-    page.getByRole("button", { name: "Open record: Window equipment 26" }),
-  ).toBeVisible();
-  expect(api.windowQueryRequests.at(-1)).toMatchObject({ offset: 25 });
-
-  api.failNextWindowQuery();
-  await page.getByRole("button", { name: "Undated records" }).click();
-  await expect(
-    page.getByRole("alert").filter({
-      hasText: "Window records could not be loaded.",
-    }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: /^Open record: Window equipment/ }),
-  ).toHaveCount(0);
-  expect(api.windowQueryRequests.at(-1)).toMatchObject({ scope: "undated" });
-  await page.getByRole("button", { name: "Retry window records" }).click();
-  await expect(
-    page.getByRole("button", { name: "Open record: Unscheduled equipment" }),
-  ).toBeVisible();
-  expect(api.windowQueryRequests.at(-1)).toMatchObject({
-    mode: "calendar",
-    scope: "undated",
-    date_field: { field_id: calendarDateFieldId, expected_type: "datetime" },
-  });
-});
-
-test("saved Calendar range and Month/List scale drive and persist the live layouts", async ({
-  page,
-}) => {
-  const api = await installViewsApi(page, {
-    initialLayout: "calendar",
-    initialPresentation: { date_range: "quarter", scale: null },
-  });
-
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  const settings = await openLayoutSettings(page);
-  await expect(settings.getByLabel("Calendar date range")).toHaveValue(
-    "quarter",
-  );
-  await expect(settings.getByLabel("Calendar scale")).toHaveValue("month");
-  await closeDialog(settings);
-  await expect(
-    page.getByRole("region", { name: "Calendar", exact: true }),
-  ).toBeVisible();
-
-  const editSettings = await openLayoutSettings(page);
-  await editSettings.getByLabel("Calendar date range").selectOption("year");
-  await editSettings.getByLabel("Calendar scale").selectOption("list");
-  await closeDialog(editSettings);
-  await expect(
-    page.getByRole("region", { name: "Calendar list view" }),
-  ).toBeVisible();
-  await expect
-    .poll(() => api.windowQueryRequests.at(-1)?.from_date)
-    .toMatch(/^\d{4}-01-01$/);
-  await expect
-    .poll(() => api.windowQueryRequests.at(-1)?.to_date)
-    .toMatch(/^\d{4}-12-31$/);
-  await page.getByRole("button", { name: "Save view", exact: true }).click();
-  await expect.poll(() => api.saved().presentation.date_range).toBe("year");
-  await expect.poll(() => api.saved().presentation.scale).toBe("list");
-
-  await page.reload();
-  const reloadedSettings = await openLayoutSettings(page);
-  await expect(reloadedSettings.getByLabel("Calendar date range")).toHaveValue(
-    "year",
-  );
-  await expect(reloadedSettings.getByLabel("Calendar scale")).toHaveValue(
-    "list",
-  );
-  await closeDialog(reloadedSettings);
-  await expect(
-    page.getByRole("region", { name: "Calendar list view" }),
-  ).toBeVisible();
-
-  const scaleSettings = await openLayoutSettings(page);
-  await scaleSettings.getByLabel("Calendar scale").selectOption("month");
-  await closeDialog(scaleSettings);
-  await expect(
-    page.getByRole("region", { name: "Calendar", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Save view", exact: true }).click();
-  await expect.poll(() => api.saved().presentation.scale).toBe("month");
-  await page.reload();
-  const savedScaleSettings = await openLayoutSettings(page);
-  await expect(savedScaleSettings.getByLabel("Calendar scale")).toHaveValue(
-    "month",
-  );
-  await closeDialog(savedScaleSettings);
-  await expect(
-    page.getByRole("region", { name: "Calendar", exact: true }),
-  ).toBeVisible();
-});
-
 test("OpenView invalidations refresh Views while preserving dirty edits and clear denied records", async ({
   page,
 }) => {
@@ -4337,47 +3610,15 @@ for (const localAction of ["revert", "save"] as const) {
   });
 }
 
-test.describe("Calendar DATETIME rendering in a non-UTC browser timezone", () => {
-  test.use({ timezoneId: "America/Los_Angeles" });
-
-  test("interprets timezone-free DATETIME values as UTC before workspace conversion", async ({
-    page,
-  }) => {
-    const api = await installViewsApi(page, {
-      initialLayout: "calendar",
-      calendarDateTimeValue: "2026-09-01T10:00:00",
-    });
-
-    await page.goto(
-      `/openview?section=views&module=${moduleId}&view=${viewId}`,
-    );
-    await page.getByLabel("Window starts").fill("2026-09-01");
-    await page.getByLabel("Window ends").fill("2026-09-30");
-    await expect(
-      page.getByRole("heading", { name: "Sep 1, 2026" }).first(),
-    ).toBeVisible();
-    await expect(
-      page.getByText(/Sep 1, 2026(?:,| at) 6:00 PM/).first(),
-    ).toBeVisible();
-    expect(api.windowQueryRequests.at(-1)).toMatchObject({
-      mode: "calendar",
-      scope: "window",
-      from_date: "2026-09-01",
-      to_date: "2026-09-30",
-    });
-  });
-});
-
 test.describe("OpenView workspace regional dates", () => {
   test.use({ locale: "en-US", timezoneId: "UTC" });
 
-  for (const layout of ["table", "grid", "gallery", "kanban"] as const) {
+  for (const layout of ["table", "grid", "gallery"] as const) {
     test(`${layout} Updated dates use the workspace locale and cross-midnight date`, async ({
       page,
     }) => {
       const api = await installViewsApi(page, {
         initialLayout: layout,
-        initialGroupByFieldId: layout === "kanban" ? nameFieldId : undefined,
         disableInitialSearch: true,
       });
       api.workspace.locale = "fr-FR";
@@ -4385,28 +3626,12 @@ test.describe("OpenView workspace regional dates", () => {
       await page.goto(
         `/openview?section=views&module=${moduleId}&view=${viewId}`,
       );
-      if (layout === "kanban") {
-        await page
-          .getByRole("navigation", { name: "Kanban lane pages", exact: true })
-          .getByRole("button", { name: "Go to next page", exact: true })
-          .click();
-        await page
-          .getByRole("button", { name: "In service, 26 records", exact: true })
-          .click();
-        await expect(
-          page
-            .getByRole("list", { name: "Kanban lane records" })
-            .getByText("22 sept. 2026", { exact: false })
-            .first(),
-        ).toBeVisible();
-      } else {
-        await expect(
-          page
-            .getByLabel("Record results", { exact: true })
-            .getByText("22 sept. 2026", { exact: false })
-            .first(),
-        ).toBeVisible();
-      }
+      await expect(
+        page
+          .getByLabel("Record results", { exact: true })
+          .getByText("22 sept. 2026", { exact: false })
+          .first(),
+      ).toBeVisible();
     });
   }
 
@@ -4448,295 +3673,6 @@ test.describe("OpenView workspace regional dates", () => {
     await expect(
       inspector.getByText(/22 sept\. 2026.*17:00/).first(),
     ).toBeVisible();
-  });
-
-  test("Calendar localizes visible dates while retaining its response timezone and machine keys", async ({
-    page,
-  }) => {
-    const api = await installViewsApi(page, {
-      initialLayout: "calendar",
-      calendarDateTimeValue: "2026-09-01T10:00:00",
-    });
-    api.workspace.locale = "fr-FR";
-    api.workspace.timezone = "America/Los_Angeles";
-    await page.goto(
-      `/openview?section=views&module=${moduleId}&view=${viewId}`,
-    );
-    await page.getByLabel("Window starts").fill("2026-09-01");
-    await page.getByLabel("Window ends").fill("2026-09-30");
-    await expect(
-      page
-        .getByRole("heading", { name: "1 sept. 2026, 18:00", exact: true })
-        .first(),
-    ).toBeVisible();
-    await expect(page.getByText(/1 sept\. 2026.*18:00/).first()).toBeVisible();
-    await expect(
-      page.getByText("Workspace timezone: Asia/Manila", { exact: false }),
-    ).toBeVisible();
-    expect(api.windowQueryRequests.at(-1)).toMatchObject({
-      mode: "calendar",
-      scope: "window",
-      from_date: "2026-09-01",
-      to_date: "2026-09-30",
-    });
-  });
-
-  test("Timeline localizes date-only and response-zone intervals without changing window requests", async ({
-    page,
-  }) => {
-    const api = await installViewsApi(page, {
-      initialLayout: "timeline",
-      initialPresentation: {
-        timeline_deadline_field_id: timelineTimestampDeadlineFieldId,
-      },
-    });
-    api.workspace.locale = "fr-FR";
-    api.workspace.timezone = "America/Los_Angeles";
-    await page.goto(
-      `/openview?section=views&module=${moduleId}&view=${viewId}`,
-    );
-    await page.getByLabel("Window starts").fill("2026-08-25");
-    await page.getByLabel("Window ends").fill("2026-09-15");
-    const intervals = page.getByRole("list", {
-      name: "Timeline intervals",
-      exact: true,
-    });
-    await expect(
-      intervals.getByText("25 août 2026", { exact: true }).first(),
-    ).toBeVisible();
-    await expect(
-      intervals.getByText("15 sept. 2026", { exact: true }).first(),
-    ).toBeVisible();
-    await expect(page.getByLabel("Window starts")).toHaveValue("2026-08-25");
-    await expect(page.getByLabel("Window ends")).toHaveValue("2026-09-15");
-    await expect(
-      page.getByText("29 août 2026", { exact: false }).first(),
-    ).toBeVisible();
-    await expect(page.getByText(/7 sept\. 2026.*0?2:30/).first()).toBeVisible();
-    expect(api.windowQueryRequests.at(-1)).toMatchObject({
-      mode: "timeline",
-      from_date: "2026-08-25",
-      to_date: "2026-09-15",
-    });
-  });
-
-  test("Calendar personal dates and week start change presentation only, retaining workspace grouping and requests", async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.clock.setFixedTime(new Date("2026-09-01T12:00:00Z"));
-    const api = await installViewsApi(page, {
-      initialLayout: "calendar",
-      disableInitialSearch: true,
-      calendarDateTimeValue: "2026-09-01T00:30:00Z",
-      initialPresentation: { date_range: "week", scale: "month" },
-    });
-    Object.assign(api.workspace, {
-      locale: "en-US",
-      timezone: "Asia/Manila",
-      today: "2026-09-01",
-      week_start: "monday",
-    });
-    let preferences = profilePreferences(userId, {
-      timezone: "America/Los_Angeles",
-      date_format: "ymd",
-      time_format: "24h",
-      week_start: "monday",
-    });
-    await page.route(`**/api/users/${userId}/preferences`, (route) =>
-      route.fulfill({ json: preferences }),
-    );
-    await page.goto(
-      `/openview?section=views&module=${moduleId}&view=${viewId}`,
-    );
-    const calendar = page.getByRole("region", {
-      name: "September 2026 calendar",
-      exact: true,
-    });
-    await expect(calendar).toBeVisible();
-    // Aug 31 in the personal zone still belongs to the response's Sep 1 group.
-    const workspaceDay = calendar.getByRole("group", {
-      name: "Move to 2026-09-01",
-      exact: true,
-    });
-    const record = workspaceDay.getByRole("button", {
-      name: "Open record: Window equipment 01",
-      exact: true,
-    });
-    await expect(record).toContainText("2026-08-31");
-    await expect(record).toContainText("17:30");
-    await expect(
-      page.getByText(/Workspace timezone: Asia\/Manila/),
-    ).toBeVisible();
-    await expect(
-      calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
-    ).toHaveText(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
-    expect(api.windowQueryRequests.at(-1)).toMatchObject({
-      mode: "calendar",
-      scope: "window",
-      date_field: { field_id: calendarDateFieldId, expected_type: "datetime" },
-      from_date: "2026-08-31",
-      to_date: "2026-09-06",
-      limit: 25,
-      offset: 0,
-    });
-    const windowReads = api.windowQueryRequests.length;
-    // Use the incumbent cross-tab signal to obtain a confirmed preference
-    // read without leaving Calendar or changing its query/workspace data.
-    preferences = profilePreferences(userId, {
-      timezone: "America/Los_Angeles",
-      date_format: "ymd",
-      time_format: "24h",
-      week_start: "sunday",
-    });
-    await page.evaluate(() =>
-      window.dispatchEvent(
-        new StorageEvent("storage", { key: "openslate-theme" }),
-      ),
-    );
-    await expect(
-      calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
-    ).toHaveText(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
-    await expect(record).toContainText("2026-08-31");
-    expect(api.windowQueryRequests).toHaveLength(windowReads);
-    await expect(page.getByLabel("Window starts", { exact: true })).toHaveValue(
-      "2026-08-31",
-    );
-    await expect(page.getByLabel("Window ends", { exact: true })).toHaveValue(
-      "2026-09-06",
-    );
-    const batches: {
-      module_id: string;
-      items: {
-        record_id: string;
-        revision: string;
-        field_id: string;
-        value: string;
-      }[];
-    }[] = [];
-    await page.route("**/api/records/batch-update", (route) => {
-      expect(route.request().method()).toBe("POST");
-      const body = route.request().postDataJSON() as (typeof batches)[number];
-      batches.push(body);
-      const results = body.items.map((item) => {
-        const row = api.windowRows.find(({ id }) => id === item.record_id);
-        if (!row) throw new Error("Unknown move target");
-        if (item.revision !== row.updated_at)
-          return { record_id: item.record_id, status: "stale" };
-        Object.assign(row.data, { [item.field_id]: item.value });
-        row.updated_at = "2026-09-23T00:01:00Z";
-        return {
-          record_id: row.id,
-          status: "updated",
-          record: structuredClone(row),
-        };
-      });
-      return route.fulfill({ json: { results } });
-    });
-    const moveCard = workspaceDay.getByRole("article").filter({
-      has: page.getByRole("button", {
-        name: "Open record: Window equipment 01",
-        exact: true,
-      }),
-    });
-    await moveCard
-      .getByRole("button", { name: "Move to…", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "Move date…", exact: true })
-      .click();
-    const move = page.getByRole("dialog", {
-      name: "Move Window equipment 01",
-      exact: true,
-    });
-    // The move starts on the workspace day, not the personal Aug 31 label.
-    await expect(move.getByLabel("Move date", { exact: true })).toHaveValue(
-      "2026-09-01",
-    );
-    await move.getByLabel("Move date", { exact: true }).fill("2026-09-02");
-    await move.getByRole("button", { name: "Stage move", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Save changes (1)", exact: true })
-      .click();
-    await expect(
-      page.getByRole("status").filter({ hasText: "Saved 1 move." }),
-    ).toBeVisible();
-    expect(batches).toEqual([
-      {
-        module_id: moduleId,
-        items: [
-          {
-            record_id: "00000000-0000-4000-8000-000000000200",
-            revision: "2026-09-23T00:00:00Z",
-            field_id: calendarDateFieldId,
-            value: "2026-09-02T00:30:00Z",
-          },
-        ],
-      },
-    ]);
-    expect(api.windowRows[0]?.data[calendarDateFieldId]).toBe(
-      "2026-09-02T00:30:00Z",
-    );
-    await expect(
-      calendar
-        .getByRole("group", { name: "Move to 2026-09-02", exact: true })
-        .getByRole("button", {
-          name: "Open record: Window equipment 01",
-          exact: true,
-        }),
-    ).toContainText("2026-09-01");
-  });
-
-  test("Timeline personal formatting preserves date-only days and the workspace window", async ({
-    page,
-  }) => {
-    const api = await installViewsApi(page, {
-      initialLayout: "timeline",
-      disableInitialSearch: true,
-      initialPresentation: {
-        timeline_deadline_field_id: timelineTimestampDeadlineFieldId,
-      },
-    });
-    Object.assign(api.workspace, { locale: "en-US", timezone: "Asia/Manila" });
-    await page.route(`**/api/users/${userId}/preferences`, (route) =>
-      route.fulfill({
-        json: profilePreferences(userId, {
-          timezone: "America/Los_Angeles",
-          date_format: "ymd",
-          time_format: "24h",
-        }),
-      }),
-    );
-    await page.goto(
-      `/openview?section=views&module=${moduleId}&view=${viewId}`,
-    );
-    await page.getByLabel("Window starts", { exact: true }).fill("2026-09-01");
-    await page.getByLabel("Window ends", { exact: true }).fill("2026-09-30");
-    const intervals = page.getByRole("list", {
-      name: "Timeline intervals",
-      exact: true,
-    });
-    const row = intervals
-      .getByRole("listitem")
-      .filter({ hasText: "Window equipment 01" });
-    await expect(row).toContainText("2026-08-29");
-    await expect(row).toContainText("2026-09-04");
-    // Sep 6 18:30 UTC is Sep 7 02:30 in the response zone, Sep 6 11:30
-    // in the personal zone; date-only interval endpoints never shift.
-    await expect(row).toContainText("2026-09-06");
-    await expect(row).toContainText("11:30");
-    await expect(
-      page.getByText(/Workspace timezone: Asia\/Manila/).first(),
-    ).toBeVisible();
-    expect(api.windowQueryRequests.at(-1)).toMatchObject({
-      mode: "timeline",
-      from_date: "2026-09-01",
-      to_date: "2026-09-30",
-      scope: "window",
-      start_field: { field_id: timelineStartFieldId, expected_type: "date" },
-      end_field: { field_id: timelineEndFieldId, expected_type: "date" },
-      offset: 0,
-    });
   });
 
   test("failed regional reads keep record content usable and recover dates separately", async ({
@@ -4907,161 +3843,6 @@ test.describe("OpenView workspace regional dates", () => {
   });
 });
 
-test("Timeline renders complete intervals and keeps unscheduled records separate", async ({
-  page,
-}) => {
-  const api = await installViewsApi(page, { initialLayout: "timeline" });
-
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
-    viewId,
-  );
-  await page.getByLabel("Window starts").fill("2026-09-01");
-  await page.getByLabel("Window ends").fill("2026-09-30");
-  await expect(
-    page.getByRole("list", { name: "Timeline intervals" }),
-  ).toBeVisible();
-  const firstInterval = page
-    .getByRole("list", { name: "Timeline intervals" })
-    .getByRole("listitem")
-    .first();
-  await expect(firstInterval).toContainText("Aug 29, 2026 – Sep 4, 2026");
-  await expect(firstInterval).toContainText("Deadline: Sep 6, 2026");
-  await expect(firstInterval).toContainText("Progress: 40.50%");
-  await expect(
-    firstInterval.getByRole("progressbar", {
-      name: "Window equipment 01 progress",
-    }),
-  ).toHaveAttribute("aria-valuenow", "40.5");
-  expect(api.windowQueryRequests.at(-1)).toMatchObject({
-    mode: "timeline",
-    scope: "window",
-    from_date: "2026-09-01",
-    to_date: "2026-09-30",
-    start_field: { field_id: timelineStartFieldId, expected_type: "date" },
-    end_field: { field_id: timelineEndFieldId, expected_type: "date" },
-  });
-  expect(
-    (api.windowQueryRequests.at(-1)?.definition as QueryDefinition).columns.map(
-      ({ field_id }) => field_id,
-    ),
-  ).toEqual(
-    expect.arrayContaining([
-      timelineDeadlineFieldId,
-      timelineTimestampDeadlineFieldId,
-      timelineProgressFieldId,
-    ]),
-  );
-
-  api.failNextWindowQuery();
-  await page
-    .getByRole("navigation", { name: "Date window record pages" })
-    .getByRole("button", { name: "Go to next page" })
-    .click();
-  const timeline = page.getByRole("region", {
-    name: "Timeline records",
-    exact: true,
-  });
-  await expect(timeline.getByRole("alert")).toHaveAttribute(
-    "data-variant",
-    "destructive",
-  );
-  await expect(timeline.getByRole("alert")).toContainText(
-    "Window records could not be loaded.",
-  );
-  await expect(timeline.getByRole("alert")).toContainText(
-    "Requested page 2; showing previous page 1–25.",
-  );
-  await expect(timeline).not.toContainText("Window query temporarily failed.");
-  await expect(
-    page.getByRole("button", { name: "Open record: Window equipment 01" }),
-  ).toBeVisible();
-  await expect(
-    timeline
-      .getByRole("list", { name: "Timeline intervals" })
-      .getByRole("listitem"),
-  ).toHaveCount(25);
-  await timeline
-    .getByRole("button", { name: "Retry timeline records", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Open record: Window equipment 26" }),
-  ).toBeVisible();
-  expect(api.windowQueryRequests.at(-1)).toMatchObject({ offset: 25 });
-  await page
-    .getByRole("navigation", { name: "Date window record pages" })
-    .getByRole("button", { name: "Go to previous page" })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Open record: Window equipment 01" }),
-  ).toBeVisible();
-  expect(api.windowQueryRequests.at(-1)).toMatchObject({ offset: 0 });
-
-  const unscheduledResponse = page.waitForResponse((response) => {
-    const request = response.request();
-    return (
-      new URL(response.url()).pathname === "/api/records/window-query" &&
-      request.method() === "POST" &&
-      (request.postDataJSON() as { scope?: string }).scope === "unscheduled"
-    );
-  });
-  await page.getByRole("button", { name: "Unscheduled records" }).click();
-  expect((await unscheduledResponse).status()).toBe(200);
-  const openRecord = page.getByRole("button", {
-    name: "Open record: Unscheduled equipment",
-  });
-  await expect(openRecord).toBeVisible();
-  expect(api.windowQueryRequests.at(-1)).toMatchObject({
-    mode: "timeline",
-    scope: "unscheduled",
-  });
-  const timelineRequestsBeforeInvalidation = api.windowQueryRequests.length;
-  await api.triggerInvalidation("records");
-  await expect
-    .poll(() => api.windowQueryRequests.length)
-    .toBe(timelineRequestsBeforeInvalidation + 1);
-  expect(api.windowQueryRequests.at(-1)).toMatchObject({
-    mode: "timeline",
-    scope: "unscheduled",
-  });
-  await expect(openRecord).toBeVisible();
-  await openRecord.click();
-  await expect(page).toHaveURL(new RegExp(`record=${recordTwoId}`));
-  await expect(
-    page.getByRole("dialog", { name: "Record details" }),
-  ).toBeVisible();
-});
-
-test("Timeline accepts a DATETIME deadline alongside DATE interval fields", async ({
-  page,
-}) => {
-  const api = await installViewsApi(page, { initialLayout: "timeline" });
-
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  const settings = await openLayoutSettings(page);
-  const deadlineField = settings.getByRole("combobox", {
-    name: "Deadline field (optional)",
-  });
-  await deadlineField.selectOption(timelineTimestampDeadlineFieldId);
-  const save = page.getByRole("button", { name: "Save view", exact: true });
-  await closeDialog(settings);
-  await expect(save).toBeEnabled();
-  await save.click();
-  await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "“Equipment register” was saved." }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Deadline: Sep 7, 2026(?:,| at) 2:30 AM/).first(),
-  ).toBeVisible();
-  expect(api.saved().presentation).toMatchObject({
-    timeline_start_field_id: timelineStartFieldId,
-    timeline_end_field_id: timelineEndFieldId,
-    timeline_deadline_field_id: timelineTimestampDeadlineFieldId,
-  });
-});
-
 test("stale conflict can reload the authoritative saved version without losing it implicitly", async ({
   page,
 }) => {
@@ -5218,9 +3999,7 @@ test("a legacy sample Board URL cannot create a local OpenView record link", asy
 
   await page.goto("/boards?board=sample-board-organization&section=overview");
   await expect(
-    page.getByText(
-      /This Board may have been removed or your account may not have access/,
-    ),
+    page.getByText("It may have been removed, or you may not have access."),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Organization board" }),
@@ -5864,13 +4643,15 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     details.getByRole("button", { name: "Restore record" }),
   ).toBeVisible();
   await expect(
-    details.getByRole("button", { name: "Permanently delete" }),
+    details.getByRole("button", { name: "Delete forever", exact: true }),
   ).toBeVisible();
 
-  await details.getByRole("button", { name: "Permanently delete" }).click();
+  await details
+    .getByRole("button", { name: "Delete forever", exact: true })
+    .click();
   const impactSummary = details
     .getByRole("status")
-    .filter({ hasText: "permanently removes" });
+    .filter({ hasText: "This deletes" });
   await expect(impactSummary).toContainText("1 record");
   await expect(impactSummary).toContainText("2 links");
   await expect(impactSummary).toContainText("3 automation history entries");
@@ -5895,7 +4676,7 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   api.workspace.purge_enabled = true;
   await api.triggerInvalidation("workspace_profiles");
   await details
-    .getByRole("button", { name: "Permanently delete", exact: true })
+    .getByRole("button", { name: "Delete forever", exact: true })
     .click();
   await expect(details.getByLabel("Administrator password")).toBeVisible();
   await details
@@ -5910,7 +4691,9 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     `/api/records/${recordOneId}/purge/preview`,
     `/api/records/${recordOneId}/purge/preview`,
   ]);
-  await details.getByRole("button", { name: "Permanently delete" }).click();
+  await details
+    .getByRole("button", { name: "Delete forever", exact: true })
+    .click();
   await expect(
     details.getByText(/Pump seal replacement.*Work orders.*Maintenance/),
   ).toBeVisible();
@@ -5922,9 +4705,7 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await details
     .getByLabel("Administrator password")
     .fill("synthetic-test-passphrase");
-  await details
-    .getByRole("button", { name: "Confirm permanent deletion" })
-    .click();
+  await details.getByRole("button", { name: "Delete record forever" }).click();
   await expect(details.getByRole("alert")).toHaveText(
     "Administrator verification failed. Confirm your password and access, then request a new review.",
   );
@@ -5939,10 +4720,8 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await details
     .getByLabel("Administrator password")
     .fill("synthetic-test-passphrase");
-  await details
-    .getByRole("button", { name: "Confirm permanent deletion" })
-    .click();
-  await expect(page.getByText("Record permanently deleted.")).toBeVisible();
+  await details.getByRole("button", { name: "Delete record forever" }).click();
+  await expect(page.getByText("Record deleted forever.")).toBeVisible();
   expect(recordPurgeCalls.map(({ method, path }) => [method, path])).toEqual([
     ["POST", `/api/records/${recordOneId}/purge/preview`],
     ["POST", `/api/records/${recordOneId}/purge/preview`],
@@ -6026,17 +4805,17 @@ test("a blocked record purge lists the dependency and hides password confirmatio
   );
   const details = page.getByRole("dialog", { name: "Record details" });
   await details
-    .getByRole("button", { name: "Permanently delete", exact: true })
+    .getByRole("button", { name: "Delete forever", exact: true })
     .click();
   await expect(details.getByRole("alert")).toContainText(
     "Remove the Board link before deleting this record.",
   );
   await expect(
-    details.getByText("This permanently removes 1 record."),
+    details.getByText("This deletes 1 record forever."),
   ).toBeVisible();
   await expect(details.getByLabel("Administrator password")).toHaveCount(0);
   await expect(
-    details.getByRole("button", { name: "Confirm permanent deletion" }),
+    details.getByRole("button", { name: "Delete record forever" }),
   ).toHaveCount(0);
   expect(deletions).toBe(0);
 });
@@ -6058,7 +4837,7 @@ test("members with write access can restore a deleted record but cannot see perm
     details.getByRole("button", { name: "Restore record" }),
   ).toBeVisible();
   await expect(
-    details.getByRole("button", { name: "Permanently delete" }),
+    details.getByRole("button", { name: "Delete forever", exact: true }),
   ).toHaveCount(0);
 });
 
@@ -6081,7 +4860,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
       details.getByRole("button", { name: "Restore record" }),
     ).toBeEnabled();
     await expect(
-      details.getByRole("button", { name: "Permanently delete", exact: true }),
+      details.getByRole("button", { name: "Delete forever", exact: true }),
     ).toHaveCount(0);
   });
 }
@@ -6162,7 +4941,7 @@ for (const current of [
   });
 }
 
-for (const layout of ["table", "kanban"] as const) {
+for (const layout of ["table"] as const) {
   for (const mode of ["light", "dark"] as const) {
     test(`${layout} Saved view controls fit mobile Larger Spacious in ${mode}`, async ({
       page,
@@ -6289,10 +5068,7 @@ async function installS16Export(
   );
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
-    if (
-      (path.startsWith("/api/views") || path === "/api/records/batch-update") &&
-      request.method() !== "GET"
-    )
+    if (path.startsWith("/api/views") && request.method() !== "GET")
       writes.push(`${request.method()} ${path}`);
   });
   let reply: S16Reply = {};

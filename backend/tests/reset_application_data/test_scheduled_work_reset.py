@@ -18,7 +18,6 @@ RESET_TABLES = (
     ("identity_mfa_observations", True, ()),
     ("saved_views", True, ()),
     ("board_groups", True, ("boards", "groups")),
-    ("board_widgets", True, ("boards",)),
     ("board_posts", True, ("boards", "departments")),
     ("board_attachments", True, ("boards",)),
     ("boards", True, ("departments", "organizations")),

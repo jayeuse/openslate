@@ -67,7 +67,7 @@ const safeCodes: Record<string, { status: number; message: string }> = {
   },
   board_archived: {
     status: 409,
-    message: "Restore the Board before editing it",
+    message: "Restore the board before editing it",
   },
   post_archived: {
     status: 409,
@@ -87,7 +87,7 @@ const safeCodes: Record<string, { status: number; message: string }> = {
   },
   post_limit_reached: {
     status: 409,
-    message: "The Board has too many posts",
+    message: "The board has too many posts",
   },
   post_conflict: {
     status: 409,

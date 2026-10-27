@@ -363,3 +363,27 @@ def expand_board_event_occurrences(
             candidate += timedelta(days=step_days)
 
     return BoardEventOccurrenceResult(tuple(occurrences), truncated)
+
+
+def first_occurrence_after(event: BoardEvent, after: date) -> BoardEventOccurrence | None:
+    """The first occurrence dated after ``after`` and at most 366 days past it.
+
+    The date is the occurrence's start date in the event's own zone, as for windows,
+    so an occurrence that starts on or before ``after`` and runs past it is not next.
+    The expansion lists such overlapping spans first. The save-time bound
+    (``EventDefinition.require_bounded_occurrences``) keeps them below the
+    100-occurrence result: a series either has at most 100 occurrences, or its span
+    is short enough that fewer than 100 overlap one day (under 59 for daily). So the
+    first later start is always returned.
+    """
+
+    if type(after) is not date or after == date.max:
+        return None
+    try:
+        last = after + timedelta(days=MAX_OCCURRENCE_WINDOW_DAYS)
+    except OverflowError:
+        last = date.max
+    expanded = expand_board_event_occurrences(event, after + timedelta(days=1), last)
+    return next(
+        (item for item in expanded.occurrences if date.fromisoformat(item.date) > after), None
+    )

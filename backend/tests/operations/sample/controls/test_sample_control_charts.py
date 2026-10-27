@@ -15,7 +15,6 @@ from operations.sample.controls.openview_queries import select_openview_target
 from operations.sample.packs.registry import get_pack
 from operations.sample.phases.actions import PhaseExecutionContext
 from operations.sample.phases.planning import _manager_key
-from operations.sample.population.boards import project_board_logical_id
 from operations.sample.scenario import build_dataset
 from tests.operations.sample.controls.sample_chart_query_wire import corrupt_boundary_receipts
 from tests.operations.sample.controls.sample_chart_wire import ChartWire, identity
@@ -65,14 +64,9 @@ def chart_setup(tmp_path, request):
         dataset = replace(dataset, organization=pack)
     department, module, _ = select_openview_target(dataset)
     manager = _manager_key(dataset.organization, department, module.key, department_scope=True)
-    anchor_name, anchor_department = dataset.organization.phases.existing_project_board
-    source_board = project_board_logical_id(anchor_department, anchor_name)
     source_dashboard = f"department:{department}:dashboard"
     action = plan_chart_control(dataset)
     wire = ChartWire()
-    wire.field_name = next(field.name for field in module.fields if field.key == "name")
-    wire.module_name = module.name
-    wire.department_name = dict(dataset.organization.catalog.departments)[department]
     clients = {}
     try:
         for key in ("admin", manager):
@@ -91,10 +85,7 @@ def chart_setup(tmp_path, request):
             {department: identity("department")},
             {module.key: identity("module")},
             {f"{module.key}:name": identity("field:title")},
-            {
-                "boards": {source_board: identity("source:board")},
-                "dashboards": {source_dashboard: identity("source:dashboard")},
-            },
+            {"dashboards": {source_dashboard: identity("source:dashboard")}},
             "fixture-password",
         )
         yield dataset, action, context, wire, tmp_path
@@ -145,11 +136,9 @@ def test_chart_lifecycle_uses_real_client_and_preserves_owned_sources(chart_setu
         wire.dashboards[wire.dashboard_id]["revision"] == 4
         and wire.dashboards[wire.dashboard_id]["widgets"] == []
     )
-    assert wire.source_before == (
-        {wire.source_board_id: wire.boards[wire.source_board_id]},
-        {wire.source_board_id: wire.widgets[wire.source_board_id]},
-        {wire.source_dashboard_id: wire.dashboards[wire.source_dashboard_id]},
-    )
+    assert wire.source_before == {
+        wire.source_dashboard_id: wire.dashboards[wire.source_dashboard_id]
+    }
 
 
 def _manifest(context, result):
@@ -236,7 +225,7 @@ def test_retained_dashboard_corruption_grants_zero_credit(chart_setup, fault):
                 row
                 for row in rows
                 if row["step"]
-                == ("duplicate_board" if fault == "native_write" else "read_populated_dashboard")
+                == ("create_chart" if fault == "native_write" else "read_populated_dashboard")
             ),
             None,
         )
@@ -281,18 +270,14 @@ def test_retained_dashboard_corruption_grants_zero_credit(chart_setup, fault):
         "wrong_409",
         "hidden_usage",
         "source",
-        "portable",
         "read_actor",
         "read_path",
         "read_status",
         "create_body",
         "clear_body",
-        "portable_semantics",
-        "import_query",
         "write_read_id",
         "append_body",
         "audit_entity",
-        "portable_name",
         "clear_state",
         "append_state",
         "list_missing",
@@ -323,14 +308,16 @@ def test_chart_verifier_rejects_corrupt_receipts_or_final_state(chart_setup, fau
     elif fault == "hidden_usage":
         row = next(row for row in result["read_receipts"] if row["step"] == "usage_manager")
         row["response"]["items"].append(
-            {"kind": "board", "id": wire.board_id, "name": "Hidden canary"}
+            {"kind": "dashboard", "id": identity("hidden dashboard"), "name": "Hidden canary"}
         )
     elif fault == "source":
         next(row for row in result["read_receipts"] if row["step"] == "final_authored_dashboard")[
             "response"
         ]["name"] = "Changed authored"
     elif fault == "read_actor":
-        row = next(row for row in result["read_receipts"] if row["step"] == "final_authored_board")
+        row = next(
+            row for row in result["read_receipts"] if row["step"] == "final_authored_dashboard"
+        )
         row["actor_key"], row["actor_id"] = action.actor_key, context.user_ids[action.actor_key]
     elif fault == "read_path":
         next(row for row in result["read_receipts"] if row["step"] == "read_created_chart")[
@@ -348,19 +335,6 @@ def test_chart_verifier_rejects_corrupt_receipts_or_final_state(chart_setup, fau
         next(row for row in result["read_receipts"] if row["step"] == "clear_chart_dashboard")[
             "request_body"
         ]["revision"] = 99
-    elif fault == "portable_semantics":
-        bundle = json.loads(result["portable_bytes"])
-        bundle["configuration"]["widgets"][-1]["config"]["query"]["definition"]["deleted"] = "only"
-        result["portable_bytes"] = json.dumps(bundle)
-        result["portable_bundle"] = bundle
-        result["portable_sha256"] = (
-            __import__("hashlib").sha256(result["portable_bytes"].encode()).hexdigest()
-        )
-    elif fault == "import_query":
-        row = next(
-            row for row in result["read_receipts"] if row["step"] == "read_imported_chart_widgets"
-        )
-        row["response"]["items"][-1]["config"]["query"]["definition"]["deleted"] = "only"
     elif fault == "write_read_id":
         result["request_evidence"][0]["request_id"] = identity("unrelated native write")
     elif fault == "append_body":
@@ -370,20 +344,11 @@ def test_chart_verifier_rejects_corrupt_receipts_or_final_state(chart_setup, fau
         row["request_body"]["widgets"][-1]["chart_id"] = identity("unowned chart")
     elif fault == "audit_entity":
         result["request_evidence"][0]["primary_entity_id"] = identity("unowned audit target")
-    elif fault == "portable_name":
-        bundle = json.loads(result["portable_bytes"])
-        bundle["configuration"]["widgets"][-1]["config"]["query"]["dimension"]["name"] = "Unowned"
-        result["portable_bytes"], result["portable_bundle"] = json.dumps(bundle), bundle
-        result["portable_sha256"] = (
-            __import__("hashlib").sha256(result["portable_bytes"].encode()).hexdigest()
-        )
-    elif fault in {"clear_state", "append_state"}:
+    else:
         step = "read_cleared_dashboard" if fault == "clear_state" else "attach_dashboard_chart"
         next(row for row in result["read_receipts"] if row["step"] == step)["response"][
             "department_id"
         ] = identity("unowned response department")
-    else:
-        result["portable_bytes"] = result["portable_bytes"].replace('"dimension"', '"hidden_id"')
     issues, observed = [], {"control_requests_verified": 0}
     verify_request_evidence(
         dataset,

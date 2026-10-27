@@ -25,6 +25,7 @@ def _user(
     *,
     role: str = "member",
     username: str | None = None,
+    display_name: str | None = None,
     status: UserStatus = UserStatus.ACTIVE,
     deleted: bool = False,
     invitation_sent_at: datetime | None = None,
@@ -37,6 +38,7 @@ def _user(
         id=user_id,
         email=f"preview-{user_id.hex}@example.test",
         username=username or f"preview_{user_id.hex[:20]}",
+        display_name=display_name,
         status=status.value,
         role=role,
         sponsor_user_id=sponsor.id if sponsor is not None else None,
@@ -135,7 +137,11 @@ def test_preview_user_chooser_filters_before_bounded_pagination_and_exposes_no_p
 ) -> None:
     db = integration_owner_db
     manager, board = _board_for_manager(db)
-    eligible = [_user(db, username=f"choice_{name}") for name in ("alpha", "beta", "gamma")]
+    eligible = [
+        _user(db, username="choice_alpha"),
+        _user(db, username="choice_beta", display_name=""),
+        _user(db, username="choice_gamma", display_name="Gamma Castillo"),
+    ]
     _user(db, username="choice_disabled", status=UserStatus.DISABLED)
     _user(db, username="choice_pending", status=UserStatus.PENDING)
     _user(db, username="choice_deleted", deleted=True)
@@ -153,9 +159,10 @@ def test_preview_user_chooser_filters_before_bounded_pagination_and_exposes_no_p
         "total": 3,
         "has_more": False,
     }
+    # The chooser label is the display name; a blank one falls back to the username.
     assert payload["items"] == [
-        {"id": str(eligible[1].id), "username": "choice_beta"},
-        {"id": str(eligible[2].id), "username": "choice_gamma"},
+        {"id": str(eligible[1].id), "username": "choice_beta", "display_name": "choice_beta"},
+        {"id": str(eligible[2].id), "username": "choice_gamma", "display_name": "Gamma Castillo"},
     ]
     assert client.get(f"/api/boards/{board.id}/preview-users?limit=101").status_code == 422
 
@@ -168,8 +175,34 @@ def test_preview_user_chooser_filters_before_bounded_pagination_and_exposes_no_p
         invitation_accepted_at=invited + timedelta(days=1),
     )
     listed = client.get(f"/api/boards/{board.id}/preview-users?search=invitee_").json()
-    assert listed["items"] == [{"id": str(accepted.id), "username": "invitee_accepted"}]
+    assert listed["items"] == [
+        {"id": str(accepted.id), "username": "invitee_accepted", "display_name": "invitee_accepted"}
+    ]
     assert listed["pagination"]["total"] == 1
+
+
+def test_preview_user_chooser_searches_and_sorts_by_the_shown_name(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    manager, board = _board_for_manager(db)
+    ana = _user(db, username="shown_zz_ana", display_name="Ana Quintanilla")
+    bob = _user(db, username="shown_bob")
+    cara = _user(db, username="shown_aa_cara", display_name="cara Diaz")
+    client = board_client(db, manager, router)
+    root = f"/api/boards/{board.id}/preview-users"
+
+    def ids(query: str) -> list[str]:
+        response = client.get(f"{root}?{query}")
+        assert response.status_code == 200
+        return [item["id"] for item in response.json()["items"]]
+
+    # A manager finds a person by the name the chooser shows, or by the username.
+    assert ids("search=QUINTANILLA") == [str(ana.id)]
+    assert ids("search=shown_bob") == [str(bob.id)]
+    # The default order is the shown name, case-insensitive; the username order differs.
+    assert ids("search=shown_") == [str(ana.id), str(cara.id), str(bob.id)]
+    assert ids("search=shown_&sort_by=username") == [str(cara.id), str(bob.id), str(ana.id)]
 
 
 def test_expired_active_identity_is_hidden_from_preview_and_chooser(

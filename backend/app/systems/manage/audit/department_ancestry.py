@@ -10,8 +10,16 @@ from sqlalchemy.orm.base import LoaderCallableStatus
 
 from app.systems.access.policy.models import GroupAccess
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
+from app.systems.boards.calendar_source_models import BoardCalendarSource
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardScope, BoardWidget
+from app.systems.boards.kanban_models import (
+    BoardCard,
+    BoardCardChecklistItem,
+    BoardCardLabel,
+    BoardLabel,
+    BoardStage,
+)
+from app.systems.boards.models import Board, BoardGroup, BoardScope
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
@@ -42,11 +50,17 @@ _MODULE_CHILDREN = (Field, Record, SavedView, Report, Chart)
 _BOARD_CHILDREN = (
     BoardPost,
     BoardEvent,
-    BoardWidget,
     BoardGroup,
     BoardAttachment,
     BoardRecordLink,
     BoardEventReminder,
+    BoardStage,
+    BoardCard,
+    BoardLabel,
+    BoardCardLabel,
+    BoardCardChecklistItem,
+    # A personal source (no Board) has no department: only administrators see it.
+    BoardCalendarSource,
 )
 _REVISION_CHILDREN = (BoardPostRevisionAttachment, BoardPostRevisionRecordLink)
 _COMMS_SCOPED_CHILDREN = (CommsSettings, CommsCapabilityGrant)

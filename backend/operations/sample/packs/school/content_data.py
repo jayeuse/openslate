@@ -8,6 +8,8 @@ from operations.sample.packs.content_types import (
     BoardFileSpec,
     BoardLinkSpec,
     ContentSpec,
+    KanbanCardSpec,
+    KanbanSpec,
     MoneySpec,
 )
 from operations.sample.packs.school import content_text as text
@@ -23,7 +25,7 @@ _PROJECTS = (
 )
 
 _POST_STATES = ("draft", "published", "scheduled", "archived")
-_LAYOUTS = ("table", "grid", "gallery", "kanban", "calendar", "timeline")
+_LAYOUTS = ("table", "grid", "gallery")
 _REMINDERS = ("start", "15m", "1d")
 
 # Blank attachments on seeded posts (indexes 0-5 stay visible) and events. None sit on
@@ -43,6 +45,38 @@ _BOARD_FILES = tuple(
         ("project:student_affairs:clubs-and-enrichment-programme", "post", 1, "Clubs fair.jpg"),
         ("company", "post", 3, "Term dates for next year.pdf"),
     )
+)
+
+# The Academic department Board's demo Kanban: 5 stages, 3 labels, 12 cards (4 record cards).
+_KANBAN = KanbanSpec(
+    board="department:academic",
+    stages=(
+        ("Ideas", "chart-1"),
+        ("Planned", "chart-2"),
+        ("In progress", "chart-3"),
+        ("Review", "chart-4"),
+        ("Done", "chart-5"),
+    ),
+    labels=(("Exams", "chart-1"), ("Parents", "chart-2"), ("Staff", "chart-3")),
+    cards=(
+        KanbanCardSpec(0, "Peer reading pairs for Year 7", labels=(2,)),
+        KanbanCardSpec(0, "Revision café after school", labels=(0,), due_in_days=10),
+        KanbanCardSpec(1, record="courses:000001", labels=(0,), due_in_days=5),
+        KanbanCardSpec(1, "Plan the science fair judging", labels=(2,), due_in_days=8,
+                       checklist=("Invite judges", "Book the hall")),
+        KanbanCardSpec(1, record="courses:000002"),
+        KanbanCardSpec(2, record="assessments:000001", labels=(0,), due_in_days=3),
+        KanbanCardSpec(2, "Update the homework policy", labels=(1, 2),
+                       description="Reflect the parent survey in the new policy.",
+                       checklist=("Summarise the survey", "Draft the changes",
+                                  "Share with heads of year")),
+        KanbanCardSpec(2, "Order the new maths textbooks", due_in_days=6),
+        KanbanCardSpec(3, record="assessments:000002", labels=(0,), due_in_days=2),
+        KanbanCardSpec(3, "Mock exam seating plan", labels=(0,), due_in_days=4),
+        KanbanCardSpec(4, "Parents' guide to options", labels=(1,),
+                       checklist=("Proofread", "Send to the office")),
+        KanbanCardSpec(4, "Timetable the spring clubs"),
+    ),
 )
 
 
@@ -107,4 +141,5 @@ def content_spec() -> ContentSpec:
         view_name=text.view_name,
         dashboard_name=text.dashboard_name,
         report_names=text.report_names,
+        kanban=_KANBAN,
     )

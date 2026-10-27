@@ -211,11 +211,12 @@ async function installAttachmentApi(page: Page, options: Options) {
 }
 
 async function openDraftAttachments(page: Page) {
-  await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page.getByRole("button", { name: "More post actions" }).click();
-  await page.getByRole("menuitem", { name: "Edit drafts" }).click();
-  const editor = page.getByRole("dialog", { name: "Post editor", exact: true });
-  await editor.getByRole("button", { name: title, exact: true }).click();
+  await page.goto(`/boards?board=${boardId}&section=posts&show=drafts`);
+  await page
+    .getByRole("article", { name: title, exact: true })
+    .getByRole("button", { name: "Edit", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", { name: "Edit post", exact: true });
   const panel = editor.getByRole("region", { name: "Post attachments" });
   await expect(panel.getByText("No attachments yet.")).toBeVisible();
   return panel;
@@ -388,7 +389,9 @@ test("an upload with an unreadable response keeps the file for a retry", async (
   );
 });
 
-test("a published post shows downloads only", async ({ page }) => {
+test("a published post's pane shows its files as downloads only", async ({
+  page,
+}) => {
   const api = await installAttachmentApi(page, {
     status: "published",
     seeded: ["Fire drill route.pdf"],
@@ -406,8 +409,6 @@ test("a published post shows downloads only", async ({ page }) => {
       return route.fallback();
     },
   );
-  await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
-  const reader = page.getByRole("dialog", { name: title, exact: true });
   const failedList = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname ===
@@ -415,9 +416,10 @@ test("a published post shows downloads only", async ({ page }) => {
       response.request().method() === "GET" &&
       response.status() === 503,
   );
-  await reader.getByRole("button", { name: "Attachments" }).click();
+  await page.goto(`/boards?board=${boardId}&section=posts&post=${postId}`);
+  const reader = page.getByRole("article", { name: title, exact: true });
   expect((await failedList).status()).toBe(503);
-  const panel = reader.getByRole("region", { name: "Post attachments" });
+  const panel = reader.getByRole("region", { name: "Files" });
   await expect(panel.getByRole("alert")).toHaveAttribute(
     "data-variant",
     "destructive",

@@ -1,7 +1,6 @@
 """Board scope decides who reads and writes: company, department and project Boards."""
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
 
 import pytest
 from fastapi import APIRouter
@@ -13,11 +12,10 @@ from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User, UserRole
 from app.systems.boards.access import board_level, board_reader_ids
 from app.systems.boards.event_router import router as event_router
-from app.systems.boards.models import Board, BoardWidget
+from app.systems.boards.models import Board
 from app.systems.boards.post_models import BoardPost
 from app.systems.boards.post_router import router as post_router
 from app.systems.boards.router import router as boards_router
-from app.systems.boards.widget_router import router as widget_router
 from tests.boards.support import (
     admin,
     board_group,
@@ -34,11 +32,11 @@ from tests.rbac.support import add_department, add_module, add_user, make_group_
 
 pytestmark = pytest.mark.integration
 
-ROUTERS = (boards_router, post_router, event_router, widget_router)
+ROUTERS = (boards_router, post_router, event_router)
 
 
 def client(db: Session, actor: User, *routers: APIRouter) -> TestClient:
-    """Board widget writers resolve the full identity, so the actor needs a live session."""
+    """Board writers resolve the full identity, so the actor needs a live session."""
 
     return with_live_session(_board_client(db, actor, *routers), db, actor)
 
@@ -56,18 +54,6 @@ def _event(board: Board) -> dict[str, object]:
         "start_at": start.isoformat().replace("+00:00", "Z"),
         "end_at": (start + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
         "timezone_name": "UTC",
-    }
-
-
-def _widget_payload(board: Board, module_id: UUID) -> dict[str, object]:
-    return {
-        "revision": board.revision,
-        "widget": {
-            "name": "Records",
-            "widget_type": "records",
-            "module_id": str(module_id),
-            "config": {"fields": [], "filters": []},
-        },
     }
 
 
@@ -175,23 +161,13 @@ def test_readers_and_members_without_a_group_cannot_change_board_content(
 ) -> None:
     db = integration_owner_db
     department = add_department(db)
-    module = add_module(db, department)
     board = department_board(db, department)
     reader, no_group, author = member(db), member(db), member(db)
     make_group_access(db, [reader], department, level=AccessLevel.READ)
     make_group_access(db, [author], department, level=AccessLevel.WRITE)
     item = BoardPost(org_id=board.org_id, board_id=board.id,
                      author_id=author.id, title="Mine", body="Body")
-    widget = BoardWidget(
-        org_id=board.org_id,
-        board_id=board.id,
-        module_id=module.id,
-        name="Tile",
-        position=0,
-        widget_type="records",
-        config={"version": 1, "fields": [], "filters": []},
-    )
-    db.add_all([item, widget])
+    db.add(item)
     db.flush()
     revision = {"board_revision": board.revision, "post_revision": item.revision}
 
@@ -201,19 +177,11 @@ def test_readers_and_members_without_a_group_cannot_change_board_content(
         assert api.post(f"{root}/posts", json=_post(board)).status_code == missing
         assert api.post(f"{root}/events", json=_event(board)).status_code == missing
         assert (
-            api.post(f"{root}/widgets", json=_widget_payload(board, module.id)).status_code
-            == missing
-        )
-        assert (
             api.patch(f"{root}/posts/{item.id}", json={**revision, "title": "Changed"}).status_code
             == missing
         )
         assert (
             api.request("DELETE", f"{root}/posts/{item.id}", json=revision).status_code == missing
-        )
-        assert (
-            api.delete(f"{root}/widgets/{widget.id}?revision={board.revision}").status_code
-            == missing
         )
         assert api.patch(
             root, json={"revision": board.revision, "description": "x"}
@@ -224,12 +192,11 @@ def test_readers_and_members_without_a_group_cannot_change_board_content(
         assert api.post("/api/boards", json={"name": "Mine"}).status_code == 403
 
 
-def test_managers_pin_change_tiles_and_change_the_posts_of_others(
+def test_managers_pin_and_change_the_posts_of_others(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
     department = add_department(db)
-    module = add_module(db, department)
     board = department_board(db, department)
     writer, other_writer, manager = member(db), member(db), member(db)
     make_group_access(db, [writer, other_writer], department, level=AccessLevel.WRITE)
@@ -250,19 +217,8 @@ def test_managers_pin_change_tiles_and_change_the_posts_of_others(
         .status_code
         == 403
     )
-    assert (
-        client(db, writer, *ROUTERS)
-        .post(f"{root}/widgets", json=_widget_payload(board, module.id))
-        .status_code
-        == 403
-    )
     changed = client(db, manager, *ROUTERS).patch(f"{root}/posts/{item.id}", json=pin)
     assert changed.status_code == 200
-    db.refresh(board)
-    tile = client(db, manager, *ROUTERS).post(
-        f"{root}/widgets", json=_widget_payload(board, module.id)
-    )
-    assert tile.status_code == 201
 
 
 def test_only_administrators_create_project_boards_and_company_scope_is_fixed(

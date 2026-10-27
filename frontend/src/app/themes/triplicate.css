@@ -438,7 +438,8 @@
 
 /* The canvas is the desk; each department is a tinted carbon copy with
    ruled boxes printed on it. */
-[data-theme="triplicate"] [data-skin="canvas-frame"]::after {
+[data-theme="triplicate"]
+  :is([data-skin="canvas-frame"], [data-skin="board-surface"])::after {
   content: "";
   position: absolute;
   inset: 0;

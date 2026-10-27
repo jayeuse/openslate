@@ -1,7 +1,6 @@
 import {
   archiveBoard,
   createBoard,
-  duplicateBoardStructure,
   listBoards,
   previewBoardPurge,
   purgeBoard,
@@ -12,34 +11,19 @@ import {
   updateBoard,
 } from "../../../src/components/systems/boards/adapters/board-management-api";
 import {
-  downloadBoardConfiguration,
-  importBoardConfiguration,
-} from "../../../src/components/systems/boards/adapters/board-configuration-api";
-import {
   getBoardAccessPreview,
   getMyBoardAccess,
   listBoardActivity,
   listBoardPreviewUsers,
 } from "../../../src/components/systems/boards/adapters/board-tools-api";
-import {
-  createBoardWidget,
-  deleteBoardWidget,
-  duplicateBoardWidget,
-  listBoardWidgets,
-  reorderBoardWidgets,
-  updateBoardWidget,
-  type BoardWidgetInput,
-} from "../../../src/components/systems/boards/adapters/board-widgets-api";
 import { getBoardWorkspaceToday } from "../../../src/components/systems/boards/adapters/board-workspace-date-api";
+import { listBoardPeople } from "../../../src/components/systems/boards/adapters/board-people-api";
 import { describeContracts } from "./openapi-contract";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const departmentId = "00000000-0000-4000-8000-000000000002";
 const groupId = "00000000-0000-4000-8000-000000000003";
 const userId = "00000000-0000-4000-8000-000000000004";
-const widgetId = "00000000-0000-4000-8000-000000000005";
-const moduleId = "00000000-0000-4000-8000-000000000006";
-const chartId = "00000000-0000-4000-8000-000000000009";
 
 // Overrides below keep the frontend's cross-field rules true: echoed ids, a
 // department Board has a department, page counts match the items sent.
@@ -57,52 +41,7 @@ const purgeImpact = {
   // The frontend narrows the digest to the SHA-256 hex the backend emits.
   impact_digest: "a".repeat(64),
 };
-// A referenced source keeps XOR valid in both generated nullable-response modes.
-// The harness deliberately preserves generated nulls rather than replacing them with objects.
-const widget = {
-  board_id: boardId,
-  position: 0,
-  chart_id: chartId,
-  config: null,
-};
-// The portable count-all bundle stays valid with both generated nullable modes.
-// Dedicated Board portability regressions cover non-null numeric/primitive metrics.
-const bundle = {
-  kind: "openslate-board",
-  version: 3,
-  configuration: {
-    widgets: [
-      {
-        config: {
-          fields: [{ expected_type: "text" }],
-          filters: [
-            { expected_type: "text", operator: "contains", value: "pump" },
-          ],
-          aggregation: "count",
-          metric: null,
-        },
-      },
-    ],
-  },
-};
-const widgetInput: BoardWidgetInput = {
-  name: "Open work",
-  widgetType: "chart",
-  moduleId,
-  size: "M",
-  pinned: false,
-  chartId,
-  config: null,
-};
-const bundleFile = new Blob([
-  JSON.stringify({
-    kind: "openslate-board",
-    version: 3,
-    configuration: { name: "Front desk", description: null, widgets: [] },
-  }),
-]);
-
-describeContracts("Boards: management, tools and widgets", [
+describeContracts("Boards: management and tools", [
   {
     name: "listBoards",
     run: () =>
@@ -172,14 +111,6 @@ describeContracts("Boards: management, tools and widgets", [
     },
   },
   {
-    name: "duplicateBoardStructure",
-    run: () => duplicateBoardStructure(boardId),
-    // A duplicate is a new Board, so its id must differ from the source.
-    responses: {
-      "POST /api/boards/{board_id}/duplicate": { ...board, id: groupId },
-    },
-  },
-  {
     name: "readBoardGroups",
     run: () => readBoardGroups(boardId),
     responses: { "GET /api/boards/{board_id}/groups": { board_id: boardId } },
@@ -192,19 +123,6 @@ describeContracts("Boards: management, tools and widgets", [
         groups: [{ groupId, level: "write" }],
       }),
     responses: { "PUT /api/boards/{board_id}/groups": { board_id: boardId } },
-  },
-  {
-    name: "downloadBoardConfiguration",
-    run: () => downloadBoardConfiguration(boardId),
-    responseHeaders: {
-      "Content-Disposition": 'attachment; filename="board-configuration.json"',
-    },
-    responses: { "GET /api/boards/{board_id}/configuration": bundle },
-  },
-  {
-    name: "importBoardConfiguration",
-    run: () => importBoardConfiguration(bundleFile),
-    responses: { "POST /api/boards/import": board },
   },
   {
     name: "getMyBoardAccess",
@@ -246,60 +164,19 @@ describeContracts("Boards: management, tools and widgets", [
     },
   },
   {
+    name: "listBoardPeople",
+    run: () => listBoardPeople(boardId, { offset: 100, search: "ana" }),
+    responses: {
+      // The adapter checks the page it asked for: 100 from offset 100.
+      "GET /api/boards/{board_id}/people": {
+        pagination: { ...page, limit: 100, offset: 100, total: 101 },
+      },
+    },
+  },
+  {
     name: "listBoardActivity",
     run: () => listBoardActivity(boardId, { limit: 25, offset: 0 }),
     responses: { "GET /api/boards/{board_id}/activity": { pagination: page } },
-  },
-  {
-    name: "listBoardWidgets",
-    run: () =>
-      listBoardWidgets(boardId, {
-        limit: 12,
-        offset: 0,
-        sortBy: "created_at",
-        sortOrder: "desc",
-      }),
-    responses: {
-      "GET /api/boards/{board_id}/widgets": {
-        items: [widget],
-        pagination: page,
-      },
-    },
-  },
-  {
-    name: "createBoardWidget",
-    run: () => createBoardWidget(boardId, 2, widgetInput),
-    responses: { "POST /api/boards/{board_id}/widgets": { widget } },
-  },
-  {
-    name: "updateBoardWidget",
-    run: () => updateBoardWidget(boardId, widgetId, 2, widgetInput),
-    responses: {
-      "PATCH /api/boards/{board_id}/widgets/{widget_id}": {
-        widget: { ...widget, id: widgetId },
-      },
-    },
-  },
-  {
-    name: "duplicateBoardWidget",
-    run: () => duplicateBoardWidget(boardId, widgetId, 2),
-    responses: {
-      "POST /api/boards/{board_id}/widgets/{widget_id}/duplicate": { widget },
-    },
-  },
-  {
-    name: "reorderBoardWidgets",
-    run: () => reorderBoardWidgets(boardId, 2, [widgetId]),
-    // The response must list the widgets in the requested order.
-    responses: {
-      "PUT /api/boards/{board_id}/widgets/order": {
-        items: [{ ...widget, id: widgetId }],
-      },
-    },
-  },
-  {
-    name: "deleteBoardWidget",
-    run: () => deleteBoardWidget(boardId, widgetId, 2),
   },
   { name: "getBoardWorkspaceToday", run: () => getBoardWorkspaceToday() },
 ]);

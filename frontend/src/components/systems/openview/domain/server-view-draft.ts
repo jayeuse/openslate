@@ -78,10 +78,7 @@ export function emptyPresentation(
     cardSize: "comfortable",
     primaryFieldId: columns[0] ?? null,
     secondaryFieldId: columns[1] ?? null,
-    dateFieldId: null,
     groupByFieldId: null,
-    dateRange: "month",
-    scale: null,
   };
 }
 

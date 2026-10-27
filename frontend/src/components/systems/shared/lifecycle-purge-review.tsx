@@ -11,7 +11,6 @@ const entityLabels: Record<string, readonly [string, string]> = {
   board_posts: ["post", "posts"],
   board_post_revisions: ["post revision", "post revisions"],
   board_groups: ["group assignment", "group assignments"],
-  board_widgets: ["widget", "widgets"],
   board_events: ["event", "events"],
   board_event_reminders: ["event reminder", "event reminders"],
   board_attachments: ["attachment", "attachments"],
@@ -20,6 +19,12 @@ const entityLabels: Record<string, readonly [string, string]> = {
     "post revision attachments",
   ],
   board_record_links: ["Board link", "Board links"],
+  board_calendar_sources: ["calendar record source", "calendar record sources"],
+  board_stages: ["Kanban stage", "Kanban stages"],
+  board_cards: ["Kanban card", "Kanban cards"],
+  board_labels: ["card label", "card labels"],
+  board_card_labels: ["label on a card", "labels on cards"],
+  board_card_checklist_items: ["checklist item", "checklist items"],
   board_post_revision_record_links: [
     "post revision link",
     "post revision links",
@@ -72,8 +77,8 @@ export function LifecyclePurgeReview({
     return `${count} ${label}`;
   });
   const summary = groups.length
-    ? `This permanently removes ${new Intl.ListFormat("en", { type: "conjunction" }).format(groups)}.`
-    : "No items are included in this permanent-deletion review.";
+    ? `This deletes ${new Intl.ListFormat("en", { type: "conjunction" }).format(groups)} forever.`
+    : "No items are included in this review.";
 
   return (
     <div className="space-y-3">
@@ -109,7 +114,7 @@ export function LifecyclePurgeReview({
       ) : null}
       {impact.blockers.length > 0 ? (
         <Alert variant="warning" role="alert">
-          <p className="font-medium">Permanent deletion is blocked</p>
+          <p className="font-medium">Delete forever is blocked</p>
           <p className="mt-1">Resolve these dependencies, then review again.</p>
           <ul className="mt-2 list-disc space-y-2 pl-5">
             {impact.blockers.map((blocker) => (

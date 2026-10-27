@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   ChevronRight,
@@ -66,8 +67,24 @@ import {
   currentDashboardDepartmentId,
   currentModuleId,
   dashboardHref,
+  isRefusal,
   moduleHref,
 } from "@/components/department-navigation-model";
+import {
+  announcementsHref,
+  boardsGroupRows,
+  boardsNavigationKey,
+  boardsPlace,
+  type NavigationBoard,
+} from "@/components/boards-navigation-model";
+
+// Reads the board list when the Boards group opens away from /boards, where
+// the page reads it; only this loader ships with the shell (BR2).
+const BoardsNavigationReader = dynamic(() =>
+  import("@/components/boards-navigation-reader").then(
+    (module) => module.BoardsNavigationReader,
+  ),
+);
 
 const groupIcons = {
   sandbox: Workflow,
@@ -193,10 +210,39 @@ export function AppNavigation({
     pathname,
     searchParams,
   );
+  const place = boardsPlace(pathname, searchParams);
+  const announcementsDepartmentId =
+    place?.kind === "department" ? place.departmentId : null;
+  // The board list the Boards page or the reader caches; never read here.
+  const boardList = useQuery<{ items: NavigationBoard[] }>({
+    queryKey: boardsNavigationKey(),
+    queryFn: skipToken,
+  });
+  // A refused read keeps its last data in the cache; the rows drop it.
+  const boardItems = isRefusal(boardList.error)
+    ? undefined
+    : boardList.data?.items;
+  const boardRows = boardsGroupRows(place, boardItems);
+  // A Board id may name a department's board, which its department group
+  // holds (BR1), so the Boards group waits for the list to know it.
+  const boardsActive =
+    place !== null &&
+    place.kind !== "department" &&
+    (place.kind !== "board" ||
+      (boardItems !== undefined &&
+        !boardItems.some(
+          (board) => board.id === place.boardId && board.scope === "department",
+        )));
+  const groupActive = (group: (typeof groups)[number]) =>
+    group.id === "boards"
+      ? boardsActive
+      : isWorkspaceNavigationGroupActive(group, pathname);
   const search = searchParams.toString();
-  const activeGroupId = groups.find((group) =>
-    isWorkspaceNavigationGroupActive(group, pathname),
-  )?.id;
+  const activeGroupId = groups.find(groupActive)?.id;
+  const boardsOpen =
+    !collapsed &&
+    (expanded.boards ?? activeGroupId === "boards") &&
+    groups.some((group) => group.id === "boards");
   const currentKey = currentNavigationKey(pathname, searchParams, hash);
   const navRef = useRef<HTMLElement>(null);
   const indicatorRef = useRef<HTMLSpanElement>(null);
@@ -504,15 +550,23 @@ export function AppNavigation({
                   ),
                   active:
                     department.id === dashboardDepartmentId ||
+                    department.id === announcementsDepartmentId ||
                     department.modules.some((module) => module.id === moduleId),
                   listLabel: `${department.name} pages`,
-                  // The department's home dashboard comes first (BD1).
+                  // The department's home dashboard comes first (BD1), then
+                  // its board, Announcements (BR1, BR47).
                   items: [
                     {
                       id: "dashboard",
                       label: "Dashboard",
                       href: dashboardHref(department.id),
                       active: department.id === dashboardDepartmentId,
+                    },
+                    {
+                      id: "announcements",
+                      label: "Announcements",
+                      href: announcementsHref(department.id),
+                      active: department.id === announcementsDepartmentId,
                     },
                     ...department.modules.map((module) => ({
                       id: module.id,
@@ -537,22 +591,29 @@ export function AppNavigation({
               label: group.label,
               description: group.description,
               icon: <Icon aria-hidden="true" />,
-              active: isWorkspaceNavigationGroupActive(group, pathname),
-              items: group.items.map((item) => ({
-                id: item.id,
-                label: item.label,
-                href: item.href,
-                active: isWorkspaceNavigationItemActive(
-                  group.id,
-                  item.id,
-                  pathname,
-                  searchParams,
-                  hash,
-                ),
-              })),
+              active: groupActive(group),
+              ...(group.id === "boards"
+                ? { listLabel: "Boards", items: boardRows }
+                : {
+                    items: group.items.map((item) => ({
+                      id: item.id,
+                      label: item.label,
+                      href: item.href,
+                      active: isWorkspaceNavigationItemActive(
+                        group.id,
+                        item.id,
+                        pathname,
+                        searchParams,
+                        hash,
+                      ),
+                    })),
+                  }),
             });
           })}
         </SidebarMenu>
+        {boardsOpen && pathname !== "/boards" ? (
+          <BoardsNavigationReader />
+        ) : null}
       </nav>
     </SidebarGroup>
   );

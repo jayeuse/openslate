@@ -5,9 +5,11 @@ import { ApiContractError, ApiError } from "@/lib/api";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { listBoardPosts } from "../adapters/board-posts-api";
 import type {
+  BoardPost,
   BoardPostListOptions,
   BoardPostPage,
 } from "../adapters/board-posts-api";
+import { postMatchesState, type PostListState } from "../domain/post-list";
 import {
   listBoardPostAuthors,
   type BoardPostAuthorChoice,
@@ -422,16 +424,19 @@ export function postFeedKey(
   appliedSearch = "",
   authorId: string | null = null,
   options: PostFeedQueryOptions = defaultPostFeedQuery,
+  state: PostListState = "published",
 ): string {
   return JSON.stringify([
     boardId,
     actorId,
+    state,
     offset,
     normalizePublishedPostSearch(appliedSearch),
     authorId,
     options.limit,
     options.sortBy,
     options.sortOrder,
+    state,
   ]);
 }
 
@@ -457,6 +462,107 @@ export async function loadPublishedPostFeed(
   });
 }
 
+/** The most posts a board holds (`MAX_POSTS`), so a complete read ends. */
+const DRAFT_COLLECTION_LIMIT = 500;
+const DRAFT_COLLECTION_PAGE = 100;
+
+/**
+ * Scheduled and Drafts share the server's `draft` view, which has no status
+ * filter. The complete collection is read (pages of 100, bounded by the
+ * board's post limit) and split by status before paging, so each state's
+ * totals and pages are its own.
+ */
+export async function loadDraftCollection(
+  boardId: string,
+  appliedSearch = "",
+  authorId: string | null = null,
+  options: Pick<
+    PostFeedQueryOptions,
+    "sortBy" | "sortOrder"
+  > = defaultPostFeedQuery,
+): Promise<{ items: BoardPost[]; boardRevision: number }> {
+  const items: BoardPost[] = [];
+  let boardRevision = 0;
+  for (let offset = 0; offset < DRAFT_COLLECTION_LIMIT;) {
+    const page = await listBoardPosts(boardId, {
+      view: "draft",
+      limit: DRAFT_COLLECTION_PAGE,
+      offset,
+      sortBy: options.sortBy,
+      sortOrder: options.sortOrder,
+      search: normalizePublishedPostSearch(appliedSearch) || undefined,
+      authorId: authorId ?? undefined,
+    });
+    items.push(...page.items);
+    boardRevision = page.boardRevision;
+    if (!page.pagination.hasMore || page.pagination.count === 0) break;
+    offset += page.pagination.count;
+  }
+  return { items, boardRevision };
+}
+
+/** One page of a complete collection, with the collection's own totals. */
+export function pageOfCollection(
+  items: readonly BoardPost[],
+  boardRevision: number,
+  offset: number,
+  limit: number,
+): BoardPostPage {
+  const visible = items.slice(offset, offset + limit);
+  return {
+    items: visible,
+    boardRevision,
+    pagination: {
+      limit,
+      offset,
+      count: visible.length,
+      total: items.length,
+      hasMore: offset + visible.length < items.length,
+    },
+  };
+}
+
+/** The page a list state shows (BR10). */
+export async function loadPostList(
+  boardId: string,
+  state: PostListState,
+  offset: number,
+  appliedSearch = "",
+  authorId: string | null = null,
+  options: PostFeedQueryOptions = defaultPostFeedQuery,
+): Promise<BoardPostPage> {
+  if (state === "published")
+    return loadPublishedPostFeed(
+      boardId,
+      offset,
+      appliedSearch,
+      authorId,
+      options,
+    );
+  if (state === "archived")
+    return listBoardPosts(boardId, {
+      view: "archive",
+      limit: options.limit,
+      offset,
+      sortBy: options.sortBy,
+      sortOrder: options.sortOrder,
+      search: normalizePublishedPostSearch(appliedSearch) || undefined,
+      authorId: authorId ?? undefined,
+    });
+  const collection = await loadDraftCollection(
+    boardId,
+    appliedSearch,
+    authorId,
+    options,
+  );
+  return pageOfCollection(
+    collection.items.filter((post) => postMatchesState(post, state)),
+    collection.boardRevision,
+    offset,
+    options.limit,
+  );
+}
+
 export function useServerBoardPosts(
   boardId: string,
   offset: number,
@@ -465,6 +571,7 @@ export function useServerBoardPosts(
   authorId: string | null = null,
   enabled = true,
   options: PostFeedQueryOptions = defaultPostFeedQuery,
+  listState: PostListState = "published",
 ) {
   const actorId = useVerifiedWorkspaceUserId();
   const [state, setState] = useState<PostFeedState>(initialState);
@@ -478,6 +585,7 @@ export function useServerBoardPosts(
     normalizedSearch,
     authorId,
     options,
+    listState,
   );
 
   useEffect(() => {
@@ -494,8 +602,9 @@ export function useServerBoardPosts(
         sequence: request,
       }),
     );
-    void loadPublishedPostFeed(
+    void loadPostList(
       boardId,
+      listState,
       offset,
       normalizedSearch,
       authorId,
@@ -539,6 +648,7 @@ export function useServerBoardPosts(
     options.limit,
     options.sortBy,
     options.sortOrder,
+    listState,
   ]);
 
   return {

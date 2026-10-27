@@ -672,29 +672,38 @@ async function exerciseConnectedBoard(
     buffer: Buffer.from("This is a plain text note, not a PDF.\n", "utf8"),
   };
 
-  await page.goto("/boards");
-  await page.getByRole("button", { name: "Board menu", exact: true }).click();
+  await page.goto("/boards?section=all");
   await page
-    .getByRole("menuitem", { name: "New project Board", exact: true })
+    .getByRole("button", { name: "New project board", exact: true })
     .click();
-  await page.getByLabel("Board name").fill(boardName);
+  await page
+    .getByRole("dialog", { name: "New project board" })
+    .getByLabel("Name", { exact: true })
+    .fill(boardName);
   const [createdBoard] = await Promise.all([
     page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/api/boards" &&
         response.request().method() === "POST",
     ),
-    page.getByRole("button", { name: "Create Board" }).click(),
+    page.getByRole("button", { name: "Create board" }).click(),
   ]);
   expect(createdBoard.status()).toBe(201);
   const boardId = ((await createdBoard.json()) as { id: string }).id;
+  // A new project board opens with Board settings on Access (BR30).
+  await page
+    .getByRole("button", { name: "Close board settings", exact: true })
+    .click();
   await expect(page.getByRole("heading", { name: boardName })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`board=${boardId}`));
 
+  // At 1440×900 a month day holds two all-day pills before "+n more".
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("link", { name: "Calendar", exact: true }).click();
   await page.getByRole("button", { name: "New event" }).click();
   await page.getByLabel("Event title").fill(eventTitle);
-  await page.getByRole("checkbox", { name: "1 day before" }).click();
+  // The 44px row is the target; the box inside is drawn, not native.
+  await page.getByText("1 day before", { exact: true }).click();
   const [createdEvent] = await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -706,13 +715,12 @@ async function exerciseConnectedBoard(
   expect(createdEvent.status()).toBe(201);
   const eventId = ((await createdEvent.json()) as { id: string }).id;
   await expect(page.getByText("Event created.")).toBeVisible();
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
-  const createdEventList = page.getByRole("region", { name: "My events" });
-  await createdEventList
-    .getByRole("button", { name: `Edit ${eventTitle}` })
+  // After Create the event sheet opens on the new event (BR21).
+  await page
+    .getByRole("dialog", { name: eventTitle })
+    .getByRole("button", { name: "Edit event" })
     .click();
-  const eventEditor = page.getByRole("form", { name: "Edit Board event" });
+  const eventEditor = page.getByRole("form", { name: "Edit event" });
   await expect(
     eventEditor.getByRole("checkbox", { name: "1 day before" }),
   ).toBeChecked();
@@ -759,13 +767,11 @@ async function exerciseConnectedBoard(
   await expect(eventEditor).toBeHidden();
 
   // The remaining attachments are stored on the event, not in page state.
+  // Cancel returned to the event's sheet, and its address survives a reload.
   await page.reload();
-  await page.getByRole("link", { name: "Calendar", exact: true }).click();
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
   await page
-    .getByRole("region", { name: "My events" })
-    .getByRole("button", { name: `Edit ${eventTitle}` })
+    .getByRole("dialog", { name: eventTitle })
+    .getByRole("button", { name: "Edit event" })
     .click();
   const attachedFiles = eventEditor.getByRole("list", {
     name: "Attached files",
@@ -776,7 +782,7 @@ async function exerciseConnectedBoard(
     ).toBeVisible();
   await expect(attachedFiles.getByRole("listitem")).toHaveCount(2);
   await eventEditor
-    .getByLabel("Record data source")
+    .getByLabel("Record module")
     .selectOption({ label: "Suppliers" });
   await eventEditor
     .getByLabel("Record to link")
@@ -788,7 +794,7 @@ async function exerciseConnectedBoard(
           `/api/boards/${boardId}/events/${eventId}/record-links` &&
         response.request().method() === "POST",
     ),
-    eventEditor.getByRole("button", { name: "Link Record" }).click(),
+    eventEditor.getByRole("button", { name: "Link record" }).click(),
   ]);
   expect(eventLink.status()).toBe(201);
   const eventRecordLink = eventEditor.getByRole("link", {
@@ -800,11 +806,12 @@ async function exerciseConnectedBoard(
   await eventEditor
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
+  await page.getByRole("button", { name: "Close event" }).click();
 
   const secondTitle = `Supplier follow-up ${runId.slice(0, 8)}`;
   await page.getByRole("button", { name: "New event" }).click();
   const secondEditor = page.getByRole("form", {
-    name: "Create Board event",
+    name: "Create event",
   });
   await secondEditor.getByLabel("Event title").fill(secondTitle);
   const [secondCreated] = await Promise.all([
@@ -816,13 +823,13 @@ async function exerciseConnectedBoard(
     secondEditor.getByRole("button", { name: "Create event" }).click(),
   ]);
   expect(secondCreated.status()).toBe(201);
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
-  const myEvents = page.getByRole("region", { name: "My events" });
-  await myEvents.getByRole("button", { name: `Edit ${secondTitle}` }).click();
+  await page
+    .getByRole("dialog", { name: secondTitle })
+    .getByRole("button", { name: "Edit event" })
+    .click();
   const updatedSecondTitle = `${secondTitle} updated`;
   const secondUpdateEditor = page.getByRole("form", {
-    name: "Edit Board event",
+    name: "Edit event",
   });
   await secondUpdateEditor.getByLabel("Event title").fill(updatedSecondTitle);
   const [secondUpdated] = await Promise.all([
@@ -836,25 +843,22 @@ async function exerciseConnectedBoard(
   ]);
   expect(secondUpdated.status()).toBe(200);
   await expect(
-    myEvents.getByRole("button", { name: `Edit ${updatedSecondTitle}` }),
+    page.getByRole("dialog", { name: updatedSecondTitle }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
+  await page.getByRole("button", { name: "Close event" }).click();
+  // Created by me keeps the author's events (BR44).
+  await page.getByRole("button", { name: "Show: All" }).click();
+  await page.getByRole("menuitemradio", { name: "Created by me" }).click();
   await expect(
-    myEvents.getByRole("button", { name: `Edit ${updatedSecondTitle}` }),
+    page.getByRole("button", { name: `${updatedSecondTitle},` }).first(),
   ).toBeVisible();
   await page.reload();
-  await page.getByRole("link", { name: "Calendar", exact: true }).click();
-  await page.getByRole("button", { name: "Event lists" }).click();
-  await page.getByRole("menuitem", { name: "My events", exact: true }).click();
   await expect(
-    page
-      .getByRole("region", { name: "My events" })
-      .getByRole("button", { name: `Edit ${updatedSecondTitle}` }),
+    page.getByRole("button", { name: `${updatedSecondTitle},` }).first(),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Posts", exact: true }).click();
-  await page.getByRole("button", { name: "New post" }).click();
+  await page.getByRole("button", { name: "New post" }).first().click();
   await page.getByLabel("Title", { exact: true }).fill(postTitle);
   await page
     .getByLabel("Message", { exact: true })
@@ -869,12 +873,12 @@ async function exerciseConnectedBoard(
   ]);
   expect(createdPost.status()).toBe(201);
   const postId = ((await createdPost.json()) as { id: string }).id;
-  await expect(page.getByText("Draft saved.")).toBeVisible();
+  await expect(
+    page.getByRole("status").getByText("Draft saved", { exact: true }),
+  ).toBeVisible();
   await page.getByLabel("Add an attachment").setInputFiles(postImage);
   await expect(page.getByText(`${postImage.name} attached.`)).toBeVisible();
-  await page
-    .getByLabel("Record data source")
-    .selectOption({ label: "Suppliers" });
+  await page.getByLabel("Record module").selectOption({ label: "Suppliers" });
   await page.getByLabel("Record to link").selectOption(supplier.recordId);
   const [postLink] = await Promise.all([
     page.waitForResponse(
@@ -883,7 +887,7 @@ async function exerciseConnectedBoard(
           `/api/boards/${boardId}/posts/${postId}/record-links` &&
         response.request().method() === "POST",
     ),
-    page.getByRole("button", { name: "Link Record" }).click(),
+    page.getByRole("button", { name: "Link record" }).click(),
   ]);
   expect(postLink.status()).toBe(201);
   const [published] = await Promise.all([
@@ -893,23 +897,13 @@ async function exerciseConnectedBoard(
           `/api/boards/${boardId}/posts/${postId}/publish` &&
         response.request().method() === "POST",
     ),
-    page.getByRole("button", { name: "Publish now" }).click(),
+    page.getByRole("button", { name: "Publish", exact: true }).click(),
   ]);
   expect(published.status()).toBe(200);
-  await expect(page.getByText("Published successfully.")).toBeVisible();
-  await page.getByRole("button", { name: "Close post editor" }).click();
-  await expect(page.getByRole("dialog", { name: "Post editor" })).toBeHidden();
-  const publishedPost = page
-    .getByRole("region", { name: "Published posts" })
-    .getByRole("article")
-    .filter({
-      has: page.getByRole("heading", {
-        name: postTitle,
-        exact: true,
-      }),
-    });
-  await publishedPost.getByRole("button", { name: "Open post" }).click();
-  const postReader = page.getByRole("dialog", {
+  await expect(page.getByText("Post published").first()).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "New post" })).toBeHidden();
+  // Publishing opens the post in the reading pane.
+  const postReader = page.getByRole("article", {
     name: postTitle,
   });
   await expect(postReader).toBeVisible();
@@ -919,13 +913,13 @@ async function exerciseConnectedBoard(
   });
   await expect(postRecordLink).toBeVisible();
   await expect(postRecordLink).toHaveAttribute("href", recordLinkTarget);
-  await postReader.getByRole("button", { name: "Close post" }).click();
 
   const secondPostTitle = `Supplier notice ${runId.slice(0, 8)}`;
-  const postManager = page.getByRole("region", {
-    name: "Manage posts",
-  });
-  await page.getByRole("button", { name: "New post", exact: true }).click();
+  const postManager = page.getByRole("dialog", { name: "New post" });
+  await page
+    .getByRole("button", { name: "New post", exact: true })
+    .first()
+    .click();
   await postManager.getByLabel("Title", { exact: true }).fill(secondPostTitle);
   await postManager
     .getByLabel("Message", { exact: true })
@@ -947,24 +941,20 @@ async function exerciseConnectedBoard(
           `/api/boards/${boardId}/posts/${secondPostId}/publish` &&
         response.request().method() === "POST",
     ),
-    postManager.getByRole("button", { name: "Publish now" }).click(),
+    postManager.getByRole("button", { name: "Publish", exact: true }).click(),
   ]);
   expect(secondPostPublished.status()).toBe(200);
   await page.reload();
-  await page.getByRole("link", { name: "Posts", exact: true }).click();
-  await page.getByRole("button", { name: "More post actions" }).click();
   await page
-    .getByRole("menuitem", { name: "Edit drafts", exact: true })
+    .getByRole("region", { name: "Posts", exact: true })
+    .getByRole("button", { name: new RegExp(`^${secondPostTitle}`) })
     .click();
-  const reloadedPostManager = page.getByRole("region", {
-    name: "Manage posts",
-  });
-  await reloadedPostManager
-    .getByRole("button", { name: `${secondPostTitle} · Published` })
+  await page
+    .getByRole("article", { name: secondPostTitle })
+    .getByRole("button", { name: "Edit", exact: true })
     .click();
-  await expect(
-    reloadedPostManager.getByRole("heading", { name: "Edit post" }),
-  ).toBeVisible();
+  const reloadedPostManager = page.getByRole("dialog", { name: "Edit post" });
+  await expect(reloadedPostManager).toBeVisible();
   await reloadedPostManager
     .getByLabel("Title", { exact: true })
     .fill(`${secondPostTitle} revised`);

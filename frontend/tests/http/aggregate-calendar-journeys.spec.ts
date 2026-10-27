@@ -1,6 +1,5 @@
 import { expect, signedInSession, test, type Page } from "./helpers/test";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
-import { boardId, installBoardApi } from "./helpers/boards-api";
 import { pageOf } from "../helpers/pagination";
 import { wireBucket } from "../helpers/wire";
 
@@ -221,99 +220,4 @@ test("saved weekly Dashboard uses Sunday workspace starts and hides retained dat
     page.getByRole("button", { name: "Retry", exact: true }),
   ).toBeVisible();
   expect(requests).toBe(1);
-});
-
-test("Board overview keeps null date positions as separate SVG segments with exact missing labels", async ({
-  page,
-}) => {
-  const keyWarnings: string[] = [];
-  page.on("console", (message) => {
-    if (message.text().includes("same key")) keyWarnings.push(message.text());
-  });
-  await installBoardApi(page, () => true);
-  await catalog(page);
-  await page.route("**/api/workspace", (route) =>
-    route.fulfill({
-      json: {
-        display_name: "OpenSlate",
-        mark: "OS",
-        logo_file_id: null,
-        revision: 1,
-        week_start: "monday",
-        timezone: "Asia/Manila",
-        locale: "en-PH",
-        today: "2026-10-30",
-      },
-    }),
-  );
-  await page.route("**/api/boards/" + boardId + "/widgets**", (route) =>
-    route.fulfill({
-      json: {
-        ...collection(
-          [
-            {
-              id: categoryId,
-              board_id: boardId,
-              name: "Nullable trend",
-              widget_type: "chart",
-              module_id: moduleId,
-              position: 0,
-              size: "M",
-              pinned: false,
-              chart_id: null,
-              created_at: timestamp,
-              updated_at: timestamp,
-              config: {
-                version: 1,
-                fields: [{ field_id: dateId, expected_type: "date" }],
-                filters: [],
-                logic: "and",
-                metric: null,
-                visualization: "line",
-                refresh: "manual",
-              },
-            },
-          ],
-          12,
-        ),
-        board_revision: 1,
-      },
-    }),
-  );
-  await page.route("**/api/records/aggregate-snapshot", (route) => {
-    const keys = Array.from(
-      { length: 30 },
-      (_, index) => "2026-10-" + String(index + 1).padStart(2, "0"),
-    );
-    return route.fulfill({
-      json: snapshot(
-        keys,
-        keys.map((_, index) => (index === 14 ? null : index + 1)),
-      ),
-    });
-  });
-  await page.goto("/boards?board=" + boardId + "&section=overview");
-  const card = page
-    .getByRole("heading", { name: "Nullable trend", exact: true })
-    .locator("..")
-    .locator("..");
-  // The exact-values row shows the missing day; an axis tick may show its date
-  // too, depending on the width the chart has for tick labels.
-  await expect(card.getByText("2026-10-15—", { exact: true })).toBeVisible();
-  // The shared renderer draws one path that restarts after the missing day.
-  await expect
-    .poll(
-      async () =>
-        (
-          (await card.locator(".recharts-line-curve").getAttribute("d")) ?? ""
-        ).split("M").length - 1,
-    )
-    .toBe(2);
-  await expect(card.locator(".recharts-line-dot")).toHaveCount(29);
-  await expect(
-    card.getByText("Values too large to chart. Exact values remain below.", {
-      exact: true,
-    }),
-  ).toHaveCount(0);
-  expect(keyWarnings).toEqual([]);
 });

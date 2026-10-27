@@ -1,6 +1,21 @@
-import { expect, signedInSession, test, type Page } from "./helpers/test";
+import {
+  authMeBody,
+  expect,
+  signedInSession,
+  test,
+  type Page,
+} from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
 import { wireBoard } from "../helpers/wire";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
+import {
+  directoryIds,
+  installBoardApi,
+  installBoardDirectory,
+} from "./helpers/boards-api";
 
 const boardId = "00000000-0000-4000-8000-000000000021";
 const userId = "00000000-0000-4000-8000-000000000022";
@@ -58,13 +73,23 @@ test("legacy sample Board URL cannot reveal browser-local Board content", async 
   page,
 }) => {
   await installServerBoards(page);
-  await page.goto("/boards?board=sample-board-organization&section=overview");
+  await page.goto("/boards?board=sample-board-organization&section=posts");
 
   await expect(
-    page.getByText(
-      /This Board may have been removed or your account may not have access/,
-    ),
+    page.getByText("It may have been removed, or you may not have access."),
   ).toBeVisible();
+  // The refusal leads to the Company board, and offers no Retry that cannot
+  // succeed. No loading placeholder stays behind once there is no Board to
+  // wait for.
+  const main = page.locator("#main-content");
+  await expect(
+    main.getByText("This board is not available.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    main.getByRole("link", { name: "Go to Company board" }),
+  ).toHaveAttribute("href", "/boards");
+  await expect(main.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(main.locator(".animate-pulse")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "Organization board" }),
   ).toHaveCount(0);
@@ -82,13 +107,13 @@ test("Board content sections stay on the authorized UUID and fail closed when co
   await expect(page.getByRole("heading", { name: board.name })).toBeVisible();
   await expect(
     page.getByText(
-      "No events are shown. Retry or ask a Board manager to check your access.",
+      "No events are shown. Retry or ask a board manager to check your access.",
     ),
   ).toBeVisible();
   await expect(page.getByText("Manager-visible event")).toHaveCount(0);
 
   await page
-    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("navigation", { name: `${board.name} announcements views` })
     .getByRole("link", { name: "Posts", exact: true })
     .click();
   await expect(page).toHaveURL(
@@ -98,9 +123,7 @@ test("Board content sections stay on the authorized UUID and fail closed when co
       url.searchParams.get("section") === "posts",
   );
   await expect(
-    page.getByText(
-      "No post content is shown. Retry or ask a Board manager to check your access.",
-    ),
+    page.getByText("Posts unavailable. Check your access or try again."),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Manager-visible post" }),
@@ -131,7 +154,7 @@ async function openBoardsWithHeldList(page: Page) {
   await expect(region).toHaveAttribute("aria-busy", "true");
   return {
     region,
-    label: page.getByRole("status").filter({ hasText: "Loading Boards" }),
+    label: page.getByRole("status").filter({ hasText: "Loading boards" }),
     release,
   };
 }
@@ -175,8 +198,9 @@ test("a slow Board list shows its skeleton only after 300ms, and for at least 30
       { intervals: [50] },
     )
     .toBe(1);
+  // The region now holds the Board's posts (here, its fail-closed notice).
   await expect(
-    region.getByRole("region", { name: "Record summaries" }),
+    region.getByText("Posts unavailable. Check your access or try again."),
   ).toBeVisible();
   await expect(label).toHaveCount(0);
 });
@@ -191,4 +215,487 @@ test("a Board list that arrives within 300ms never shows the skeleton", async ({
   await expect(region).toHaveAttribute("aria-busy", "false");
   await page.clock.runFor(1_000);
   await expect(label).toHaveCount(0);
+});
+
+// docs/specs/boards-relayout.md P1: the sidebar rows, the breadcrumb, the
+// page header and All boards (BR1–BR9, BR41, BR47, BF-7).
+
+const sidebar = (page: Page) =>
+  page.getByRole("navigation", { name: "Main navigation" });
+const crumbs = (page: Page) =>
+  page.getByRole("navigation", { name: "breadcrumb" });
+
+test("a department's Announcements row opens its board by department, and a Board link to it is replaced in place", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  await installBoardDirectory(page);
+  const postId = "00000000-0000-4000-8000-000000000041";
+  await page.goto("/platform?section=search");
+  await page.goto(
+    `/boards?board=${directoryIds.sales}&section=posts&post=${postId}&keep=chosen`,
+  );
+  // The shell reads the address alone: the department, never the Board id.
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("department") === directoryIds.salesDepartment &&
+      !url.searchParams.has("board") &&
+      url.searchParams.get("section") === "posts" &&
+      url.searchParams.get("post") === postId &&
+      url.searchParams.get("keep") === "chosen",
+  );
+  // The post link still opens its post; this one is not on the board.
+  await expect(
+    page.getByRole("article", { name: "This post is not available." }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Sales announcements" }),
+  ).toBeVisible();
+  const salesPages = sidebar(page).getByRole("list", { name: "Sales pages" });
+  await expect(salesPages.getByRole("link")).toHaveText([
+    "Dashboard",
+    "Announcements",
+    "Contacts",
+  ]);
+  const row = salesPages.getByRole("link", { name: "Announcements" });
+  await expect(row).toHaveAttribute(
+    "href",
+    `/boards?department=${directoryIds.salesDepartment}`,
+  );
+  await expect(row).toHaveAttribute("aria-current", "page");
+  await expect(crumbs(page)).toHaveText(/^Sales\s*Announcements$/);
+  // A department's board is not a Boards row, so that group stays closed.
+  await expect(
+    sidebar(page).getByRole("link", { name: "Company", exact: true }),
+  ).toHaveCount(0);
+  // The replace kept one history entry: Back leaves Boards.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/platform\?section=search$/);
+});
+
+test("the Boards group lists My calendar, Company, the active project boards by name and All boards, read once", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  const directory = await installBoardDirectory(page);
+  await page.goto("/platform?section=search");
+  const nav = sidebar(page);
+  await expect(
+    nav.getByRole("button", { name: "Boards", exact: true }),
+  ).toBeVisible();
+  await nav.getByRole("button", { name: "Boards", exact: true }).click();
+  const rows = nav.getByRole("list", { name: "Boards" });
+  await expect(rows.getByRole("link")).toHaveText([
+    "My calendar",
+    "Company",
+    "Customer Renewal",
+    "Fleet Reliability",
+    "All boards",
+  ]);
+  await expect(rows.getByRole("link", { name: "My calendar" })).toHaveAttribute(
+    "href",
+    "/boards?section=my-calendar",
+  );
+  await expect(rows.getByRole("link", { name: "Company" })).toHaveAttribute(
+    "href",
+    "/boards",
+  );
+  await expect(
+    rows.getByRole("link", { name: "Fleet Reliability" }),
+  ).toHaveAttribute("href", `/boards?board=${directoryIds.fleet}`);
+  await expect(rows.getByRole("link", { name: "All boards" })).toHaveAttribute(
+    "href",
+    "/boards?section=all",
+  );
+  await rows.getByRole("link", { name: "Fleet Reliability" }).click();
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: "Fleet Reliability announcements",
+    }),
+  ).toBeVisible();
+  await expect(
+    rows.getByRole("link", { name: "Fleet Reliability" }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(crumbs(page)).toHaveText(/^Boards\s*Fleet Reliability$/);
+  // The page reads the list the sidebar already holds.
+  expect(directory.listQueries).toHaveLength(1);
+
+  await rows.getByRole("link", { name: "Company" }).click();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Company announcements" }),
+  ).toBeVisible();
+  await expect(rows.getByRole("link", { name: "Company" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(crumbs(page)).toHaveText(/^Boards\s*Company$/);
+
+  // The collapsed rail's Boards button opens the sidebar on the group.
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect(rows).toHaveCount(0);
+  await nav.getByRole("button", { name: "Boards", exact: true }).click();
+  await expect(rows.getByRole("link", { name: "Company" })).toBeVisible();
+});
+
+test("a Board page has one header: the title, the level, one meta line, tabs and the tab's primary", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  await installBoardDirectory(page);
+  await page.goto("/boards?section=overview");
+  // A retired Overview link opens Company's Posts.
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("section") === "posts" &&
+      !url.searchParams.has("board"),
+  );
+  const title = page.getByRole("heading", { level: 1 });
+  await expect(title).toHaveText("Company announcements");
+  await expect(page.getByText("Manager", { exact: true })).toBeVisible();
+  const tabs = page.getByRole("navigation", {
+    name: "Company announcements views",
+  });
+  await expect(tabs.getByRole("link")).toHaveText([
+    "Posts",
+    "Calendar",
+    "Kanban",
+    "Gantt",
+  ]);
+  await expect(tabs.getByRole("link", { name: "Posts" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(
+    page.getByRole("button", { name: "New post", exact: true }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Board settings", exact: true }),
+  ).toBeVisible();
+  for (const gone of ["Board menu", "Refresh", "Switch board"])
+    await expect(
+      page.getByRole("button", { name: gone, exact: true }),
+    ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Posts", exact: true }),
+  ).toHaveCount(0);
+
+  await tabs.getByRole("link", { name: "Calendar" }).click();
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("section") === "calendar" &&
+      !url.searchParams.has("board"),
+  );
+  await expect(
+    page.getByRole("button", { name: "New event", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "New post", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("on a phone a board header is two short rows, the whole title, then the tabs", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installBoardApi(page, () => true);
+  await installBoardDirectory(page);
+  await page.goto(`/boards?board=${directoryIds.fleet}&section=posts`);
+  const title = page.getByRole("heading", { level: 1 });
+  await expect(title).toHaveText("Fleet Reliability announcements");
+  // Row 1: the title wraps instead of cutting, with the level chip beside it.
+  expect(
+    await title.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  const titleBox = (await title.boundingBox())!;
+  expect(titleBox.height).toBeGreaterThan(48);
+  const chip = (await page
+    .getByRole("main")
+    .getByText("Manager", { exact: true })
+    .boundingBox())!;
+  expect(chip.y).toBeGreaterThanOrEqual(titleBox.y);
+  expect(chip.y + chip.height).toBeLessThanOrEqual(
+    titleBox.y + titleBox.height,
+  );
+  // The chip sits on the title's first line (30px), not in the middle of
+  // the wrapped title.
+  expect(Math.abs(chip.y + chip.height / 2 - (titleBox.y + 15))).toBeLessThan(
+    3,
+  );
+  // Row 2: Board settings and the tab's primary, side by side, at 44px.
+  const settings = (await page
+    .getByRole("button", { name: "Board settings", exact: true })
+    .boundingBox())!;
+  // The header's primary comes first; the empty list offers it too.
+  const primary = (await page
+    .getByRole("button", { name: "New post", exact: true })
+    .first()
+    .boundingBox())!;
+  expect(settings.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+  expect(Math.abs(primary.y - settings.y)).toBeLessThan(1);
+  expect(settings).toMatchObject({ width: 44, height: 44 });
+  expect(primary.height).toBeGreaterThanOrEqual(44);
+  // Then the tabs; the meta line waits for a wider screen.
+  const tabs = (await page
+    .getByRole("navigation", { name: "Fleet Reliability announcements views" })
+    .boundingBox())!;
+  expect(tabs.y).toBeGreaterThanOrEqual(settings.y + settings.height);
+  await expect(page.getByText("Project groups read and post")).toBeHidden();
+
+  // A department board's mark leads the first row.
+  await page.goto(`/boards?department=${directoryIds.salesDepartment}`);
+  await expect(title).toHaveText("Sales announcements");
+  const mark = (await page
+    .getByRole("main")
+    .locator('[data-sandbox-part="identity"]')
+    .first()
+    .boundingBox())!;
+  const salesTitle = (await title.boundingBox())!;
+  expect(mark.x + mark.width).toBeLessThanOrEqual(salesTitle.x);
+  expect(mark.y).toBeGreaterThanOrEqual(salesTitle.y);
+  expect(mark.y + mark.height).toBeLessThanOrEqual(
+    salesTitle.y + salesTitle.height,
+  );
+
+  // All boards: the title, then its primary.
+  await page.goto("/boards?section=all");
+  const allTitle = page.getByRole("heading", { level: 1, name: "All boards" });
+  await expect(allTitle).toBeVisible();
+  const allBox = (await allTitle.boundingBox())!;
+  const create = (await page
+    .getByRole("button", { name: "New project board", exact: true })
+    .boundingBox())!;
+  expect(create.y).toBeGreaterThanOrEqual(allBox.y + allBox.height);
+  expect(create.y - (allBox.y + allBox.height)).toBeLessThanOrEqual(24);
+  await expect(page.getByText("Every board you can read.")).toBeHidden();
+});
+
+test("All boards lists every readable board with its kind and level, searches, and shows archived boards", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  const directory = await installBoardDirectory(page);
+  await page.goto("/boards?section=all");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "All boards" }),
+  ).toBeVisible();
+  await expect(crumbs(page)).toHaveText(/^Boards\s*All boards$/);
+  const list = page.getByRole("list", { name: "All boards", exact: true });
+  await expect(list.getByRole("link")).toHaveCount(4);
+  const sales = list.getByRole("link", { name: /^Sales/ });
+  await expect(sales).toHaveAttribute(
+    "href",
+    `/boards?department=${directoryIds.salesDepartment}`,
+  );
+  await expect(sales).toContainText("Department");
+  await expect(sales).toContainText("Manager");
+  await expect(
+    list.getByRole("link", { name: /^Fleet Reliability/ }),
+  ).toContainText("Project");
+  // No Board is open, so nothing reads one.
+  expect(directory.detailReads).toEqual([]);
+
+  await page.getByRole("searchbox", { name: "Search boards" }).fill("fleet");
+  await expect(list.getByRole("link")).toHaveCount(1);
+  await expect(list.getByRole("link")).toContainText("Fleet Reliability");
+  expect(
+    directory.listQueries.some(
+      (query) => new URLSearchParams(query).get("search") === "fleet",
+    ),
+  ).toBe(true);
+  await page.getByRole("searchbox", { name: "Search boards" }).fill("");
+  await page.getByRole("button", { name: "Archived", exact: true }).click();
+  await expect(list.getByRole("link")).toHaveCount(1);
+  await expect(list.getByRole("link")).toContainText("Spring Launch");
+
+  await page
+    .getByRole("button", { name: "New project board", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "New project board" }),
+  ).toBeVisible();
+  for (const gone of ["Board type", "Board status"])
+    await expect(page.getByRole("combobox", { name: gone })).toHaveCount(0);
+});
+
+test("only administrators are offered a new project board on All boards", async ({
+  page,
+}) => {
+  await installBoardApi(page, () => true);
+  await installBoardDirectory(page, { level: "read" });
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: authMeBody({
+        id: "00000000-0000-4000-8000-000000000012",
+        role: "member",
+        access: [],
+        default_organization_blocked: null,
+      }),
+    }),
+  );
+  await page.goto("/boards?section=all");
+  const list = page.getByRole("list", { name: "All boards", exact: true });
+  await expect(list.getByRole("link", { name: /^Company/ })).toContainText(
+    "Read",
+  );
+  await expect(
+    page.getByRole("button", { name: "New project board", exact: true }),
+  ).toHaveCount(0);
+});
+
+for (const viewport of [
+  { width: 1280, height: 720 },
+  { width: 1440, height: 900 },
+]) {
+  test(`a Board page does not scroll the document at ${viewport.width}px; its panel scrolls`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await installBoardApi(page, () => true);
+    const published = "2026-09-24T00:00:00Z";
+    const posts = Array.from({ length: 12 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-0000000005${String(index).padStart(2, "0")}`,
+      board_id: directoryIds.company,
+      author_id: "00000000-0000-4000-8000-000000000012",
+      title: `Shift note ${index + 1}`,
+      body: "Shifts start at 7. Bring the dock keys and sign the rota.",
+      links: [],
+      status: "published",
+      publish_at: published,
+      expires_at: null,
+      pinned: false,
+      post_revision: null,
+      board_revision: 1,
+      publication_number: index + 1,
+      published_at: published,
+      edited: false,
+      created_at: published,
+      updated_at: published,
+    }));
+    await installBoardDirectory(page, {
+      posts: { [directoryIds.company]: posts },
+    });
+    await page.goto("/boards");
+    await expect(page.getByText("Shift note 12")).toBeAttached();
+    const scroll = await page.evaluate(() => ({
+      document: document.documentElement.scrollHeight - window.innerHeight,
+      panel: [...document.querySelectorAll("main *")].some(
+        (element) =>
+          element.scrollHeight > element.clientHeight + 1 &&
+          ["auto", "scroll"].includes(getComputedStyle(element).overflowY),
+      ),
+    }));
+    expect(scroll).toEqual({ document: 0, panel: true });
+  });
+}
+
+test("a cold /boards reads the board list and the open board once each, within 34 requests", async ({
+  page,
+}) => {
+  // A live stream, so its connection is part of the cold load.
+  await installOpenViewEventSource(page, { autoResync: true });
+  await installBoardApi(page, () => true);
+  const directory = await installBoardDirectory(page);
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/"))
+      requests.push(`${request.method()} ${url.pathname}${url.search}`);
+  });
+  await page.goto("/boards");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Company announcements" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "New post", exact: true }).first(),
+  ).toBeVisible();
+  // Count once the page stops reading: two polls in a row see no new request.
+  let previous = -1;
+  await expect
+    .poll(
+      () => {
+        const settled = requests.length === previous;
+        previous = requests.length;
+        return settled;
+      },
+      { intervals: [500] },
+    )
+    .toBe(true);
+  expect(directory.listQueries, requests.join("\n")).toHaveLength(1);
+  expect(directory.detailReads, requests.join("\n")).toEqual([
+    directoryIds.company,
+  ]);
+  await test.info().attach("cold /boards API requests", {
+    body: `${requests.length}\n${requests.join("\n")}`,
+    contentType: "text/plain",
+  });
+  expect(requests.length, requests.join("\n")).toBeLessThanOrEqual(34);
+});
+
+test("a refused board offers only the Company board; a failed read offers Retry", async ({
+  page,
+}) => {
+  const refusedId = "00000000-0000-4000-8000-000000000029";
+  // A live stream; this test sends its resync itself.
+  await installOpenViewEventSource(page);
+  await installServerBoards(page);
+  const refusedReads: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === `/api/boards/${refusedId}`)
+      refusedReads.push(request.url());
+  });
+  await page.goto(`/boards?board=${refusedId}&section=posts`);
+  const main = page.locator("#main-content");
+  await expect(
+    main.getByText("This board is not available.", { exact: true }),
+  ).toBeVisible();
+  // A refusal is read once: a resync or a change to the board does not
+  // read it again.
+  await sendOpenViewEvent(page, "resync");
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "boards",
+    board_id: refusedId,
+  });
+  let previous = -1;
+  await expect
+    .poll(
+      () => {
+        const settled = refusedReads.length === previous;
+        previous = refusedReads.length;
+        return settled;
+      },
+      { intervals: [500] },
+    )
+    .toBe(true);
+  expect(refusedReads).toHaveLength(1);
+  await expect(
+    main.getByText("It may have been removed, or you may not have access."),
+  ).toBeVisible();
+  await expect(
+    main.getByRole("link", { name: "Go to Company board" }),
+  ).toHaveAttribute("href", "/boards");
+  await expect(main.getByRole("button", { name: "Retry" })).toHaveCount(0);
+
+  // A temporary failure is not a refusal: Retry reads the board again.
+  let failures = 1;
+  await page.route(`**/api/boards/${boardId}`, (route) => {
+    if (failures-- > 0)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Unavailable" }),
+      });
+    return route.fallback();
+  });
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await expect(
+    main.getByText("This board is not available.", { exact: true }),
+  ).toHaveCount(0);
+  await main.getByRole("button", { name: "Retry" }).click();
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: "Authorized operations announcements",
+    }),
+  ).toBeVisible();
 });

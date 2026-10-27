@@ -35,7 +35,7 @@ export const eventLabels: Record<string, string> = {
   "records.export.authorized": "Record export authorization",
   "records.aggregate_snapshot.authorized": "Record summary authorization",
   "records.aggregate_snapshots.authorized": "Record summaries authorization",
-  "lifecycle.record_purge": "Permanent record deletion",
+  "lifecycle.record_purge": "Record deleted forever",
   "job.retry": "Job retry",
 };
 
@@ -270,8 +270,8 @@ export function securityEventSentence(
     }
     case "lifecycle.record_purge":
       return result(
-        `${actor} permanently deleted a record.`,
-        `Permanent record deletion by ${actor}`,
+        `${actor} deleted a record forever.`,
+        `Delete forever by ${actor}`,
       );
     case "job.retry": {
       const kinds: Record<string, string> = {

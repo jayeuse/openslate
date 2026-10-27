@@ -21,7 +21,7 @@ import {
 } from "../adapters/board-files-api";
 
 type EventAttachmentTarget = {
-  kind: "event";
+  kind: "event" | "card";
   boardId: string;
   contentId: string;
 };
@@ -39,6 +39,11 @@ type EditableTarget =
 type ReadOnlyProps = {
   access: "read";
   target: ReadOnlyTarget;
+  /**
+   * The reading pane's form: a "Files" section, open at once, that shows
+   * only when the content has files (BR12).
+   */
+  hideWhenEmpty?: boolean;
 };
 type EditableProps = {
   access: "edit";
@@ -78,9 +83,9 @@ function isAbort(error: unknown): boolean {
 }
 
 function targetKey(target: BoardAttachmentTarget): string {
-  return target.kind === "event"
-    ? `event:${target.boardId}:${target.contentId}`
-    : `post:${target.boardId}:${target.contentId}:${target.view}`;
+  return target.kind === "post"
+    ? `post:${target.boardId}:${target.contentId}:${target.view}`
+    : `${target.kind}:${target.boardId}:${target.contentId}`;
 }
 
 function uploadFailure(file: BoardAttachmentFile): Error | null {
@@ -95,7 +100,11 @@ function uploadFailure(file: BoardAttachmentFile): Error | null {
 }
 
 export function ServerBoardAttachments(props: Props) {
-  const [expanded, setExpanded] = useState(props.access === "edit");
+  const paneSection = props.access === "read" && props.hideWhenEmpty === true;
+  // A card's Files tab is the list itself, never a collapsed toggle.
+  const [expanded, setExpanded] = useState(
+    props.access === "edit" || paneSection || props.target.kind === "card",
+  );
   const [listStatus, setListStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
@@ -120,9 +129,9 @@ export function ServerBoardAttachments(props: Props) {
   const sourceKey = targetKey(props.target);
   const stableTarget = useMemo<BoardAttachmentTarget>(
     () =>
-      kind === "event"
-        ? { kind, boardId, contentId }
-        : { kind, boardId, contentId, view: view ?? "published" },
+      kind === "post"
+        ? { kind, boardId, contentId, view: view ?? "published" }
+        : { kind, boardId, contentId },
     [boardId, contentId, kind, view],
   );
   const busy = operation !== null;
@@ -378,7 +387,11 @@ export function ServerBoardAttachments(props: Props) {
   }
 
   const title =
-    props.target.kind === "event" ? "Event attachments" : "Post attachments";
+    props.target.kind === "event"
+      ? "Event attachments"
+      : props.target.kind === "card"
+        ? "Card files"
+        : "Post attachments";
   // Edit mode shows feedback next to the upload control; read mode at the top.
   // The status region stays mounted so screen readers announce text changes.
   const feedback = (
@@ -394,9 +407,23 @@ export function ServerBoardAttachments(props: Props) {
     </>
   );
 
+  if (
+    paneSection &&
+    (listStatus === "idle" ||
+      listStatus === "loading" ||
+      (listStatus === "ready" && items.length === 0))
+  )
+    return null;
   return (
-    <section aria-label={title} className="mt-3 min-w-0">
-      {props.access === "read" ? (
+    <section
+      aria-label={paneSection ? "Files" : title}
+      className={paneSection ? "min-w-0" : "mt-3 min-w-0"}
+    >
+      {paneSection ? (
+        <h3 data-slot="section-title" className="text-sm font-medium">
+          Files
+        </h3>
+      ) : props.target.kind === "card" ? null : props.access === "read" ? (
         <Button
           type="button"
           variant="ghost"

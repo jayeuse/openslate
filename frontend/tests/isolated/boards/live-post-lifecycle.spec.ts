@@ -1,12 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import type { BoardPost } from "../../../src/components/systems/boards/adapters/board-posts-api";
-import {
-  ServerBoardPostLifecycleDisplay,
-  prepareBoardPostLifecycleAction,
-  type PostLifecycleView,
-} from "../../../src/components/systems/boards/components/server-backed-board-post-lifecycle";
+import { prepareBoardPostLifecycleAction } from "../../../src/components/systems/boards/hooks/use-server-board-post-lifecycle";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const postId = "00000000-0000-4000-8000-000000000002";
@@ -30,42 +24,7 @@ const item: BoardPost = {
   createdAt: now,
   updatedAt: now,
 };
-const page = {
-  items: [item],
-  boardRevision: 7,
-  pagination: { limit: 25, offset: 0, count: 1, total: 1, hasMore: false },
-};
-const ready: PostLifecycleView = {
-  status: "ready",
-  active: true,
-  canManage: true,
-  view: "published",
-  page,
-  pending: false,
-  conflict: false,
-  error: null,
-  notice: null,
-  confirmation: null,
-};
-
-function markup(view: PostLifecycleView): string {
-  return renderToStaticMarkup(
-    createElement(ServerBoardPostLifecycleDisplay, {
-      view,
-      onSelectView: () => undefined,
-      onRetry: () => undefined,
-      onPage: () => undefined,
-      onBeginAction: () => undefined,
-    }),
-  );
-}
-
-test("published manager list offers archive but no deletion or revision guess", () => {
-  const html = markup(ready);
-  expect(html).toContain("Private policy notice");
-  expect(html).toContain("Archive post");
-  expect(html).not.toContain(">Delete<");
-  expect(html).not.toContain("Private post body");
+test("archive uses the post's current revisions and never guesses a stale one", () => {
   expect(
     prepareBoardPostLifecycleAction(
       item,
@@ -130,7 +89,7 @@ test("published manager list offers archive but no deletion or revision guess", 
   }
 });
 
-test("archive view offers restore and delete of a never-published post; denial and conflict hide unsafe actions", () => {
+test("restore uses the archived post's current revisions", () => {
   const archived: BoardPost = {
     ...item,
     status: "archived",
@@ -138,14 +97,6 @@ test("archive view offers restore and delete of a never-published post; denial a
     publicationNumber: null,
     publishedAt: null,
   };
-  const archivedView: PostLifecycleView = {
-    ...ready,
-    view: "archive",
-    page: { ...page, items: [archived] },
-  };
-  const html = markup(archivedView);
-  expect(html).toContain("Restore post");
-  expect(html).toContain(">Delete<");
   expect(
     prepareBoardPostLifecycleAction(
       archived,
@@ -159,38 +110,4 @@ test("archive view offers restore and delete of a never-published post; denial a
       "restore",
     ),
   ).toMatchObject({ kind: "restore", postRevision: 4 });
-  for (const view of [
-    { ...archivedView, status: "denied" as const },
-    { ...archivedView, active: false },
-    { ...archivedView, canManage: false },
-  ]) {
-    const hidden = markup(view);
-    expect(hidden).not.toContain("Private policy notice");
-    expect(hidden).not.toContain(">Delete<");
-  }
-  const conflicted = markup({ ...archivedView, conflict: true });
-  expect(conflicted).toContain("changed elsewhere");
-  expect(conflicted).not.toContain(">Delete<");
-});
-
-test("initial loading and retriable read failure show status without private post content", () => {
-  const loading = markup({
-    ...ready,
-    status: "loading",
-    canManage: false,
-    page: null,
-  });
-  expect(loading).toContain("Loading posts");
-  expect(loading).not.toContain("Private policy notice");
-
-  const failed = markup({
-    ...ready,
-    status: "error",
-    canManage: false,
-    page: null,
-    error: "Posts are unavailable. Try again.",
-  });
-  expect(failed).toContain("Posts are unavailable. Try again.");
-  expect(failed).toContain("Retry");
-  expect(failed).not.toContain("Private policy notice");
 });

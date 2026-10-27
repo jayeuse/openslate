@@ -54,7 +54,7 @@ The Sandbox is where an administrator designs the organization: departments, mod
 | Lifecycle | `lifecycle`, `LifecycleOperation` | The controlled close, reopen, and purge of a department, module, field, record, file, or Board. | Internal |
 | Close | `close` | Stop new work on a department, module, or field but keep its data. Close needs the typed name and a password challenge. | Customer |
 | Reopen | `reopen` | Undo a close. Only Sandbox lifecycle items use "reopen"; other items use "restore". | Customer |
-| Purge | `purge`, "Permanently delete", `LIFECYCLE_PURGE_ENABLED` | Remove an item and its owned data for good. Purge is enabled in new-installation examples; existing installations keep their required setting. Records support purge but not close. | Customer ("Permanently delete") |
+| Purge | `purge`, "Delete forever", `LIFECYCLE_PURGE_ENABLED` | Remove an item and its owned data for good. Purge is enabled in new-installation examples; existing installations keep their required setting. Records support purge but not close. | Customer ("Delete forever") |
 | Impact | `impact`, `impact_digest`, `confirmation_name` | The preview of what a lifecycle action or publish changes. The request must send the digest back so that the server knows the person saw the current impact. | Internal |
 | Password challenge | `LifecycleConfirmationChallenge` | A one-time check of the administrator password before a destructive action. Supabase Auth verifies the password; the challenge does not start an application session. | Internal |
 
@@ -64,7 +64,7 @@ Boards are for communication. The Board scope decides who sees the content. Back
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
-| Board | `Board`, `BoardScope` | A shared page of posts, events, and widgets. The scope is `company`, `department`, or `project`. | Customer |
+| Board | `Board`, `BoardScope` | A shared page of posts and events. The scope is `company`, `department`, or `project`. | Customer |
 | Company Board | scope `company` | The one Board for the whole organization. All active accounts read it; only administrators change it. "Company" is the scope name, not a word for the organization. | Customer |
 | Department Board | scope `department` | The one Board for each department. Publish creates it, and it uses the department access level. | Customer |
 | Project Board | scope `project`, `board_groups`, `BoardGroup` | A Board that an administrator creates. Access groups get a level on it through `board_groups` rows. | Customer |
@@ -72,8 +72,8 @@ Boards are for communication. The Board scope decides who sees the content. Back
 | Post revision | `BoardPostRevision`, "Published revision", "Edit history" | An unchangeable copy of a post, made each time it is published. Readers can open earlier revisions. | Customer |
 | Event | `BoardEvent`, "Calendar" | A dated item on a Board calendar. | Customer |
 | Reminder | `event.reminders`, scheduled work kind `event-reminder` | A notification that the event author sets: at the start, 15 minutes before, or 1 day before. | Customer |
-| Widget | `BoardWidget`, `DashboardWidget`, "tile" | A block on a Board overview or a dashboard that shows record data. Use "widget"; "tile" is an older name for the same thing. | Customer |
-| Pin | `pinned` | Keep a post or widget at the top. Pinning needs `manage` on the Board. | Customer |
+| Widget | `DashboardWidget`, "tile" | A block on a dashboard that shows record data. Use "widget"; "tile" is an older name for the same thing. | Customer |
+| Pin | `pinned` | Keep a post at the top. Pinning needs `manage` on the Board. | Customer |
 
 ## OpenView
 
@@ -81,12 +81,12 @@ OpenView is for reading records and reports. Its content belongs to departments 
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
-| View | `?section=views`, `temporary-view`, "Unsaved view", legacy `?section=records` | A query over one module, shown as Table, Kanban, Calendar, or Timeline. It is not saved until you save it. | Customer |
+| View | `?section=views`, `temporary-view`, "Unsaved view", legacy `?section=records` | A query over one module, shown as Table, Grid, or Gallery. It is not saved until you save it. | Customer |
 | Saved view | `SavedView` | A view that is stored for the module. Every reader of the module sees it; `manage` on the module changes it. | Customer |
 | Default view | `defaultViewId`, "Module default" | The one saved view that a module opens with. Making a new default clears the old one. | Customer |
 | Dashboard | `Dashboard` | A page of widgets that belongs to one department. Each widget reads a module of that department. | Customer |
 | Chart | `?section=charts`, `ChartDefinition` | A visualization of a module query. Unsaved editing and preview stay local; Save creates a shared saved chart. | Customer |
-| Saved chart | `Chart`, `/api/charts`, widget `chart_id` | A revisioned query and presentation definition for one source module. Reading requires `read` on that module; creating, editing, archiving and restoring require `manage` on the chart's department plus `read` on its source module. Module-level `manage` alone is insufficient. It owns no materialized Record results; Dashboard and Board consumers recheck current source access. | Customer |
+| Saved chart | `Chart`, `/api/charts`, widget `chart_id` | A revisioned query and presentation definition for one source module. Reading requires `read` on that module; creating, editing, archiving and restoring require `manage` on the chart's department plus `read` on its source module. Module-level `manage` alone is insufficient. It owns no materialized Record results; Dashboard consumers recheck current source access. | Customer |
 | Report | `Report` | A saved query recipe for one module that you run on demand or on a schedule. | Customer |
 | Report run | `ReportRun`, "Run now" | One unchangeable result of a report. | Customer |
 | Eligible readers | `ReportRunEligibleUser` | The module readers at the time of a report run. To open the run, a person must be an eligible reader and still read the module now. | Internal |
@@ -273,4 +273,4 @@ Each row is one word with more than one meaning. Add the qualifier in **Write** 
 | Manage | (1) the Manage workspace; (2) the `manage` access level | **Manage** (capital) for 1, **`manage` level** for 2. |
 | Platform | (1) the Platform workspace; (2) the backend `platform` package; (3) a word for the product | Meanings 1 and 2 only. Never use "platform" for the product. |
 | client | (1) a customer installation; (2) an HTTP client; (3) a sample-run login client | **installation** for 1. |
-| archive / close / delete | (1) close: Sandbox departments, modules, and fields, data kept; (2) archive: Boards, published posts, events, views, dashboards, reports; (3) delete a record: soft, undone with restore (`DELETE /records/{id}`, `POST /records/{id}/restore`); (4) delete a never-published post: permanent; (5) purge: permanent | Use the verb of the item's own row above. Use **restore** to undo an archive or a record delete, and **reopen** to undo a close. Say **permanently delete** for 4 and 5. |
+| archive / close / delete | (1) close: Sandbox departments, modules, and fields, data kept; (2) archive: Boards, published posts, events, views, dashboards, reports; (3) delete a record: soft, undone with restore (`DELETE /records/{id}`, `POST /records/{id}/restore`); (4) delete a never-published post: permanent; (5) purge: permanent | Use the verb of the item's own row above. Use **restore** to undo an archive or a record delete, and **reopen** to undo a close. Say **delete forever** for 4 and 5. |

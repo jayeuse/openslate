@@ -155,11 +155,11 @@ Proposed under the relayout delegation; each names what it removes.
 | OD1 | One section header for all four sections (Layout direction). | Page intro sentences; the data-source card; the dashboard picker card; the repeated "Unsaved view" titles. |
 | OD2 | ~~Keep four sections.~~ Replaced by the direction above (department pages). | — |
 | OD3 | Views toolbar in one row: search, quick filter, Filters popover with chips, Sort, Columns, Layout. | The inline More filters panel; "No active filters"; the search-and-sort card. |
-| OD4 | The layout is a select with six options and their icons, not tabs or a segmented control. | Six full-width tabs. |
+| OD4 | **Reversed (2026-10-27) by `docs/specs/boards-relayout.md` BR77:** the menu lists Table, Grid, and Gallery. The layout is a select with six options and their icons, not tabs or a segmented control. | Six full-width tabs. |
 | OD5 | Save model: the "Unsaved changes" chip, then Save view (primary) and "Save as new view". Otherwise New record is the primary. Export sits in the header; Archived views, Copy link, and Reset changes move to the menu. | "Temporary changes" with "These changes live in the page address"; the filled Save view as at rest; the empty View actions menu. |
 | OD6 | 40px one-line rows; the whole row opens the record; people as avatar and name in ink; one date format. | Blue name buttons; underlined people links; the 69px rows. |
 | OD7 | The record opens in a right sheet. `?record=` links are unchanged. | The centered dialog; its three helper sentences; Delete beside Edit; the height jump between tabs. |
-| OD8 | Kanban, Calendar, and Timeline show their field picker in their empty state. | "Choose an active queried … field" with no control. |
+| OD8 | **Reversed (2026-10-27) by `docs/specs/boards-relayout.md` BR77:** these layouts left OpenView. Kanban, Calendar, and Timeline show their field picker in their empty state. | "Choose an active queried … field" with no control. |
 | OD9 | *(Replaced by part B: a chart-builder dialog.)* Charts in two panes with explicit Apply; one primary at a time; Group by starts on a choice field. | The "Chart source: Inline query" select; two filled primaries; the inline saved list; the snapshot sentences; 30 bars of 1. |
 | OD10 | *(Replaced by part B: the 4×5 grid.)* Dashboards: header picker, one primary, compact widget pagers, no repeated widget sentence. | The picker card and revision sentence (the revision moves to Dashboard options); the size kicker; full pagers on short tables; the nested summary card. |
 | OD11 | *(Replaced by part C: Reports in module pages.)* Reports in list and detail panes; Shared outputs as the second list. | Per-row Duplicate buttons; the "Available outputs" foot button; the 480px detail card. |

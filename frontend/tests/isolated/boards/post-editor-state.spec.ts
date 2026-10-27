@@ -11,6 +11,7 @@ import {
   resolveEditorRefresh,
   type PostEditorState,
 } from "../../../src/components/systems/boards/hooks/use-server-board-post-editor";
+import { dirty } from "../../../src/components/systems/boards/hooks/post-editor-state";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -110,6 +111,7 @@ test("a draft update never sends an audience", () => {
       expiresLocal: "",
     },
     6,
+    "UTC",
   );
   expect(patch).toEqual({
     boardRevision: 6,
@@ -130,7 +132,7 @@ test("post links validate before save and omit untouched links from text-only ed
     links: [...original],
   };
   expect(validPostLinks(form.links)).toBe(true);
-  expect(postPatchForForm(linked, form, 3)).not.toHaveProperty("links");
+  expect(postPatchForForm(linked, form, 3, "UTC")).not.toHaveProperty("links");
   expect(
     postPatchForForm(
       linked,
@@ -139,6 +141,7 @@ test("post links validate before save and omit untouched links from text-only ed
         links: [{ label: "Guide", url: "https://example.test/guide" }],
       },
       3,
+      "UTC",
     ).links,
   ).toEqual([{ label: "Guide", url: "https://example.test/guide" }]);
   for (const url of [
@@ -155,44 +158,49 @@ test("post links validate before save and omit untouched links from text-only ed
   );
 });
 
-test("local schedule times convert to UTC and reject past, invalid, or expired times", () => {
+test("schedule times are read in the workspace zone and reject past, invalid, or expired times", () => {
   const now = Date.parse("2035-06-01T00:00:00Z");
-  const converted = postScheduleTimeToUtc("2035-06-01T12:30", now);
-  expect(converted).toEqual({
+  // 12:30 in Manila is 04:30 UTC, whatever zone the machine is in.
+  expect(postScheduleTimeToUtc("2035-06-01T12:30", "Asia/Manila", now)).toEqual(
+    { ok: true, publishAt: "2035-06-01T04:30:00.000Z" },
+  );
+  expect(postScheduleTimeToUtc("2035-06-01T12:30", "UTC", now)).toEqual({
     ok: true,
-    publishAt: new Date("2035-06-01T12:30").toISOString(),
+    publishAt: "2035-06-01T12:30:00.000Z",
   });
-  expect(postScheduleTimeToUtc("", now)).toEqual({
+  expect(postScheduleTimeToUtc("", "UTC", now)).toEqual({
     ok: false,
     reason: "required",
   });
-  expect(postScheduleTimeToUtc("2035-06-01T99:30", now)).toEqual({
-    ok: false,
-    reason: "invalid",
-  });
-  expect(postScheduleTimeToUtc("2035-05-31T12:30", now)).toEqual({
+  for (const invalid of ["2035-06-01T99:30", "2035-02-30T12:30"])
+    expect(postScheduleTimeToUtc(invalid, "UTC", now)).toEqual({
+      ok: false,
+      reason: "invalid",
+    });
+  expect(postScheduleTimeToUtc("2035-05-31T12:30", "UTC", now)).toEqual({
     ok: false,
     reason: "past",
   });
   expect(
-    postScheduleTimeToUtc("2035-06-01T12:30", now, "2035-06-01T03:00:00Z"),
+    postScheduleTimeToUtc(
+      "2035-06-01T12:30",
+      "Asia/Manila",
+      now,
+      "2035-06-01T04:30:00Z",
+    ),
   ).toEqual({ ok: false, reason: "after_expiration" });
 });
 
-test("a nonexistent device-local time during a clock change is rejected", () => {
-  const previousTimezone = process.env.TZ;
-  process.env.TZ = "America/New_York";
-  try {
-    expect(
-      postScheduleTimeToUtc(
-        "2035-03-11T02:30",
-        Date.parse("2035-03-01T00:00:00Z"),
-      ),
-    ).toEqual({ ok: false, reason: "invalid" });
-  } finally {
-    if (previousTimezone === undefined) delete process.env.TZ;
-    else process.env.TZ = previousTimezone;
-  }
+test("a workspace-local time a clock change skips is rejected", () => {
+  // 02:30 does not exist in New York on 2035-03-11, whatever zone the
+  // machine is in.
+  expect(
+    postScheduleTimeToUtc(
+      "2035-03-11T02:30",
+      "America/New_York",
+      Date.parse("2035-03-01T00:00:00Z"),
+    ),
+  ).toEqual({ ok: false, reason: "invalid" });
 });
 
 test("a concurrent schedule edit conflicts without replacing the local time selection", () => {
@@ -231,6 +239,7 @@ test("a concurrent schedule edit conflicts without replacing the local time sele
     },
     latest,
     true,
+    "UTC",
   );
   expect(refreshed.conflict).toBe(true);
   expect(refreshed.scheduleLocal).toBe("2035-06-02T12:30");
@@ -272,6 +281,7 @@ test("refresh verifies a conflicting draft without silently replacing its retain
     },
     latest,
     true,
+    "UTC",
   );
   expect(refreshed.form).toEqual(ready.form);
   expect(refreshed.selected?.postRevision).toBe(1);
@@ -298,6 +308,7 @@ test("dirty refresh detects a concurrent post edit and keeps old revision tokens
     },
     latest,
     true,
+    "UTC",
   );
   expect(refreshed.form).toEqual(dirtyDraft.form);
   expect(refreshed.selected?.postRevision).toBe(1);
@@ -334,6 +345,7 @@ test("clean refresh adopts the concurrent post edit and its revisions", () => {
     },
     latest,
     true,
+    "UTC",
   );
   expect(refreshed.form?.title).toBe("Concurrent server title");
   expect(refreshed.selected?.postRevision).toBe(3);
@@ -353,9 +365,31 @@ test("unrelated Board revision refresh retains local draft text without false po
     },
     latest,
     true,
+    "UTC",
   );
   expect(refreshed.form).toEqual(ready.form);
   expect(refreshed.selected?.postRevision).toBe(1);
   expect(refreshed.boardRevision).toBe(5);
   expect(refreshed.conflict).toBe(false);
+});
+
+test("a new post counts as changed only once it has content", () => {
+  const blank = {
+    title: "",
+    body: "",
+    links: [],
+    pinned: false,
+    expiresLocal: "",
+  };
+  expect(dirty(blank, null, "UTC")).toBe(false);
+  expect(dirty({ ...blank, title: "  ", body: "\n" }, null, "UTC")).toBe(false);
+  // Each of these is content the person would lose on close.
+  for (const changed of [
+    { ...blank, title: "Dock 3 closes" },
+    { ...blank, body: "Use Dock 4." },
+    { ...blank, links: [{ label: "", url: "" }] },
+    { ...blank, pinned: true },
+    { ...blank, expiresLocal: "2035-06-01T12:30" },
+  ])
+    expect(dirty(changed, null, "UTC")).toBe(true);
 });

@@ -1,4 +1,4 @@
-"""One pack-derived real-client Chart lifecycle on distinct owned consumer copies."""
+"""One pack-derived real-client Chart lifecycle on an owned Dashboard consumer copy."""
 
 import hashlib
 from collections.abc import Mapping
@@ -6,17 +6,15 @@ from typing import Any
 
 import httpx
 
-from app.systems.boards.schemas import BoardResponse
-from app.systems.boards.widget_schemas import BoardWidgetListResponse
 from app.systems.openview.charts.schemas import ChartResponse, ChartUsageResponse
 from app.systems.openview.dashboards.schemas import DashboardResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.controls.charts_consumers import (
     _model,
+    clear_consumers,
     dispose_consumers,
     prepare_consumers,
     read_source_charts,
-    transfer_and_clear,
 )
 from operations.sample.controls.openview_queries import make_control_action, select_openview_target
 from operations.sample.controls.openview_snapshots import _wire_references
@@ -33,7 +31,6 @@ from operations.sample.phases.actions import (
     _result,
 )
 from operations.sample.phases.planning import _manager_key
-from operations.sample.population.boards import project_board_logical_id
 
 CHART_ROUTES = frozenset(
     {
@@ -48,17 +45,10 @@ CHART_ROUTES = frozenset(
 )
 CONTROL_KEY = "control:chart_lifecycle"
 ADMIN_STEPS = [
-    "duplicate_board",
-    "attach_board_chart",
     "create_chart_dashboard",
     "attach_dashboard_chart",
-    "import_board",
-    "delete_board_chart",
     "clear_chart_dashboard",
     "archive_chart_dashboard",
-    "archive_control_board",
-    "preview_control_board_purge",
-    "purge_control_board",
 ]
 
 
@@ -73,7 +63,6 @@ def plan_chart_control(dataset: SampleDataset) -> PhaseAction:
         raise ValueError(
             "Chart control needs a department manager, authored sources and text title"
         )
-    board_name, board_department = phase.existing_project_board
     return make_control_action(
         "chart_lifecycle",
         manager,
@@ -81,7 +70,6 @@ def plan_chart_control(dataset: SampleDataset) -> PhaseAction:
         {
             "department_key": department,
             "module_key": module.key,
-            "source_board_key": project_board_logical_id(board_department, board_name),
             "source_dashboard_key": f"department:{department}:dashboard",
             "temporary_name": "Owned Chart control",
             "edited_name": "Reviewed Chart control",
@@ -199,25 +187,12 @@ def execute_chart_control(
     department_id = _mapped_id(
         context, "department", str(values["department_key"]), step=action.key
     )
-    source_board = _mapped_id(context, "boards", str(values["source_board_key"]), step=action.key)
     source_dashboard = _mapped_id(
         context, "dashboards", str(values["source_dashboard_key"]), step=action.key
     )
     for actor in ("admin", action.actor_key):
         _client(context, actor, step=action.key)
     query = _wire_references(values["query"], context, step=action.key)
-    before_board = _model(
-        BoardResponse,
-        journey.call("GET", f"/api/boards/{source_board}", "read_authored_board", admin=True),
-        action.key,
-    )
-    before_widgets = _model(
-        BoardWidgetListResponse,
-        journey.call(
-            "GET", f"/api/boards/{source_board}/widgets", "read_authored_widgets", admin=True
-        ),
-        action.key,
-    )
     before_dashboard = _model(
         DashboardResponse,
         journey.call(
@@ -226,12 +201,11 @@ def execute_chart_control(
         action.key,
     )
     if (
-        str(before_board.id) != source_board
-        or str(before_dashboard.id) != source_dashboard
+        str(before_dashboard.id) != source_dashboard
         or str(before_dashboard.department_id) != department_id
     ):
         raise SamplePhaseActionError("Authored Chart sources differ from mappings", step=action.key)
-    source_charts = read_source_charts(journey, before_widgets, before_dashboard)
+    source_charts = read_source_charts(journey, before_dashboard)
     created_reply = journey.call(
         "POST",
         "/api/charts",
@@ -331,15 +305,8 @@ def execute_chart_control(
             "Chart edit changed ownership or instructions", step="edit_chart"
         )
     journey.chart(root, "read_edited_chart", expected)
-    admin_action, board_id, attached, dashboard, dashboard_id, dashboard_path = prepare_consumers(
-        journey,
-        chart,
-        before_dashboard,
-        before_widgets,
-        module_id,
-        department_id,
-        source_board,
-        source_dashboard,
+    dashboard, dashboard_id, dashboard_path = prepare_consumers(
+        journey, chart, before_dashboard, department_id
     )
     for admin in (False, True):
         usage = _model(
@@ -350,13 +317,6 @@ def execute_chart_control(
             action.key,
         )
         wanted = {("dashboard", dashboard_id, dashboard.name)}
-        if admin:
-            board_name = next(
-                row["response"]["name"]
-                for row in journey.receipts
-                if row["step"] == "read_chart_board"
-            )
-            wanted.add(("board", board_id, board_name))
         if (
             {(row.kind, str(row.id), row.name) for row in usage.items} != wanted
             or len(usage.items) != len(wanted)
@@ -364,7 +324,7 @@ def execute_chart_control(
             or usage.pagination.count != len(wanted)
             or usage.pagination.offset != 0
             or usage.pagination.has_more
-            or usage.has_restricted_usage is admin
+            or usage.has_restricted_usage
         ):
             raise SamplePhaseActionError("Chart usage visibility differs", step="usage_chart")
     blocked = journey.call("DELETE", root, "archive_in_use_chart", 409, params={"revision": 2})
@@ -374,19 +334,7 @@ def execute_chart_control(
     ):
         raise SamplePhaseActionError("In-use Chart refusal differs", step="archive_in_use_chart")
     journey.chart(root, "read_blocked_chart", expected)
-    import_id, bundle, raw = transfer_and_clear(
-        journey,
-        admin_action,
-        chart,
-        query,
-        source_board,
-        source_dashboard,
-        board_id,
-        dashboard_id,
-        dashboard_path,
-        attached,
-        source_charts,
-    )
+    clear_consumers(journey, chart, dashboard_id, dashboard_path)
     for revision, method, suffix, step, archived in [
         (2, "DELETE", "", "archive_chart", True),
         (3, "POST", "/restore", "restore_chart", False),
@@ -414,21 +362,7 @@ def execute_chart_control(
             expected["updated_at"] = current.model_dump(mode="json")["updated_at"]
         if current.model_dump(mode="json") != expected:
             raise SamplePhaseActionError("Chart lifecycle readback differs", step=step)
-    final_dashboard = dispose_consumers(
-        journey, admin_action, board_id, import_id, dashboard_id, dashboard_path
-    )
-    after_board = _model(
-        BoardResponse,
-        journey.call("GET", f"/api/boards/{source_board}", "final_authored_board", admin=True),
-        action.key,
-    )
-    after_widgets = _model(
-        BoardWidgetListResponse,
-        journey.call(
-            "GET", f"/api/boards/{source_board}/widgets", "final_authored_widgets", admin=True
-        ),
-        action.key,
-    )
+    final_dashboard = dispose_consumers(journey, dashboard_id, dashboard_path)
     after_dashboard = _model(
         DashboardResponse,
         journey.call(
@@ -436,15 +370,11 @@ def execute_chart_control(
         ),
         action.key,
     )
-    if (after_board, after_widgets, after_dashboard) != (
-        before_board,
-        before_widgets,
-        before_dashboard,
-    ):
+    if after_dashboard != before_dashboard:
         raise SamplePhaseActionError(
             "Authored Chart sources were changed", step="final_authored_sources"
         )
-    if read_source_charts(journey, after_widgets, after_dashboard, final=True) != source_charts:
+    if read_source_charts(journey, after_dashboard, final=True) != source_charts:
         raise SamplePhaseActionError(
             "Authored Chart instructions changed", step="final_authored_sources"
         )
@@ -457,15 +387,9 @@ def execute_chart_control(
             "chart_archived": True,
             "authored_sources_preserved": True,
             "read_receipts": journey.receipts,
-            "portable_bundle": bundle.model_dump(mode="json"),
-            "portable_sha256": hashlib.sha256(raw).hexdigest(),
-            "portable_bytes": raw.decode("utf-8"),
             "chart": current.model_dump(mode="json"),
             "dashboard": final_dashboard.model_dump(mode="json"),
-            "source_board_id": source_board,
             "source_dashboard_id": source_dashboard,
-            "board_id": board_id,
-            "import_id": import_id,
             "chart_id": str(chart.id),
             "dashboard_id": dashboard_id,
         },

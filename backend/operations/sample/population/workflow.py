@@ -38,7 +38,6 @@ from operations.sample.verification.rejections import RejectionContext, run_reje
 
 _CONTENT_KEYS = (
     "boards",
-    "widgets",
     "posts",
     "events",
     "reminders",
@@ -47,6 +46,10 @@ _CONTENT_KEYS = (
     "project_group_grants",
     "post_publications",
     "publication_revisions",
+    "kanban_stages",
+    "kanban_labels",
+    "kanban_cards",
+    "kanban_checklist_items",
     "views",
     "dashboards",
     "dashboard_widgets",

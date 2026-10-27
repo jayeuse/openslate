@@ -1,23 +1,64 @@
 import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 export function PageHeader({
   title,
   description,
   actions,
+  leading,
+  badges,
+  className,
 }: {
   title: string;
   description?: ReactNode;
   actions?: ReactNode;
+  /** A mark before the title, such as a department's color. */
+  leading?: ReactNode;
+  /** Chips after the title, on its line (a level, a state). */
+  badges?: ReactNode;
+  className?: string;
 }) {
+  const heading = (
+    <h1
+      data-slot="page-title"
+      className={cn(
+        "text-2xl leading-tight font-bold tracking-[-0.025em] sm:text-[1.875rem]",
+        // Beside a mark or chips the title shares its line: on phones it
+        // wraps rather than cut a long name (Boards BR31); from 640px the
+        // line has room and truncates.
+        (leading || badges) && "min-w-0 wrap-anywhere sm:truncate",
+      )}
+    >
+      {title}
+    </h1>
+  );
   return (
-    <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <h1
-          data-slot="page-title"
-          className="text-2xl leading-tight font-bold tracking-[-0.025em] sm:text-[1.875rem]"
-        >
-          {title}
-        </h1>
+    <div
+      className={cn(
+        "mb-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between",
+        className,
+      )}
+    >
+      <div className={cn((leading || badges) && "min-w-0")}>
+        {leading || badges ? (
+          // On phones a long title wraps, so the row aligns to its start and
+          // the mark and chips sit on the title's first line (30px).
+          <div className="flex min-w-0 items-center gap-2.5 max-sm:items-start">
+            {leading ? (
+              <span className="flex shrink-0 items-center max-sm:h-[1.875rem]">
+                {leading}
+              </span>
+            ) : null}
+            {heading}
+            {badges ? (
+              <span className="flex shrink-0 items-center gap-2.5 max-sm:h-[1.875rem]">
+                {badges}
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          heading
+        )}
         {description && (
           <p className="text-muted-foreground mt-1.5 max-w-2xl text-sm leading-6">
             {description}

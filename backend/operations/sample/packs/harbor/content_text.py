@@ -159,9 +159,6 @@ _BOARD_DESCRIPTIONS = {
 _LAYOUT_NAMES = {
     "table": "{module}: all records",
     "grid": "{module} at a glance",
-    "kanban": "{module} by status",
-    "calendar": "{module} calendar",
-    "timeline": "{module} schedule",
     "gallery": "{module} cards",
 }
 

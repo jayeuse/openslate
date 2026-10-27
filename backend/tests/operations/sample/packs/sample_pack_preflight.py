@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.systems.boards.event_schemas import EventCreate
+from app.systems.boards.kanban_schemas import (
+    ChecklistCreate,
+    LabelCreate,
+    ObjectiveCreate,
+    RecordCardCreate,
+    StageCreate,
+)
 from app.systems.boards.post_schemas import PostCreate
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.fields.models import Field, FieldType
@@ -50,6 +58,9 @@ _JOURNAL_KINDS = {
     "expected_failure",
     "fields",
     "group",
+    "kanban_cards",
+    "kanban_labels",
+    "kanban_stages",
     "modules",
     "posts",
     "record",
@@ -192,9 +203,47 @@ def _board_metas(pack: OrganizationPack) -> tuple[BoardMeta, ...]:
     return tuple(boards)
 
 
+def _validate_kanban_payloads(dataset: SampleDataset) -> None:
+    """The demo Kanban is valid, on a department Board, and its records are that team's."""
+    pack = dataset.organization
+    kanban = pack.content.data.kanban
+    assert kanban is not None
+    department = kanban.board.removeprefix("department:")
+    assert department in {key for key, _name in pack.catalog.departments}
+    modules = {module.key: module.department for module in pack.catalog.modules}
+    records = {record.logical_id for record in dataset.records}
+    for name, color in kanban.stages:
+        StageCreate.model_validate({"name": name, "color": color})
+    for name, color in kanban.labels:
+        LabelCreate.model_validate({"name": name, "color": color})
+    stage = str(uuid5(NAMESPACE_URL, "stage"))
+    for item in kanban.cards:
+        assert 0 <= item.stage < len(kanban.stages)
+        assert all(0 <= label < len(kanban.labels) for label in item.labels)
+        values: dict[str, Any] = {"stage_id": stage, "label_ids": [
+            str(uuid5(NAMESPACE_URL, f"label:{label}")) for label in item.labels
+        ]}
+        if item.due_in_days is not None:
+            values["due_on"] = (dataset.anchor_date + timedelta(days=item.due_in_days)).isoformat()
+        if item.record is not None:
+            assert item.title is None and item.record in records, item.record
+            assert modules[item.record.split(":", maxsplit=1)[0]] == department, item.record
+            RecordCardCreate.model_validate(
+                {**values, "kind": "record", "record_id": _record_server_id(dataset, item.record)}
+            )
+        else:
+            ObjectiveCreate.model_validate(
+                {**values, "kind": "objective", "title": item.title,
+                 "description": item.description}
+            )
+        for text in item.checklist:
+            ChecklistCreate.model_validate({"text": text})
+
+
 def _validate_board_payloads(dataset: SampleDataset) -> None:
     pack = dataset.organization
     spec = pack.content.data
+    _validate_kanban_payloads(dataset)
     for board_index, meta in enumerate(_board_metas(pack)):
         board = {"department_key": meta.department_key, "scope": meta.scope}
         for index in range(spec.posts_per_board):
@@ -306,8 +355,6 @@ def _journal_ids(
             add("posts", f"{board.logical_id}:post:{index + 1:02d}")
         for index in range(pack.content.data.events_per_board):
             add("events", f"{board.logical_id}:event:{index + 1:02d}")
-        for index in range(4):
-            add("widgets", f"{board.logical_id}:widget:{index + 1:02d}")
     for department, _name in pack.catalog.departments:
         add("dashboards", f"department:{department}:dashboard")
         for index in range(4):
@@ -317,6 +364,12 @@ def _journal_ids(
             add("views", f"department:{department}:view:{source_module}:{layout}")
         for index in range(len(openview_plans[department])):
             add("reports", f"department:{department}:report:{index + 1:02d}")
+    kanban = pack.content.data.kanban
+    assert kanban is not None
+    for kind, total in (("stage", len(kanban.stages)), ("label", len(kanban.labels)),
+                        ("card", len(kanban.cards))):  # fmt: skip
+        for index in range(total):
+            add(f"kanban_{kind}s", f"{kanban.board}:{kind}:{index + 1:02d}")
     for link in pack.content.data.board_links:
         for logical_id in link.records:
             content_id = f"{link.kind}:{link.board}:{link.index}"

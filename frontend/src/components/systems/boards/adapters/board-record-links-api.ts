@@ -18,7 +18,7 @@ const linkSchema = z
     if (link.url !== (link.available ? expected : null))
       context.addIssue({
         code: "custom",
-        message: "Invalid Board record link URL",
+        message: "The record link address is not valid",
       });
   })
   .transform(({ record_id, module_id, ...link }) => ({
@@ -38,6 +38,8 @@ const pageSchema = z
 export type BoardRecordLink = z.output<typeof linkSchema>;
 export type BoardRecordLinkTarget =
   | { kind: "event"; boardId: string; contentId: string }
+  /** An objective card's links (a record card's links are its record's). */
+  | { kind: "card"; boardId: string; contentId: string }
   | {
       kind: "post";
       boardId: string;
@@ -46,12 +48,19 @@ export type BoardRecordLinkTarget =
     };
 export type BoardEditableRecordLinkTarget =
   | { kind: "event"; boardId: string; contentId: string }
+  | { kind: "card"; boardId: string; contentId: string }
   | { kind: "post"; boardId: string; contentId: string; view: "draft" };
 
 function path(target: BoardRecordLinkTarget): string {
   const boardId = uuid.parse(target.boardId);
   const contentId = uuid.parse(target.contentId);
-  return `/boards/${boardId}/${target.kind === "event" ? "events" : "posts"}/${contentId}/record-links`;
+  const owner =
+    target.kind === "event"
+      ? "events"
+      : target.kind === "card"
+        ? "cards"
+        : "posts";
+  return `/boards/${boardId}/${owner}/${contentId}/record-links`;
 }
 
 export async function listBoardRecordLinks(

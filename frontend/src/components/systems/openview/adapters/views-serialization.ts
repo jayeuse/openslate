@@ -50,13 +50,6 @@ export function serializeOpenViewPresentation(raw: OpenViewPresentation) {
     card_size: presentation.cardSize,
     primary_field_id: presentation.primaryFieldId,
     secondary_field_id: presentation.secondaryFieldId,
-    date_field_id: presentation.dateFieldId,
-    timeline_start_field_id: presentation.timelineStartFieldId ?? null,
-    timeline_end_field_id: presentation.timelineEndFieldId ?? null,
-    timeline_deadline_field_id: presentation.timelineDeadlineFieldId ?? null,
-    timeline_progress_field_id: presentation.timelineProgressFieldId ?? null,
     group_by_field_id: presentation.groupByFieldId,
-    date_range: presentation.dateRange,
-    scale: presentation.scale,
   };
 }

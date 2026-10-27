@@ -1,4 +1,4 @@
-"""Contextual Event and Post file access; never expose Board bytes by bare ID."""
+"""Contextual Event, Post and objective card file access; never expose Board bytes by bare ID."""
 
 from hashlib import sha256
 from typing import Annotated, Literal
@@ -291,3 +291,71 @@ def download_post_file(
     return _download(
         request, db, actor, board_id, "post", post_id, file_id, view, storage
     )
+
+
+@router.get("/{board_id}/cards/{card_id}/attachments", response_model=AttachmentList)
+def list_card_attachments(
+    board_id: UUID,
+    card_id: UUID,
+    actor: Reader,
+    db: Database,
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> AttachmentList:
+    """An objective card's files; an archived card keeps and lists them."""
+
+    return _list(db, actor, board_id, "card", card_id, view="current", limit=limit, offset=offset)
+
+
+@router.post("/{board_id}/cards/{card_id}/attachments", response_model=FileResponse)
+def attach_card_file(
+    board_id: UUID, card_id: UUID, payload: AttachmentLink, actor: Writer, db: Database
+) -> FileResponse:
+    """``content_revision`` is the card's revision; any writer of the Board may attach."""
+
+    return FileResponse.model_validate(
+        link_file(
+            db,
+            fresh_user(db, actor.id),
+            board_id,
+            "card",
+            card_id,
+            payload.file_id,
+            board_revision=payload.board_revision,
+            content_revision=payload.content_revision,
+        )
+    )
+
+
+@router.delete("/{board_id}/cards/{card_id}/attachments/{file_id}", status_code=204)
+def detach_card_file(
+    board_id: UUID,
+    card_id: UUID,
+    file_id: UUID,
+    payload: AttachmentRevision,
+    actor: Writer,
+    db: Database,
+) -> None:
+    unlink_file(
+        db,
+        fresh_user(db, actor.id),
+        board_id,
+        "card",
+        card_id,
+        file_id,
+        board_revision=payload.board_revision,
+        content_revision=payload.content_revision,
+    )
+
+
+@router.get("/{board_id}/cards/{card_id}/attachments/{file_id}/content")
+def download_card_file(
+    request: Request,
+    board_id: UUID,
+    card_id: UUID,
+    file_id: UUID,
+    actor: Reader,
+    db: Database,
+    storage: Store,
+) -> Response:
+    return _download(request, db, actor, board_id, "card", card_id, file_id, "current", storage)

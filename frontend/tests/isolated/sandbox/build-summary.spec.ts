@@ -167,13 +167,13 @@ test("Advanced names what it holds, with the lifecycle verb that applies", () =>
     [
       "module",
       { closed: true, canPurge: true },
-      "Department, Title field, Reopen, Delete, Permanently delete",
+      "Department, Title field, Reopen, Delete, Delete forever",
     ],
     ["department", { closed: false, canPurge: false }, "Close, Delete"],
     [
       "department",
       { closed: true, canPurge: true },
-      "Reopen, Delete, Permanently delete",
+      "Reopen, Delete, Delete forever",
     ],
   ] as const)
     expect(propertiesAdvancedSummary(kind, lifecycle), `${kind}`).toBe(
@@ -193,7 +193,7 @@ test("a field's Advanced names the settings its type has", () => {
     [
       "User",
       { closed: true, canPurge: true },
-      "Description, Reopen, Delete, Permanently delete",
+      "Description, Reopen, Delete, Delete forever",
     ],
   ] as const)
     expect(fieldAdvancedSummary(type, lifecycle), type).toBe(expected);

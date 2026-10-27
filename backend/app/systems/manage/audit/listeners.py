@@ -116,10 +116,14 @@ def _event_module_id(instance: Any, edge_modules: dict[UUID, UUID]) -> UUID | No
 
 def _event_entity(instance: Any, entity: str) -> str:
     if entity in {"board_attachments", "board_record_links"}:
+        if instance.card_id is not None:
+            return "board_cards"
         return "board_posts" if instance.post_id is not None else "board_events"
     return {
         "organizations": "workspace_profiles",
         "board_groups": "boards",
+        "board_card_labels": "board_cards",
+        "board_card_checklist_items": "board_cards",
         "board_event_reminders": "board_events",
         "board_post_revisions": "board_posts",
         "board_post_revision_attachments": "board_posts",

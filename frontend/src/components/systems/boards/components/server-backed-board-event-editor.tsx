@@ -1,9 +1,11 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Temporal } from "@js-temporal/polyfill";
-import { Alert } from "@/components/ui/alert";
+import { Check } from "lucide-react";
+import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { DialogFrameFooter } from "@/components/ui/dialog-frame";
 import {
   Field,
   FieldDescription,
@@ -16,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { datetimeInputToUtc, datetimeOffsets } from "@/lib/date-time";
+import { cn } from "@/lib/utils";
 import type {
   BoardEvent,
   BoardEventCreateInput,
@@ -27,6 +30,56 @@ import { ServerBoardAttachments } from "./server-backed-board-attachments";
 import { ServerBoardRecordLinks } from "./server-backed-board-record-links";
 
 type Recurrence = BoardEvent["recurrence"];
+
+/** 44px fields on phones and tablets; the slim 32px from 1280px. */
+const field = "min-h-11 xl:min-h-8";
+const select = "w-full [&_select]:min-h-11 xl:[&_select]:min-h-8";
+
+/**
+ * A checkbox row: the 44px row is the target (32px from 1280px), and the
+ * box is drawn from the label, so the native box is not a 16px target.
+ */
+function CheckRow({
+  id,
+  checked,
+  disabled,
+  onChange,
+  children,
+}: {
+  id: string;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className="flex min-h-11 w-fit cursor-pointer items-center gap-2.5 text-sm has-disabled:cursor-not-allowed has-disabled:opacity-50 xl:min-h-8"
+    >
+      <input
+        id={id}
+        type="checkbox"
+        className="peer sr-only"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+      />
+      <span
+        aria-hidden="true"
+        className={cn(
+          "peer-focus-visible:outline-ring grid size-4 shrink-0 place-items-center rounded-[4px] border peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 xl:size-3.5",
+          checked
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-input dark:bg-input/30",
+        )}
+      >
+        <Check className={cn("size-3.5", !checked && "invisible")} />
+      </span>
+      {children}
+    </label>
+  );
+}
 /** The author's reminder choices, in the order the form shows them. */
 export const REMINDER_TIMINGS: readonly {
   value: BoardEventReminderTiming;
@@ -100,7 +153,7 @@ export function prepareBoardEventConflictRetry(
 ): BoardEventDraft {
   if (draft.boardId !== latest.boardId || !latest.boardActive)
     throw new BoardEventDraftError(
-      "This Board is no longer available for event editing.",
+      "This board is no longer available for event editing.",
     );
   if (draft.eventId === null) {
     if (latest.event !== null)
@@ -388,6 +441,13 @@ export function boardEventInputFromDraft(
   };
 }
 
+/**
+ * The event editor's body in the shared dialog frame (BR21): Title, When
+ * (All day, Starts, Ends, the zone as a suffix), Repeats with Until only
+ * while repeating, Location, Details, Reminders with one consequence line,
+ * then Files and Linked records once the event is saved, and Advanced last
+ * (Time zone, External links, and the clock-change offsets when they apply).
+ */
 export function ServerBoardEventEditorForm({
   draft,
   busy,
@@ -399,10 +459,13 @@ export function ServerBoardEventEditorForm({
   onAttachmentBusyChange,
   onRecordLinkBusyChange,
   refreshAttachmentVersions,
+  leading,
 }: {
   draft: BoardEventDraft;
   busy: boolean;
   saveBlocked?: boolean;
+  /** A field before the title: My calendar's Board (BR35). */
+  leading?: React.ReactNode;
   error: string | null;
   onChange: (patch: Partial<BoardEventDraft>) => void;
   onCancel: () => void;
@@ -417,27 +480,28 @@ export function ServerBoardEventEditorForm({
   const endOffsets = draft.allDay
     ? []
     : datetimeOffsets(draft.end, draft.timezoneName);
+  const offsetsNeeded = startOffsets.length > 1 || endOffsets.length > 1;
+  const saved = draft.eventId !== null && draft.eventRevision !== null;
+  const zone = (
+    <span className="text-muted-foreground shrink-0 text-xs">
+      {draft.timezoneName.replaceAll("_", " ")}
+    </span>
+  );
   return (
     <form
-      aria-label={draft.eventId ? "Edit Board event" : "Create Board event"}
-      data-slot="card"
-      className="border-card-edge bg-card shadow-card flex min-w-0 flex-col gap-5 rounded-xl border p-4 sm:p-5"
+      aria-label={draft.eventId ? "Edit event" : "Create event"}
+      className="flex min-w-0 flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();
         onSave();
       }}
     >
-      <h3 data-slot="section-title" className="text-base font-semibold">
-        {draft.eventId
-          ? draft.recurrence === "none"
-            ? "Edit event"
-            : "Edit event series"
-          : "New event"}
-      </h3>
-      <FieldGroup>
-        <Field>
+      <FieldGroup className="gap-4">
+        {leading}
+        <Field className="gap-1.5">
           <FieldLabel htmlFor="live-board-event-title">Event title</FieldLabel>
           <Input
+            className={field}
             id="live-board-event-title"
             required
             maxLength={100}
@@ -446,7 +510,124 @@ export function ServerBoardEventEditorForm({
             onChange={(event) => onChange({ title: event.target.value })}
           />
         </Field>
-        <Field>
+        <FieldSet className="gap-2">
+          <FieldLegend className="text-sm font-medium">When</FieldLegend>
+          <CheckRow
+            id="live-board-event-all-day"
+            checked={draft.allDay}
+            disabled={busy}
+            onChange={(checked) => {
+              onChange({
+                allDay: checked,
+                start: checked
+                  ? draft.start.slice(0, 10)
+                  : `${draft.start.slice(0, 10)}T09:00`,
+                end: checked
+                  ? draft.end.slice(0, 10)
+                  : `${draft.end.slice(0, 10)}T10:00`,
+                startOffset: "",
+                endOffset: "",
+              });
+            }}
+          >
+            All day
+          </CheckRow>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="live-board-event-start">
+                {draft.allDay ? "Start date" : "Starts"}
+              </FieldLabel>
+              <div className="flex min-w-0 items-center gap-2">
+                <Input
+                  className={field}
+                  id="live-board-event-start"
+                  type={draft.allDay ? "date" : "datetime-local"}
+                  step={draft.allDay ? undefined : "any"}
+                  required
+                  disabled={busy}
+                  value={draft.start}
+                  onChange={(event) =>
+                    onChange({ start: event.target.value, startOffset: "" })
+                  }
+                />
+                {draft.allDay ? null : zone}
+              </div>
+            </Field>
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="live-board-event-end">
+                {draft.allDay ? "End date" : "Ends"}
+              </FieldLabel>
+              <div className="flex min-w-0 items-center gap-2">
+                <Input
+                  className={field}
+                  id="live-board-event-end"
+                  type={draft.allDay ? "date" : "datetime-local"}
+                  step={draft.allDay ? undefined : "any"}
+                  required
+                  disabled={busy}
+                  value={draft.end}
+                  onChange={(event) =>
+                    onChange({ end: event.target.value, endOffset: "" })
+                  }
+                />
+                {draft.allDay ? null : zone}
+              </div>
+            </Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field className="gap-1.5">
+              <FieldLabel htmlFor="live-board-event-repeat">Repeats</FieldLabel>
+              <NativeSelect
+                id="live-board-event-repeat"
+                className={select}
+                disabled={busy}
+                value={draft.recurrence}
+                onChange={(event) =>
+                  onChange({
+                    recurrence: event.target.value as Recurrence,
+                    repeatUntil:
+                      event.target.value === "none" ? "" : draft.repeatUntil,
+                  })
+                }
+              >
+                <option value="none">Does not repeat</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </NativeSelect>
+            </Field>
+            {draft.recurrence !== "none" && (
+              <Field className="gap-1.5">
+                <FieldLabel htmlFor="live-board-event-until">
+                  Repeat until
+                </FieldLabel>
+                <Input
+                  className={field}
+                  id="live-board-event-until"
+                  type="date"
+                  required
+                  disabled={busy}
+                  value={draft.repeatUntil}
+                  onChange={(event) =>
+                    onChange({ repeatUntil: event.target.value })
+                  }
+                />
+              </Field>
+            )}
+          </div>
+        </FieldSet>
+        <Field className="gap-1.5">
+          <FieldLabel htmlFor="live-board-event-location">Location</FieldLabel>
+          <Input
+            className={field}
+            id="live-board-event-location"
+            maxLength={240}
+            disabled={busy}
+            value={draft.location}
+            onChange={(event) => onChange({ location: event.target.value })}
+          />
+        </Field>
+        <Field className="gap-1.5">
           <FieldLabel htmlFor="live-board-event-details">Details</FieldLabel>
           <Textarea
             id="live-board-event-details"
@@ -456,231 +637,122 @@ export function ServerBoardEventEditorForm({
             onChange={(event) => onChange({ details: event.target.value })}
           />
         </Field>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field>
-            <FieldLabel htmlFor="live-board-event-location">
-              Location
-            </FieldLabel>
-            <Input
-              id="live-board-event-location"
-              maxLength={240}
-              disabled={busy}
-              value={draft.location}
-              onChange={(event) => onChange({ location: event.target.value })}
-            />
-          </Field>
-          <FieldSet>
-            <FieldLegend className="text-sm font-medium">Reminders</FieldLegend>
-            <p className="text-muted-foreground text-sm">
-              Reminders notify everyone who can read this Board at delivery
-              time. They may arrive up to 15 minutes after the selected time.
-            </p>
-            <div className="flex flex-col">
-              {REMINDER_TIMINGS.map((timing) => {
-                const id = `live-board-event-reminder-${timing.value}`;
-                return (
-                  <Field
-                    key={timing.value}
-                    className="min-h-11 flex-row items-center gap-3"
-                  >
-                    <Checkbox
-                      id={id}
-                      disabled={busy}
-                      checked={draft.reminders.includes(timing.value)}
-                      onCheckedChange={(checked) =>
-                        onChange({
-                          reminders:
-                            checked === true
-                              ? [...draft.reminders, timing.value]
-                              : draft.reminders.filter(
-                                  (value) => value !== timing.value,
-                                ),
-                        })
-                      }
-                    />
-                    <FieldLabel htmlFor={id} className="font-normal">
-                      {timing.label}
-                    </FieldLabel>
-                  </Field>
-                );
-              })}
-            </div>
-          </FieldSet>
-        </div>
-        <Field>
-          <FieldLabel>External links</FieldLabel>
-          <FieldDescription>
-            Add up to 20 HTTP or HTTPS links. Links open outside OpenSlate.
-          </FieldDescription>
-          <div className="flex flex-col gap-3">
-            {draft.links.map((link, index) => (
-              <div
-                key={index}
-                className="border-border grid min-w-0 gap-3 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_auto]"
-              >
-                <Field>
-                  <FieldLabel htmlFor={`live-board-event-link-label-${index}`}>
-                    Link label
-                  </FieldLabel>
-                  <Input
-                    id={`live-board-event-link-label-${index}`}
-                    maxLength={100}
-                    required
-                    disabled={busy}
-                    value={link.label}
-                    onChange={(event) =>
-                      onChange({
-                        links: draft.links.map((current, position) =>
-                          position === index
-                            ? { ...current, label: event.target.value }
-                            : current,
-                        ),
-                      })
-                    }
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor={`live-board-event-link-url-${index}`}>
-                    Link URL
-                  </FieldLabel>
-                  <Input
-                    id={`live-board-event-link-url-${index}`}
-                    type="url"
-                    maxLength={2048}
-                    required
-                    disabled={busy}
-                    value={link.url}
-                    onChange={(event) =>
-                      onChange({
-                        links: draft.links.map((current, position) =>
-                          position === index
-                            ? { ...current, url: event.target.value }
-                            : current,
-                        ),
-                      })
-                    }
-                  />
-                </Field>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11 self-end"
+        <FieldSet className="gap-1">
+          <FieldLegend className="text-sm font-medium">Reminders</FieldLegend>
+          <div className="flex flex-wrap gap-x-4">
+            {REMINDER_TIMINGS.map((timing) => {
+              const id = `live-board-event-reminder-${timing.value}`;
+              return (
+                <CheckRow
+                  key={timing.value}
+                  id={id}
                   disabled={busy}
-                  onClick={() =>
+                  checked={draft.reminders.includes(timing.value)}
+                  onChange={(checked) =>
                     onChange({
-                      links: draft.links.filter(
-                        (_, position) => position !== index,
-                      ),
+                      reminders: checked
+                        ? [...draft.reminders, timing.value]
+                        : draft.reminders.filter(
+                            (value) => value !== timing.value,
+                          ),
                     })
                   }
                 >
-                  Remove link
-                </Button>
-              </div>
-            ))}
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 self-start"
-              disabled={busy || draft.links.length >= 20}
-              onClick={() =>
-                onChange({ links: [...draft.links, { label: "", url: "" }] })
-              }
-            >
-              Add link
-            </Button>
+                  {timing.label}
+                </CheckRow>
+              );
+            })}
           </div>
-        </Field>
-        <label className="flex min-h-11 items-center gap-3 text-sm font-medium">
-          <input
-            type="checkbox"
-            className="accent-primary size-5"
-            checked={draft.allDay}
-            disabled={busy}
-            onChange={(event) => {
-              const allDay = event.target.checked;
-              onChange({
-                allDay,
-                start: allDay
-                  ? draft.start.slice(0, 10)
-                  : `${draft.start.slice(0, 10)}T09:00`,
-                end: allDay
-                  ? draft.end.slice(0, 10)
-                  : `${draft.end.slice(0, 10)}T10:00`,
-                startOffset: "",
-                endOffset: "",
-              });
+          <p className="text-muted-foreground text-sm">
+            Everyone who reads this board gets reminders, up to 15 minutes late.
+          </p>
+        </FieldSet>
+      </FieldGroup>
+      {saved ? (
+        <div className="flex flex-col gap-4">
+          <ServerBoardAttachments
+            key={`event-attachments:${draft.eventId}`}
+            target={{
+              kind: "event",
+              boardId: draft.boardId,
+              contentId: draft.eventId!,
             }}
+            {...(saveBlocked
+              ? { access: "read" as const }
+              : {
+                  access: "edit" as const,
+                  versions: {
+                    boardRevision: draft.boardRevision,
+                    contentRevision: draft.eventRevision!,
+                  },
+                  refreshVersions: refreshAttachmentVersions,
+                  onBusyChange: onAttachmentBusyChange,
+                })}
           />
-          All-day event
-        </label>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field>
-            <FieldLabel htmlFor="live-board-event-start">
-              {draft.allDay ? "Start date" : "Starts"}
-            </FieldLabel>
-            <Input
-              id="live-board-event-start"
-              type={draft.allDay ? "date" : "datetime-local"}
-              step={draft.allDay ? undefined : "any"}
-              required
-              disabled={busy}
-              value={draft.start}
-              onChange={(event) =>
-                onChange({ start: event.target.value, startOffset: "" })
-              }
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="live-board-event-end">
-              {draft.allDay ? "End date" : "Ends"}
-            </FieldLabel>
-            <Input
-              id="live-board-event-end"
-              type={draft.allDay ? "date" : "datetime-local"}
-              step={draft.allDay ? undefined : "any"}
-              required
-              disabled={busy}
-              value={draft.end}
-              onChange={(event) =>
-                onChange({ end: event.target.value, endOffset: "" })
-              }
-            />
-          </Field>
+          <ServerBoardRecordLinks
+            key={`event-record-links:${draft.eventId}`}
+            target={{
+              kind: "event",
+              boardId: draft.boardId,
+              contentId: draft.eventId!,
+            }}
+            {...(saveBlocked
+              ? { access: "read" as const }
+              : {
+                  access: "edit" as const,
+                  versions: {
+                    boardRevision: draft.boardRevision,
+                    contentRevision: draft.eventRevision!,
+                  },
+                  refreshVersions: refreshAttachmentVersions,
+                  onBusyChange: onRecordLinkBusyChange,
+                })}
+          />
         </div>
-        <Field>
-          <FieldLabel htmlFor="live-board-event-timezone">
-            Event timezone
-          </FieldLabel>
-          <Input
-            id="live-board-event-timezone"
-            required
-            maxLength={80}
-            disabled={busy}
-            value={draft.timezoneName}
-            onChange={(event) =>
-              onChange({
-                timezoneName: event.target.value,
-                startOffset: "",
-                endOffset: "",
-              })
-            }
-          />
-          <FieldDescription>
-            Use an IANA timezone, such as Asia/Manila.
-          </FieldDescription>
-        </Field>
-        {!draft.allDay &&
-          (startOffsets.length > 1 || endOffsets.length > 1) && (
-            <div className="grid gap-4 sm:grid-cols-2">
+      ) : (
+        <p className="text-muted-foreground text-sm">
+          Files and linked records are added after the event is created.
+        </p>
+      )}
+      <AdvancedSection
+        storageKey="boards-event-editor"
+        setCount={(draft.links.length ? 1 : 0) + (offsetsNeeded ? 1 : 0)}
+        forceOpen={offsetsNeeded}
+      >
+        <div className="flex min-w-0 flex-col gap-4">
+          <Field className="gap-1.5">
+            <FieldLabel htmlFor="live-board-event-timezone">
+              Event timezone
+            </FieldLabel>
+            <Input
+              className={field}
+              id="live-board-event-timezone"
+              required
+              maxLength={80}
+              disabled={busy}
+              value={draft.timezoneName}
+              onChange={(event) =>
+                onChange({
+                  timezoneName: event.target.value,
+                  startOffset: "",
+                  endOffset: "",
+                })
+              }
+            />
+            <FieldDescription>
+              An IANA time zone, such as Asia/Manila.
+            </FieldDescription>
+          </Field>
+          {!draft.allDay && offsetsNeeded && (
+            <div className="grid gap-3 sm:grid-cols-2">
               {startOffsets.length > 1 && (
-                <Field>
+                <Field className="gap-1.5">
                   <FieldLabel htmlFor="live-board-event-start-offset">
                     Start UTC offset
                   </FieldLabel>
                   <NativeSelect
                     id="live-board-event-start-offset"
-                    className="w-full [&>select]:min-h-11"
+                    className={select}
                     required
                     disabled={busy}
                     value={draft.startOffset}
@@ -698,13 +770,13 @@ export function ServerBoardEventEditorForm({
                 </Field>
               )}
               {endOffsets.length > 1 && (
-                <Field>
+                <Field className="gap-1.5">
                   <FieldLabel htmlFor="live-board-event-end-offset">
                     End UTC offset
                   </FieldLabel>
                   <NativeSelect
                     id="live-board-event-end-offset"
-                    className="w-full [&>select]:min-h-11"
+                    className={select}
                     required
                     disabled={busy}
                     value={draft.endOffset}
@@ -723,136 +795,121 @@ export function ServerBoardEventEditorForm({
               )}
             </div>
           )}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field>
-            <FieldLabel htmlFor="live-board-event-repeat">Repeats</FieldLabel>
-            <NativeSelect
-              id="live-board-event-repeat"
-              className="w-full [&>select]:min-h-11"
-              disabled={busy}
-              value={draft.recurrence}
-              onChange={(event) =>
-                onChange({
-                  recurrence: event.target.value as Recurrence,
-                  repeatUntil:
-                    event.target.value === "none" ? "" : draft.repeatUntil,
-                })
-              }
-            >
-              <option value="none">Does not repeat</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </NativeSelect>
-          </Field>
-          {draft.recurrence !== "none" && (
-            <Field>
-              <FieldLabel htmlFor="live-board-event-until">
-                Repeat until
-              </FieldLabel>
-              <Input
-                id="live-board-event-until"
-                type="date"
-                required
-                disabled={busy}
-                value={draft.repeatUntil}
-                onChange={(event) =>
-                  onChange({ repeatUntil: event.target.value })
+          <Field className="gap-1.5">
+            <FieldLabel>External links</FieldLabel>
+            <FieldDescription>
+              Up to 20 HTTP or HTTPS links. They open outside OpenSlate.
+            </FieldDescription>
+            <div className="flex flex-col gap-3">
+              {draft.links.map((link, index) => (
+                <div
+                  key={index}
+                  className="grid min-w-0 gap-2 rounded-md border p-3 sm:grid-cols-[1fr_1fr_auto]"
+                >
+                  <Field className="gap-1.5">
+                    <FieldLabel
+                      htmlFor={`live-board-event-link-label-${index}`}
+                    >
+                      Link label
+                    </FieldLabel>
+                    <Input
+                      className={field}
+                      id={`live-board-event-link-label-${index}`}
+                      maxLength={100}
+                      required
+                      disabled={busy}
+                      value={link.label}
+                      onChange={(event) =>
+                        onChange({
+                          links: draft.links.map((current, position) =>
+                            position === index
+                              ? { ...current, label: event.target.value }
+                              : current,
+                          ),
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field className="gap-1.5">
+                    <FieldLabel htmlFor={`live-board-event-link-url-${index}`}>
+                      Link URL
+                    </FieldLabel>
+                    <Input
+                      className={field}
+                      id={`live-board-event-link-url-${index}`}
+                      type="url"
+                      maxLength={2048}
+                      required
+                      disabled={busy}
+                      value={link.url}
+                      onChange={(event) =>
+                        onChange({
+                          links: draft.links.map((current, position) =>
+                            position === index
+                              ? { ...current, url: event.target.value }
+                              : current,
+                          ),
+                        })
+                      }
+                    />
+                  </Field>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 self-end xl:min-h-8"
+                    disabled={busy}
+                    onClick={() =>
+                      onChange({
+                        links: draft.links.filter(
+                          (_, position) => position !== index,
+                        ),
+                      })
+                    }
+                  >
+                    Remove link
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 self-start xl:min-h-8"
+                disabled={busy || draft.links.length >= 20}
+                onClick={() =>
+                  onChange({ links: [...draft.links, { label: "", url: "" }] })
                 }
-              />
-            </Field>
-          )}
+              >
+                Add link
+              </Button>
+            </div>
+          </Field>
         </div>
-      </FieldGroup>
-      {draft.eventId !== null && draft.eventRevision !== null ? (
-        saveBlocked ? (
-          <ServerBoardAttachments
-            key={`event-attachments:${draft.eventId}`}
-            access="read"
-            target={{
-              kind: "event",
-              boardId: draft.boardId,
-              contentId: draft.eventId,
-            }}
-          />
-        ) : (
-          <ServerBoardAttachments
-            key={`event-attachments:${draft.eventId}`}
-            access="edit"
-            target={{
-              kind: "event",
-              boardId: draft.boardId,
-              contentId: draft.eventId,
-            }}
-            versions={{
-              boardRevision: draft.boardRevision,
-              contentRevision: draft.eventRevision,
-            }}
-            refreshVersions={refreshAttachmentVersions}
-            onBusyChange={onAttachmentBusyChange}
-          />
-        )
-      ) : (
-        <p className="text-muted-foreground text-sm">
-          Save this event before adding attachments.
-        </p>
-      )}
-      {draft.eventId !== null && draft.eventRevision !== null ? (
-        saveBlocked ? (
-          <ServerBoardRecordLinks
-            key={`event-record-links:${draft.eventId}`}
-            access="read"
-            target={{
-              kind: "event",
-              boardId: draft.boardId,
-              contentId: draft.eventId,
-            }}
-          />
-        ) : (
-          <ServerBoardRecordLinks
-            key={`event-record-links:${draft.eventId}`}
-            access="edit"
-            target={{
-              kind: "event",
-              boardId: draft.boardId,
-              contentId: draft.eventId,
-            }}
-            versions={{
-              boardRevision: draft.boardRevision,
-              contentRevision: draft.eventRevision,
-            }}
-            refreshVersions={refreshAttachmentVersions}
-            onBusyChange={onRecordLinkBusyChange}
-          />
-        )
-      ) : (
-        <p className="text-muted-foreground text-sm">
-          Save this event before linking Records.
-        </p>
-      )}
-      {error && (
-        <Alert variant="destructive" role="alert">
-          {error}
-        </Alert>
-      )}
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11"
-          disabled={busy}
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          className="min-h-11"
-          disabled={busy || saveBlocked}
-        >
-          {busy ? "Saving…" : draft.eventId ? "Save event" : "Create event"}
-        </Button>
-      </div>
+      </AdvancedSection>
+      <DialogFrameFooter>
+        {error ? (
+          <p role="alert" className="text-danger-text text-sm">
+            {error}
+          </p>
+        ) : null}
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 xl:min-h-8"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            className="min-h-11 xl:min-h-8"
+            disabled={busy || saveBlocked}
+          >
+            {busy ? "Saving…" : draft.eventId ? "Save event" : "Create event"}
+          </Button>
+        </div>
+      </DialogFrameFooter>
     </form>
   );
 }

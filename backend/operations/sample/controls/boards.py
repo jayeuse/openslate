@@ -11,7 +11,6 @@ from uuid import NAMESPACE_URL, uuid5
 from operations.sample.board_text import project_board
 from operations.sample.packs.phase_types import PhaseAction, PhaseJsonValue
 from operations.sample.phases.actions import PhaseExecutionContext, PhaseSubstep
-from operations.sample.population.boards import project_board_logical_id
 
 if TYPE_CHECKING:
     from operations.sample.blueprint import SampleDataset
@@ -30,23 +29,21 @@ from operations.sample.controls.board_files import (
     execute_board_file_action,
     plan_board_file_controls,
 )
+from operations.sample.controls.board_kanban import (
+    KANBAN_OPERATIONS,
+    KANBAN_ROUTES,
+    plan_kanban_controls,
+)
 from operations.sample.controls.board_record_links import (
     BOARD_LINK_ROUTES,
     execute_board_record_link_action,
 )
 from operations.sample.controls.board_verification import verify_board_controls
-from operations.sample.controls.board_widgets import (
-    BOARD_WIDGET_ROUTES,
-    execute_board_widget_action,
-)
 
 _BOARD_ROUTES = frozenset(
     {
         ("GET", "/api/boards/{board_id}"),
         ("PATCH", "/api/boards/{board_id}"),
-        ("POST", "/api/boards/{board_id}/duplicate"),
-        ("GET", "/api/boards/{board_id}/configuration"),
-        ("POST", "/api/boards/import"),
         ("GET", "/api/boards/{board_id}/groups"),
         ("PUT", "/api/boards/{board_id}/groups"),
     }
@@ -54,10 +51,10 @@ _BOARD_ROUTES = frozenset(
 CONTROL_ROUTES = (
     _BOARD_ROUTES
     | BOARD_EXECUTION_ROUTES
-    | BOARD_WIDGET_ROUTES
     | BOARD_CONTENT_ROUTES
     | BOARD_LINK_ROUTES
     | BOARD_FILE_ROUTES
+    | KANBAN_ROUTES
 )
 
 
@@ -124,7 +121,7 @@ def _board_manager_and_record(dataset: SampleDataset) -> tuple[str, str, str]:
 
 
 def plan_board_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
-    """Plan deterministic Board edits against pack-authored work and a disposable copy."""
+    """Plan deterministic Board edits against pack-authored work and an owned Board."""
     pack = dataset.organization
     phase = pack.phases
     if phase is None:
@@ -132,7 +129,6 @@ def plan_board_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     board_name, department = phase.existing_project_board
     if (board_name, department) not in pack.content.data.projects:
         raise ValueError("The Board control anchor must be an authored pack project")
-    source_board_key = project_board_logical_id(department, board_name)
     source_name, description = project_board(board_name, organization=pack)
     if source_name != board_name or not description.strip():
         raise ValueError("The authored Board control anchor is invalid")
@@ -148,7 +144,7 @@ def plan_board_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     event_details = pack.content.data.event_details[event_title]
     _, revised_event_details = pack.content.data.revised_post(event_title, event_details)
     event_date = dataset.anchor_date + timedelta(days=14)
-    primary_board, imported_board = "control:duplicate", "control:import"
+    primary_board = "control:board"
     post_key, event_key = "control:post", "control:event"
     group_rows: list[PhaseJsonValue] = [
         {"group_key": key, "level": "manage" if key == manager_group else level}
@@ -186,26 +182,17 @@ def plan_board_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         )
 
     add(
-        "board_duplicate",
-        "duplicate",
+        "board_create",
+        "create-board",
         "admin",
         primary_board,
-        {"source_board_key": source_board_key},
-        {"scope": "project", "status": "active"},
-        201,
-    )
-    add(
-        "board_import",
-        "import",
-        "admin",
-        imported_board,
-        {"source_board_key": source_board_key},
+        {"name": source_name, "description": description},
         {"scope": "project", "status": "active"},
         201,
     )
     add(
         "board_share",
-        "share-duplicate",
+        "share-board",
         "admin",
         primary_board,
         {"groups": group_rows},
@@ -213,7 +200,7 @@ def plan_board_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     )
     add(
         "board_patch",
-        "patch-duplicate",
+        "patch-board",
         manager,
         primary_board,
         {"name": f"{board_name} follow-up"},
@@ -332,6 +319,9 @@ def plan_board_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     )
     add("event_archive", "archive-event", manager, event_key, common, {"archived": True})
     add("event_restore", "restore-event", manager, event_key, common, {"archived": False})
+    actions.extend(
+        plan_kanban_controls(dataset, manager=manager, record_key=record_key, event_day=event_date)
+    )
     add(
         "event_archive",
         "archive-event-before-delete",
@@ -341,35 +331,7 @@ def plan_board_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         {"archived": True},
     )
     add("event_purge", "purge-event", "admin", event_key, common, {"deleted": True})
-    add(
-        "widget_patch",
-        "patch-widget",
-        manager,
-        "control:widget-source",
-        {**common, "name": f"{board_name} progress"},
-        {"updated": True},
-    )
-    add(
-        "widget_duplicate",
-        "duplicate-widget",
-        manager,
-        "control:widget-copy",
-        {**common, "source_widget_key": "control:widget-source"},
-        {"duplicate": True},
-        201,
-    )
-    add("widget_order", "reorder-widgets", manager, primary_board, common, {"order_saved": True})
-    add(
-        "widget_delete",
-        "delete-widget-copy",
-        manager,
-        "control:widget-copy",
-        common,
-        {"deleted": True},
-        204,
-    )
-    add("purge_duplicate", "purge-duplicate", "admin", primary_board, {}, {"purged": True})
-    add("purge_import", "purge-import", "admin", imported_board, {}, {"purged": True})
+    add("purge_board", "purge-board", "admin", primary_board, {}, {"purged": True})
     return (*actions, *plan_board_file_controls(dataset))
 
 
@@ -381,6 +343,10 @@ def execute_board_control(
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
     operation = action.values.get("operation")
+    if operation in KANBAN_OPERATIONS:
+        from operations.sample.controls.board_kanban_steps import execute_kanban_action
+
+        return execute_kanban_action(action, context, on_substep=on_substep)
     if operation in FILE_OPERATIONS:
         return execute_board_file_action(action, context, on_substep=on_substep)
     if operation in {
@@ -390,16 +356,7 @@ def execute_board_control(
         "event_record_link_delete",
     }:
         return execute_board_record_link_action(action, context, on_substep=on_substep)
-    if operation in {"widget_patch", "widget_duplicate", "widget_order", "widget_delete"}:
-        return execute_board_widget_action(action, context, on_substep=on_substep)
-    if operation in {
-        "board_duplicate",
-        "board_import",
-        "board_share",
-        "board_patch",
-        "purge_duplicate",
-        "purge_import",
-    }:
+    if operation in {"board_create", "board_share", "board_patch", "purge_board"}:
         return execute_board_action(action, context, on_substep=on_substep)
     return execute_board_content_action(action, dataset, context, on_substep=on_substep)
 

@@ -1668,7 +1668,7 @@ const emittedSentenceCases: {
   },
   {
     type: "lifecycle.record_purge",
-    sentence: "Mara permanently deleted a record.",
+    sentence: "Mara deleted a record forever.",
     patch: {
       subject_id: eventOperationId,
       metadata: { trigger_history_rows_removed: 3 },

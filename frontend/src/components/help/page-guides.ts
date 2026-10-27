@@ -17,10 +17,12 @@ export const PAGE_GUIDES = {
   boards: {
     title: "Boards",
     entries: [
-      "Choose a board to see the team information you can access. Company boards are shared with everyone in the organization.",
-      "Posts holds updates and their history. Open a post to read it; editing controls depend on your access.",
-      "Calendar shows the board's events. Open an event to see its details and available actions.",
-      "Overview brings the board's information together. You can only open linked records and files that you are allowed to read.",
+      "In the sidebar, each department's Announcements row opens its board. Company, project boards and All boards have their own rows.",
+      "Posts holds updates; Calendar holds events. Open one to read it. What you can change depends on your level.",
+      "Kanban: cards move through stages. A card is an objective you name or a record you find. Drag it or use Move to stage; Undo puts it back.",
+      "Gantt: drag a bar to change its dates. Changes wait for Save changes; Discard puts them back.",
+      "My calendar shows the boards you can read in one calendar. Tick a calendar to show or hide it.",
+      "Keyboard: on the Kanban, Space lifts a card, the arrow keys move it, Space drops it and Escape puts it back. On the Gantt, Left and Right move a bar a day; Shift with Left or Right changes its due date.",
     ],
   },
   comms: {

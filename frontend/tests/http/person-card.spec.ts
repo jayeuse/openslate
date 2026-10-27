@@ -40,6 +40,14 @@ async function visit(
       .getByRole("button")
       .first()
       .click();
+  // A phone lists posts first; the author's card is in the open post.
+  if (surface === "posts" && (page.viewportSize()?.width ?? 1440) < 1024)
+    await page
+      .getByRole("region", { name: "Posts", exact: true })
+      .getByRole("listitem")
+      .first()
+      .getByRole("button")
+      .click();
   await expect(trigger(page).first()).toBeVisible();
 }
 async function expectMemberCard(page: Page) {
@@ -440,6 +448,7 @@ test("Person card rejects mime avatar bytes and keeps accepted text with explici
 test("Person card calendar resolves visible author ids once and never requests an administrator catalog", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   const api = await installPersonCardApi(page, "calendar", "member");
   const catalogs: string[] = [];
   page.on("request", (request) => {
@@ -451,17 +460,23 @@ test("Person card calendar resolves visible author ids once and never requests a
   try {
     await page.goto(api.href);
     await hold.entered;
+    // The event sheet names its author; the second event by the same
+    // author reuses the first read.
     await expect(
       page.getByText("Loading person…", { exact: true }),
-    ).toHaveCount(2);
+    ).toHaveCount(1);
     await expect(page.getByText(cardTarget, { exact: true })).toHaveCount(0);
     hold.release();
-    await expect(trigger(page)).toHaveCount(2);
+    await expect(trigger(page)).toHaveCount(1);
     expect(api.reads).toEqual([{ viewer: cardViewer, target: cardTarget }]);
     await trigger(page).first().click();
     await expectMemberCard(page);
     await page.keyboard.press("Escape");
-    await trigger(page).last().click();
+    await page.getByRole("button", { name: "Close event" }).click();
+    await page.getByRole("button", { name: /^Workshop briefing,/ }).click();
+    await trigger(
+      page.getByRole("dialog", { name: "Workshop briefing" }),
+    ).click();
     await expectMemberCard(page);
     expect(api.reads).toHaveLength(1);
     expect(catalogs).toEqual([]);
@@ -568,19 +583,12 @@ for (const surface of [
         page.getByRole("region", { name: "Record details content" }),
       ).toContainText("Pump inspection");
     } else if (surface === "posts") {
-      await page
-        .getByRole("button", {
-          name: "Open post",
-          exact: true,
-        })
-        .click();
-      const reader = page.getByRole("dialog", {
+      // The author's card lives in the reading pane, which opens the first
+      // post from 1024px.
+      const reader = page.getByRole("article", {
         name: "Maintenance update",
         exact: true,
       });
-      await trigger(reader).click();
-      await expectMemberCard(page);
-      await page.keyboard.press("Escape");
       await expect(reader).toBeVisible();
       await reader.getByRole("button", { name: "Edited", exact: true }).click();
       const history = page.getByRole("dialog", {
@@ -643,3 +651,27 @@ for (const surface of ["posts", "openview", "calendar", "platform"] as const) {
     }
   }
 }
+
+test("the event sheet names its author in plain ink, as the post pane does", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const api = await installPersonCardApi(page, "calendar", "member");
+  await page.goto(api.href);
+  const sheet = page.getByRole("dialog", {
+    name: "Equipment handover",
+    exact: true,
+  });
+  const author = trigger(sheet);
+  await expect(author).toBeVisible();
+  expect(
+    await author.evaluate((node) => ({
+      underlined: [node, ...node.querySelectorAll("*")].some((element) =>
+        getComputedStyle(element).textDecorationLine.includes("underline"),
+      ),
+      ink:
+        getComputedStyle(node).color ===
+        getComputedStyle(node.closest('[role="dialog"]')!).color,
+    })),
+  ).toEqual({ underlined: false, ink: true });
+});

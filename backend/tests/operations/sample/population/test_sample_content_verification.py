@@ -20,7 +20,6 @@ OTHER_GROUP = "00000000-0000-7000-8000-000000000105"
 
 EXPECTED_CONTENT = {
     "boards": 12,
-    "widgets": 48,
     "posts": 96,
     "events": 144,
     "reminders": 24,
@@ -29,7 +28,11 @@ EXPECTED_CONTENT = {
     "project_group_grants": 15,
     "post_publications": 70,
     "publication_revisions": 2,
-    "views": 36,
+    "kanban_stages": 5,
+    "kanban_labels": 3,
+    "kanban_cards": 12,
+    "kanban_checklist_items": 7,
+    "views": 18,
     "dashboards": 6,
     "dashboard_widgets": 24,
     "reports": 12,
@@ -46,6 +49,7 @@ EXPECTED_CONTENT = {
         "project_group_grants",
         "post_publications",
         "publication_revisions",
+        "kanban_cards",
         "disabled_schedules",
     ),
 )
@@ -60,7 +64,6 @@ def test_content_readback_rejects_each_missing_required_outcome(
     observed[missing_key] -= 1
     board_keys = {
         "boards",
-        "widgets",
         "posts",
         "events",
         "reminders",
@@ -69,6 +72,10 @@ def test_content_readback_rejects_each_missing_required_outcome(
         "project_group_grants",
         "post_publications",
         "publication_revisions",
+        "kanban_stages",
+        "kanban_labels",
+        "kanban_cards",
+        "kanban_checklist_items",
         "read_failures",
     }
     monkeypatch.setattr(
@@ -146,9 +153,11 @@ def test_project_board_grants_require_exact_intended_groups_and_levels(
         if request.url.path == f"/api/boards/{BOARD_ID}/groups":
             return httpx.Response(200, json={"board_id": BOARD_ID, "revision": 3, "groups": grants})
         if request.url.path in {
-            f"/api/boards/{BOARD_ID}/widgets",
             f"/api/boards/{BOARD_ID}/posts",
             f"/api/boards/{BOARD_ID}/events",
+            f"/api/boards/{BOARD_ID}/stages",
+            f"/api/boards/{BOARD_ID}/labels",
+            f"/api/boards/{BOARD_ID}/cards",
         }:
             return httpx.Response(200, json=_page([]))
         raise AssertionError(f"Unexpected GET {request.url.path}")

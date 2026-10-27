@@ -12,7 +12,7 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupAccess
 from app.systems.access.users.models import UserRole
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
 from app.systems.boards.event_models import BoardEvent
-from app.systems.boards.models import Board, BoardGroup, BoardScope, BoardWidget
+from app.systems.boards.models import Board, BoardGroup, BoardScope
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
@@ -145,15 +145,6 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
         end_date=date(2026, 10, 1),
         timezone_name="UTC",
     )
-    widget = BoardWidget(
-        org_id=board.org_id,
-        board_id=board.id,
-        module_id=module.id,
-        name="Items",
-        position=0,
-        widget_type="records",
-        config={},
-    )
     revision = BoardPostRevision(
         org_id=post.org_id,
         id=uuid7(),
@@ -178,7 +169,7 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
     )
     integration_db.add_all([record, board])
     integration_db.flush()
-    integration_db.add_all([post, event, widget, file])
+    integration_db.add_all([post, event, file])
     integration_db.flush()
     integration_db.add(revision)
     integration_db.flush()
@@ -211,7 +202,6 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
         board,
         post,
         event,
-        widget,
         revision,
         reminder,
         link,
@@ -223,7 +213,7 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
     assert _created_log(integration_db, file).department_id is None
     assert {tuple(sorted(payload.items())) for payload in _board_payloads(integration_db)} == {
         tuple(sorted({"entity": entity, "board_id": str(board.id)}.items()))
-        for entity in ("boards", "board_posts", "board_events", "board_widgets")
+        for entity in ("boards", "board_posts", "board_events")
     }
 
 
@@ -292,14 +282,15 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
         source_record_id=source.id,
         target_record_id=target.id,
     )
-    board_child = BoardWidget(
+    board_child = BoardEvent(
         org_id=org_id,
         board_id=board_id,
-        module_id=module_id,
-        name="Items",
-        position=0,
-        widget_type="records",
-        config={},
+        author_id=author.id,
+        title="Recount",
+        all_day=True,
+        start_date=date(2026, 10, 2),
+        end_date=date(2026, 10, 2),
+        timezone_name="UTC",
     )
     post_child = BoardPostRevision(
         org_id=org_id,
@@ -322,9 +313,9 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
     for child in (module_child, record_child, board_child, post_child, revision_child):
         assert _created_log(integration_db, child).department_id == department_id
     assert sorted(_board_payloads(integration_db), key=lambda payload: payload["entity"]) == [
+        {"entity": "board_events", "board_id": str(board_id)},
         {"entity": "board_posts", "board_id": str(board_id)},
         {"entity": "board_posts", "board_id": str(board_id)},
-        {"entity": "board_widgets", "board_id": str(board_id)},
     ]
 
 

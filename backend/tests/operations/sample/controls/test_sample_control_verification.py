@@ -32,12 +32,12 @@ REQUEST_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 def _action(
     *,
     kind: str = "board_controls",
-    operation: str = "board_duplicate",
+    operation: str = "board_create",
     actor_key: str = "admin",
     status: int = 201,
     values: dict[str, Any] | None = None,
-    key: str = "control:board:duplicate",
-    target_key: str = "control:duplicate",
+    key: str = "control:board:create-board",
+    target_key: str = "control:board",
 ) -> PhaseAction:
     return PhaseAction(
         key=key,
@@ -60,14 +60,14 @@ def _request_evidence(
     method: str = "POST",
     path: str | None = None,
     status: int = 201,
-    step: str = "duplicate_board",
+    step: str = "create_control_board",
 ) -> dict[str, Any]:
     return {
         "step": step,
         "actor_key": actor_key,
         "actor_id": actor_id,
         "method": method,
-        "path": path or f"/api/boards/{BOARD_ID}/duplicate",
+        "path": path or "/api/boards",
         "expected_status": status,
         "status_code": status,
         "request_id": request_id,
