@@ -38,6 +38,7 @@ def plan_configuration_controls(dataset: SampleDataset) -> tuple[PhaseAction, ..
                 else "partner_configuration_roundtrip",
                 "organization": org,
                 "member_key": member,
+                "refusal_steps": ["member_template_denied"],
             },
             expected_status=200,
             expected_detail=None,
