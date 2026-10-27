@@ -2,6 +2,7 @@
 
 import type { RefObject } from "react";
 import { ArrowUpRight, MoreHorizontal, X } from "lucide-react";
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,15 +22,21 @@ import { reportDone, reportError } from "@/lib/feedback";
 import type { BoardEvent } from "../adapters/board-events-api";
 import { HydratedBoardAttachments } from "./server-backed-board-attachments";
 import { HydratedBoardRecordLinks } from "./hydrated-board-record-links";
-import { REPEAT_WORDS } from "./board-calendar-chips";
+import { CalendarSwatch, REPEAT_WORDS } from "./board-calendar-chips";
 import { REMINDER_TIMINGS } from "./server-backed-board-event-editor";
 
 /** The facts of one event, in reading order (BR20). Plain text only. */
 export function BoardEventSheetBody({
   event,
+  calendar,
   author,
 }: {
   event: BoardEvent;
+  /**
+   * The event's calendar. Its name stands beside its color here, which the
+   * month cells' Name Beside Color exception relies on (BR53).
+   */
+  calendar?: { name: string; color: string };
   /** The author's person card; the sheet passes it in. */
   author?: React.ReactNode;
 }) {
@@ -39,6 +46,14 @@ export function BoardEventSheetBody({
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <dl className="divide-y text-sm">
+        {calendar ? (
+          <Fact label="Calendar">
+            <span className="flex min-w-0 items-center gap-2">
+              <CalendarSwatch color={calendar.color} />
+              <span className="min-w-0">{calendar.name}</span>
+            </span>
+          </Fact>
+        ) : null}
         {event.location ? <Fact label="Location">{event.location}</Fact> : null}
         <Fact label="Reminders">
           {reminders.length ? reminders.join(", ") : "None"}
@@ -109,6 +124,7 @@ export type EventSheetState =
 export function BoardEventSheet({
   open,
   state,
+  calendar,
   canEdit,
   canArchive,
   finalFocus,
@@ -119,6 +135,7 @@ export function BoardEventSheet({
 }: {
   open: boolean;
   state: EventSheetState;
+  calendar: { name: string; color: string };
   canEdit: boolean;
   canArchive: boolean;
   finalFocus: RefObject<HTMLElement | null>;
@@ -211,7 +228,7 @@ export function BoardEventSheet({
                   </DropdownMenuItem>
                   {canArchive ? (
                     <DropdownMenuItem
-                      className="text-danger-text min-h-11 xl:min-h-8"
+                      className="min-h-11 xl:min-h-8"
                       onClick={() => onArchive(event)}
                     >
                       Archive event
@@ -237,6 +254,7 @@ export function BoardEventSheet({
             <div className="flex flex-col gap-6">
               <BoardEventSheetBody
                 event={event}
+                calendar={calendar}
                 author={
                   <PersonCardPopover
                     personId={event.authorId}
@@ -266,14 +284,21 @@ export function BoardEventSheet({
               />
             </div>
           ) : state.status === "error" && state.retryable ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 xl:min-h-8"
-              onClick={onRetry}
+            // A failed read can be retried; a refusal keeps its neutral line.
+            <Alert
+              variant="destructive"
+              className="flex flex-wrap items-center justify-between gap-2"
             >
-              Retry
-            </Button>
+              <span>Could not load the event.</span>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 xl:min-h-8"
+                onClick={onRetry}
+              >
+                Retry
+              </Button>
+            </Alert>
           ) : null}
         </div>
       </SheetContent>

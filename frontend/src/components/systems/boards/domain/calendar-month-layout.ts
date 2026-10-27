@@ -8,10 +8,10 @@ import {
  * Month anatomy (BR54, BR55), one week row at a time. A row has `lanes`
  * slots of one line each under the day numbers; the component measures them.
  *
- * - An all-day event is a bar across its days. Bars take the top lanes of the
- *   week, and never the last lane, which stays free for "+n more".
- * - Every other item (a timed event, a record, a due card) is a chip on each
- *   day it touches, below the week's bars.
+ * - A multi-day all-day event is a bar across its days. Bars take the top
+ *   lanes of the week, and never the last lane, which stays free for "+n more".
+ * - Every other item (a one-day all-day event, a timed event, a record, a due
+ *   card) is a chip on each day it touches, below the week's bars.
  * - A chip takes two lines while the rest of its day still fits below it.
  * - What does not fit is counted in "+n more", hidden bars included.
  */
@@ -37,8 +37,13 @@ export type MonthCell = {
 
 export type MonthWeekLayout = { bars: MonthBar[]; cells: MonthCell[] };
 
+/**
+ * A bar runs across days, so only a multi-day all-day event is one. A
+ * one-day all-day event is a chip, whose title takes two lines while its day
+ * has room.
+ */
 export function isBarItem(item: CalendarItem): boolean {
-  return item.kind === "event" && item.allDay;
+  return item.kind === "event" && item.allDay && item.endDate > item.startDate;
 }
 
 type Span = {

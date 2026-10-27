@@ -281,7 +281,11 @@ export function calendarEmptyStatus(
   if (next === null) return { message: "No upcoming events", next: null };
   return {
     message: `No events in ${month}`,
-    next: { text: `Next: ${next}`, name: `Go to the next event, ${next}` },
+    // The name starts with the words on the button (label in name).
+    next: {
+      text: `Next: ${next}`,
+      name: `Next: ${next}, go to the next event`,
+    },
   };
 }
 
@@ -303,4 +307,28 @@ export function compactTime(
   if (!twelve) return full;
   const [, hour, minutes, meridiem] = twelve;
   return `${hour}${minutes && minutes !== "00" ? `:${minutes}` : ""}${meridiem.toLowerCase()}m`;
+}
+
+/**
+ * An empty view emptied by a filter says so, with the step that undoes it:
+ * the search first, then hidden calendars. Null when nothing is filtered.
+ */
+export function calendarFilterEmpty(
+  search: string,
+  hiddenCount: number,
+): { kind: "search" | "hidden"; message: string; action: string } | null {
+  const query = search.trim();
+  if (query)
+    return {
+      kind: "search",
+      message: `No events match "${query}"`,
+      action: "Clear search",
+    };
+  if (hiddenCount > 0)
+    return {
+      kind: "hidden",
+      message: `${hiddenCount} ${hiddenCount === 1 ? "calendar" : "calendars"} hidden`,
+      action: "Show all",
+    };
+  return null;
 }

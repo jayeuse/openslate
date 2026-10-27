@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowUpDown,
   Check,
@@ -88,6 +88,9 @@ export function BoardPostList({
   onOpen,
   onPage,
   empty,
+  emptyTitle,
+  focusRowId,
+  onRowFocused,
 }: {
   states: readonly PostListState[];
   state: PostListState;
@@ -110,17 +113,46 @@ export function BoardPostList({
   onPage: (offset: number) => void;
   /** The empty list's teaching state, in the list's own frame. */
   empty: ReactNode;
+  /** The empty state's title, which the list's status also reads. */
+  emptyTitle: string;
+  /** The row whose post was just closed; its open button takes focus. */
+  focusRowId: string | null;
+  onRowFocused: () => void;
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersButton = useRef<HTMLButtonElement>(null);
   const sortLabel =
     POST_SORT_OPTIONS.find((option) => option.value === sort)?.label ?? "";
   const pagination = page?.pagination ?? null;
+  const rowsRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    if (focusRowId === null) return;
+    const row = rowsRef.current?.querySelector<HTMLElement>(
+      `[data-post-id="${CSS.escape(focusRowId)}"] button`,
+    );
+    if (!row && !page) return;
+    row?.focus();
+    onRowFocused();
+  }, [focusRowId, onRowFocused, page]);
+  const total = pagination?.total ?? rows.length;
+  // One live region for the list: loading, then what it holds.
+  const status =
+    !page && loading
+      ? "Loading posts"
+      : !page
+        ? ""
+        : rows.length === 0
+          ? emptyTitle
+          : `${total} ${total === 1 ? "post" : "posts"}`;
   return (
     <section
       aria-label="Posts"
-      className="bg-card flex min-w-0 flex-col overflow-hidden rounded-lg border lg:min-h-0 xl:flex-1"
+      data-slot="card"
+      className="border-card-edge bg-card text-card-foreground shadow-card flex min-w-0 flex-col overflow-hidden rounded-[var(--radius)] border lg:min-h-0 xl:flex-1"
     >
+      <span role="status" className="sr-only">
+        {status}
+      </span>
       <div className="flex shrink-0 flex-col gap-2 border-b p-3">
         <div className="flex min-w-0 items-center gap-1">
           <InputGroup className="min-h-11 min-w-0 flex-1 xl:min-h-8">
@@ -155,7 +187,7 @@ export function BoardPostList({
               {chips.length ? (
                 <span
                   aria-hidden="true"
-                  className="bg-action-tint text-action-text absolute top-0.5 right-0.5 inline-grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-semibold tabular-nums xl:-top-1 xl:-right-1"
+                  className="bg-action-tint text-action-text absolute top-0 right-0 inline-grid h-[18px] min-w-[18px] place-items-center rounded-full px-1 text-xs leading-none font-semibold tabular-nums xl:-top-1.5 xl:-right-1.5"
                 >
                   {chips.length}
                 </span>
@@ -278,20 +310,17 @@ export function BoardPostList({
                 <Skeleton className="h-3 w-1/2" />
               </div>
             ))}
-            <span role="status" className="sr-only">
-              Loading posts
-            </span>
           </div>
         ) : null}
         {page && rows.length === 0 ? empty : null}
         {rows.length > 0 ? (
-          <ul aria-label={`${POST_STATE_LABELS[state]} posts`}>
+          <ul ref={rowsRef} aria-label={`${POST_STATE_LABELS[state]} posts`}>
             {rows.map((row) => {
               const selected = row.id === selectedId;
               return (
                 <li
                   key={row.id}
-                  aria-current={selected ? "true" : undefined}
+                  data-post-id={row.id}
                   data-state={selected ? "selected" : undefined}
                   className={cn(
                     openRowClassName,
@@ -301,6 +330,7 @@ export function BoardPostList({
                 >
                   <RowOpenButton
                     title={row.title}
+                    current={selected}
                     className="w-full max-w-none"
                     subtitle={
                       <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
@@ -311,11 +341,16 @@ export function BoardPostList({
                           </span>
                         ) : null}
                         {row.meta.map((part, index) => (
-                          <span key={`${index}:${part}`} className="contents">
+                          // A separator stays with the part after it, so
+                          // no line ends on a lone dot.
+                          <span
+                            key={`${index}:${part}`}
+                            className="inline-flex max-w-full min-w-0 items-center gap-x-1.5 whitespace-nowrap"
+                          >
                             {row.pinned || index > 0 ? (
                               <span aria-hidden="true">·</span>
                             ) : null}
-                            <span>{part}</span>
+                            <span className="truncate">{part}</span>
                           </span>
                         ))}
                       </span>
@@ -333,10 +368,7 @@ export function BoardPostList({
           aria-label="Post pages"
           className="flex shrink-0 items-center justify-between gap-2 border-t px-3 py-1.5"
         >
-          <span
-            role="status"
-            className="text-muted-foreground text-xs tabular-nums"
-          >
+          <span className="text-muted-foreground text-xs tabular-nums">
             {pagination.count > 0
               ? `${pagination.offset + 1}–${pagination.offset + pagination.count} of ${pagination.total}`
               : `0 of ${pagination.total}`}

@@ -3,8 +3,10 @@ import type { CalendarItem } from "../../../src/components/systems/boards/domain
 import { layoutMonthWeek } from "../../../src/components/systems/boards/domain/calendar-month-layout";
 import {
   allDayLanes,
+  hourLabelHidden,
   layoutDayColumns,
   timedSegments,
+  weekBlocks,
 } from "../../../src/components/systems/boards/domain/calendar-week-layout";
 
 const week = [
@@ -240,5 +242,71 @@ test("the week's all-day row holds all-day events, sources and due cards in lane
   ).toEqual([
     ["workshop", 0, 1, 0, true],
     ["due", 1, 1, 1, false],
+  ]);
+});
+
+test("the now label hides the hour label it would cover, and only that one", () => {
+  // 8:17am: the 8am label sits 17 minutes above the now label.
+  expect(hourLabelHidden(8, 8 * 60 + 17)).toBe(true);
+  expect(hourLabelHidden(9, 8 * 60 + 17)).toBe(false);
+  // 8:45am covers 9am, not 8am.
+  expect(hourLabelHidden(8, 8 * 60 + 45)).toBe(false);
+  expect(hourLabelHidden(9, 8 * 60 + 45)).toBe(true);
+  // Halfway between two hours, both labels show.
+  expect(hourLabelHidden(8, 8 * 60 + 30)).toBe(false);
+  expect(hourLabelHidden(9, 8 * 60 + 30)).toBe(false);
+  expect(hourLabelHidden(8, null)).toBe(false);
+});
+
+test("a one-day all-day event is a chip that takes two lines while its day has room", () => {
+  const fair = item("fair", {
+    allDay: true,
+    startDate: "2026-11-19",
+    startMinute: null,
+    endMinute: null,
+  });
+  const layout = layoutMonthWeek(week, [fair], 3);
+  expect(layout.bars).toEqual([]);
+  const thursday = layout.cells.find((cell) => cell.date === "2026-11-19");
+  expect(
+    thursday?.chips.map(({ item: chip, lane, lines }) => [
+      chip.key,
+      lane,
+      lines,
+    ]),
+  ).toEqual([["fair", 0, 2]]);
+});
+
+test("short Week blocks are laid out at their drawn height, so they never overlap", () => {
+  // 9:00–9:10 and 9:15–9:25 are drawn 30 minutes tall: side by side.
+  const first = item("first", {
+    startDate: "2026-11-18",
+    startMinute: 540,
+    endMinute: 550,
+  });
+  const second = item("second", {
+    startDate: "2026-11-18",
+    startMinute: 555,
+    endMinute: 565,
+  });
+  const later = item("later", {
+    startDate: "2026-11-18",
+    startMinute: 600,
+    endMinute: 660,
+  });
+  expect(
+    weekBlocks([first, second, later], "2026-11-18").map(
+      ({ item: block, start, end, column, columns }) => [
+        block.key,
+        start,
+        end,
+        column,
+        columns,
+      ],
+    ),
+  ).toEqual([
+    ["first", 540, 550, 0, 2],
+    ["second", 555, 565, 1, 2],
+    ["later", 600, 660, 0, 1],
   ]);
 });

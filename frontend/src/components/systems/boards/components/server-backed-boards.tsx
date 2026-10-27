@@ -15,7 +15,6 @@ import { LayoutDashboard, RefreshCw, X } from "lucide-react";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { departmentNavigationOptions } from "@/components/department-navigation";
 import { isRefusal } from "@/components/department-navigation-model";
-import { allBoardsHref } from "@/components/boards-navigation-model";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -52,6 +51,7 @@ import { BoardDirectory } from "./board-directory";
 import { BoardPageHeader, boardPageTitle } from "./board-page-header";
 import { BoardEmpty, ConfirmAction } from "./ui";
 import {
+  BOARD_UNAVAILABLE,
   canonicalBoardUrl,
   parseBoardRoute,
   resolveBoardSection,
@@ -88,8 +88,7 @@ const pageClass = "boards-ui flex min-w-0 flex-col xl:min-h-0 xl:flex-1";
  * row, held at the loaded header's height so nothing shifts when it lands.
  * Without a Board to wait for (refused, missing, none), only the title stays.
  */
-const BOARD_UNAVAILABLE =
-  "It may have been removed, or you may not have access.";
+const BOARD_REFUSED_TITLE = "This board is not available.";
 
 function BoardsLoadingHeader({
   placeholders = true,
@@ -277,7 +276,10 @@ function ServerBackedBoardsContent() {
   );
   useWorkspaceNavigationGuard(guardWorkspaceNavigation);
   const updateBoardParams = useCallback(
-    (changes: Record<string, string | null | undefined>) => {
+    (
+      changes: Record<string, string | null | undefined>,
+      history: "push" | "replace" = "replace",
+    ) => {
       const next = new URLSearchParams(search);
       for (const [name, value] of Object.entries(changes)) {
         if (value === undefined) continue;
@@ -286,7 +288,10 @@ function ServerBackedBoardsContent() {
       }
       const href = `/boards?${next.toString()}` as Route;
       if (href === `/boards?${search}`) return;
-      const resume = () => router.replace(href, { scroll: false });
+      const resume = () =>
+        history === "push"
+          ? router.push(href, { scroll: false })
+          : router.replace(href, { scroll: false });
       if (requestNavigation(href, resume)) resume();
     },
     [requestNavigation, router, search],
@@ -307,7 +312,7 @@ function ServerBackedBoardsContent() {
     [router, search],
   );
   const updatePostParams = useCallback(
-    (params: PostParams) => updateBoardParams(params),
+    ({ history, ...params }: PostParams) => updateBoardParams(params, history),
     [updateBoardParams],
   );
   const updateDraftState = useCallback(
@@ -389,12 +394,15 @@ function ServerBackedBoardsContent() {
     !(route.kind === "department" && resource.list.status === "error") &&
     (awaitingList || awaitingDetail);
 
-  const unavailable =
+  const detailFailed =
+    resource.candidate !== null &&
+    board === null &&
+    resource.detail.status === "error";
+  const refused =
     route.kind === "invalid-board" ||
     resource.departmentMissing ||
-    (resource.candidate !== null &&
-      board === null &&
-      resource.detail.status === "error");
+    (detailFailed && resource.detailDenied);
+  const unavailable = refused || detailFailed;
   const noBoards =
     !resource.list.error &&
     resource.list.data !== null &&
@@ -538,40 +546,41 @@ function ServerBackedBoardsContent() {
         {!board ? (
           <BoardEmpty
             title={
-              unavailable
-                ? "Board unavailable"
-                : resource.list.error
-                  ? "Boards could not be loaded"
-                  : noBoards
-                    ? "No active Boards"
-                    : "Board unavailable"
+              refused
+                ? BOARD_REFUSED_TITLE
+                : unavailable
+                  ? "This board could not be loaded"
+                  : resource.list.error
+                    ? "Boards could not be loaded"
+                    : noBoards
+                      ? "No active Boards"
+                      : BOARD_REFUSED_TITLE
             }
             description={
-              unavailable
-                ? resource.detail.error || BOARD_UNAVAILABLE
-                : resource.list.error
-                  ? "The Board list could not be loaded. Retry to see your Boards."
-                  : noBoards
-                    ? "Your account cannot open any active Board. Ask an administrator for access."
-                    : BOARD_UNAVAILABLE
+              refused
+                ? BOARD_UNAVAILABLE
+                : unavailable
+                  ? resource.detail.error || "Could not load this board."
+                  : resource.list.error
+                    ? "The Board list could not be loaded. Retry to see your Boards."
+                    : noBoards
+                      ? "Your account cannot open any active Board. Ask an administrator for access."
+                      : BOARD_UNAVAILABLE
             }
             icon={<LayoutDashboard aria-hidden="true" />}
           >
-            {unavailable || resource.list.error ? (
-              <div className="flex flex-wrap justify-center gap-2">
-                {unavailable ? (
-                  <Button asChild variant="outline" className="min-h-11">
-                    <Link href={allBoardsHref as Route}>All boards</Link>
-                  </Button>
-                ) : null}
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  onClick={refreshBoard}
-                >
-                  <RefreshCw data-icon="inline-start" /> Retry
-                </Button>
-              </div>
+            {refused ? (
+              <Button asChild variant="outline" className="min-h-11 xl:min-h-8">
+                <Link href="/boards">Go to Company board</Link>
+              </Button>
+            ) : unavailable || resource.list.error ? (
+              <Button
+                variant="outline"
+                className="min-h-11 xl:min-h-8"
+                onClick={refreshBoard}
+              >
+                <RefreshCw data-icon="inline-start" /> Retry
+              </Button>
             ) : null}
             {/* An empty workspace has its first step in view. The server
                 still decides who may create. */}

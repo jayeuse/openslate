@@ -195,11 +195,14 @@ export function canEditPost(post: BoardPost, viewer: PostViewer): boolean {
 
 /**
  * The More post actions a viewer may take on the open post (BR12, BR14):
- * only those, in menu order.
+ * only those, in menu order. `publishedBefore` comes from the post's manage
+ * state, read when the menu opens: Delete draft shows only once that read
+ * says the post was never published (null while it is unknown).
  */
 export function postMenuActions(
   post: BoardPost,
   viewer: PostViewer,
+  publishedBefore: boolean | null,
 ): PostMenuAction[] {
   const actions: PostMenuAction[] = [];
   const published = post.status === "published" && post.postRevision === null;
@@ -210,6 +213,7 @@ export function postMenuActions(
   if (post.status === "archived") {
     if (viewer.canManage) actions.push("restore");
   } else actions.push("archive");
-  if (post.status !== "published") actions.push("delete");
+  if (post.status !== "published" && publishedBefore === false)
+    actions.push("delete");
   return actions;
 }

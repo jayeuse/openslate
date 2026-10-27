@@ -27,6 +27,8 @@ type UpcomingProps = {
   onOpen: OpenCalendarItem;
   /** Reads and filters a later window; it renders its own groups. */
   renderLater: (window: { start: string; end: string }) => React.ReactNode;
+  /** The search or hidden calendars that emptied the list, and their undo. */
+  filterEmpty: { message: string; action: string; onAction: () => void } | null;
 };
 
 /**
@@ -42,6 +44,7 @@ export function BoardCalendarUpcoming({
   region,
   onOpen,
   renderLater,
+  filterEmpty,
 }: UpcomingProps) {
   const [windows, setWindows] = useState(1);
   const groups = upcomingGroups(items, today);
@@ -59,7 +62,6 @@ export function BoardCalendarUpcoming({
         >
           Upcoming
         </h3>
-        <span className="text-muted-foreground text-[13px]">From today</span>
       </div>
       <div className="min-h-0 overflow-y-auto overscroll-contain xl:flex-1">
         <UpcomingGroupList
@@ -76,14 +78,19 @@ export function BoardCalendarUpcoming({
         ))}
         {empty ? (
           <div className="text-muted-foreground flex flex-wrap items-center gap-2 px-4 py-6 text-sm">
+            <span>
+              {filterEmpty?.message ??
+                (nextOccurrence
+                  ? "Nothing in the next 6 weeks"
+                  : "No upcoming events")}
+            </span>
             {nextOccurrence ? (
               <>
-                <span>Nothing in the next 6 weeks</span>
                 <span aria-hidden="true">·</span>
                 <Button
                   variant="ghost"
                   className="text-action-text min-h-11 px-1.5 xl:min-h-7"
-                  aria-label={`Go to the next event, ${dayLabel(nextOccurrence.date, region)}`}
+                  aria-label={`Next: ${dayLabel(nextOccurrence.date, region)}, go to the next event`}
                   onClick={() =>
                     setWindows(
                       Math.floor(
@@ -96,9 +103,19 @@ export function BoardCalendarUpcoming({
                   Next: {dayLabel(nextOccurrence.date, region)}
                 </Button>
               </>
-            ) : (
-              <span>No upcoming events</span>
-            )}
+            ) : null}
+            {filterEmpty ? (
+              <>
+                <span aria-hidden="true">·</span>
+                <Button
+                  variant="ghost"
+                  className="min-h-11 px-1.5 xl:min-h-7"
+                  onClick={filterEmpty.onAction}
+                >
+                  {filterEmpty.action}
+                </Button>
+              </>
+            ) : null}
           </div>
         ) : null}
         {ready && (!empty || nextOccurrence) ? (

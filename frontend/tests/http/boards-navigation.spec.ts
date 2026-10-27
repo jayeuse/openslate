@@ -75,14 +75,17 @@ test("legacy sample Board URL cannot reveal browser-local Board content", async 
   await expect(
     page.getByText("It may have been removed, or you may not have access."),
   ).toBeVisible();
-  // The refusal leads somewhere: All boards, or Retry. No loading
-  // placeholder stays behind once there is no Board to wait for.
+  // The refusal leads to the Company board, and offers no Retry that cannot
+  // succeed. No loading placeholder stays behind once there is no Board to
+  // wait for.
   const main = page.locator("#main-content");
-  await expect(main.getByRole("link", { name: "All boards" })).toHaveAttribute(
-    "href",
-    "/boards?section=all",
-  );
-  await expect(main.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(
+    main.getByText("This board is not available.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    main.getByRole("link", { name: "Go to Company board" }),
+  ).toHaveAttribute("href", "/boards");
+  await expect(main.getByRole("button", { name: "Retry" })).toHaveCount(0);
   await expect(main.locator(".animate-pulse")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "Organization board" }),
@@ -538,4 +541,46 @@ test("a cold /boards reads the board list and the open board once each, within 3
     contentType: "text/plain",
   });
   expect(requests.length, requests.join("\n")).toBeLessThanOrEqual(34);
+});
+
+test("a refused board offers only the Company board; a failed read offers Retry", async ({
+  page,
+}) => {
+  const refusedId = "00000000-0000-4000-8000-000000000029";
+  await installServerBoards(page);
+  await page.goto(`/boards?board=${refusedId}&section=posts`);
+  const main = page.locator("#main-content");
+  await expect(
+    main.getByText("This board is not available.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    main.getByText("It may have been removed, or you may not have access."),
+  ).toBeVisible();
+  await expect(
+    main.getByRole("link", { name: "Go to Company board" }),
+  ).toHaveAttribute("href", "/boards");
+  await expect(main.getByRole("button", { name: "Retry" })).toHaveCount(0);
+
+  // A temporary failure is not a refusal: Retry reads the board again.
+  let failures = 1;
+  await page.route(`**/api/boards/${boardId}`, (route) => {
+    if (failures-- > 0)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Unavailable" }),
+      });
+    return route.fallback();
+  });
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await expect(
+    main.getByText("This board is not available.", { exact: true }),
+  ).toHaveCount(0);
+  await main.getByRole("button", { name: "Retry" }).click();
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: "Authorized operations announcements",
+    }),
+  ).toBeVisible();
 });

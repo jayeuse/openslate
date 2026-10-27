@@ -169,6 +169,13 @@ export function ServerBoardPostEditorDisplay({
       }
     : null;
   const blocked = publishBlockedReason(view);
+  // An unchanged draft has nothing to save; a published post saves as a
+  // draft even unchanged.
+  const saveBlocked =
+    blocked ??
+    (selected !== null && !view.dirty && selected.status !== "published"
+      ? "No changes to save."
+      : null);
   const advancedSet = (form.pinned ? 1 : 0) + (form.expiresLocal ? 1 : 0);
   const saveState = view.pending
     ? null
@@ -230,9 +237,9 @@ export function ServerBoardPostEditorDisplay({
         />
       </Field>
       <section aria-label="Files" className="flex min-w-0 flex-col gap-2">
-        <h3 data-slot="section-title" className="text-sm font-medium">
+        <p data-slot="field-label" className="text-xs font-medium">
           Files
-        </h3>
+        </p>
         {draftTarget && versions ? (
           <HydratedBoardAttachments
             key={`draft-attachments:${draftTarget.id}`}
@@ -249,21 +256,23 @@ export function ServerBoardPostEditorDisplay({
             locked={locked}
           />
         ) : (
-          <Button
-            type="button"
-            variant="outline"
-            className={cn(control, "self-start")}
-            disabled={locked || blocked !== null}
-            onClick={onSave}
-          >
-            Save draft to attach
-          </Button>
+          <DisabledReason reason={view.pending ? null : blocked}>
+            <Button
+              type="button"
+              variant="outline"
+              className={cn(control, "self-start")}
+              disabled={view.pending}
+              onClick={onSave}
+            >
+              Save draft to attach
+            </Button>
+          </DisabledReason>
         )}
       </section>
       <section aria-label="Links" className="flex min-w-0 flex-col gap-2">
-        <h3 data-slot="section-title" className="text-sm font-medium">
+        <p data-slot="field-label" className="text-xs font-medium">
           Links
-        </h3>
+        </p>
         {form.links.map((link, index) => (
           <div
             key={index}
@@ -351,9 +360,9 @@ export function ServerBoardPostEditorDisplay({
         aria-label="Linked records"
         className="flex min-w-0 flex-col gap-2"
       >
-        <h3 data-slot="section-title" className="text-sm font-medium">
+        <p data-slot="field-label" className="text-xs font-medium">
           Linked records
-        </h3>
+        </p>
         {draftTarget && versions ? (
           <HydratedBoardRecordLinks
             key={`draft-record-links:${draftTarget.id}`}
@@ -370,15 +379,17 @@ export function ServerBoardPostEditorDisplay({
             locked={locked}
           />
         ) : (
-          <Button
-            type="button"
-            variant="outline"
-            className={cn(control, "self-start")}
-            disabled={locked || blocked !== null}
-            onClick={onSave}
-          >
-            Save draft to link
-          </Button>
+          <DisabledReason reason={view.pending ? null : blocked}>
+            <Button
+              type="button"
+              variant="outline"
+              className={cn(control, "self-start")}
+              disabled={view.pending}
+              onClick={onSave}
+            >
+              Save draft to link
+            </Button>
+          </DisabledReason>
         )}
       </section>
       <AdvancedSection
@@ -435,7 +446,10 @@ export function ServerBoardPostEditorDisplay({
       </AdvancedSection>
       <DialogFrameFooter>
         {scheduleOpen ? (
-          <div className="flex min-w-0 flex-wrap items-end gap-2">
+          <div
+            id="board-post-schedule-row"
+            className="flex min-w-0 flex-wrap items-end gap-2"
+          >
             <Field className="min-w-0 flex-1 gap-1.5">
               <FieldLabel htmlFor="board-post-scheduled-for">
                 Publish at
@@ -490,11 +504,13 @@ export function ServerBoardPostEditorDisplay({
           </div>
         ) : null}
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          {saveState ? (
-            <Badge variant="outline" className="shrink-0">
-              {saveState}
-            </Badge>
-          ) : null}
+          <span role="status" className="inline-flex shrink-0">
+            {saveState ? (
+              <Badge variant="outline" className="shrink-0">
+                {saveState}
+              </Badge>
+            ) : null}
+          </span>
           {selected?.status === "scheduled" ? (
             <DisabledReason
               reason={
@@ -520,27 +536,23 @@ export function ServerBoardPostEditorDisplay({
           </span>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className={control}
-            disabled={
-              locked ||
-              blocked !== null ||
-              (selected !== null &&
-                !view.dirty &&
-                selected.status !== "published")
-            }
-            onClick={onSave}
-          >
-            {running === "save" ? "Saving…" : "Save draft"}
-          </Button>
+          <DisabledReason reason={view.pending ? null : saveBlocked} stable>
+            <Button
+              type="button"
+              variant="outline"
+              className={control}
+              disabled={view.pending}
+              onClick={onSave}
+            >
+              {running === "save" ? "Saving…" : "Save draft"}
+            </Button>
+          </DisabledReason>
           <Button
             type="button"
             variant="outline"
             className={control}
             aria-expanded={scheduleOpen}
-            aria-controls="board-post-scheduled-for"
+            aria-controls={scheduleOpen ? "board-post-schedule-row" : undefined}
             disabled={view.pending}
             onClick={onToggleSchedule}
           >
@@ -608,7 +620,7 @@ export function BoardPostEditorDialog({
     <>
       <Dialog
         open={open}
-        dismissible={!view.pending && !changed}
+        dismissible={!view.pending}
         onOpenChange={(next) => {
           if (!next) requestClose();
         }}

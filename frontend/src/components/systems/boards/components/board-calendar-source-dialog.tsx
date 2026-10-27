@@ -88,7 +88,13 @@ export function BoardCalendarSourceDialog({
         if (!next) close();
       }}
     >
-      <DialogContent className={cn(dialogFrameContentClass, "max-w-lg")}>
+      <DialogContent
+        className={cn(dialogFrameContentClass, "max-w-lg")}
+        // The dialog opens on its first field, the module.
+        initialFocus={() =>
+          document.getElementById("board-calendar-source-module")
+        }
+      >
         <DialogFrameHeader
           title={<DialogTitle>Add record source</DialogTitle>}
           description={

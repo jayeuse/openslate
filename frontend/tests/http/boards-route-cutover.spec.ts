@@ -337,7 +337,7 @@ test("Calendar uses Workspace today and reaches later occurrences", async ({
     page.getByRole("heading", { name: "September 2026" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Fri, Sep 25", exact: true }),
+    page.getByRole("button", { name: "Fri, Sep 25, show week", exact: true }),
   ).toHaveAttribute("aria-current", "date");
   // A busy month is read to its end, so its last event is one click away.
   await expect
@@ -523,7 +523,7 @@ test.describe("Boards workspace regional activity", () => {
       });
       await expect.poll(() => workspaceReads).toBeGreaterThan(1);
       const latest = page.getByRole("button", {
-        name: "Sat, Sep 26",
+        name: "Sat, Sep 26, show week",
         exact: true,
       });
       await expect(latest).toHaveAttribute("aria-current", "date");
@@ -565,7 +565,7 @@ test.describe("Boards workspace regional activity", () => {
     );
     await page.goto(`/boards?board=${boardId}&section=calendar`);
     const todayMark = (name: string) =>
-      page.getByRole("button", { name, exact: true });
+      page.getByRole("button", { name: `${name}, show week`, exact: true });
     await expect(todayMark("Fri, Sep 25")).toHaveAttribute(
       "aria-current",
       "date",

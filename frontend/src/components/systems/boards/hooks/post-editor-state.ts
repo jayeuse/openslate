@@ -259,7 +259,16 @@ export function dirty(
   item: BoardPost | null,
 ): boolean {
   if (!form) return false;
-  if (!item) return true;
+  // A new post holds something to lose once it has text, a link, a pin, or
+  // an expiry; a blank one closes without asking.
+  if (!item)
+    return (
+      form.title.trim() !== "" ||
+      form.body.trim() !== "" ||
+      form.links.length > 0 ||
+      form.pinned ||
+      form.expiresLocal !== ""
+    );
   const original = formFor(item);
   return (
     form.title !== original.title ||

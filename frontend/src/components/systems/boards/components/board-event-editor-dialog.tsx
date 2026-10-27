@@ -75,12 +75,16 @@ export function BoardEventEditorDialog({
     <>
       <Dialog
         open={draft !== null}
-        dismissible={!busy && !dirty}
+        dismissible={!busy}
         onOpenChange={(next) => {
           if (!next) requestClose();
         }}
       >
-        <DialogContent className={cn(dialogFrameContentClass, "max-w-2xl")}>
+        <DialogContent
+          className={cn(dialogFrameContentClass, "max-w-2xl")}
+          // The editor opens on its first field, the title.
+          initialFocus={() => document.getElementById("live-board-event-title")}
+        >
           <DialogFrameHeader
             title={<DialogTitle>{title}</DialogTitle>}
             closeLabel="Close event editor"

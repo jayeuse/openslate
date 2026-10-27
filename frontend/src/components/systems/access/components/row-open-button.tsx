@@ -20,6 +20,7 @@ export function RowOpenButton({
   leading,
   label,
   inline = false,
+  current,
   className,
   onOpen,
 }: {
@@ -29,6 +30,8 @@ export function RowOpenButton({
   leading?: ReactNode;
   label?: string;
   inline?: boolean;
+  /** The row that is open beside the list (`aria-current`). */
+  current?: boolean;
   /** Widens or adjusts the button, such as a full-width list row. */
   className?: string;
   onOpen: () => void;
@@ -39,6 +42,7 @@ export function RowOpenButton({
       type="button"
       aria-label={label}
       aria-describedby={label && subtitle ? subtitleId : undefined}
+      aria-current={current ? "true" : undefined}
       className={cn(
         "focus-visible:outline-ring -mx-1 flex min-h-11 max-w-full min-w-0 items-center gap-2.5 rounded-md px-1 text-left after:absolute after:inset-0 after:content-[''] focus-visible:outline-2",
         inline ? "xl:min-h-8" : "max-w-72",

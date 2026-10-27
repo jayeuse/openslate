@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "./helpers/test";
+import { wireBoard } from "../helpers/wire";
 import {
+  calendarBoardId,
   calendarHref,
   calendarName,
   installCalendarApi,
@@ -39,7 +41,7 @@ test("Month draws bars, ruled chips named with their calendar, week numbers, and
   ).toBeVisible();
   await expect(month.getByText("W47", { exact: true })).toBeVisible();
   await expect(
-    month.getByRole("button", { name: "Wed, Nov 18", exact: true }),
+    month.getByRole("button", { name: "Wed, Nov 18, show week", exact: true }),
   ).toHaveAttribute("aria-current", "date");
   // The time is never cut, and a title takes two lines while its day has
   // room (Nov 23 has no all-day bar above it).
@@ -60,9 +62,7 @@ test("Month draws bars, ruled chips named with their calendar, week numbers, and
   await expect(
     page.getByRole("complementary", { name: "Calendars" }),
   ).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Calendars and record sources" })
-    .click();
+  await page.getByRole("button", { name: "Calendars", exact: true }).click();
   await expect(
     page.getByRole("checkbox", { name: calendarName }),
   ).toBeChecked();
@@ -147,19 +147,29 @@ test("an empty month points to the next event and goes there, or says there is n
     nextOccurrence: (window) =>
       window.start === "2026-10-01" ? { date: "2026-11-02" } : null,
   });
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(calendarHref());
   await expect(
     page.getByRole("status").filter({ hasText: "No events in October" }),
   ).toBeVisible();
-  await page
+  // The empty month says so on its own grid, so the toolbar stays one row.
+  const october = page.getByRole("region", { name: "October 2026 calendar" });
+  await expect(october.getByText("No events in October")).toBeVisible();
+  const toolbar = page.getByRole("group", { name: "Calendar", exact: true });
+  expect((await toolbar.boundingBox())!.height).toBeLessThanOrEqual(36);
+  await october
     .getByRole("button", {
-      name: "Go to the next event, Mon, Nov 2",
+      name: "Next: Mon, Nov 2, go to the next event",
       exact: true,
     })
     .click();
-  await expect(
-    page.getByRole("heading", { name: "November 2026", exact: true }),
-  ).toBeVisible();
+  const november = page.getByRole("heading", {
+    name: "November 2026",
+    exact: true,
+  });
+  await expect(november).toBeVisible();
+  // The button left with the empty month, so the new period takes focus.
+  await expect(november).toBeFocused();
   await expect
     .poll(() => api.windowReads.at(-1))
     .toEqual({ start: "2026-11-01", end: "2026-11-30" });
@@ -183,8 +193,8 @@ test("a phone opens on today's day list, Month shows dots and the day's rows, an
     page.getByRole("heading", { name: "Nov 16 – Nov 22", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("tab", { name: /^Wed, Nov 18, 3 items$/ }),
-  ).toHaveAttribute("aria-selected", "true");
+    page.getByRole("button", { name: /^Wed, Nov 18, 3 items$/ }),
+  ).toHaveAttribute("aria-pressed", "true");
   const day = page.getByRole("region", { name: "Selected day" });
   await expect(
     day.getByRole("button", { name: /^Pricing review,/ }),
@@ -243,4 +253,169 @@ test("Created by me filters events in the browser, and Archived lists archived e
   expect(
     api.eventListReads.some((query) => query.includes("archived=archived")),
   ).toBe(true);
+});
+
+test("at 1280×720 every Month target is at least 24px tall and shows whole, and a full day still counts +n more", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await installCalendarApi(page);
+  await page.goto(calendarHref());
+  const month = page.getByRole("region", { name: "November 2026 calendar" });
+  await expect(
+    month.getByRole("button", { name: "Wed, Nov 18, show week", exact: true }),
+  ).toBeVisible();
+  await expect(
+    month.getByRole("button", { name: /^\d+ more on Wed, Nov 18$/ }),
+  ).toBeVisible();
+  // Day numbers, chips, bars and "+n more": none is under the WCAG 2.5.8
+  // floor, and none is cut by its week row.
+  const small = await month.evaluate((region) =>
+    [...region.querySelectorAll("button")].flatMap((button) => {
+      const box = button.getBoundingClientRect();
+      const week = button.parentElement!.parentElement!.getBoundingClientRect();
+      return box.height < 24 || box.bottom > week.bottom + 0.5
+        ? [`${button.getAttribute("aria-label")} ${box.height}`]
+        : [];
+    }),
+  );
+  expect(small).toEqual([]);
+  expect(await documentScrolls(page)).toEqual({ down: false, across: false });
+});
+
+test("closing an event returns focus to its chip, and a day number's week takes focus at its title", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installCalendarApi(page);
+  await page.goto(calendarHref());
+  const month = page.getByRole("region", { name: "November 2026 calendar" });
+  const chip = month.getByRole("button", {
+    name: `Customer account review, ${calendarName}, Mon, Nov 16, 9am`,
+    exact: true,
+  });
+  await chip.click();
+  const sheet = page.getByRole("dialog", { name: "Customer account review" });
+  await expect(sheet).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await expect(chip).toBeFocused();
+
+  await month
+    .getByRole("button", { name: "Wed, Nov 18, show week", exact: true })
+    .click();
+  const week = page.getByRole("heading", {
+    name: "Nov 16 – Nov 22, 2026",
+    exact: true,
+  });
+  await expect(week).toBeVisible();
+  await expect(week).toBeFocused();
+});
+
+test("a search or a hidden calendar that empties the month says so, with the step that undoes it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installCalendarApi(page);
+  await page.goto(calendarHref());
+  const month = page.getByRole("region", { name: "November 2026 calendar" });
+  await expect(
+    month.getByRole("button", { name: /^Pricing review,/ }),
+  ).toBeVisible();
+  await page.getByRole("searchbox", { name: "Search events" }).fill("zzz");
+  await expect(month.getByText('No events match "zzz"')).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: 'No events match "zzz"' }),
+  ).toBeAttached();
+  await month
+    .getByRole("button", { name: "Clear search", exact: true })
+    .click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search events" }),
+  ).toHaveValue("");
+  await expect(
+    month.getByRole("button", { name: /^Pricing review,/ }),
+  ).toBeVisible();
+
+  const rail = page.getByRole("complementary", { name: "Calendars" });
+  for (const name of [calendarName, "Cards · Due", "Quotes · Valid until"])
+    await rail.getByRole("checkbox", { name }).uncheck();
+  await expect(month.getByText("3 calendars hidden")).toBeVisible();
+  await month.getByRole("button", { name: "Show all", exact: true }).click();
+  await expect(
+    rail.getByRole("checkbox", { name: calendarName }),
+  ).toBeChecked();
+  await expect(
+    month.getByRole("button", { name: /^Pricing review,/ }),
+  ).toBeVisible();
+});
+
+test("the month's day numbers and the mini month are one Tab stop each, moved with arrow keys", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installCalendarApi(page);
+  await page.goto(calendarHref());
+  const month = page.getByRole("region", { name: "November 2026 calendar" });
+  const today = month.getByRole("button", {
+    name: "Wed, Nov 18, show week",
+    exact: true,
+  });
+  await expect(today).toHaveAttribute("tabindex", "0");
+  await expect(
+    month.locator('button[aria-label$=", show week"][tabindex="0"]'),
+  ).toHaveCount(1);
+  await today.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    month.getByRole("button", { name: "Thu, Nov 19, show week", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    month.getByRole("button", { name: "Thu, Nov 26, show week", exact: true }),
+  ).toBeFocused();
+
+  const rail = page.getByRole("complementary", { name: "Calendars" });
+  await expect(
+    rail.locator('button[aria-label^="Go to "][tabindex="0"]'),
+  ).toHaveCount(1);
+  const mini = rail.getByRole("button", { name: "Go to Wed, Nov 18" });
+  await mini.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(
+    rail.getByRole("button", { name: "Go to Tue, Nov 17" }),
+  ).toBeFocused();
+});
+
+test("an alert above the month keeps its bars at 1280×720, and the page still does not scroll", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await installCalendarApi(page);
+  await page.route(`**/api/boards/${calendarBoardId}`, (route) =>
+    route.fulfill({
+      json: wireBoard({
+        id: calendarBoardId,
+        name: "Calendar board",
+        description: "Board calendar",
+        level: "manage",
+        status: "archived",
+        created_at: "2026-09-01T00:00:00Z",
+        updated_at: "2026-09-01T00:00:00Z",
+      }),
+    }),
+  );
+  await page.goto(calendarHref());
+  await expect(
+    page.getByText("This Board is archived and read-only."),
+  ).toBeVisible();
+  const month = page.getByRole("region", { name: "November 2026 calendar" });
+  // A week row keeps a lane for its bars, so the expo is not "+1 more".
+  await expect(
+    month.getByRole("button", {
+      name: `Logistics expo, ${calendarName}, Wed, Nov 18, all day`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect((await documentScrolls(page)).down).toBe(false);
 });

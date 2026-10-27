@@ -126,6 +126,14 @@ export function canonicalBoardUrl(
   return `/boards?${params.toString()}` as Route;
 }
 
+/**
+ * The one line a refused or unknown board shows (the Same Answer Rule). A
+ * detail read that failed with it was refused; any other failure is
+ * temporary and may be retried.
+ */
+export const BOARD_UNAVAILABLE =
+  "It may have been removed, or you may not have access.";
+
 export type ResourceState<T> = {
   key: string | null;
   sequence: number;
@@ -227,7 +235,7 @@ function invalidateBoardResourceAccess<L, D>(
     sequence: detailSequence,
     data: null,
     status: "error",
-    error: "It may have been removed, or you may not have access.",
+    error: BOARD_UNAVAILABLE,
   }));
 }
 
@@ -327,7 +335,7 @@ export function useServerBoardsResource(route: BoardRoute) {
                   sequence: detailRequest,
                   data: null,
                   status: "error",
-                  error: "It may have been removed, or you may not have access.",
+                  error: BOARD_UNAVAILABLE,
                 }
               : current,
           );
@@ -427,7 +435,7 @@ export function useServerBoardsResource(route: BoardRoute) {
             key: candidateId,
             sequence,
             error: accessDenied(error)
-              ? "It may have been removed, or you may not have access."
+              ? BOARD_UNAVAILABLE
               : "Could not refresh this Board. Try again.",
             denied: accessDenied(error),
           }),
@@ -454,6 +462,9 @@ export function useServerBoardsResource(route: BoardRoute) {
     candidate,
     /** A department's address names no Board this person can read. */
     departmentMissing,
+    /** The open board's read was refused, so Retry cannot help. */
+    detailDenied:
+      detail.status === "error" && detail.error === BOARD_UNAVAILABLE,
     selectedBoard:
       candidateId && detail.key === candidateId ? detail.data : null,
     listItems,

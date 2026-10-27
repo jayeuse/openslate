@@ -75,29 +75,61 @@ export function itemAccessibleName(
 const chipBase =
   "relative flex min-w-0 cursor-pointer items-start gap-1.5 overflow-hidden rounded-sm text-left text-xs leading-4 text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]";
 
-export function chipClass(item: CalendarItem, bar: boolean): string {
+/**
+ * A mark's look. Hover tints it: `hover:` on the control itself (Week
+ * blocks), `group-hover:` on a chip's inner mark. Class names are written
+ * out whole, so Tailwind finds them.
+ */
+const HOVER = {
+  bar: {
+    self: "hover:bg-[color-mix(in_oklab,var(--cal)_42%,var(--card))]",
+    group: "group-hover:bg-[color-mix(in_oklab,var(--cal)_42%,var(--card))]",
+  },
+  outlined: {
+    self: "hover:bg-[color-mix(in_oklab,var(--cal)_10%,var(--card))]",
+    group: "group-hover:bg-[color-mix(in_oklab,var(--cal)_10%,var(--card))]",
+  },
+  ruled: { self: "hover:bg-accent", group: "group-hover:bg-accent" },
+} as const;
+
+function markClass(
+  item: CalendarItem,
+  bar: boolean,
+  hover: "self" | "group",
+  wraps = false,
+): string {
   if (bar)
     return cn(
-      chipBase,
-      "items-center rounded-full bg-[color-mix(in_oklab,var(--cal)_32%,var(--card))] px-2.5 font-medium hover:bg-[color-mix(in_oklab,var(--cal)_42%,var(--card))]",
+      "items-center bg-[color-mix(in_oklab,var(--cal)_32%,var(--card))] px-2.5 font-medium",
+      // A pill that wraps to two lines keeps a softer corner.
+      wraps ? "rounded-lg" : "rounded-full",
+      HOVER.bar[hover],
     );
   if (item.kind === "source")
     return cn(
-      chipBase,
-      "px-1.5 py-0.5 ring-1 ring-[var(--cal)] ring-inset hover:bg-[color-mix(in_oklab,var(--cal)_10%,var(--card))]",
+      "rounded-sm px-1.5 py-0.5 ring-1 ring-[var(--cal)] ring-inset",
+      HOVER.outlined[hover],
     );
   if (item.kind === "due")
     return cn(
-      chipBase,
-      "border border-dashed border-[var(--cal)] px-1.5 py-px hover:bg-[color-mix(in_oklab,var(--cal)_10%,var(--card))]",
+      "rounded-sm border border-dashed border-[var(--cal)] px-1.5 py-px",
+      HOVER.outlined[hover],
     );
   return cn(
-    chipBase,
-    "py-0.5 pr-1 pl-2 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-[var(--cal)] hover:bg-accent",
+    "rounded-sm py-0.5 pr-1 pl-2 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-[var(--cal)]",
+    HOVER.ruled[hover],
   );
 }
 
-/** One item in a month cell, the week's all-day row, or a day popover. */
+export function chipClass(item: CalendarItem, bar: boolean): string {
+  return cn(chipBase, markClass(item, bar, "self"));
+}
+
+/**
+ * One item in a month cell, the week's all-day row, or a day popover. The
+ * button is the 24px target per line (WCAG 2.5.8); the mark inside it is
+ * drawn 2px in from top and bottom, so stacked chips keep a gap.
+ */
 export function CalendarChip({
   item,
   calendar,
@@ -105,6 +137,8 @@ export function CalendarChip({
   bar = false,
   lines = 1,
   showTime = true,
+  continuesBefore = false,
+  continuesAfter = false,
   className,
   style,
   onOpen,
@@ -115,6 +149,9 @@ export function CalendarChip({
   bar?: boolean;
   lines?: 1 | 2;
   showTime?: boolean;
+  /** A bar that runs on from the previous or into the next week. */
+  continuesBefore?: boolean;
+  continuesAfter?: boolean;
   className?: string;
   style?: CSSProperties;
   onOpen: OpenCalendarItem;
@@ -129,7 +166,10 @@ export function CalendarChip({
       data-calendar-item={item.kind}
       aria-label={itemAccessibleName(item, calendar, region)}
       title={`${item.kind === "due" ? "Due: " : ""}${item.title} · ${calendar?.name ?? ""}`}
-      className={cn(chipClass(item, bar), className)}
+      className={cn(
+        "group text-foreground relative flex min-h-6 min-w-0 cursor-pointer rounded-sm py-0.5 text-left text-xs leading-4 outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]",
+        className,
+      )}
       style={{ ...colorStyle(calendar?.color ?? "var(--ink-muted)"), ...style }}
       onClick={(event: MouseEvent<HTMLButtonElement>) =>
         onOpen(item, event.currentTarget)
@@ -137,20 +177,29 @@ export function CalendarChip({
     >
       <span
         className={cn(
-          "min-w-0 flex-1",
-          lines === 2 ? "line-clamp-2 break-words" : "truncate",
+          "relative flex min-w-0 flex-1 items-start gap-1.5 overflow-hidden",
+          markClass(item, bar, "group", lines === 2),
+          continuesBefore && "rounded-l-none",
+          continuesAfter && "rounded-r-none",
         )}
       >
-        {item.kind === "due" ? (
-          <span className="text-muted-foreground">Due </span>
-        ) : null}
-        {item.title}
-      </span>
-      {time ? (
-        <span className="text-muted-foreground shrink-0 tabular-nums">
-          {time}
+        <span
+          className={cn(
+            "min-w-0 flex-1",
+            lines === 2 ? "line-clamp-2 break-words" : "truncate",
+          )}
+        >
+          {item.kind === "due" ? (
+            <span className="text-muted-foreground">Due </span>
+          ) : null}
+          {item.title}
         </span>
-      ) : null}
+        {time ? (
+          <span className="text-muted-foreground shrink-0 tabular-nums">
+            {time}
+          </span>
+        ) : null}
+      </span>
     </button>
   );
 }

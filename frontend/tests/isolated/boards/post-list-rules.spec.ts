@@ -180,19 +180,25 @@ test("the post menu offers only the actions the viewer may take", () => {
   const archived: BoardPost = { ...draft, status: "archived" };
   const edited: BoardPost = { ...published, edited: true };
 
-  expect(postMenuActions(published, reader)).toEqual(["copy-link"]);
-  expect(postMenuActions(edited, reader)).toEqual(["copy-link", "history"]);
-  expect(postMenuActions(published, otherWriter)).toEqual(["copy-link"]);
-  expect(postMenuActions(published, author)).toEqual([
+  expect(postMenuActions(published, reader, true)).toEqual(["copy-link"]);
+  expect(postMenuActions(edited, reader, true)).toEqual([
+    "copy-link",
+    "history",
+  ]);
+  expect(postMenuActions(published, otherWriter, true)).toEqual(["copy-link"]);
+  expect(postMenuActions(published, author, true)).toEqual([
     "copy-link",
     "unpublish",
     "archive",
   ]);
-  expect(postMenuActions(draft, author)).toEqual(["archive", "delete"]);
-  expect(postMenuActions(archived, manager)).toEqual(["restore", "delete"]);
-  expect(postMenuActions(archived, author)).toEqual(["delete"]);
+  expect(postMenuActions(draft, author, false)).toEqual(["archive", "delete"]);
+  expect(postMenuActions(archived, manager, false)).toEqual([
+    "restore",
+    "delete",
+  ]);
+  expect(postMenuActions(archived, author, false)).toEqual(["delete"]);
   expect(
-    postMenuActions(published, { ...manager, boardActive: false }),
+    postMenuActions(published, { ...manager, boardActive: false }, true),
   ).toEqual(["copy-link"]);
 
   expect(canEditPost(published, author)).toBe(true);
@@ -200,4 +206,20 @@ test("the post menu offers only the actions the viewer may take", () => {
   expect(canEditPost(published, otherWriter)).toBe(false);
   expect(canEditPost(published, reader)).toBe(false);
   expect(canEditPost(archived, manager)).toBe(false);
+});
+
+test("Delete draft shows only for a post that was never published", () => {
+  const author: PostViewer = {
+    actorId,
+    canWrite: true,
+    canManage: false,
+    boardActive: true,
+  };
+  const manager: PostViewer = { ...author, actorId: otherId, canManage: true };
+  const archived: BoardPost = { ...draft, status: "archived" };
+  // A draft of a post that was published before, and its archived copy.
+  expect(postMenuActions(draft, author, true)).toEqual(["archive"]);
+  expect(postMenuActions(archived, manager, true)).toEqual(["restore"]);
+  // Until the manage state is read, Delete draft waits.
+  expect(postMenuActions(draft, author, null)).toEqual(["archive"]);
 });

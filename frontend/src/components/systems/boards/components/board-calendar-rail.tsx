@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import {
@@ -30,6 +30,7 @@ import type { CalendarSource } from "../adapters/board-calendar-sources-api";
 import {
   monthGrid,
   monthOf,
+  moveDayFocus,
   shiftAnchor,
   type WeekStart,
 } from "../domain/calendar-dates";
@@ -143,12 +144,16 @@ function CalendarListItem({
         <span className="truncate">{row.name}</span>
       </label>
       {failed ? (
-        <span className="text-warn-text flex shrink-0 items-center gap-1 text-xs">
+        // A failed read is a request failure (Request feedback).
+        <span
+          role="alert"
+          className="text-danger-text flex shrink-0 items-center gap-1 text-xs"
+        >
           not loaded ·
           <Button
             type="button"
             variant="ghost"
-            className="text-warn-text h-auto min-h-11 px-1 text-xs underline xl:min-h-6"
+            className="text-danger-text h-auto min-h-11 px-1 text-xs underline xl:min-h-6"
             aria-label={`Retry ${row.name}`}
             onClick={() => actions.onRetry(row.id)}
           >
@@ -244,12 +249,42 @@ export function MiniMonth({
 }) {
   const [shown, setShown] = useState(anchor);
   const [followed, setFollowed] = useState(anchor);
+  const [focusDay, setFocusDay] = useState<string | null>(null);
+  const daysRef = useRef<HTMLDivElement>(null);
   // The mini month follows the calendar when the calendar moves.
   if (followed !== anchor) {
     setFollowed(anchor);
     setShown(anchor);
   }
   const grid = monthGrid(shown, weekStart);
+  const days = grid.flat();
+  // The days are one Tab stop; arrow keys move between them, and past the
+  // month's edge the mini month turns its page.
+  const tabDay =
+    focusDay && days.includes(focusDay)
+      ? focusDay
+      : days.includes(anchor) && monthOf(anchor) === monthOf(shown)
+        ? anchor
+        : `${monthOf(shown)}-01`;
+  // Focus waits for the page that holds the day.
+  const [pendingFocus, setPendingFocus] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const button = daysRef.current?.querySelector<HTMLButtonElement>(
+      `[data-mini-day="${pendingFocus}"]`,
+    );
+    if (!button) return;
+    button.focus();
+    setPendingFocus(null);
+  }, [pendingFocus, shown]);
+  function moveFocus(event: KeyboardEvent<HTMLButtonElement>, date: string) {
+    const next = moveDayFocus(date, event.key, weekStart);
+    if (!next) return;
+    event.preventDefault();
+    setFocusDay(next);
+    if (!days.includes(next)) setShown(next);
+    setPendingFocus(next);
+  }
   return (
     <div>
       <div className="flex items-center justify-between pb-1">
@@ -282,7 +317,10 @@ export function MiniMonth({
           </Button>
         </span>
       </div>
-      <div className="grid grid-cols-7 text-center text-xs tabular-nums">
+      <div
+        ref={daysRef}
+        className="grid grid-cols-7 text-center text-xs tabular-nums"
+      >
         {grid[0].map((date) => (
           <span
             key={date}
@@ -295,8 +333,12 @@ export function MiniMonth({
           <button
             key={date}
             type="button"
+            data-mini-day={date}
+            tabIndex={date === tabDay ? 0 : -1}
             aria-label={`Go to ${dayLabel(date, region)}`}
             onClick={() => onPick(date)}
+            onKeyDown={(event) => moveFocus(event, date)}
+            onFocus={() => setFocusDay(date)}
             className={cn(
               "hover:bg-accent focus-visible:outline-ring grid h-[26px] place-items-center rounded-sm outline-none focus-visible:outline-2",
               monthOf(date) !== monthOf(shown) && "text-muted-foreground",
@@ -321,7 +363,12 @@ export function CalendarsPopover({
   rows: readonly CalendarListRow[];
   actions: CalendarListActions;
 }) {
-  const failed = rows.some((row) => actions.statuses.get(row.id) === "error");
+  const failed = rows.filter(
+    (row) => actions.statuses.get(row.id) === "error",
+  ).length;
+  const hidden = rows.filter((row) => actions.hidden.has(row.id)).length;
+  // The button says what the folded list hides or failed to load; its name
+  // is its words.
   return (
     <Popover>
       <PopoverTrigger
@@ -329,17 +376,27 @@ export function CalendarsPopover({
           <Button
             type="button"
             variant="outline"
-            className="min-h-11 max-md:w-11 max-md:px-0 xl:min-h-8"
-            aria-label={
-              failed
-                ? "Calendars and record sources, one not loaded"
-                : "Calendars and record sources"
-            }
+            className="min-h-11 max-md:min-w-11 max-md:px-2 xl:h-8 xl:min-h-8 xl:px-2.5"
           />
         }
       >
         <ListFilter aria-hidden="true" />
-        <span className="max-md:sr-only">Calendars</span>
+        <span className={hidden || failed ? undefined : "max-md:sr-only"}>
+          Calendars
+          {hidden ? (
+            <span className="text-muted-foreground"> · {hidden} hidden</span>
+          ) : null}
+          {failed ? (
+            <span className="text-danger-text">
+              {" · "}
+              <span
+                aria-hidden="true"
+                className="bg-danger-text mr-1 inline-block size-1.5 rounded-full align-middle"
+              />
+              {failed} not loaded
+            </span>
+          ) : null}
+        </span>
       </PopoverTrigger>
       <PopoverContent align="start" className="slim-ui w-72">
         <CalendarList rows={rows} actions={actions} />

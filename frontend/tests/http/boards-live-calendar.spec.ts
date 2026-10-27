@@ -449,7 +449,7 @@ test.describe("Boards workspace regional dates", () => {
         browser.getByRole("heading", { name: "septembre 2026", exact: true }),
       ).toBeVisible();
       const day = browser.getByRole("button", {
-        name: "lun. 14 sept.",
+        name: "lun. 14 sept., show week",
         exact: true,
       });
       await expect(day).toHaveAttribute("aria-current", "date");
@@ -529,7 +529,7 @@ test.describe("organization calendar week start", () => {
         .getByText("Tue", { exact: true })
         .boundingBox();
       const firstDay = await calendar
-        .getByRole("button", { name: "Tue, Sep 1", exact: true })
+        .getByRole("button", { name: "Tue, Sep 1, show week", exact: true })
         .boundingBox();
       expect(tuesday).not.toBeNull();
       expect(firstDay).not.toBeNull();
@@ -540,7 +540,7 @@ test.describe("organization calendar week start", () => {
         .toEqual({ start: "2026-09-01", end: "2026-09-30" });
       // A day number opens its week, which starts on the week start.
       await calendar
-        .getByRole("button", { name: "Wed, Sep 16", exact: true })
+        .getByRole("button", { name: "Wed, Sep 16, show week", exact: true })
         .click();
       await expect
         .poll(() => windows.at(-1))

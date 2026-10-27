@@ -865,7 +865,9 @@ async function exerciseConnectedBoard(
   ]);
   expect(createdPost.status()).toBe(201);
   const postId = ((await createdPost.json()) as { id: string }).id;
-  await expect(page.getByText("Draft saved.")).toBeVisible();
+  await expect(
+    page.getByRole("status").getByText("Draft saved", { exact: true }),
+  ).toBeVisible();
   await page.getByLabel("Add an attachment").setInputFiles(postImage);
   await expect(page.getByText(`${postImage.name} attached.`)).toBeVisible();
   await page

@@ -2,7 +2,6 @@
 
 import type { ReactNode, RefObject } from "react";
 import {
-  ArrowRight,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -17,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { CalendarShow, CalendarView } from "../domain/calendar-dates";
 
 const VIEWS: { value: CalendarView; label: string }[] = [
@@ -32,15 +31,11 @@ export const SHOW_LABELS: Record<CalendarShow, string> = {
   archived: "Archived",
 };
 
-export type CalendarStatus = {
-  message: string;
-  next: { text: string; name: string } | null;
-};
-
 /**
  * One toolbar row (BR16, BR51): the Calendars popover below 1440px,
- * previous, next, the period, Today, the empty-month status, then search,
- * the view switch, and Show. Phones wrap it into short rows (BR59).
+ * previous, next, the period, Today, then search, the view switch, and
+ * Show. An empty month says so on its own grid (BR43), so the row never
+ * wraps. Phones wrap it into short rows (BR59).
  */
 export function BoardCalendarToolbar({
   calendars,
@@ -51,14 +46,13 @@ export function BoardCalendarToolbar({
   search,
   navigation,
   todayRef,
-  status,
+  titleRef,
   onPrevious,
   onNext,
   onToday,
   onView,
   onShow,
   onSearch,
-  onGoToNext,
 }: {
   calendars: ReactNode;
   title: string;
@@ -69,18 +63,18 @@ export function BoardCalendarToolbar({
   /** Previous and next move the period; Upcoming has none. */
   navigation: { previous: string; next: string } | null;
   todayRef: RefObject<HTMLButtonElement | null>;
-  status: CalendarStatus | null;
+  /** The period title, which takes focus after a jump to another period. */
+  titleRef: RefObject<HTMLHeadingElement | null>;
   onPrevious: () => void;
   onNext: () => void;
   onToday: () => void;
   onView: (view: CalendarView) => void;
   onShow: (show: CalendarShow) => void;
   onSearch: (value: string) => void;
-  onGoToNext: () => void;
 }) {
   return (
     <div
-      role="toolbar"
+      role="group"
       aria-label="Calendar"
       className="flex min-w-0 shrink-0 flex-wrap items-center gap-2"
     >
@@ -110,9 +104,11 @@ export function BoardCalendarToolbar({
         </span>
       ) : null}
       <h2
+        ref={titleRef}
+        tabIndex={-1}
         data-slot="section-title"
         aria-live="polite"
-        className="min-w-0 text-lg font-semibold whitespace-nowrap tabular-nums"
+        className="min-w-0 rounded-sm text-lg font-semibold whitespace-nowrap tabular-nums outline-none focus-visible:outline-2 focus-visible:outline-[var(--focus)]"
       >
         {title}
       </h2>
@@ -125,52 +121,8 @@ export function BoardCalendarToolbar({
       >
         Today
       </Button>
-      {status ? (
-        <span
-          role="status"
-          className="text-muted-foreground flex items-center gap-1.5 text-sm whitespace-nowrap"
-        >
-          <span>{status.message}</span>
-          {status.next ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <Button
-                type="button"
-                variant="ghost"
-                className="text-action-text min-h-11 px-1.5 xl:min-h-7"
-                aria-label={status.next.name}
-                onClick={onGoToNext}
-              >
-                {status.next.text}
-                <ArrowRight aria-hidden="true" data-icon="inline-end" />
-              </Button>
-            </>
-          ) : null}
-        </span>
-      ) : null}
       <span className="hidden flex-1 md:block" />
-      <div
-        role="group"
-        aria-label="Calendar view"
-        className="bg-muted grid grid-cols-3 rounded-md p-0.5 max-md:order-90 max-md:w-full md:inline-flex"
-      >
-        {VIEWS.map((option) => (
-          <Button
-            key={option.value}
-            type="button"
-            variant="ghost"
-            aria-pressed={view === option.value}
-            className={cn(
-              "min-h-11 px-3 xl:min-h-7 xl:px-2.5",
-              view === option.value && "bg-card shadow-xs",
-            )}
-            onClick={() => onView(option.value)}
-          >
-            {option.label}
-          </Button>
-        ))}
-      </div>
-      <label className="relative block min-w-0 max-md:order-95 max-md:flex-1 md:w-40">
+      <label className="relative block min-w-0 max-md:order-95 max-md:flex-1 md:w-32 min-[90rem]:w-40">
         <span className="sr-only">Search events</span>
         <Search
           aria-hidden="true"
@@ -185,6 +137,27 @@ export function BoardCalendarToolbar({
           onChange={(event) => onSearch(event.currentTarget.value)}
         />
       </label>
+      <ToggleGroup
+        aria-label="Calendar view"
+        variant="segmented"
+        multiple={false}
+        value={[view]}
+        className="gap-0.5 p-0.5 max-md:order-90 max-md:w-full md:w-auto"
+        onValueChange={(selection) => {
+          const next = VIEWS.find((option) => option.value === selection[0]);
+          if (next) onView(next.value);
+        }}
+      >
+        {VIEWS.map((option) => (
+          <ToggleGroupItem
+            key={option.value}
+            value={option.value}
+            className="px-3 text-sm xl:px-2"
+          >
+            {option.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
       {showOptions.length > 1 ? (
         <DropdownMenu>
           <DropdownMenuTrigger

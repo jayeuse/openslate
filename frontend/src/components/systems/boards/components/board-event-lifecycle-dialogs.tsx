@@ -77,10 +77,12 @@ export function BoardEventLifecycleDialog({
             disabled={pending || !canConfirm}
             onClick={onConfirm}
           >
-            {pending
-              ? "Saving…"
-              : target?.kind === "archive"
-                ? "Archive event"
+            {target?.kind === "archive"
+              ? pending
+                ? "Archiving…"
+                : "Archive event"
+              : pending
+                ? "Restoring…"
                 : "Restore event"}
           </Button>
         </AlertDialogFooter>

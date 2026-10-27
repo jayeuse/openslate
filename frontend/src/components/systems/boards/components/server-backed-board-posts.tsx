@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { FilterRow } from "@/components/systems/access/components/access-toolbar";
 import { Button } from "@/components/ui/button";
@@ -11,6 +18,7 @@ import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/
 import type { WorkspaceRegion } from "@/lib/date-time";
 import type { BoardManagementBoard } from "../adapters/board-management-api";
 import { readBoardPost, type BoardPost } from "../adapters/board-posts-api";
+import { getBoardPostManageState } from "../adapters/board-post-manage-state-api";
 import type { BoardPostAuthorChoice } from "../adapters/board-post-author-api";
 import {
   canEditPost,
@@ -61,7 +69,12 @@ function useSideBySide(): boolean {
   );
 }
 
-export type PostParams = { post?: string | null; show?: string | null };
+export type PostParams = {
+  post?: string | null;
+  show?: string | null;
+  /** "push" adds a history entry (a phone opening a post); else replace. */
+  history?: "push";
+};
 
 type PostsProps = {
   board: BoardManagementBoard;
@@ -71,7 +84,7 @@ type PostsProps = {
   selectedPostId: string | null;
   /** `?show=`: the list state. */
   show: string | null;
-  /** Replaces the post and state in the address. */
+  /** Changes the post and state in the address. */
   onParams: (params: PostParams) => void;
   /** The header's slot for the tab's one primary action. */
   primarySlot: HTMLElement | null;
@@ -134,6 +147,7 @@ function ScopedServerBackedBoardPosts({
 }: PostsProps) {
   const boardId = board.id;
   const actorId = useVerifiedWorkspaceUserId();
+  const router = useRouter();
   const sideBySide = useSideBySide();
   const states = postStatesFor(board.level);
   const state = parsePostShow(show, board.level);
@@ -289,6 +303,58 @@ function ScopedServerBackedBoardPosts({
   });
   const [historyPost, setHistoryPost] = useState<BoardPost | null>(null);
 
+  // Delete draft waits for the post's manage state, read as the menu opens:
+  // only a post that was never published offers it (BR14).
+  const [manageState, setManageState] = useState<{
+    postId: string;
+    publishedBefore: boolean;
+  } | null>(null);
+  const manageRead = useRef(0);
+  function readManageState(post: BoardPost) {
+    const request = ++manageRead.current;
+    setManageState(null);
+    void getBoardPostManageState(boardId, post.id)
+      .then((state) => {
+        if (request === manageRead.current)
+          setManageState({
+            postId: post.id,
+            publishedBefore: state.publishedBefore,
+          });
+      })
+      // Without the read the menu keeps its other actions.
+      .catch(() => undefined);
+  }
+  const publishedBefore =
+    openPost && manageState?.postId === openPost.id
+      ? manageState.publishedBefore
+      : null;
+
+  // On a phone the post replaces the list: opening a row adds a history
+  // entry, so the system Back and Back to posts both return to the list.
+  // Focus moves to the post's title, then back to its row.
+  const pushedPostId = useRef<string | null>(null);
+  const [focusTitle, setFocusTitle] = useState(false);
+  const [focusRow, setFocusRow] = useState<string | null>(null);
+  const titleFocused = useCallback(() => setFocusTitle(false), []);
+  const rowFocused = useCallback(() => setFocusRow(null), []);
+  function openRow(postId: string) {
+    if (sideBySide) {
+      onParams({ post: postId });
+      return;
+    }
+    pushedPostId.current = postId;
+    setFocusTitle(true);
+    onParams({ post: postId, history: "push" });
+  }
+  function backToList() {
+    setFocusTitle(false);
+    setFocusRow(selectedPostId);
+    if (selectedPostId !== null && pushedPostId.current === selectedPostId) {
+      pushedPostId.current = null;
+      router.back();
+    } else onParams({ post: null });
+  }
+
   function runMenu(post: BoardPost, action: PostMenuAction) {
     if (action === "history") {
       setHistoryPost(post);
@@ -309,7 +375,9 @@ function ScopedServerBackedBoardPosts({
 
   const paneState: PostPaneState =
     selectedPostId === null
-      ? { kind: "none" }
+      ? // Beside an empty list, or while it first loads, there is no post
+        // to choose, so the pane holds no hint.
+        { kind: "none", hint: (page?.items.length ?? 0) > 0 }
       : authorsDenied
         ? {
             kind: "unavailable",
@@ -364,7 +432,7 @@ function ScopedServerBackedBoardPosts({
   ) : null;
 
   return (
-    <div className="slim-ui flex min-w-0 flex-col gap-4 lg:grid lg:grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)] xl:min-h-0 xl:flex-1 xl:grid-rows-[minmax(0,1fr)]">
+    <div className="slim-ui flex min-w-0 flex-col gap-4 lg:grid lg:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)] xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)] xl:grid-rows-[minmax(0,1fr)]">
       {primarySlot && newPost ? createPortal(newPost, primarySlot) : null}
       <div
         className={
@@ -448,7 +516,10 @@ function ScopedServerBackedBoardPosts({
             }
           }}
           selectedId={selectedPostId}
-          onOpen={(postId) => onParams({ post: postId })}
+          onOpen={openRow}
+          focusRowId={selectedPostId === null ? focusRow : null}
+          onRowFocused={rowFocused}
+          emptyTitle={emptyCopy.title}
           onPage={(next) => setPaging({ scope: listScope, offset: next })}
           empty={
             <div className="flex flex-col items-start gap-2 p-5">
@@ -503,7 +574,9 @@ function ScopedServerBackedBoardPosts({
             canEditPost(openPost, viewer) &&
             editor.view.canEdit
           }
-          actions={openPost ? postMenuActions(openPost, viewer) : []}
+          actions={
+            openPost ? postMenuActions(openPost, viewer, publishedBefore) : []
+          }
           busy={
             (openPost !== null && actions.pendingPostId === openPost.id) ||
             editor.view.pending
@@ -519,7 +592,12 @@ function ScopedServerBackedBoardPosts({
           onAction={(action) => {
             if (openPost) runMenu(openPost, action);
           }}
-          onBack={() => onParams({ post: null })}
+          onBack={backToList}
+          onMenuOpen={() => {
+            if (openPost) readManageState(openPost);
+          }}
+          focusTitle={focusTitle && !sideBySide}
+          onTitleFocused={titleFocused}
         />
       </div>
       <BoardPostEditorDialog
@@ -561,11 +639,6 @@ function ScopedServerBackedBoardPosts({
           actions.confirmation && actions.confirmation.kind !== "restore"
             ? MENU_CONFIRM[actions.confirmation.kind].action
             : ""
-        }
-        phrase={
-          actions.confirmation?.kind === "delete"
-            ? actions.confirmation.title
-            : undefined
         }
         disabled={actions.pendingPostId !== null}
         onCancel={actions.cancel}

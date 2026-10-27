@@ -576,7 +576,11 @@ test("list rows are two lines that open the post, pinned first, with no cards or
   await expect(page).toHaveURL(
     (url) => url.searchParams.get("post") === postId,
   );
-  await expect(rows.nth(0)).toHaveAttribute("aria-current", "true");
+  // The open row's button carries aria-current.
+  await expect(rows.nth(0).getByRole("button")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
   const reader = postPane(page, browserPost.title);
   await expect(
     reader.getByText(browserPost.body, { exact: true }),
@@ -585,8 +589,14 @@ test("list rows are two lines that open the post, pinned first, with no cards or
 
   await postRow(page, "Older yard notice").click();
   await expect(postPane(page, "Older yard notice")).toBeVisible();
-  await expect(rows.nth(1)).toHaveAttribute("aria-current", "true");
-  await expect(rows.nth(0)).not.toHaveAttribute("aria-current", "true");
+  await expect(rows.nth(1).getByRole("button")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await expect(rows.nth(0).getByRole("button")).not.toHaveAttribute(
+    "aria-current",
+    "true",
+  );
 
   api.setPublishedItems([]);
   await page.goto(`/boards?board=${boardId}&section=posts`);
@@ -1679,7 +1689,7 @@ test("post invalidation keeps a held Save in its editor while the list updates",
     );
     release();
     await expect(
-      editor.getByText("Draft saved.", { exact: true }),
+      editor.getByRole("status").getByText("Draft saved", { exact: true }),
     ).toBeVisible();
     expect(api.writes).toHaveLength(1);
   } finally {
@@ -1938,7 +1948,7 @@ test.describe("local post expiry", () => {
       .getByRole("button", { name: "Save draft", exact: true })
       .click();
     await expect(
-      editor.getByText("Draft saved.", { exact: true }),
+      editor.getByRole("status").getByText("Draft saved", { exact: true }),
     ).toBeVisible();
     expect(api.writes[0]?.body).toMatchObject({
       pinned: true,
@@ -1966,7 +1976,7 @@ test.describe("local post expiry", () => {
       .getByRole("button", { name: "Save draft", exact: true })
       .click();
     await expect(
-      reopened.getByText("Draft saved.", { exact: true }),
+      reopened.getByRole("status").getByText("Draft saved", { exact: true }),
     ).toBeVisible();
     expect(api.writes[1]?.body).toMatchObject({
       pinned: false,
@@ -1992,7 +2002,7 @@ test.describe("local post expiry", () => {
       .getByRole("button", { name: "Save draft", exact: true })
       .click();
     await expect(
-      editor.getByText("Draft saved.", { exact: true }),
+      editor.getByRole("status").getByText("Draft saved", { exact: true }),
     ).toBeVisible();
     expect(api.writes[0]?.body).not.toHaveProperty("pinned");
     expect(api.writes[0]?.body).not.toHaveProperty("expires_at");
@@ -2019,7 +2029,7 @@ test.describe("local post expiry", () => {
         editor.getByRole("checkbox", { name: "Pin to top" }),
       ).not.toBeChecked();
       await expect(
-        editor.getByText("Draft saved.", { exact: true }),
+        editor.getByRole("status").getByText("Draft saved", { exact: true }),
       ).toHaveCount(0);
     });
   }
@@ -2552,4 +2562,152 @@ test.describe("still page", () => {
     await expect(postList(page)).toBeVisible();
     await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
   });
+
+  test("a phone moves focus with the post, and Back works like the system Back", async ({
+    page,
+  }) => {
+    await installPostBrowserApi(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    const row = postRow(page, browserPost.title);
+    await row.click();
+    const reader = postPane(page, browserPost.title);
+    // The open post takes focus at its title, where a screen reader starts.
+    await expect(
+      reader.getByRole("heading", { level: 2, name: browserPost.title }),
+    ).toBeFocused();
+    await reader.getByRole("button", { name: "Back to posts" }).click();
+    await expect(postList(page)).toBeVisible();
+    // Focus returns to the row of the post that was open.
+    await expect(row).toBeFocused();
+    // Opening the row added a history entry, and Back to posts went back
+    // over it, so Forward opens the post again.
+    await page.goForward();
+    await expect(reader).toBeVisible();
+    // The system Back returns to the list.
+    await page.goBack();
+    await expect(postList(page)).toBeVisible();
+    await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
+  });
+});
+
+test("a blank new post closes at once, and typed text asks before it is discarded", async ({
+  page,
+}) => {
+  await installS05PostApi(page);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const newPost = page
+    .getByRole("button", { name: "New post", exact: true })
+    .first();
+  await newPost.click();
+  const editor = page.getByRole("dialog", { name: "New post", exact: true });
+  await expect(editor).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  // A click outside closes a blank post too.
+  await newPost.click();
+  await expect(editor).toBeVisible();
+  await page.mouse.click(4, 4);
+  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+
+  await newPost.click();
+  await editor.getByLabel("Title", { exact: true }).fill("Dock 3 closes");
+  await page.keyboard.press("Escape");
+  const discard = page.getByRole("alertdialog", {
+    name: "Discard unsaved post changes?",
+    exact: true,
+  });
+  await expect(discard).toBeVisible();
+  await discard.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(
+    "Dock 3 closes",
+  );
+  await expect(discard).toHaveCount(0);
+  // A click outside asks the same question.
+  await page.mouse.click(4, 4);
+  await expect(discard).toBeVisible();
+  await discard
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(editor).toHaveCount(0);
+});
+
+test("Delete draft shows only for a draft that was never published, and asks once", async ({
+  page,
+}) => {
+  const api = await installS05PostApi(page);
+  // The manage state reads revision 9, so the draft holds it too.
+  api.setWorking({ ...s05Draft, post_revision: 9 });
+  api.setManageStatus("draft");
+  api.setPublishedBefore(true);
+  await page.goto(`/boards?board=${boardId}&section=posts&show=drafts`);
+  const pane = postPane(page, s05Draft.title);
+  const more = pane.getByRole("button", { name: "More post actions" });
+  await more.click();
+  await expect(page.getByRole("menuitem")).toHaveText(["Archive"]);
+  await page.keyboard.press("Escape");
+
+  api.setPublishedBefore(false);
+  await more.click();
+  await expect(page.getByRole("menuitem")).toHaveText([
+    "Archive",
+    "Delete draft",
+  ]);
+  await page
+    .getByRole("menuitem", { name: "Delete draft", exact: true })
+    .click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Delete draft?",
+    exact: true,
+  });
+  await expect(confirmation).toContainText(
+    "It was never published, so it goes with its files and record links.",
+  );
+  await expect(confirmation.getByRole("textbox")).toHaveCount(0);
+  await expect(
+    confirmation.getByRole("button", { name: "Delete draft", exact: true }),
+  ).toBeEnabled();
+});
+
+test("the post list announces loading, then how many posts it holds", async ({
+  page,
+}) => {
+  const api = await installPostBrowserApi(page);
+  api.setPublishedItems([
+    browserPost,
+    {
+      ...browserPost,
+      id: "00000000-0000-4000-8000-000000000031",
+      title: "Second yard notice",
+    },
+  ]);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    (url) => url.pathname === `/api/boards/${boardId}/posts`,
+    async (route) => {
+      await held;
+      await route.fallback();
+    },
+  );
+  try {
+    await page.goto(`/boards?board=${boardId}&section=posts`);
+    const status = postList(page).getByRole("status");
+    await expect(status).toHaveText("Loading posts");
+    release();
+    await expect(status).toHaveText("2 posts");
+  } finally {
+    release();
+  }
+  api.setPublishedItems([]);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await expect(postList(page).getByRole("status")).toHaveText(
+    "No published posts yet",
+  );
+  // Beside an empty list, the pane holds no hint.
+  await expect(page.getByText("Choose a post to read it.")).toHaveCount(0);
 });

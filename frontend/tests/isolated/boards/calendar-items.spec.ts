@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { BoardEventOccurrencePage } from "../../../src/components/systems/boards/adapters/board-events-api";
 import {
   calendarEmptyStatus,
+  calendarFilterEmpty,
   compactTime,
   dueCardItems,
   filterCalendarItems,
@@ -10,6 +11,7 @@ import {
   upcomingGroups,
   type CalendarItem,
 } from "../../../src/components/systems/boards/domain/calendar-items";
+import { moveDayFocus } from "../../../src/components/systems/boards/domain/calendar-dates";
 import {
   hiddenCalendarsKey,
   readHiddenCalendars,
@@ -319,7 +321,7 @@ test("the empty month names the next event, or says there is none", () => {
     message: "No events in October",
     next: {
       text: "Next: Mon, Nov 2",
-      name: "Go to the next event, Mon, Nov 2",
+      name: "Next: Mon, Nov 2, go to the next event",
     },
   });
   expect(calendarEmptyStatus("October", null)).toEqual({
@@ -360,4 +362,36 @@ test("hidden calendars persist per viewer and board, and a blocked store hides n
   expect(readHiddenCalendars(() => storage, key)).toEqual([]);
   values.set(key, JSON.stringify([1, "ok"]));
   expect(readHiddenCalendars(() => storage, key)).toEqual(["ok"]);
+});
+
+test("an empty view names the filter that emptied it: the search first, then hidden calendars", () => {
+  expect(calendarFilterEmpty("  dock  ", 1)).toEqual({
+    kind: "search",
+    message: 'No events match "dock"',
+    action: "Clear search",
+  });
+  expect(calendarFilterEmpty("", 1)).toEqual({
+    kind: "hidden",
+    message: "1 calendar hidden",
+    action: "Show all",
+  });
+  expect(calendarFilterEmpty("", 2)).toEqual({
+    kind: "hidden",
+    message: "2 calendars hidden",
+    action: "Show all",
+  });
+  // With no filter, the empty view is the month's own state.
+  expect(calendarFilterEmpty(" ", 0)).toBeNull();
+});
+
+test("arrow keys move the focused day by a day or a week, and Home and End keep the week", () => {
+  // Week of Mon, Nov 16 to Sun, Nov 22, 2026.
+  expect(moveDayFocus("2026-11-18", "ArrowRight", "monday")).toBe("2026-11-19");
+  expect(moveDayFocus("2026-11-18", "ArrowLeft", "monday")).toBe("2026-11-17");
+  expect(moveDayFocus("2026-11-18", "ArrowDown", "monday")).toBe("2026-11-25");
+  expect(moveDayFocus("2026-11-18", "ArrowUp", "monday")).toBe("2026-11-11");
+  expect(moveDayFocus("2026-11-18", "Home", "monday")).toBe("2026-11-16");
+  expect(moveDayFocus("2026-11-18", "End", "monday")).toBe("2026-11-22");
+  expect(moveDayFocus("2026-11-18", "Home", "sunday")).toBe("2026-11-15");
+  expect(moveDayFocus("2026-11-18", "Enter", "monday")).toBeNull();
 });

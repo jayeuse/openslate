@@ -347,6 +347,8 @@ export async function installCalendarApi(
         end: url.searchParams.get("window_end") ?? "",
       };
       state.windowReads.push(window);
+      // The server matches the search in event titles, ignoring case.
+      const search = (url.searchParams.get("search") ?? "").toLowerCase();
       const items = (
         options.occurrences ??
         (() =>
@@ -355,7 +357,11 @@ export async function installCalendarApi(
               item.date <= window.end &&
               (item.event.all_day ? item.end : item.date) >= window.start,
           ))
-      )(window);
+      )(window).filter((item) =>
+        (item as { event: { title: string } }).event.title
+          .toLowerCase()
+          .includes(search),
+      );
       return route.fulfill({
         json: {
           items,

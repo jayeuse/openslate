@@ -1,6 +1,12 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
 import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 import { Popover, PopoverContent, PopoverTitle } from "@/components/ui/popover";
@@ -8,6 +14,7 @@ import {
   isoWeek,
   isWeekend,
   monthOf,
+  moveDayFocus,
   type WeekStart,
 } from "../domain/calendar-dates";
 import { itemsOnDay, type CalendarItem } from "../domain/calendar-items";
@@ -21,8 +28,11 @@ import {
   type OpenCalendarItem,
 } from "./board-calendar-chips";
 
-/** One lane is a 20px line with a 2px gap; the day number takes the first. */
-const LANE = 22;
+/**
+ * One lane is a 24px target (WCAG 2.5.8); the day number takes the first.
+ * Chips draw their mark 2px in, so lanes need no gap.
+ */
+const LANE = 24;
 const FALLBACK_LANES = 4;
 
 function weekdayNames(days: readonly string[], region: WorkspaceRegion) {
@@ -43,6 +53,8 @@ type MonthProps = {
   region: WorkspaceRegion;
   onOpen: OpenCalendarItem;
   onShowDay: (date: string) => void;
+  /** Why the month is empty, with its one step, centered on the grid. */
+  empty?: ReactNode;
 };
 
 /**
@@ -56,6 +68,24 @@ export function BoardCalendarMonth(props: MonthProps) {
   // Focus returns to the "+n more" that opened the day.
   const moreRef = useRef<HTMLElement | null>(null);
   const [lanes, setLanes] = useState(FALLBACK_LANES);
+  // The day numbers are one Tab stop; arrow keys move between them.
+  const [focusDay, setFocusDay] = useState<string | null>(null);
+  const days = grid.flat();
+  const tabDay =
+    focusDay && days.includes(focusDay)
+      ? focusDay
+      : props.today && days.includes(props.today)
+        ? props.today
+        : `${monthOf(props.anchor)}-01`;
+  function moveFocus(event: KeyboardEvent<HTMLButtonElement>, date: string) {
+    const next = moveDayFocus(date, event.key, props.weekStart);
+    if (!next || !days.includes(next)) return;
+    event.preventDefault();
+    setFocusDay(next);
+    weeksRef.current
+      ?.querySelector<HTMLButtonElement>(`[data-month-day="${next}"]`)
+      ?.focus();
+  }
   const [moreDay, setMoreDay] = useState<{
     date: string;
     anchor: HTMLElement;
@@ -65,9 +95,11 @@ export function BoardCalendarMonth(props: MonthProps) {
     const element = weeksRef.current;
     if (!element) return;
     const measure = () => {
-      const row = element.firstElementChild?.getBoundingClientRect().height;
+      // The row's inner height, without its rule; lanes that would be cut
+      // go to "+n more" instead.
+      const row = element.firstElementChild?.clientHeight;
       if (!row) return;
-      setLanes(Math.max(2, Math.floor((row - LANE) / LANE)));
+      setLanes(Math.max(1, Math.floor((row - LANE) / LANE)));
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -77,11 +109,14 @@ export function BoardCalendarMonth(props: MonthProps) {
 
   const moreItems = moreDay ? itemsOnDay(props.items, moreDay.date) : [];
   return (
+    // A week row never drops below a day number and two 24px lanes (73px
+    // with its rule): when an alert above shortens the page, the panel
+    // scrolls instead of hiding every bar behind "+n more".
     <section
       aria-label={`${label} calendar`}
-      className="bg-card flex min-w-0 flex-col overflow-hidden rounded-lg border xl:min-h-0 xl:flex-1"
+      className="bg-card flex min-w-0 flex-col overflow-hidden rounded-lg border xl:flex-1"
     >
-      <div className="text-muted-foreground grid h-[30px] shrink-0 grid-cols-7 items-center border-b text-xs font-medium">
+      <div className="text-muted-foreground grid h-6 shrink-0 grid-cols-7 items-center border-b text-xs font-medium">
         {weekdayNames(grid[0], region).map(({ date, name }) => (
           <span key={date} className="px-2">
             {name}
@@ -90,20 +125,30 @@ export function BoardCalendarMonth(props: MonthProps) {
       </div>
       <div
         ref={weeksRef}
-        className="grid grid-rows-[repeat(6,7rem)] xl:min-h-0 xl:flex-1 xl:grid-rows-6"
+        className="relative grid grid-rows-[repeat(6,7rem)] xl:flex-1 xl:grid-rows-[repeat(6,minmax(73px,1fr))]"
       >
-        {grid.map((days) => (
+        {grid.map((week) => (
           <MonthWeekRow
-            key={days[0]}
+            key={week[0]}
             {...props}
-            days={days}
+            days={week}
             lanes={lanes}
+            tabDay={tabDay}
+            onDayKey={moveFocus}
+            onDayFocus={setFocusDay}
             onMore={(date, anchor) => {
               moreRef.current = anchor;
               setMoreDay({ date, anchor });
             }}
           />
         ))}
+        {props.empty ? (
+          <div className="pointer-events-none absolute inset-0 grid place-items-center p-4">
+            <div className="bg-card pointer-events-auto flex flex-wrap items-center justify-center gap-1.5 rounded-lg border px-4 py-2 text-sm shadow-xs">
+              {props.empty}
+            </div>
+          </div>
+        ) : null}
       </div>
       <Popover
         open={moreDay !== null}
@@ -128,7 +173,6 @@ export function BoardCalendarMonth(props: MonthProps) {
                 calendar={props.calendars.get(item.calendarId)}
                 region={region}
                 bar={item.kind === "event" && item.allDay}
-                className="min-h-6"
                 onOpen={(entry, anchor) => {
                   setMoreDay(null);
                   props.onOpen(entry, anchor);
@@ -153,10 +197,16 @@ function MonthWeekRow({
   onOpen,
   onShowDay,
   onMore,
+  tabDay,
+  onDayKey,
+  onDayFocus,
 }: MonthProps & {
   days: string[];
   lanes: number;
   onMore: (date: string, anchor: HTMLElement) => void;
+  tabDay: string;
+  onDayKey: (event: KeyboardEvent<HTMLButtonElement>, date: string) => void;
+  onDayFocus: (date: string) => void;
 }) {
   const month = monthOf(anchor);
   const layout = layoutMonthWeek(days, items, lanes);
@@ -177,18 +227,21 @@ function MonthWeekRow({
           />
         ))}
       </div>
-      <div className="relative grid auto-rows-[20px] grid-cols-7 content-start gap-y-[2px] pt-0.5">
+      <div className="relative grid auto-rows-[24px] grid-cols-7 content-start">
         {days.map((date, column) => (
           <button
             key={date}
             type="button"
-            aria-label={dayLabel(date, region)}
+            data-month-day={date}
+            tabIndex={date === tabDay ? 0 : -1}
+            aria-label={`${dayLabel(date, region)}, show week`}
             aria-current={date === today ? "date" : undefined}
-            title="Show this week"
             onClick={() => onShowDay(date)}
+            onKeyDown={(event) => onDayKey(event, date)}
+            onFocus={() => onDayFocus(date)}
             style={{ gridColumn: column + 1, gridRow: 1 }}
             className={cn(
-              "hover:bg-accent focus-visible:outline-ring ml-1 grid h-5 min-w-[22px] place-items-center justify-self-start rounded-full px-1.5 text-xs font-medium tabular-nums outline-none focus-visible:outline-2",
+              "hover:bg-accent focus-visible:outline-ring ml-1 grid h-6 min-w-6 place-items-center justify-self-start rounded-full px-1.5 text-xs font-medium tabular-nums outline-none focus-visible:outline-2 focus-visible:-outline-offset-2",
               monthOf(date) !== month && "text-muted-foreground",
               date === today &&
                 "bg-foreground text-background hover:bg-foreground font-semibold",
@@ -213,11 +266,13 @@ function MonthWeekRow({
             calendar={calendars.get(bar.item.calendarId)}
             region={region}
             bar
+            continuesBefore={bar.continuesBefore}
+            continuesAfter={bar.continuesAfter}
             onOpen={onOpen}
             className={cn(
               "mx-[3px]",
-              bar.continuesBefore && "ml-0 rounded-l-none",
-              bar.continuesAfter && "mr-0 rounded-r-none",
+              bar.continuesBefore && "ml-0",
+              bar.continuesAfter && "mr-0",
             )}
             style={{
               gridColumn: `${bar.start + 1} / ${bar.end + 2}`,
@@ -233,8 +288,10 @@ function MonthWeekRow({
               calendar={calendars.get(chip.item.calendarId)}
               region={region}
               lines={chip.lines}
+              // A one-day all-day event keeps its pill (BR54).
+              bar={chip.item.kind === "event" && chip.item.allDay}
               onOpen={onOpen}
-              className="mx-[3px] self-start"
+              className="mx-[3px]"
               style={{
                 gridColumn: cell.column + 1,
                 gridRow: `${chip.lane + 2} / span ${chip.lines}`,
@@ -252,7 +309,7 @@ function MonthWeekRow({
                 gridColumn: cell.column + 1,
                 gridRow: cell.more.lane + 2,
               }}
-              className="text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-ring mx-[3px] justify-self-start rounded-sm px-1.5 text-xs leading-5 outline-none focus-visible:outline-2"
+              className="text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-ring mx-[3px] h-6 justify-self-start rounded-sm px-1.5 text-xs leading-6 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2"
             >
               +{cell.more.count} more
             </button>
@@ -376,9 +433,14 @@ export function BoardCalendarDayList({
       className="bg-card overflow-hidden rounded-lg border"
     >
       <h3 className="text-muted-foreground bg-muted/40 border-b px-4 py-2 text-xs font-medium">
-        {dayLabel(date, region)}
-        {date === today ? " · Today" : ""} · {items.length}{" "}
-        {items.length === 1 ? "item" : "items"}
+        {/* An empty day says so once, in the list below. */}
+        {[
+          dayLabel(date, region),
+          ...(date === today ? ["Today"] : []),
+          ...(items.length
+            ? [`${items.length} ${items.length === 1 ? "item" : "items"}`]
+            : []),
+        ].join(" · ")}
       </h3>
       {items.length ? (
         <ul>

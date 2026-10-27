@@ -11,6 +11,7 @@ import {
   resolveEditorRefresh,
   type PostEditorState,
 } from "../../../src/components/systems/boards/hooks/use-server-board-post-editor";
+import { dirty } from "../../../src/components/systems/boards/hooks/post-editor-state";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -358,4 +359,25 @@ test("unrelated Board revision refresh retains local draft text without false po
   expect(refreshed.selected?.postRevision).toBe(1);
   expect(refreshed.boardRevision).toBe(5);
   expect(refreshed.conflict).toBe(false);
+});
+
+test("a new post counts as changed only once it has content", () => {
+  const blank = {
+    title: "",
+    body: "",
+    links: [],
+    pinned: false,
+    expiresLocal: "",
+  };
+  expect(dirty(blank, null)).toBe(false);
+  expect(dirty({ ...blank, title: "  ", body: "\n" }, null)).toBe(false);
+  // Each of these is content the person would lose on close.
+  for (const changed of [
+    { ...blank, title: "Dock 3 closes" },
+    { ...blank, body: "Use Dock 4." },
+    { ...blank, links: [{ label: "", url: "" }] },
+    { ...blank, pinned: true },
+    { ...blank, expiresLocal: "2035-06-01T12:30" },
+  ])
+    expect(dirty(changed, null)).toBe(true);
 });

@@ -7,6 +7,7 @@ import type {
 } from "../../../src/components/systems/boards/adapters/board-events-api";
 import { canEditBoardEvent } from "../../../src/components/systems/boards/components/server-backed-board-calendar";
 import { BoardEventSheetBody } from "../../../src/components/systems/boards/components/board-event-sheet";
+import { BoardCalendarDayList } from "../../../src/components/systems/boards/components/board-calendar-month";
 import { boardOccurrenceTimeLabel } from "../../../src/components/systems/boards/components/server-board-calendar-display";
 import {
   itemsOnDay,
@@ -748,4 +749,41 @@ test("denied latest-version check clears cached occurrences even when retry fail
   });
   expect(failed.data).toBeNull();
   expect(failed.status).toBe("error");
+});
+
+test("a phone day list counts its items, and an empty day says only that it is empty", () => {
+  const region = { timezone: "UTC", locale: "en-US" };
+  const dayList = (items: ReturnType<typeof occurrenceItems>) =>
+    renderToStaticMarkup(
+      createElement(BoardCalendarDayList, {
+        date: "2026-10-27",
+        today: "2026-10-27",
+        items,
+        calendars: new Map(),
+        region,
+        onOpen: () => undefined,
+      }),
+    ).replaceAll("<!-- -->", "");
+  const empty = dayList([]);
+  expect(empty).toContain("Tue, Oct 27 · Today</h3>");
+  expect(empty).toContain("Nothing on this day.");
+  expect(empty).not.toContain("0 items");
+  const one = dayList([
+    {
+      key: "standup",
+      calendarId: boardId,
+      kind: "event",
+      title: "Yard stand-up",
+      startDate: "2026-10-27",
+      endDate: "2026-10-27",
+      allDay: false,
+      startMinute: 9 * 60,
+      endMinute: 9 * 60 + 30,
+      location: "",
+      repeat: "none",
+      authorId,
+      target: { kind: "event", eventId, occurrenceDate: "2026-10-27" },
+    },
+  ]);
+  expect(one).toContain("Tue, Oct 27 · Today · 1 item</h3>");
 });

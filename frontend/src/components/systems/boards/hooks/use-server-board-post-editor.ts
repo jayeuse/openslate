@@ -430,7 +430,7 @@ export function useServerBoardPostEditor({
         current.boardRevision,
       );
       if (operation !== mutationSequence.current) return;
-      adopt(saved, revision, false, "Draft saved.");
+      adopt(saved, revision, false, null);
       if (mountedRef.current && activeKeyRef.current === key)
         onPublished?.(boardId);
       setRetryKey((value) => value + 1);
@@ -494,7 +494,7 @@ export function useServerBoardPostEditor({
       )
         throw new ApiContractError();
       if (operation !== mutationSequence.current) return false;
-      adopt(saved, result.boardRevision, false, "Publication scheduled.");
+      adopt(saved, result.boardRevision, false, null);
       if (mountedRef.current && activeKeyRef.current === key)
         onPublished?.(boardId);
       setRetryKey((value) => value + 1);

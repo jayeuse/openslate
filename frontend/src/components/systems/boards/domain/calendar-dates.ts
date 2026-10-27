@@ -136,3 +136,22 @@ export function parseCalendarShow(
   if (value === "archived" && allowed.archived) return "archived";
   return "all";
 }
+
+/**
+ * The day a grid key moves focus to (one Tab stop per grid): a day left or
+ * right, a week up or down, and Home and End to the ends of the week. Null
+ * for any other key.
+ */
+export function moveDayFocus(
+  date: string,
+  key: string,
+  weekStart: WeekStart,
+): string | null {
+  if (key === "ArrowRight") return addDays(date, 1);
+  if (key === "ArrowLeft") return addDays(date, -1);
+  if (key === "ArrowDown") return addDays(date, 7);
+  if (key === "ArrowUp") return addDays(date, -7);
+  if (key === "Home") return startOfWeek(date, weekStart);
+  if (key === "End") return addDays(startOfWeek(date, weekStart), 6);
+  return null;
+}

@@ -316,6 +316,9 @@ test("published post revision renders its validated external links safely", () =
       onEdit: () => undefined,
       onAction: () => undefined,
       onBack: () => undefined,
+      onMenuOpen: () => undefined,
+      focusTitle: false,
+      onTitleFocused: () => undefined,
     }),
   );
   expect(html).toContain("Policy &lt;script&gt;update&lt;/script&gt;");

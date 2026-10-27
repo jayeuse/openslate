@@ -100,3 +100,40 @@ export function allDayLanes(
     items.filter((item) => item.allDay),
   ).map((span) => ({ ...span, lane: placeInLanes(span, used) }));
 }
+
+/**
+ * The now label sits on the now line; an hour label within 20 minutes of it
+ * (16px at 48px an hour) would be covered, so it hides, as in Outlook.
+ */
+export function hourLabelHidden(
+  hour: number,
+  nowMinute: number | null,
+): boolean {
+  return nowMinute !== null && Math.abs(nowMinute - hour * 60) < 20;
+}
+
+/** The shortest a Week block is drawn: 30 minutes, the 22px floor. */
+export const WEEK_MIN_BLOCK_MINUTES = 30;
+
+/**
+ * One day's timed blocks in Week (BR56), with their columns. Columns are
+ * laid out at each block's drawn height, so two short blocks never overlap;
+ * `start` and `end` stay the real times for the labels.
+ */
+export function weekBlocks(
+  items: readonly CalendarItem[],
+  date: string,
+): (DaySegment & { column: number; columns: number })[] {
+  const segments = timedSegments(items, date);
+  return layoutDayColumns(
+    segments.map((segment, index) => ({
+      index,
+      start: segment.start,
+      end: Math.max(segment.end, segment.start + WEEK_MIN_BLOCK_MINUTES),
+    })),
+  ).map(({ index, column, columns }) => ({
+    ...segments[index],
+    column,
+    columns,
+  }));
+}

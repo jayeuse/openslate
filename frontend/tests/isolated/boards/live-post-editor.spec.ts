@@ -196,7 +196,9 @@ test("a revision conflict keeps the text and blocks an unreviewed overwrite", ()
   const html = markup(view);
   expect(html).toContain("My competing edit");
   expect(html).toContain("Someone changed this post first.");
-  expect(html).toMatch(/disabled=""[^>]*>Save draft/);
+  // Save draft waits, and says why (DisabledReason).
+  expect(html).toMatch(/aria-disabled="true"[^>]*>Save draft</);
+  expect(html).toContain("Review the latest version first.");
   expect(publishBlockedReason(view)).toBe("Review the latest version first.");
 });
 

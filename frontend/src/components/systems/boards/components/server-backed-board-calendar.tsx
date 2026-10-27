@@ -14,7 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { Plus, RefreshCw } from "lucide-react";
+import { ArrowRight, Plus, RefreshCw } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   authMeOptions,
@@ -23,23 +23,10 @@ import {
 import { encodeTemporaryDefinition } from "../../openview/domain/temporary-view";
 import { moduleHref } from "@/components/department-navigation-model";
 import { departmentTone } from "@/lib/sandbox/department-tone";
-import {
-  lifecycleErrorMessage,
-  type LifecyclePurgePreview,
-} from "@/lib/lifecycle";
-import {
-  workspaceLifecycleQueryOptions,
-  subscribeWorkspaceLifecycleSettings,
-} from "../../manage/adapters/workspace-api";
 import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
-import {
-  previewBoardEventPurge,
-  purgeBoardEvent,
-} from "../adapters/board-events-api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
-import { apiErrorMessage } from "@/lib/api-errors";
 import { reportDone, reportError } from "@/lib/feedback";
 import { formatWorkspaceDate } from "@/lib/date-time";
 import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
@@ -47,16 +34,7 @@ import {
   useVerifiedWorkspaceUserId,
   useWorkspaceInteractionSuspended,
 } from "@/components/systems/shared/runtime/workspace-identity";
-import {
-  archiveBoardEvent,
-  createBoardEvent,
-  listBoardEvents,
-  readBoardEvent,
-  restoreBoardEvent,
-  updateBoardEvent,
-  type BoardEvent,
-  type BoardEventPage,
-} from "../adapters/board-events-api";
+import { readBoardEvent, type BoardEvent } from "../adapters/board-events-api";
 import {
   addBoardCalendarSource,
   addMyCalendarSource,
@@ -64,8 +42,6 @@ import {
   type CalendarSource,
 } from "../adapters/board-calendar-sources-api";
 import type { DueCard } from "../adapters/board-due-cards-api";
-import type { BoardAttachmentVersions } from "../adapters/board-files-api";
-import { readBoard } from "../adapters/board-management-api";
 import type { WorkspaceCalendarSettings } from "../../manage/adapters/workspace-api";
 import {
   getMyBoardAccess,
@@ -84,6 +60,7 @@ import {
 import {
   calendarColor,
   calendarEmptyStatus,
+  calendarFilterEmpty,
   filterCalendarItems,
   type CalendarItem,
   type CalendarTone,
@@ -102,20 +79,12 @@ import {
   useBoardCalendarSources,
   useBoardCalendarWindow,
 } from "../hooks/use-board-calendar-data";
+import { useBoardEventEditor } from "../hooks/use-board-event-editor";
+import { useBoardEventLifecycle } from "../hooks/use-board-event-lifecycle";
 import { BoardEmpty, ConfirmAction } from "./ui";
-import {
-  BoardEventDraftError,
-  boardEventDraftFromEvent,
-  boardEventInputFromDraft,
-  newBoardEventDraft,
-  prepareBoardEventConflictRetry,
-  type BoardEventDraft,
-  type BoardEventLatestVersion,
-} from "./server-backed-board-event-editor";
 import {
   prepareBoardEventLifecycleAction,
   ServerArchivedBoardEventsDisplay,
-  type BoardEventLifecycleAction,
 } from "./server-backed-board-event-lifecycle";
 import {
   boardEventTimeLabel,
@@ -152,28 +121,6 @@ import {
 } from "./board-event-lifecycle-dialogs";
 import { upcomingGroups } from "../domain/calendar-items";
 
-function sameEventContent(left: BoardEvent, right: BoardEvent): boolean {
-  return (
-    left.id === right.id &&
-    left.boardId === right.boardId &&
-    left.authorId === right.authorId &&
-    left.title === right.title &&
-    left.details === right.details &&
-    left.location === right.location &&
-    JSON.stringify(left.links) === JSON.stringify(right.links) &&
-    left.allDay === right.allDay &&
-    left.startDate === right.startDate &&
-    left.endDate === right.endDate &&
-    left.startAt === right.startAt &&
-    left.endAt === right.endAt &&
-    left.timezoneName === right.timezoneName &&
-    left.recurrence === right.recurrence &&
-    left.repeatUntil === right.repeatUntil &&
-    JSON.stringify(left.reminders) === JSON.stringify(right.reminders) &&
-    left.archived === right.archived
-  );
-}
-
 const phoneQuery = "(max-width: 47.99rem)";
 const railQuery = "(min-width: 90rem)";
 function subscribeQuery(media: string) {
@@ -193,13 +140,6 @@ function useMedia(
     subscribe,
     () => window.matchMedia(query).matches,
     () => false,
-  );
-}
-
-/** A draft without its revisions, to tell an edit from a refreshed base. */
-function draftContent(draft: BoardEventDraft | null): string {
-  return JSON.stringify(
-    draft ? { ...draft, boardRevision: 0, eventRevision: 0 } : null,
   );
 }
 
@@ -303,12 +243,20 @@ export function ServerBackedBoardCalendar({
     identityQuery.data.role === "admin" &&
     !suspended;
   const todayButton = useRef<HTMLButtonElement>(null);
+  // Closing the event sheet returns focus to the chip or row that opened
+  // it; a sheet opened from an `?event=` link returns it to Today.
+  const sheetOpener = useRef<HTMLElement | null>(null);
+  const sheetReturn = useRef<HTMLElement | null>(null);
+  // The period title takes focus after a jump moves the period.
+  const periodTitle = useRef<HTMLHeadingElement>(null);
+  const [titleFocus, setTitleFocus] = useState(0);
   const [selectedRetry, setSelectedRetry] = useState(0);
   const selectedKey = `${viewerId}:${boardId}:${selectedEventId}:${refreshKey}:${selectedRetry}`;
   const [selectedDetail, setSelectedDetail] = useState<{
     key: string;
     event: BoardEvent | null;
     error: string | null;
+    refused: boolean;
   } | null>(null);
   const workspaceToday = workspaceCalendar?.today ?? null;
   const displayRegion = useDisplayRegion(workspaceCalendar);
@@ -336,21 +284,6 @@ export function ServerBackedBoardCalendar({
   const [sourceToRemove, setSourceToRemove] = useState<CalendarSource | null>(
     null,
   );
-  const [archivedOffset, setArchivedOffset] = useState(0);
-  const [archivedVersion, setArchivedVersion] = useState(0);
-  const [archivedState, setArchivedState] = useState<{
-    key: string;
-    status: "loading" | "ready" | "error";
-    page: BoardEventPage | null;
-    error: string | null;
-  } | null>(null);
-  const archivedRequest = useRef(0);
-  const lifecycleRequest = useRef(0);
-  const lifecyclePendingRef = useRef(false);
-  const [lifecyclePending, setLifecyclePending] = useState(false);
-  const [lifecycleTarget, setLifecycleTarget] =
-    useState<BoardEventLifecycleAction | null>(null);
-  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [access, setAccess] = useState<{
     key: string;
     status: "loading" | "ready" | "denied" | "error";
@@ -358,28 +291,6 @@ export function ServerBackedBoardCalendar({
   } | null>(null);
   const [accessVersion, setAccessVersion] = useState(0);
   const [blockedBoardId, setBlockedBoardId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<BoardEventDraft | null>(null);
-  const [draftBase, setDraftBase] = useState<BoardEvent | null>(null);
-  // A new event's starting draft, to tell an edit from an untouched form.
-  const [draftOrigin, setDraftOrigin] = useState<BoardEventDraft | null>(null);
-  const liveDraft = useRef<{
-    draft: BoardEventDraft | null;
-    base: BoardEvent | null;
-  }>({ draft: null, base: null });
-  const consumedLiveKey = useRef<string | null>(null);
-  const liveDraftRequest = useRef(0);
-  const [pending, setPending] = useState(false);
-  const [attachmentPending, setAttachmentPending] = useState(false);
-  const attachmentPendingRef = useRef(false);
-  const [recordLinkPending, setRecordLinkPending] = useState(false);
-  const recordLinkPendingRef = useRef(false);
-  const pendingRef = useRef(false);
-  const [editorError, setEditorError] = useState<string | null>(null);
-  const [conflict, setConflict] = useState<{
-    eventId: string | null;
-    status: "needs-check" | "checking" | "ready";
-    latest: BoardEventLatestVersion | null;
-  } | null>(null);
   const currentAnchor = anchor ?? workspaceToday;
   const calendarWindow =
     currentAnchor && workspaceToday
@@ -431,138 +342,60 @@ export function ServerBackedBoardCalendar({
     !accessDenied &&
     currentAccess?.manage === true &&
     (boardActive || isPurgeAdmin);
-  const archivedKey = `${boardId}:${liveKey}:${archivedOffset}:${archivedVersion}`;
-  const archivedPage =
-    canBrowseArchived &&
-    archivedState?.key === archivedKey &&
-    archivedState.status === "ready"
-      ? archivedState.page
-      : null;
-  const activeDraft = canEdit && draft?.boardId === boardId ? draft : null;
   const show = parseCalendarShow(requestedShow, {
     mine: canEdit,
     archived: canBrowseArchived,
   });
-
-  useEffect(() => {
-    liveDraft.current = { draft, base: draftBase };
-  }, [draft, draftBase]);
-
-  useEffect(() => {
-    if (pending || attachmentPending || recordLinkPending) return;
-    const signal = `${viewerId}:${boardId}:${liveKey}`;
-    if (consumedLiveKey.current === signal) return;
-    consumedLiveKey.current = signal;
-    const selected = liveDraft.current.draft;
-    if (
-      !viewerId ||
-      !boardActive ||
-      !selected?.eventId ||
-      selected.boardId !== boardId
-    )
-      return;
-    const request = ++liveDraftRequest.current;
-    void Promise.all([
-      readBoardEvent(boardId, selected.eventId),
-      readBoard(boardId),
-    ])
-      .then(([event, board]) => {
-        const current = liveDraft.current;
-        if (
-          request !== liveDraftRequest.current ||
-          !current.draft ||
-          current.draft.eventId !== selected.eventId ||
-          current.draft.eventRevision !== selected.eventRevision
-        )
-          return;
-        if (
-          event.id !== selected.eventId ||
-          event.boardId !== boardId ||
-          board.id !== boardId ||
-          event.boardRevision !== board.revision
-        ) {
-          setEditorError(
-            "Could not verify the latest event. Your draft is retained; try again.",
-          );
-          return;
-        }
-        if (event.revision < (current.draft.eventRevision ?? 0)) return;
-        if (event.revision === current.draft.eventRevision) {
-          setDraft((value) =>
-            value?.eventId === event.id
-              ? { ...value, boardRevision: board.revision }
-              : value,
-          );
-          return;
-        }
-        const original = current.base && boardEventDraftFromEvent(current.base);
-        const dirty =
-          original === null ||
-          JSON.stringify({
-            ...current.draft,
-            boardRevision: 0,
-            eventRevision: 0,
-          }) !==
-            JSON.stringify({ ...original, boardRevision: 0, eventRevision: 0 });
-        if (dirty || event.archived || board.status !== "active") {
-          setConflict({
-            eventId: event.id,
-            status: "ready",
-            latest: {
-              boardId: board.id,
-              boardRevision: board.revision,
-              boardActive: board.status === "active",
-              event,
-            },
-          });
-        } else {
-          setDraft(boardEventDraftFromEvent(event));
-          setDraftBase(event);
-          setConflict(null);
-        }
-      })
-      .catch((failure: unknown) => {
-        const current = liveDraft.current.draft;
-        if (
-          request !== liveDraftRequest.current ||
-          current?.eventId !== selected.eventId ||
-          current.eventRevision !== selected.eventRevision
-        )
-          return;
-        if (
-          failure instanceof ApiError &&
-          [401, 403, 404].includes(failure.status)
-        ) {
-          setDraft(null);
-          setDraftBase(null);
-          setConflict(null);
-          invalidateRef.current();
-          setEditorError(
-            "This event or Board is no longer available. The editor was closed.",
-          );
-        } else {
-          setConflict({
-            eventId: selected.eventId,
-            status: "needs-check",
-            latest: null,
-          });
-          setEditorError(
-            "Could not check the latest version. Your draft is retained; try again.",
-          );
-        }
-      });
-    return () => {
-      liveDraftRequest.current += 1;
-    };
-  }, [
-    liveKey,
+  // The event draft and the event lifecycle each have one owner.
+  const editor = useBoardEventEditor({
     boardId,
     viewerId,
     boardActive,
-    pending,
-    attachmentPending,
-    recordLinkPending,
-  ]);
+    liveKey,
+    canEdit,
+    calendarPage,
+    eventsState: state,
+    retry,
+    invalidate,
+    onSaved: (savedId) => {
+      // After Create or Save, the event sheet opens on it (BR21).
+      setSelectedOccurrence(null);
+      onParams({ event: savedId });
+      setAccessVersion((value) => value + 1);
+    },
+    onAccessDenied: (recheck) => {
+      setBlockedBoardId(boardId);
+      setAccess({ key: accessKey, status: "denied", value: null });
+      if (recheck) setAccessVersion((value) => value + 1);
+    },
+  });
+  const activeDraft = editor.activeDraft;
+  const lifecycle = useBoardEventLifecycle({
+    boardId,
+    viewerId,
+    boardActive,
+    refreshKey,
+    liveKey,
+    show,
+    isPurgeAdmin,
+    accessDenied,
+    currentAccess,
+    canManage,
+    canBrowseArchived,
+    calendarPage,
+    hasDraft: activeDraft !== null,
+    selectedEventId,
+    // Archiving the open event closes its sheet, as Close does.
+    onArchivedSelected: () => closeSheet(),
+    invalidate,
+    onAccessChanged: () => setAccessVersion((value) => value + 1),
+    onAccessDenied: () => {
+      setBlockedBoardId(boardId);
+      editor.dropDraft();
+      setAccessVersion((value) => value + 1);
+    },
+  });
+  const archivedPage = lifecycle.archived.page;
 
   useEffect(() => {
     if (!viewerId || selectedEventId === null || accessDenied) {
@@ -572,19 +405,26 @@ export function ServerBackedBoardCalendar({
     let active = true;
     void readBoardEvent(boardId, selectedEventId)
       .then((event) => {
-        if (active) setSelectedDetail({ key: selectedKey, event, error: null });
-      })
-      .catch((error: unknown) => {
         if (active)
           setSelectedDetail({
             key: selectedKey,
-            event: null,
-            error:
-              error instanceof ApiError &&
-              [401, 403, 404].includes(error.status)
-                ? "This event is unavailable or you no longer have access."
-                : "Could not load the event. Try again.",
+            event,
+            error: null,
+            refused: false,
           });
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        const refused =
+          error instanceof ApiError && [401, 403, 404].includes(error.status);
+        setSelectedDetail({
+          key: selectedKey,
+          event: null,
+          error: refused
+            ? "This event is unavailable or you no longer have access."
+            : "Could not load the event. Try again.",
+          refused,
+        });
       });
     return () => {
       active = false;
@@ -599,17 +439,20 @@ export function ServerBackedBoardCalendar({
   useEffect(() => {
     onDraftStateChange?.(
       boardId,
-      draft !== null,
-      pending || lifecyclePending || attachmentPending || recordLinkPending,
+      editor.hasDraft,
+      editor.pending ||
+        lifecycle.pending ||
+        editor.attachmentPending ||
+        editor.recordLinkPending,
     );
   }, [
-    attachmentPending,
-    recordLinkPending,
+    editor.attachmentPending,
+    editor.recordLinkPending,
     boardId,
-    draft,
-    lifecyclePending,
+    editor.hasDraft,
+    lifecycle.pending,
     onDraftStateChange,
-    pending,
+    editor.pending,
   ]);
 
   useEffect(
@@ -622,56 +465,8 @@ export function ServerBackedBoardCalendar({
   }, [invalidate]);
 
   useEffect(() => {
-    setDraft(null);
-    setDraftBase(null);
-    attachmentPendingRef.current = false;
-    recordLinkPendingRef.current = false;
-    setAttachmentPending(false);
-    setRecordLinkPending(false);
-    setEditorError(null);
-
-    setConflict(null);
     setBlockedBoardId(null);
-    setArchivedOffset(0);
-    setArchivedState(null);
-    setLifecycleTarget(null);
-    setLifecycleError(null);
-    lifecycleRequest.current += 1;
-    lifecyclePendingRef.current = false;
-    setLifecyclePending(false);
   }, [boardId]);
-
-  useEffect(() => {
-    setLifecycleTarget(null);
-  }, [refreshKey]);
-
-  useEffect(() => {
-    if (!canBrowseArchived) {
-      setArchivedState(null);
-      setLifecycleTarget(null);
-    }
-  }, [canBrowseArchived]);
-
-  useEffect(() => {
-    if (!boardActive) {
-      setDraft(null);
-      setEditorError(null);
-      setConflict(null);
-      setLifecycleTarget(null);
-      if (!isPurgeAdmin) setArchivedState(null);
-    }
-  }, [boardActive, isPurgeAdmin]);
-
-  useEffect(() => {
-    if (
-      state.status === "error" &&
-      state.error?.startsWith("Calendar unavailable.")
-    ) {
-      setDraft(null);
-      setEditorError(null);
-      setConflict(null);
-    }
-  }, [state.error, state.status]);
 
   useEffect(() => {
     if (!boardActive && !isPurgeAdmin) return;
@@ -699,12 +494,9 @@ export function ServerBackedBoardCalendar({
         });
         if (denied) {
           setBlockedBoardId(boardId);
-          setDraft(null);
-          setEditorError(null);
-          setConflict(null);
-          setArchivedState(null);
-          setLifecycleTarget(null);
-          setEditorError("Event editing is unavailable for this Board.");
+          editor.dropDraft();
+          lifecycle.closeOnDenial();
+          editor.setEditorError("Event editing is unavailable for this Board.");
           invalidateRef.current();
         }
       });
@@ -720,300 +512,6 @@ export function ServerBackedBoardCalendar({
     accessKey,
   ]);
 
-  useEffect(() => {
-    if (show !== "archived" || !canBrowseArchived) return;
-    const request = ++archivedRequest.current;
-    setArchivedState({
-      key: archivedKey,
-      status: "loading",
-      page: null,
-      error: null,
-    });
-    void listBoardEvents(boardId, {
-      archived: "archived",
-      limit: 25,
-      offset: archivedOffset,
-      sortBy: "title",
-      sortOrder: "asc",
-    })
-      .then((page) => {
-        if (request !== archivedRequest.current) return;
-        setArchivedState({
-          key: archivedKey,
-          status: "ready",
-          page,
-          error: null,
-        });
-      })
-      .catch((error: unknown) => {
-        if (request !== archivedRequest.current) return;
-        const denied =
-          error instanceof ApiError && [401, 403, 404].includes(error.status);
-        setArchivedState({
-          key: archivedKey,
-          status: "error",
-          page: null,
-          error: denied
-            ? "Archived events are unavailable. Ask a Board manager to check your access."
-            : "Could not load archived events. Try again.",
-        });
-        if (denied) {
-          setBlockedBoardId(boardId);
-          setLifecycleTarget(null);
-          setDraft(null);
-          setConflict(null);
-          setAccessVersion((value) => value + 1);
-          invalidateRef.current();
-        }
-      });
-    return () => {
-      archivedRequest.current += 1;
-    };
-  }, [archivedKey, archivedOffset, boardId, canBrowseArchived, show]);
-
-  const lifecycleSettings = useQuery({
-    ...workspaceLifecycleQueryOptions(),
-    enabled: isPurgeAdmin && show === "archived" && canBrowseArchived,
-  });
-  const purgeEnabled =
-    isPurgeAdmin &&
-    canBrowseArchived &&
-    lifecycleSettings.isSuccess &&
-    lifecycleSettings.data.purge_enabled;
-  const [purgeEvent, setPurgeEvent] = useState<BoardEvent | null>(null);
-  const [purgePreview, setPurgePreview] =
-    useState<LifecyclePurgePreview | null>(null);
-  const [purgeName, setPurgeName] = useState("");
-  const [purgePassword, setPurgePassword] = useState("");
-  const [purgeError, setPurgeError] = useState("");
-  const purgeRequest = useRef(0);
-  useEffect(() => {
-    if (isPurgeAdmin && show === "archived" && canBrowseArchived)
-      return subscribeWorkspaceLifecycleSettings(queryClient);
-  }, [isPurgeAdmin, show, canBrowseArchived, queryClient]);
-  useEffect(() => {
-    purgeRequest.current += 1;
-    setPurgeEvent(null);
-    setPurgePreview(null);
-    setPurgeName("");
-    setPurgePassword("");
-    setPurgeError("");
-    return () => {
-      purgeRequest.current += 1;
-    };
-  }, [boardId, viewerId, refreshKey, purgeEnabled]);
-  function mayPurge(event: BoardEvent) {
-    return (
-      purgeEnabled &&
-      !lifecyclePendingRef.current &&
-      !activeDraft &&
-      event.archived &&
-      event.boardId === boardId &&
-      event.boardRevision === archivedPage?.boardRevision
-    );
-  }
-  async function reviewEventPurge(event: BoardEvent) {
-    if (!mayPurge(event)) return;
-    const request = ++purgeRequest.current;
-    const pendingOwner = ++lifecycleRequest.current;
-    lifecyclePendingRef.current = true;
-    setLifecyclePending(true);
-    setPurgeEvent(event);
-    setPurgePreview(null);
-    setPurgeName("");
-    setPurgePassword("");
-    setPurgeError("");
-    try {
-      const preview = await previewBoardEventPurge(boardId, event.id);
-      if (request === purgeRequest.current) setPurgePreview(preview);
-    } catch (failure) {
-      if (request === purgeRequest.current)
-        setPurgeError(
-          lifecycleErrorMessage(
-            failure,
-            "The event review could not be prepared. Request a new review.",
-          ),
-        );
-    } finally {
-      if (pendingOwner === lifecycleRequest.current) {
-        lifecyclePendingRef.current = false;
-        setLifecyclePending(false);
-      }
-    }
-  }
-  async function confirmEventPurge() {
-    const event = purgeEvent,
-      preview = purgePreview;
-    if (
-      !event ||
-      !preview ||
-      !mayPurge(event) ||
-      preview.impact.blockers.length ||
-      purgeName !== preview.confirmation_name ||
-      !purgePassword ||
-      !archivedPage?.items.some(
-        (row) => row.id === event.id && row.revision === event.revision,
-      )
-    )
-      return;
-    const request = ++purgeRequest.current;
-    const pendingOwner = ++lifecycleRequest.current;
-    lifecyclePendingRef.current = true;
-    setLifecyclePending(true);
-    try {
-      await purgeBoardEvent(boardId, event.id, {
-        token: preview.token,
-        confirmationName: purgeName,
-        password: purgePassword,
-      });
-      if (request !== purgeRequest.current) return;
-      setPurgeEvent(null);
-      setPurgePreview(null);
-      setPurgeName("");
-      setPurgePassword("");
-      reportDone("Event permanently deleted.");
-      invalidate();
-      setArchivedState(null);
-      setArchivedVersion((value) => value + 1);
-      setAccessVersion((value) => value + 1);
-    } catch (failure) {
-      if (request !== purgeRequest.current) return;
-      setPurgeError(
-        lifecycleErrorMessage(
-          failure,
-          "The event was not permanently deleted. Request a new review.",
-        ),
-      );
-      setPurgePreview(null);
-      setPurgeName("");
-    } finally {
-      if (pendingOwner === lifecycleRequest.current) {
-        setPurgePassword("");
-        lifecyclePendingRef.current = false;
-        setLifecyclePending(false);
-      }
-    }
-  }
-
-  function beginLifecycle(kind: "archive" | "restore", event: BoardEvent) {
-    if (lifecyclePendingRef.current || activeDraft) return;
-    const page = kind === "archive" ? calendarPage : archivedPage;
-    if (!page) return;
-    const action = prepareBoardEventLifecycleAction(
-      event,
-      boardId,
-      page.boardRevision,
-      currentAccess,
-      boardActive,
-      kind,
-      viewerId,
-    );
-    if (!action) return;
-    setLifecycleError(null);
-    setLifecycleTarget(action);
-  }
-
-  async function confirmLifecycle() {
-    const action = lifecycleTarget;
-    if (!action || lifecyclePendingRef.current) return;
-    const page = action.kind === "archive" ? calendarPage : archivedPage;
-    const listedEvent =
-      action.kind === "archive"
-        ? calendarPage?.items.find(
-            (item) =>
-              item.event.id === action.eventId &&
-              item.event.revision === action.eventRevision &&
-              !item.event.archived,
-          )?.event
-        : undefined;
-    const listed =
-      action.kind === "archive"
-        ? listedEvent !== undefined
-        : archivedPage?.items.some(
-            (item) =>
-              item.id === action.eventId &&
-              item.revision === action.eventRevision,
-          );
-    const authorized =
-      action.kind === "restore"
-        ? canManage
-        : boardActive &&
-          !accessDenied &&
-          (currentAccess?.manage === true ||
-            (currentAccess?.edit === true &&
-              listedEvent?.authorId === viewerId));
-    if (
-      action.boardId !== boardId ||
-      !authorized ||
-      !page ||
-      page.boardRevision !== action.boardRevision ||
-      !listed
-    ) {
-      setLifecycleTarget(null);
-      setLifecycleError("Event details changed. Refresh before trying again.");
-      return;
-    }
-    lifecyclePendingRef.current = true;
-    setLifecyclePending(true);
-    const request = ++lifecycleRequest.current;
-    try {
-      if (action.kind === "archive")
-        await archiveBoardEvent(
-          boardId,
-          action.eventId,
-          action.boardRevision,
-          action.eventRevision,
-        );
-      else
-        await restoreBoardEvent(
-          boardId,
-          action.eventId,
-          action.boardRevision,
-          action.eventRevision,
-        );
-      if (request !== lifecycleRequest.current) return;
-      setLifecycleTarget(null);
-      setLifecycleError(null);
-      reportDone(
-        action.kind === "archive" ? "Event archived." : "Event restored.",
-      );
-      if (action.kind === "archive" && selectedEventId === action.eventId)
-        onParams({ event: null });
-      invalidate();
-      setArchivedState(null);
-      setArchivedVersion((value) => value + 1);
-      setAccessVersion((value) => value + 1);
-    } catch (error) {
-      if (request !== lifecycleRequest.current) return;
-      setArchivedState(null);
-      invalidate();
-      setArchivedVersion((value) => value + 1);
-      if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
-        setLifecycleTarget(null);
-        setAccessVersion((value) => value + 1);
-        setBlockedBoardId(boardId);
-        setDraft(null);
-        setConflict(null);
-        setLifecycleError(
-          "Your access changed. Event actions were closed and the calendar is refreshing.",
-        );
-      } else if (error instanceof ApiError && error.status === 409) {
-        setLifecycleError(
-          "The Board or event changed. Review refreshed events before trying again.",
-        );
-      } else {
-        setLifecycleError(
-          "Could not confirm the event action. Review refreshed events before trying again.",
-        );
-      }
-    } finally {
-      if (request === lifecycleRequest.current) {
-        lifecyclePendingRef.current = false;
-        setLifecyclePending(false);
-      }
-    }
-  }
-
   function mayEditEvent(event: BoardEvent): boolean {
     return canEditBoardEvent(
       event,
@@ -1024,280 +522,10 @@ export function ServerBackedBoardCalendar({
     );
   }
 
-  async function saveEvent(draftToSave: BoardEventDraft | null = activeDraft) {
-    if (
-      !draftToSave ||
-      pendingRef.current ||
-      attachmentPendingRef.current ||
-      recordLinkPendingRef.current ||
-      draftToSave.boardId !== boardId
-    )
-      return;
-    pendingRef.current = true;
-    setPending(true);
-    setEditorError(null);
-    try {
-      const input = boardEventInputFromDraft(draftToSave);
-      let savedId: string;
-      if (draftToSave.eventId !== null && "eventRevision" in input)
-        savedId = (await updateBoardEvent(boardId, draftToSave.eventId, input))
-          .id;
-      else if (draftToSave.eventId === null && !("eventRevision" in input))
-        savedId = (await createBoardEvent(boardId, input)).id;
-      else throw new Error("Event editor state is invalid.");
-      setDraft(null);
-      setConflict(null);
-      reportDone(draftToSave.eventId ? "Event saved." : "Event created.");
-      retry();
-      // After Create or Save, the event sheet opens on it (BR21).
-      setSelectedOccurrence(null);
-      onParams({ event: savedId });
-      setAccessVersion((value) => value + 1);
-    } catch (error) {
-      if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
-        setBlockedBoardId(boardId);
-        setDraft(null);
-        setConflict(null);
-        setEditorError("Your access changed. The event editor was closed.");
-        setAccess({ key: accessKey, status: "denied", value: null });
-        setAccessVersion((value) => value + 1);
-        invalidate();
-      } else {
-        if (error instanceof ApiError && error.status === 409)
-          setConflict({
-            eventId: draftToSave.eventId,
-            status: "needs-check",
-            latest: null,
-          });
-        setEditorError(
-          error instanceof ApiError && error.status === 409
-            ? `${apiErrorMessage(error, "Could not save the event.")} Your draft is retained. Check the latest version before choosing how to continue.`
-            : error instanceof ApiError && error.status === 422
-              ? `${apiErrorMessage(error, "Could not save the event.")} Your draft is retained; check the fields and try again.`
-              : error instanceof BoardEventDraftError
-                ? error.message
-                : "Could not save the event. Your draft is still here; try again.",
-        );
-      }
-    } finally {
-      pendingRef.current = false;
-      setPending(false);
-    }
-  }
-
-  async function refreshEventAttachmentVersions(): Promise<BoardAttachmentVersions> {
-    const selected = activeDraft;
-    if (!selected?.eventId)
-      throw new ApiError(409, "Save the event before attaching files.");
-    try {
-      const [latestEvent, latestBoard] = await Promise.all([
-        readBoardEvent(boardId, selected.eventId),
-        readBoard(boardId),
-      ]);
-      const baseline =
-        calendarPage?.items.find((item) => item.event.id === selected.eventId)
-          ?.event ?? null;
-      const latest: BoardEventLatestVersion = {
-        boardId: latestBoard.id,
-        boardRevision: latestBoard.revision,
-        boardActive: latestBoard.status === "active",
-        event: latestEvent,
-      };
-      if (
-        latestBoard.id !== boardId ||
-        latestEvent.id !== selected.eventId ||
-        latestEvent.boardId !== boardId ||
-        latestEvent.boardRevision !== latestBoard.revision ||
-        !baseline ||
-        !sameEventContent(baseline, latestEvent)
-      ) {
-        setConflict({
-          eventId: selected.eventId,
-          status: "ready",
-          latest,
-        });
-        setEditorError(
-          "The saved event changed while you were editing. Your draft is retained; review the latest version before continuing.",
-        );
-        throw new ApiError(
-          409,
-          "Event content changed; review the latest version.",
-        );
-      }
-      const versions = {
-        boardRevision: latestBoard.revision,
-        contentRevision: latestEvent.revision,
-      };
-      setDraft((current) =>
-        current?.eventId === selected.eventId
-          ? {
-              ...current,
-              boardRevision: versions.boardRevision,
-              eventRevision: versions.contentRevision,
-            }
-          : current,
-      );
-      retry();
-      return versions;
-    } catch (error) {
-      if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
-        setBlockedBoardId(boardId);
-        setDraft(null);
-        setConflict(null);
-        setEditorError("Your access changed. The event editor was closed.");
-        setAccess({ key: accessKey, status: "denied", value: null });
-        invalidate();
-      }
-      throw error;
-    }
-  }
-
-  function changeAttachmentPending(value: boolean) {
-    attachmentPendingRef.current = value;
-    setAttachmentPending(value);
-  }
-
-  function changeRecordLinkPending(value: boolean) {
-    recordLinkPendingRef.current = value;
-    setRecordLinkPending(value);
-  }
-
-  async function checkLatestVersion() {
-    if (
-      !activeDraft ||
-      !conflict ||
-      pendingRef.current ||
-      conflict.eventId !== activeDraft.eventId
-    )
-      return;
-    pendingRef.current = true;
-    setPending(true);
-    setEditorError(null);
-    setConflict({ ...conflict, status: "checking", latest: null });
-    try {
-      const latestEvent = activeDraft.eventId
-        ? await readBoardEvent(boardId, activeDraft.eventId)
-        : null;
-      const latestBoard = await readBoard(boardId);
-      const latest: BoardEventLatestVersion = {
-        boardId: latestBoard.id,
-        boardRevision: latestBoard.revision,
-        boardActive: latestBoard.status === "active",
-        event: latestEvent,
-      };
-      setConflict({ eventId: activeDraft.eventId, status: "ready", latest });
-      setEditorError(
-        !latest.boardActive
-          ? "This Board is archived. Keep a copy of your draft and ask a Board manager to restore it."
-          : latest.event?.archived
-            ? "This event is archived. Keep a copy of your draft and ask a Board manager to restore it."
-            : null,
-      );
-      retry();
-    } catch (error) {
-      if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
-        setDraft(null);
-        setConflict(null);
-        setEditorError(
-          "This event or Board is no longer available. The editor was closed.",
-        );
-        invalidate();
-      } else {
-        setConflict({
-          eventId: activeDraft.eventId,
-          status: "needs-check",
-          latest: null,
-        });
-        setEditorError(
-          "Could not check the latest version. Your draft is retained; try again.",
-        );
-      }
-    } finally {
-      pendingRef.current = false;
-      setPending(false);
-    }
-  }
-
-  function loadLatestEvent() {
-    if (!activeDraft || !conflict?.latest?.event || pendingRef.current) return;
-    const latest = conflict.latest;
-    const event = latest.event;
-    if (!event) return;
-    if (
-      event.id !== activeDraft.eventId ||
-      !latest.boardActive ||
-      event.archived
-    )
-      return;
-    setDraft({
-      ...boardEventDraftFromEvent(event),
-      boardRevision: latest.boardRevision,
-    });
-    setDraftBase(event);
-    setConflict(null);
-    setEditorError(null);
-  }
-
-  function retryWithLatestVersion() {
-    if (!activeDraft || !conflict?.latest || pendingRef.current) return;
-    try {
-      const updated = prepareBoardEventConflictRetry(
-        activeDraft,
-        conflict.latest,
-      );
-      setDraft(updated);
-      setConflict(null);
-      setEditorError(null);
-      void saveEvent(updated);
-    } catch (error) {
-      setEditorError(
-        error instanceof BoardEventDraftError
-          ? error.message
-          : "The latest event cannot be used. Your draft is retained.",
-      );
-    }
-  }
-
   function editEvent(event: BoardEvent) {
-    if (!mayEditEvent(event)) return;
-    setEditorError(null);
-
-    setConflict(null);
-    setDraft(boardEventDraftFromEvent(event));
-    setDraftBase(event);
+    if (mayEditEvent(event)) editor.editEvent(event);
   }
 
-  function canArchiveEvent(event: BoardEvent): boolean {
-    return (
-      !activeDraft &&
-      prepareBoardEventLifecycleAction(
-        event,
-        boardId,
-        calendarPage?.boardRevision ?? 0,
-        currentAccess,
-        boardActive,
-        "archive",
-        viewerId,
-      ) !== null
-    );
-  }
-
-  function canConfirmLifecycle(action: BoardEventLifecycleAction | null) {
-    if (!action || action.boardId !== boardId) return false;
-    if (action.kind === "restore") return canManage;
-    const listed = calendarPage?.items.find(
-      (item) =>
-        item.event.id === action.eventId &&
-        item.event.revision === action.eventRevision &&
-        !item.event.archived,
-    );
-    return (
-      boardActive &&
-      !accessDenied &&
-      (currentAccess?.manage === true ||
-        (currentAccess?.edit === true && listed?.event.authorId === viewerId))
-    );
-  }
   // ---- The calendars, their items, and what opens them ----
   const region = displayRegion ?? workspaceCalendar;
   const requestNavigation = useWorkspaceNavigationRequest();
@@ -1440,6 +668,8 @@ export function ServerBackedBoardCalendar({
   function openItem(item: CalendarItem, anchorElement: HTMLElement) {
     const target = item.target;
     if (target.kind === "event") {
+      sheetOpener.current = anchorElement;
+      sheetReturn.current = anchorElement;
       setSelectedOccurrence(item.key);
       onParams({ event: target.eventId });
       return;
@@ -1477,7 +707,7 @@ export function ServerBackedBoardCalendar({
       ? {
           status: "error",
           message: currentSelectedDetail.error,
-          retryable: true,
+          retryable: !currentSelectedDetail.refused,
         }
       : sheetEvent
         ? {
@@ -1516,19 +746,74 @@ export function ServerBackedBoardCalendar({
             ? `From ${dayLabel(workspaceToday, region)}`
             : "Upcoming";
   const nextEvent = data.nextOccurrence;
-  const status =
-    view === "month" &&
-    show === "all" &&
-    !query &&
-    !hidden.has(eventsCalendar) &&
-    data.eventsReady &&
-    items.length === 0 &&
-    region
+  const hiddenCount = rows.filter((row) => hidden.has(row.id)).length;
+  const emptyView = data.eventsReady && items.length === 0 && region;
+  // A search or hidden calendar that emptied the view says so first.
+  const filterEmpty = emptyView
+    ? calendarFilterEmpty(search, hiddenCount)
+    : null;
+  const monthEmpty =
+    view === "month" && show === "all" && emptyView && !filterEmpty
       ? calendarEmptyStatus(
           monthName,
           nextEvent ? dayLabel(nextEvent.date, region) : null,
         )
       : null;
+  function undoFilter() {
+    if (filterEmpty?.kind === "search") setSearch("");
+    else if (hiddenKey) {
+      setHiddenState({ key: hiddenKey, ids: [] });
+      writeHiddenCalendars(browserStorage, hiddenKey, []);
+    }
+  }
+  function goToNext() {
+    if (!nextEvent) return;
+    setAnchor(nextEvent.date);
+    setSelectedDay(nextEvent.date);
+    setTitleFocus((value) => value + 1);
+  }
+  const emptyMessage =
+    show === "archived" || view === "upcoming"
+      ? ""
+      : view === "week" && !filterEmpty
+        ? ""
+        : (filterEmpty?.message ?? monthEmpty?.message ?? "");
+  // The words show on the grid; this one live region announces them.
+  const emptyNotice =
+    filterEmpty || monthEmpty ? (
+      <>
+        <span aria-hidden="true">
+          {filterEmpty?.message ?? monthEmpty?.message}
+        </span>
+        {filterEmpty ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 px-1.5 xl:min-h-7"
+              onClick={undoFilter}
+            >
+              {filterEmpty.action}
+            </Button>
+          </>
+        ) : monthEmpty?.next ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-action-text min-h-11 px-1.5 xl:min-h-7"
+              aria-label={monthEmpty.next.name}
+              onClick={goToNext}
+            >
+              {monthEmpty.next.text}
+              <ArrowRight aria-hidden="true" data-icon="inline-end" />
+            </Button>
+          </>
+        ) : null}
+      </>
+    ) : null;
   const showOptions: CalendarShow[] = [
     "all",
     ...(canEdit ? (["mine"] as const) : []),
@@ -1543,14 +828,37 @@ export function ServerBackedBoardCalendar({
         : view === "week"
           ? (days[0] ?? anchorDate)
           : `${anchorDate.slice(0, 7)}-01`;
-  const draftDirty =
-    activeDraft !== null &&
-    draftContent(activeDraft) !==
-      draftContent(
-        draftBase && activeDraft.eventId === draftBase.id
-          ? boardEventDraftFromEvent(draftBase)
-          : draftOrigin,
-      );
+  function closeSheet() {
+    const opener = sheetOpener.current;
+    sheetReturn.current = opener?.isConnected ? opener : todayButton.current;
+    sheetOpener.current = null;
+    onParams({ event: null });
+  }
+
+  useEffect(() => {
+    if (titleFocus > 0) periodTitle.current?.focus();
+  }, [titleFocus]);
+
+  // The now line moves: Week re-renders on each minute while it shows today.
+  const showsToday =
+    view === "week" && workspaceToday !== null && days.includes(workspaceToday);
+  const [, setMinuteTick] = useState(0);
+  useEffect(() => {
+    if (!showsToday) return;
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const tick = () => setMinuteTick((value) => value + 1);
+    const timeout = setTimeout(
+      () => {
+        tick();
+        interval = setInterval(tick, 60_000);
+      },
+      60_000 - (Date.now() % 60_000),
+    );
+    return () => {
+      clearTimeout(timeout);
+      if (interval) clearInterval(interval);
+    };
+  }, [showsToday]);
 
   function move(amount: number) {
     if (!anchorDate) return;
@@ -1569,8 +877,10 @@ export function ServerBackedBoardCalendar({
           <>
             <p className="text-muted-foreground text-sm" role="status">
               {archivedPage.pagination.total} archived events · Showing{" "}
-              {archivedPage.items.length === 0 ? 0 : archivedOffset + 1}–
-              {archivedOffset + archivedPage.items.length}
+              {archivedPage.items.length === 0
+                ? 0
+                : lifecycle.archived.offset + 1}
+              –{lifecycle.archived.offset + archivedPage.items.length}
             </p>
             <ServerArchivedBoardEventsDisplay
               page={archivedPage}
@@ -1584,18 +894,22 @@ export function ServerBackedBoardCalendar({
                   "restore",
                 ) !== null
               }
-              onRestoreEvent={(event) => beginLifecycle("restore", event)}
-              canPurgeEvent={mayPurge}
-              onPurgeEvent={(event) => void reviewEventPurge(event)}
+              onRestoreEvent={(event) =>
+                lifecycle.beginLifecycle("restore", event)
+              }
+              canPurgeEvent={lifecycle.purge.mayPurge}
+              onPurgeEvent={(event) => void lifecycle.purge.review(event)}
             />
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11 xl:min-h-8"
-                disabled={archivedOffset === 0}
+                disabled={lifecycle.archived.offset === 0}
                 onClick={() =>
-                  setArchivedOffset((current) => Math.max(0, current - 25))
+                  lifecycle.archived.setOffset((current) =>
+                    Math.max(0, current - 25),
+                  )
                 }
               >
                 Previous archived events
@@ -1605,7 +919,9 @@ export function ServerBackedBoardCalendar({
                 variant="outline"
                 className="min-h-11 xl:min-h-8"
                 disabled={!archivedPage.pagination.hasMore}
-                onClick={() => setArchivedOffset((current) => current + 25)}
+                onClick={() =>
+                  lifecycle.archived.setOffset((current) => current + 25)
+                }
               >
                 Next archived events
               </Button>
@@ -1613,22 +929,22 @@ export function ServerBackedBoardCalendar({
           </>
         ) : null}
         {canBrowseArchived &&
-        archivedState?.key === archivedKey &&
-        archivedState.status === "loading" ? (
+        lifecycle.archived.state?.key === lifecycle.archived.key &&
+        lifecycle.archived.state.status === "loading" ? (
           <p role="status" className="text-muted-foreground py-8 text-sm">
             Loading archived events…
           </p>
         ) : null}
         {canBrowseArchived &&
-        archivedState?.key === archivedKey &&
-        archivedState.error ? (
+        lifecycle.archived.state?.key === lifecycle.archived.key &&
+        lifecycle.archived.state.error ? (
           <Alert variant="destructive">
-            {archivedState.error}
+            {lifecycle.archived.state.error}
             <Button
               type="button"
               variant="outline"
               className="ml-2 min-h-11 xl:min-h-8"
-              onClick={() => setArchivedVersion((value) => value + 1)}
+              onClick={lifecycle.archived.retry}
             >
               Retry archived events
             </Button>
@@ -1680,10 +996,12 @@ export function ServerBackedBoardCalendar({
         calendars={calendars}
         region={region}
         onOpen={openItem}
+        empty={emptyNotice}
         onShowDay={(date) => {
           setAnchor(date);
           setSelectedDay(date);
           onParams({ view: "week" });
+          setTitleFocus((value) => value + 1);
         }}
       />
     );
@@ -1709,6 +1027,7 @@ export function ServerBackedBoardCalendar({
         calendars={calendars}
         region={region}
         onOpen={openItem}
+        empty={filterEmpty ? emptyNotice : null}
       />
     );
   } else {
@@ -1721,6 +1040,9 @@ export function ServerBackedBoardCalendar({
         calendars={calendars}
         region={region}
         onOpen={openItem}
+        filterEmpty={
+          filterEmpty ? { ...filterEmpty, onAction: undoFilter } : null
+        }
         renderLater={(window) => (
           <LaterWindow
             boardId={boardId}
@@ -1755,18 +1077,9 @@ export function ServerBackedBoardCalendar({
           <Button
             type="button"
             className="min-h-11 xl:min-h-8"
-            onClick={() => {
-              setEditorError(null);
-              setConflict(null);
-              const next = newBoardEventDraft(
-                boardId,
-                calendarPage.boardRevision,
-                selectedCalendarDate,
-              );
-              setDraftOrigin(next);
-              setDraftBase(null);
-              setDraft(next);
-            }}
+            onClick={() =>
+              editor.newEvent(calendarPage.boardRevision, selectedCalendarDate)
+            }
           >
             <Plus data-icon="inline-start" /> New event
           </Button>,
@@ -1791,11 +1104,11 @@ export function ServerBackedBoardCalendar({
           </div>
         </Alert>
       ) : null}
-      {editorError && !activeDraft ? (
-        <Alert variant="destructive">{editorError}</Alert>
+      {editor.editorError && !activeDraft ? (
+        <Alert variant="destructive">{editor.editorError}</Alert>
       ) : null}
-      {lifecycleError && !lifecycleTarget ? (
-        <Alert variant="destructive">{lifecycleError}</Alert>
+      {lifecycle.error && !lifecycle.target ? (
+        <Alert variant="destructive">{lifecycle.error}</Alert>
       ) : null}
       {accessFailed ? (
         <Alert variant="destructive">
@@ -1869,7 +1182,7 @@ export function ServerBackedBoardCalendar({
                   : { previous: "Previous month", next: "Next month" }
             }
             todayRef={todayButton}
-            status={status}
+            titleRef={periodTitle}
             onPrevious={() => move(-1)}
             onNext={() => move(1)}
             onToday={() => {
@@ -1886,51 +1199,48 @@ export function ServerBackedBoardCalendar({
             }
             onShow={(next) => onParams({ show: next === "all" ? null : next })}
             onSearch={setSearch}
-            onGoToNext={() => {
-              if (!nextEvent) return;
-              setAnchor(nextEvent.date);
-              setSelectedDay(nextEvent.date);
-            }}
           />
+          <p role="status" className="sr-only">
+            {emptyMessage}
+          </p>
           {main}
         </div>
       </div>
       <BoardEventSheet
         open={viewerId !== null && selectedEventId !== null && !activeDraft}
         state={sheetState}
+        calendar={{ name: calendarName, color: boardColor }}
         canEdit={sheetEvent !== null && mayEditEvent(sheetEvent)}
-        canArchive={sheetEvent !== null && canArchiveEvent(sheetEvent)}
-        finalFocus={todayButton}
-        onClose={() => onParams({ event: null })}
+        canArchive={
+          sheetEvent !== null && lifecycle.canArchiveEvent(sheetEvent)
+        }
+        finalFocus={sheetReturn}
+        onClose={closeSheet}
         onRetry={() => setSelectedRetry((current) => current + 1)}
         onEdit={editEvent}
-        onArchive={(event) => beginLifecycle("archive", event)}
+        onArchive={(event) => lifecycle.beginLifecycle("archive", event)}
       />
       <BoardEventEditorDialog
         draft={activeDraft}
-        dirty={draftDirty}
-        busy={pending || attachmentPending || recordLinkPending}
-        conflict={activeDraft ? conflict : null}
-        error={editorError}
-        onChange={(patch) =>
-          setDraft((current) => (current ? { ...current, ...patch } : null))
+        dirty={editor.draftDirty}
+        busy={
+          editor.pending || editor.attachmentPending || editor.recordLinkPending
         }
-        onClose={() => {
-          setDraft(null);
-          setEditorError(null);
-          setConflict(null);
-        }}
+        conflict={editor.conflict}
+        error={editor.editorError}
+        onChange={editor.change}
+        onClose={editor.close}
         onSave={() => {
-          void saveEvent();
+          void editor.saveEvent();
         }}
         onCheckLatest={() => {
-          void checkLatestVersion();
+          void editor.checkLatestVersion();
         }}
-        onUseLatest={loadLatestEvent}
-        onKeepMine={retryWithLatestVersion}
-        onAttachmentBusyChange={changeAttachmentPending}
-        onRecordLinkBusyChange={changeRecordLinkPending}
-        refreshAttachmentVersions={refreshEventAttachmentVersions}
+        onUseLatest={editor.loadLatestEvent}
+        onKeepMine={editor.retryWithLatestVersion}
+        onAttachmentBusyChange={editor.changeAttachmentPending}
+        onRecordLinkBusyChange={editor.changeRecordLinkPending}
+        refreshAttachmentVersions={editor.refreshAttachmentVersions}
       />
       <BoardCalendarSourceDialog
         open={sourceDialogOpen && canManageSources}
@@ -1963,43 +1273,40 @@ export function ServerBackedBoardCalendar({
       ) : null}
       <BoardEventPurgeDialog
         open={
-          purgeEvent !== null && purgeEvent.boardId === boardId && purgeEnabled
+          lifecycle.purge.event !== null &&
+          lifecycle.purge.event.boardId === boardId &&
+          lifecycle.purge.enabled
         }
-        pending={lifecyclePending}
-        enabled={purgeEnabled}
-        preview={purgePreview}
-        error={purgeError}
-        name={purgeName}
-        password={purgePassword}
+        pending={lifecycle.pending}
+        enabled={lifecycle.purge.enabled}
+        preview={lifecycle.purge.preview}
+        error={lifecycle.purge.error}
+        name={lifecycle.purge.name}
+        password={lifecycle.purge.password}
         region={displayRegion}
-        onName={setPurgeName}
-        onPassword={setPurgePassword}
-        onConfirm={() => void confirmEventPurge()}
+        onName={lifecycle.purge.setName}
+        onPassword={lifecycle.purge.setPassword}
+        onConfirm={() => void lifecycle.purge.confirm()}
         onReviewAgain={() => {
-          if (purgeEvent) void reviewEventPurge(purgeEvent);
+          const event = lifecycle.purge.event;
+          if (event) void lifecycle.purge.review(event);
         }}
-        onClose={() => {
-          purgeRequest.current += 1;
-          setPurgeEvent(null);
-          setPurgePreview(null);
-          setPurgeName("");
-          setPurgePassword("");
-          setPurgeError("");
-        }}
+        onClose={lifecycle.purge.close}
       />
       <BoardEventLifecycleDialog
         open={
-          lifecycleTarget?.boardId === boardId &&
+          lifecycle.target?.boardId === boardId &&
           !accessDenied &&
           boardActive &&
-          (canConfirmLifecycle(lifecycleTarget) || Boolean(lifecycleError))
+          (lifecycle.canConfirmLifecycle(lifecycle.target) ||
+            Boolean(lifecycle.error))
         }
-        target={lifecycleTarget}
-        error={lifecycleError}
-        pending={lifecyclePending}
-        canConfirm={canConfirmLifecycle(lifecycleTarget)}
-        onCancel={() => setLifecycleTarget(null)}
-        onConfirm={() => void confirmLifecycle()}
+        target={lifecycle.target}
+        error={lifecycle.error}
+        pending={lifecycle.pending}
+        canConfirm={lifecycle.canConfirmLifecycle(lifecycle.target)}
+        onCancel={lifecycle.cancelLifecycle}
+        onConfirm={() => void lifecycle.confirmLifecycle()}
       />
     </section>
   );
