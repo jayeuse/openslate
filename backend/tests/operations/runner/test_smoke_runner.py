@@ -95,6 +95,7 @@ def smoke_boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         log=None,
         cleanup_state=None,
         commands=[],
+        operators=[],
     )
     monkeypatch.setattr(runner, "BACKEND", tmp_path / "backend")
     monkeypatch.setattr(runner, "FRONTEND", tmp_path / "frontend")
@@ -206,6 +207,11 @@ def smoke_boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(runner, "DisposablePostgres", postgres)
     monkeypatch.setattr(runner, "seed", seed)
+    monkeypatch.setattr(
+        runner,
+        "register_installation_operator",
+        lambda _owner_url, admin_id: state.operators.append(admin_id),
+    )
     monkeypatch.setattr(runner.subprocess, "Popen", popen)
     monkeypatch.setattr(runner.subprocess, "run", checked_run)
     monkeypatch.setattr(runner_console.os, "killpg", signal_group)
@@ -276,6 +282,8 @@ def test_smoke_overlaps_build_with_startup_and_waits_for_both_prerequisites(
     assert "MIGRATION_DATABASE_URL" not in state.api_env
     assert state.api_env["E2E_BACKGROUND_WORKERS"] == "true"
     assert state.api_env["E2E_SEEDING_WITHOUT_ANONYMOUS_LIMITS"] == "true"
+    # The sample run acts as the installation owner, as bootstrap_admin.py makes it (F9).
+    assert state.operators == ["synthetic-admin"]
     assert sum(report["stage_seconds"].values()) == 7.0, (
         "serial stage accounting double-counted overlap or included teardown"
     )
@@ -327,3 +335,128 @@ def test_smoke_cancels_and_awaits_the_build_when_the_stack_side_fails(
         assert state.raised is None
         assert state.returned == 1
         assert report["failure_type"] == ("OSError" if fault == "startup" else "RuntimeError")
+
+
+def test_smoke_options_take_a_pack_list_only_for_a_seed_only_run() -> None:
+    default = runner.parse_options([])
+    assert (default.seed_only, default.packs) == (False, ("harbor",))
+    seeded = runner.parse_options(["--seed-only", "--packs", "harbor,school"])
+    assert (seeded.seed_only, seeded.packs) == (True, ("harbor", "school"))
+    for argv in (["--packs", "school"], ["--seed-only", "--packs", "harbor,unknown"],
+                 ["--seed-only", "--packs", "harbor,harbor"]):  # fmt: skip
+        with pytest.raises(SystemExit):
+            runner.parse_options(argv)
+
+
+def test_request_timings_summarize_a_journal_without_identifiers(tmp_path: Path) -> None:
+    journal = tmp_path / "requests.jsonl"
+    rows = []
+    for number, (route, status, milliseconds) in enumerate(
+        [
+            ("/api/records", 201, 40),
+            ("/api/records", 201, 60),
+            ("/api/relationships", 201, 20),
+            ("/api/records", 503, 100),
+        ]  # fmt: skip
+    ):
+        attempt = f"0190a000-0000-7000-8000-{number:012d}"
+        start = f"2026-10-27T00:00:{number:02d}.000000Z"
+        end = f"2026-10-27T00:00:{number:02d}.{milliseconds * 1000:06d}Z"
+        rows += [
+            {"attempt_id": attempt, "event": "request_started", "method": "POST",
+             "route_template": route, "timestamp": start},
+            {"attempt_id": attempt, "event": "request_finished", "status_code": status,
+             "request_id": "secret-request-id", "timestamp": end},
+            {"event": "id_mapping", "logical_id": "records:000001", "id": "secret-row-id"},
+        ]  # fmt: skip
+    journal.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    timings = runner.request_timings(journal)
+
+    assert timings["requests"] == 4
+    assert timings["statuses"] == {"201": 3, "503": 1}
+    assert timings["latency_ms"] == {"p50": 60, "p90": 100, "p99": 100, "max": 100}
+    assert timings["slowest_routes"][0] == {
+        "route": "POST /api/records",
+        "requests": 3,
+        "total_ms": 200,
+        "mean_ms": 67,
+    }
+    assert "secret" not in json.dumps(timings)
+
+
+def test_smoke_seed_populates_the_pack_organization_it_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests import smoke_seed
+
+    seen: dict[str, object] = {}
+
+    def populate(**values):
+        seen.update(values)
+        return SimpleNamespace(status="complete", run_directory=tmp_path, issues=())
+
+    monkeypatch.setattr(smoke_seed, "populate_sample_data", populate)
+    parameters = tmp_path / "parameters.json"
+    parameters.write_text(
+        json.dumps(
+            {
+                "api_url": "https://web.example.test",
+                "origin": "https://web.example.test",
+                "mailpit_url": "http://127.0.0.1:1",
+                "admin_email": "admin@example.test",
+                "admin_id": "0190a000-0000-7000-8000-000000000001",
+                "admin_password": "test",
+                "run_root": str(tmp_path),
+                "seed": 42,
+                "anchor_date": "2026-09-30",
+                "organization": "school",
+                "organization_id": "0190a000-0000-7000-8000-00000000000a",
+                "partner_organization_id": "0190a000-0000-7000-8000-00000000000b",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert smoke_seed.main([str(parameters)]) == 0
+    assert seen["organization_id"] == "0190a000-0000-7000-8000-00000000000a"
+    assert seen["partner_organization_id"] == "0190a000-0000-7000-8000-00000000000b"
+    assert seen["organization"].identity.key == "school"
+
+
+def test_smoke_seed_prints_each_verification_issue_as_the_cli_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A run that reached verification lost its mismatches with the disposable stack.
+    from tests import smoke_seed
+
+    monkeypatch.setattr(
+        smoke_seed,
+        "populate_sample_data",
+        lambda **_: SimpleNamespace(
+            status="incomplete", run_directory=tmp_path, issues=("boards: count differs",)
+        ),
+    )
+    parameters = tmp_path / "parameters.json"
+    parameters.write_text(
+        json.dumps(
+            {
+                "api_url": "https://web.example.test",
+                "origin": "https://web.example.test",
+                "mailpit_url": "http://127.0.0.1:1",
+                "admin_email": "admin@example.test",
+                "admin_id": "0190a000-0000-7000-8000-000000000001",
+                "admin_password": "test",
+                "run_root": str(tmp_path),
+                "seed": 42,
+                "anchor_date": "2026-09-30",
+                "organization": "harbor",
+                "organization_id": "0190a000-0000-7000-8000-00000000000a",
+                "partner_organization_id": "0190a000-0000-7000-8000-00000000000b",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert smoke_seed.main([str(parameters)]) == 1
+    assert "incomplete: boards: count differs" in capsys.readouterr().out.splitlines()

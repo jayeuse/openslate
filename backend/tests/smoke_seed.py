@@ -1,4 +1,4 @@
-"""Seed Harbor Small into a disposable smoke stack through the sample-data seeder.
+"""Seed one pack at Small into a disposable smoke stack through the sample-data seeder.
 
 ``tests/smoke_runner.py`` runs this as a subprocess so the gateway's local certificate
 authority (``SSL_CERT_FILE``) applies to every seeder client. Parameters, including the
@@ -31,9 +31,13 @@ def main(arguments: list[str]) -> int:
         seed=int(parameters["seed"]),
         anchor_date=date.fromisoformat(parameters["anchor_date"]),
         organization=get_pack(parameters["organization"]),
+        organization_id=parameters["organization_id"],
+        partner_organization_id=parameters["partner_organization_id"],
     )
     print(f"status={report.status}", flush=True)
     print(f"run_directory={report.run_directory}", flush=True)
+    for issue in report.issues:
+        print(f"incomplete: {issue}", flush=True)
     return 0 if report.status == "complete" else 1
 
 

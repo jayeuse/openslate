@@ -353,6 +353,29 @@ def test_mfa_plan_uses_two_distinct_owned_active_members(pack):
     assert plan_mfa_controls(renamed) == plan
 
 
+def test_mfa_refreshes_idle_clients_and_skips_refresh_only_for_session_end_probes(
+    setup_mfa, monkeypatch
+):
+    # Disposable stacks issue 45-second access tokens. The School member's primary client
+    # was idle longer than that, and a step that never refreshed got HTTP 401 (F7).
+    from operations.sample.controls.mfa import execute_mfa_control
+
+    dataset, action, context, _ = setup_mfa("school")
+    calls = []
+    original = SampleClient.request
+
+    def spy(self, method, path, **kwargs):
+        calls.append((method, path, kwargs.get("refresh_first", True)))
+        return original(self, method, path, **kwargs)
+
+    monkeypatch.setattr(SampleClient, "request", spy)
+    execute_mfa_control(action, dataset, context)
+
+    skipped = {(method, path) for method, path, refresh in calls if not refresh}
+    assert skipped == {("GET", "/api/auth/session")}
+    assert ("GET", "/api/auth/me", True) in calls
+
+
 @pytest.mark.parametrize("pack", ["harbor", "school"])
 def test_mfa_success_requires_real_step_up_revocation_and_exact_restoration(
     setup_mfa, tmp_path, pack

@@ -320,6 +320,35 @@ def test_write_server_error_is_unknown_and_does_not_expose_response_content(
 
 
 @pytest.mark.parametrize(
+    "detail,code",
+    [
+        ({"code": "files_busy", "message": "File capacity is busy"}, "files_busy"),
+        ({"code": "file_integrity_error", "message": "unavailable"}, "file_integrity_error"),
+        ({"code": "Private Value 42", "message": "unavailable"}, "other"),
+        ({"code": "x" * 65, "message": "unavailable"}, "other"),
+        ({"message": "unavailable"}, "other"),
+    ],
+)
+def test_server_error_journal_names_the_api_error_code_only_when_it_is_a_bounded_slug(
+    tmp_path: Path, detail: dict[str, str], code: str
+) -> None:
+    # A 503 card download recorded only "other", so the run could not tell a refused
+    # transfer slot from missing bytes (F6). Messages are never journaled.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return _login_response()
+        return httpx.Response(503, json={"detail": detail})
+
+    with _client(tmp_path, httpx.MockTransport(handler)) as client:
+        client.login(EMAIL, PASSWORD)
+        assert client.request("GET", f"/api/files/{REQUEST_ID}/content").status_code == 503
+
+    contents = (tmp_path / "private" / "requests.jsonl").read_text()
+    assert json.loads(contents.splitlines()[-1])["failure_code"] == code
+    assert "unavailable" not in contents and "capacity" not in contents
+
+
+@pytest.mark.parametrize(
     "method,path,failures,success,attempts,delays,code",
     [
         ("POST", "/api/records", 1, 201, 2, [0.1], "rollback_busy"),
@@ -513,14 +542,16 @@ def test_an_organization_bound_client_sends_its_organization_on_every_request(
             return _login_response()
         if request.url.path == "/api/events":
             return httpx.Response(
-                200, stream=httpx.ByteStream(b"event: resync\ndata: {}\n\n"),
+                200,
+                stream=httpx.ByteStream(b"event: resync\ndata: {}\n\n"),
                 headers={"Content-Type": "text/event-stream"},
             )
         return httpx.Response(200, json={})
 
     transport = httpx.MockTransport(handler)
-    with SampleClient(BASE_URL, ORIGIN, tmp_path / "requests.jsonl", organization,
-                      transport=transport) as client:
+    with SampleClient(
+        BASE_URL, ORIGIN, tmp_path / "requests.jsonl", organization, transport=transport
+    ) as client:
         client.login(EMAIL, PASSWORD)
         client.request("GET", "/api/records")
         client.request("POST", "/api/records", json_body={"name": "record"})

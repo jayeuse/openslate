@@ -1,13 +1,15 @@
 """Bounded, non-private failure classification for the sample HTTP transport."""
 
+import re
 from uuid import UUID
 
 import httpx
 
 _ROLLED_BACK_DETAIL = "Relationship operation is temporarily unavailable"
+_API_ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
-def _simple_error_detail(response: httpx.Response) -> str | None:
+def _error_detail(response: httpx.Response) -> object:
     if (
         response.headers.get("content-type", "").partition(";")[0].strip().lower()
         != "application/json"
@@ -19,15 +21,21 @@ def _simple_error_detail(response: httpx.Response) -> str | None:
     except ValueError:
         return None
     if isinstance(payload, dict) and set(payload) == {"detail"}:
-        detail = payload["detail"]
-        return detail if isinstance(detail, str) else None
+        return payload["detail"]
     return None
+
+
+def _api_error_code(detail: object) -> str | None:
+    """The API's own error code slug; its message is never recorded."""
+    code = detail.get("code") if isinstance(detail, dict) else None
+    return code if isinstance(code, str) and _API_ERROR_CODE.fullmatch(code) else None
 
 
 def failure_code(response: httpx.Response, method: str, path: str) -> str | None:
     if response.status_code < 500:
         return None
-    detail = _simple_error_detail(response)
+    payload = _error_detail(response)
+    detail = payload if isinstance(payload, str) else None
     if response.status_code == 503:
         # Record writes reach this detail only from lock_row, which rolls back
         # before create/update can flush or commit. Relationship mutations can
@@ -51,4 +59,4 @@ def failure_code(response: httpx.Response, method: str, path: str) -> str | None
         }
         if detail in known:
             return known[detail]
-    return "other"
+    return _api_error_code(payload) or "other"

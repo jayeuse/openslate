@@ -43,11 +43,19 @@ def sample_slug(pack_key: str, *, partner: bool = False) -> str:
     return f"sample-{pack_key}-partner" if partner else f"sample-{pack_key}"
 
 
+def sample_organization_name(pack: OrganizationPack, *, partner: bool = False) -> str:
+    """The pack organization starts at the fresh-install name; the partner has its own."""
+    return f"{pack.identity.workspace_name} Partner" if partner else _INITIAL_NAME
+
+
 def pack_email_domains(pack: OrganizationPack) -> frozenset[str]:
     return frozenset(
         domain.casefold()
-        for domain in (pack.identity.email_domain, pack.actors.internal_domain,
-                       *pack.actors.guest_domains)
+        for domain in (
+            pack.identity.email_domain,
+            pack.actors.internal_domain,
+            *pack.actors.guest_domains,
+        )
     )
 
 
@@ -56,9 +64,10 @@ def organization_usage(connection: Any, slug: str, admin_id: UUID) -> Organizati
     rows = connection.execute(_USAGE_STATEMENT, {"admin": admin_id, "slug": slug}).fetchall()
     if not rows:
         return None
-    (organization_id, members, records, administered), = rows
-    return OrganizationUsage(UUID(str(organization_id)), int(members), int(records),
-                             administered is True)
+    ((organization_id, members, records, administered),) = rows
+    return OrganizationUsage(
+        UUID(str(organization_id)), int(members), int(records), administered is True
+    )
 
 
 def organization_storage_objects(object_keys: Iterable[str], organization_id: UUID | None) -> int:
@@ -101,8 +110,12 @@ def pack_provider_accounts(
 
 
 def create_sample_organization(
-    values: Mapping[str, str], target: Any, pack: OrganizationPack, admin_id: UUID,
-    *, partner: bool = False,
+    values: Mapping[str, str],
+    target: Any,
+    pack: OrganizationPack,
+    admin_id: UUID,
+    *,
+    partner: bool = False,
 ) -> UUID:
     """Create the pack organization, owned by the administrator, on the verified owner target."""
     from psycopg import connect
@@ -127,7 +140,7 @@ def create_sample_organization(
         with AuditSession(engine) as db:
             organization = provision(
                 db,
-                name=f"{pack.identity.workspace_name} Partner" if partner else _INITIAL_NAME,
+                name=sample_organization_name(pack, partner=partner),
                 slug=sample_slug(pack.identity.key, partner=partner),
                 admin_user_id=admin_id,
             )

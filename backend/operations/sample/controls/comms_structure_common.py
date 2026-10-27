@@ -139,19 +139,33 @@ class StructureRun:
             )
         return row, response.headers["ETag"]
 
-    def page(self, path: str, kind: str, **kwargs: Any) -> list[dict[str, Any]]:
-        response = self.call("GET", path, "list_structure", **kwargs)
-        try:
-            page = PAGES[kind].validate_json(response.content)
-        except ValidationError as exc:
-            raise SamplePhaseActionError("Invalid structure page", step="list_structure") from exc
-        if kind in ("conversation", "category") and any(
-            str(row.org_id) != self.org for row in page.items
-        ):
-            raise SamplePhaseActionError(
-                "Structure page organization differs", step="list_structure"
-            )
-        return [row.model_dump(mode="json") for row in page.items]
+    def page(
+        self, path: str, kind: str, *, params: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        """Every row, read page by page; a first page alone misses rows past its limit."""
+        rows: list[dict[str, Any]] = []
+        while True:
+            query = {**(params or {}), "limit": 100, "offset": len(rows)}
+            response = self.call("GET", path, "list_structure", params=query, **kwargs)
+            try:
+                page = PAGES[kind].validate_json(response.content)
+            except ValidationError as exc:
+                raise SamplePhaseActionError(
+                    "Invalid structure page", step="list_structure"
+                ) from exc
+            if kind in ("conversation", "category") and any(
+                str(row.org_id) != self.org for row in page.items
+            ):
+                raise SamplePhaseActionError(
+                    "Structure page organization differs", step="list_structure"
+                )
+            rows.extend(row.model_dump(mode="json") for row in page.items)
+            if not page.pagination.has_more:
+                return rows
+            if not page.items:
+                raise SamplePhaseActionError(
+                    "Structure page did not advance", step="list_structure"
+                )
 
     def identity(self, actor: str = "admin") -> None:
         row = _read_json(
