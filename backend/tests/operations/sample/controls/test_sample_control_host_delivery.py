@@ -291,6 +291,27 @@ def test_host_control_without_trusted_runtime_fails_instead_of_omitting_acceptan
     assert context.private_values == {}
 
 
+def test_host_control_refreshes_idle_clients_before_each_request(host_journey, monkeypatch):
+    # The MFA control never refreshed and failed on 45-second tokens (F7); this control
+    # copied that pattern (F8) and has no revoked-session probe that needs it.
+    from operations.sample.client import SampleClient
+    from operations.sample.controls.host_delivery import execute_host_control
+
+    dataset, action, context, runtime, _, _ = host_journey
+    skipped = []
+    original = SampleClient.request
+
+    def spy(self, method, path, **kwargs):
+        if not kwargs.get("refresh_first", True):
+            skipped.append((method, path))
+        return original(self, method, path, **kwargs)
+
+    monkeypatch.setattr(SampleClient, "request", spy)
+    execute_host_control(action, dataset, context, runtime=runtime)
+
+    assert skipped == []
+
+
 @pytest.mark.parametrize("owner_has_factor", (False, True))
 def test_source_export_restore_are_one_owned_journey_with_fresh_production_client(
     host_journey, owner_has_factor
