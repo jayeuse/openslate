@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from operations.sample.client import SampleClient
+from operations.sample.controls.board_kanban import KANBAN_ROUTES
 from operations.sample.controls.boards import (
     CONTROL_ROUTES,
     plan_board_controls,
@@ -16,6 +17,7 @@ from operations.sample.controls.boards import (
 from operations.sample.packs.registry import get_pack
 from operations.sample.phases.actions import PhaseExecutionContext
 from operations.sample.scenario import build_dataset
+from operations.sample.verification.route_coverage import SEEDER_ROUTES
 
 ACTOR_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 BOARD_ID = "a36755cf-e6ed-4da7-bdee-d9154423b3fb"
@@ -136,3 +138,40 @@ def test_board_control_plan_covers_ui_controls_from_pack_data(pack_key: str) -> 
     assert {("DELETE", "/api/boards/{board_id}/posts/{post_id}/record-links/{link_id}")} <= (
         CONTROL_ROUTES
     )
+
+
+@pytest.mark.parametrize("pack_key", ("harbor", "school"))
+def test_kanban_controls_run_on_the_control_board_while_its_event_is_live(pack_key: str) -> None:
+    dataset = build_dataset("small", 42, date(2026, 10, 1), organization=get_pack(pack_key))
+    actions = plan_board_controls(dataset)
+    keys = [action.key for action in actions]
+    kanban = [action for action in actions if action.values["operation"].startswith("kanban_")]
+    manager = next(a.actor_key for a in actions if a.values["operation"] == "board_patch")
+
+    assert [(a.values["operation"], a.actor_key, a.expected_status) for a in kanban] == [
+        ("kanban_create", manager, 201),
+        ("kanban_update", manager, 200),
+        ("kanban_remove", manager, 204),
+        ("kanban_file_purge", "admin", 200),
+    ]
+    # The event is live for the occurrence read; the file is purged before the Board.
+    first, last = keys.index(kanban[0].key), keys.index(kanban[-1].key)
+    assert keys.index("control:board:restore-event") < first
+    assert last < keys.index("control:board:archive-event-before-delete")
+    assert last < keys.index("control:board:purge-board")
+    assert {a.values["board_key"] for a in kanban} == {"control:board"}
+    module_key = kanban[0].values["module_key"]
+    assert kanban[0].values["field_key"] == {
+        "harbor": "equipment:activity_date",
+        "school": "maintenance_requests:completed_on",
+    }[pack_key]
+    assert module_key == kanban[0].values["field_key"].split(":")[0]
+    assert {
+        ("GET", "/api/boards/occurrences"),
+        ("GET", "/api/boards/cards/due"),
+        ("POST", "/api/boards/{board_id}/cards/batch-dates"),
+        ("PUT", "/api/boards/{board_id}/cards/{card_id}/checklist/order"),
+        ("DELETE", "/api/me/calendar-sources/{source_id}"),
+    } <= CONTROL_ROUTES
+    # A route the controls execute must be claimable as run coverage.
+    assert KANBAN_ROUTES <= SEEDER_ROUTES

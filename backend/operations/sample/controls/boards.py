@@ -29,6 +29,11 @@ from operations.sample.controls.board_files import (
     execute_board_file_action,
     plan_board_file_controls,
 )
+from operations.sample.controls.board_kanban import (
+    KANBAN_OPERATIONS,
+    KANBAN_ROUTES,
+    plan_kanban_controls,
+)
 from operations.sample.controls.board_record_links import (
     BOARD_LINK_ROUTES,
     execute_board_record_link_action,
@@ -49,6 +54,7 @@ CONTROL_ROUTES = (
     | BOARD_CONTENT_ROUTES
     | BOARD_LINK_ROUTES
     | BOARD_FILE_ROUTES
+    | KANBAN_ROUTES
 )
 
 
@@ -313,6 +319,9 @@ def plan_board_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     )
     add("event_archive", "archive-event", manager, event_key, common, {"archived": True})
     add("event_restore", "restore-event", manager, event_key, common, {"archived": False})
+    actions.extend(
+        plan_kanban_controls(dataset, manager=manager, record_key=record_key, event_day=event_date)
+    )
     add(
         "event_archive",
         "archive-event-before-delete",
@@ -334,6 +343,10 @@ def execute_board_control(
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
     operation = action.values.get("operation")
+    if operation in KANBAN_OPERATIONS:
+        from operations.sample.controls.board_kanban_steps import execute_kanban_action
+
+        return execute_kanban_action(action, context, on_substep=on_substep)
     if operation in FILE_OPERATIONS:
         return execute_board_file_action(action, context, on_substep=on_substep)
     if operation in {

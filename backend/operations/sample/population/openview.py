@@ -112,7 +112,8 @@ def _view_presentation(
         "card_size": "comfortable",
         "primary_field_id": primary if layout in {"grid", "gallery"} else None,
         "secondary_field_id": secondary if layout == "grid" else None,
-        "group_by_field_id": None,
+        # The Table view groups by status, as the removed Kanban view did.
+        "group_by_field_id": (secondary or primary) if layout == "table" else None,
     }
     return result
 

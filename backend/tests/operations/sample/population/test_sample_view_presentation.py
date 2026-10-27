@@ -57,3 +57,16 @@ def test_layout_fields_are_query_columns_for_every_module(pack_key: str) -> None
             if not used <= columns:
                 problems.append(f"{module.key}:{layout}")
     assert problems == []
+
+
+@pytest.mark.parametrize("pack_key", ["harbor", "school"])
+def test_table_views_group_by_the_status_field_the_old_kanban_view_used(pack_key: str) -> None:
+    pack = get_pack(pack_key)
+    for module in pack.catalog.modules:
+        fields = _api_fields(pack_key, module)
+        status = str(uuid5(NAMESPACE_URL, f"{pack_key}:{module.key}:status"))
+        grouping = {
+            layout: _view_presentation(layout, fields)["group_by_field_id"]
+            for layout in pack.content.data.layouts
+        }
+        assert grouping == {"table": status, "grid": None, "gallery": None}, module.key

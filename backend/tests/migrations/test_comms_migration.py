@@ -14,6 +14,18 @@ from tests.operations.migration_support import guarded_migration_environment, ru
 pytestmark = pytest.mark.integration
 BASELINE = "226847298ae4"
 CURRENT_COMMS_TABLES = {name for name in ORGANIZATION_TABLES if name.startswith("comms_")}
+# Later revisions that are not Comms also change the table set, and the
+# downgrade to BASELINE passes through them: the Boards relayout removed board
+# widgets and added the Kanban and calendar sources.
+LATER_ADDED_TABLES = {
+    "board_stages",
+    "board_cards",
+    "board_labels",
+    "board_card_labels",
+    "board_card_checklist_items",
+    "board_calendar_sources",
+}
+LATER_REMOVED_TABLES = {"board_widgets"}
 
 
 def test_comms_inventory_contains_the_foundation_and_current_approved_extensions(
@@ -147,7 +159,10 @@ def test_empty_comms_downgrade_upgrade_removes_owned_triggers_without_provider_c
         run_alembic(environment, "downgrade", BASELINE)
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == BASELINE
-            assert set(inspect(connection).get_table_names(schema="public")) == non_comms
+            assert (
+                set(inspect(connection).get_table_names(schema="public"))
+                == (non_comms - LATER_ADDED_TABLES) | LATER_REMOVED_TABLES
+            )
             for function in functions:
                 assert (
                     connection.scalar(text("SELECT to_regprocedure(:name)"), {"name": function})

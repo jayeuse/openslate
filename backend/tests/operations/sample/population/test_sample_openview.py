@@ -178,6 +178,13 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
         "gallery",
     }
     assert all(body["definition"]["columns"] for body in view_bodies)
+    # One grouped view per department: its Table view, by the status column.
+    grouped = [body for body in view_bodies if body["presentation"]["group_by_field_id"]]
+    assert [body["presentation"]["layout"] for body in grouped] == ["table"] * 6
+    assert all(
+        body["presentation"]["group_by_field_id"] in body["presentation"]["column_field_ids"]
+        for body in grouped
+    )
     assert all(len(body["widgets"]) == 4 for body in dashboard_bodies)
     for body in dashboard_bodies:
         DashboardCreate.model_validate(body)
