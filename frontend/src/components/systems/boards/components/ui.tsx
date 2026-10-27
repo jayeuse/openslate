@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Field, FieldLabel } from "@/components/ui/field";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -59,30 +57,26 @@ export function ConfirmAction({
   title,
   description,
   action,
-  phrase,
   onConfirm,
   onCancel,
   disabled = false,
+  tone = "destructive",
 }: {
   open: boolean;
   title: string;
   description: ReactNode;
   action: string;
-  phrase?: string;
   onConfirm: () => void;
   onCancel: () => void;
   disabled?: boolean;
+  /** Danger marks only destruction (One Meaning Rule); a reversible step is neutral. */
+  tone?: "destructive" | "neutral";
 }) {
-  const [typed, setTyped] = useState("");
-  const id = useId();
   return (
     <AlertDialog
       open={open}
       onOpenChange={(next) => {
-        if (!next && !disabled) {
-          setTyped("");
-          onCancel();
-        }
+        if (!next && !disabled) onCancel();
       }}
     >
       <AlertDialogContent>
@@ -90,40 +84,22 @@ export function ConfirmAction({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
-        {phrase && (
-          <Field className="mt-4">
-            <FieldLabel htmlFor={id}>Type “{phrase}” to confirm</FieldLabel>
-            <Input
-              id={id}
-              disabled={disabled}
-              value={typed}
-              autoComplete="off"
-              onChange={(event) => setTyped(event.target.value)}
-            />
-          </Field>
-        )}
         <AlertDialogFooter>
           <Button
             type="button"
             variant="outline"
             className="min-h-11"
             disabled={disabled}
-            onClick={() => {
-              setTyped("");
-              onCancel();
-            }}
+            onClick={onCancel}
           >
             Cancel
           </Button>
           <Button
             type="button"
-            variant="destructive"
+            variant={tone === "destructive" ? "destructive" : "default"}
             className="min-h-11"
-            onClick={() => {
-              setTyped("");
-              onConfirm();
-            }}
-            disabled={disabled || (phrase !== undefined && typed !== phrase)}
+            onClick={onConfirm}
+            disabled={disabled}
           >
             {action}
           </Button>

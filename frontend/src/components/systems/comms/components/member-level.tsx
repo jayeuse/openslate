@@ -12,11 +12,14 @@ const LABEL: Record<Member["level"], string> = {
 export function LevelBadge({
   level,
   label = LABEL[level],
+  description,
   className,
 }: {
   level: Member["level"];
   /** A grant names its own levels ("Read and post"); the chip stays the same. */
   label?: string;
+  /** Why the level stops where it does: the chip's tooltip and description. */
+  description?: string;
   className?: string;
 }) {
   return (
@@ -28,6 +31,8 @@ export function LevelBadge({
             ? "secondary"
             : "outline"
       }
+      title={description}
+      aria-description={description}
       className={cn(
         "shrink-0",
         level === "manage" && "bg-action-tint text-action-text",

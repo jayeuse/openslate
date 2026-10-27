@@ -5,7 +5,6 @@ import type { ReactNode } from "react";
 import {
   CalendarDays,
   ChartGantt,
-  ChevronDown,
   Kanban,
   Newspaper,
   Settings,
@@ -16,12 +15,6 @@ import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { LevelBadge } from "@/components/systems/comms/components/member-level";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   linkTabsIndicatorClass,
   linkTabsListClass,
@@ -37,6 +30,7 @@ import {
   canonicalBoardUrl,
   type BoardSection,
 } from "../hooks/use-server-boards";
+import { postingReason } from "../domain/post-list";
 
 /** A board's views, in order, each with its icon (BR50). */
 const BOARD_TABS: readonly {
@@ -70,9 +64,23 @@ export function boardAudience(board: {
   return "Project groups read and post";
 }
 
-/** The viewer's level on a board: only Manager is tinted (BR6). */
-export function BoardLevelChip({ level }: { level: BoardAccessLevel }) {
-  return <LevelBadge level={level === "write" ? "post" : level} />;
+/**
+ * The viewer's level on a board: only Manager is tinted (BR6). A reader's
+ * chip says why they cannot post (BR34), as its tooltip and description.
+ */
+export function BoardLevelChip({
+  level,
+  description,
+}: {
+  level: BoardAccessLevel;
+  description?: string | null;
+}) {
+  return (
+    <LevelBadge
+      level={level === "write" ? "post" : level}
+      description={description ?? undefined}
+    />
+  );
 }
 
 const quietControl = "min-h-11 xl:min-h-8";
@@ -80,7 +88,8 @@ const quietControl = "min-h-11 xl:min-h-8";
 /**
  * The one header of a board page (BR6, BR7, BR50): the department's mark,
  * the title, the level and Archived chips, one meta line that also carries a
- * refresh, the tab's one primary, a quiet Board settings, then the tabs.
+ * refresh, the tab's one primary, a quiet Board settings (BR26), then the
+ * tabs.
  */
 export function BoardPageHeader({
   board,
@@ -88,7 +97,8 @@ export function BoardPageHeader({
   section,
   status,
   primary,
-  settings,
+  guest,
+  onOpenSettings,
 }: {
   board: BoardManagementBoard;
   /** The department's place in the Sandbox order, for its mark. */
@@ -96,12 +106,10 @@ export function BoardPageHeader({
   section: BoardSection;
   status: ReactNode;
   primary: ReactNode;
-  /** Board settings for managers; until P5 it opens the existing sheets. */
-  settings: {
-    onDetails: () => void;
-    onAccess: () => void;
-    onActivity: () => void;
-  } | null;
+  /** A guest reads only; their chip says so. */
+  guest: boolean;
+  /** Opens Board settings; managers only, so null hides the button. */
+  onOpenSettings: (() => void) | null;
 }) {
   const title = boardPageTitle(board);
   return (
@@ -119,7 +127,12 @@ export function BoardPageHeader({
         }
         badges={
           <>
-            <BoardLevelChip level={board.level} />
+            <BoardLevelChip
+              level={board.level}
+              description={
+                board.level === "read" ? postingReason(board, guest) : null
+              }
+            />
             {board.status === "archived" ? (
               <Badge variant="outline" className="shrink-0">
                 Archived
@@ -138,49 +151,17 @@ export function BoardPageHeader({
         }
         actions={
           <>
-            {settings ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className={cn(
-                        quietControl,
-                        "max-sm:min-w-11 max-sm:px-0",
-                      )}
-                      aria-label="Board settings"
-                    />
-                  }
-                >
-                  <Settings aria-hidden="true" />
-                  <span className="max-sm:hidden">Board settings</span>
-                  <ChevronDown
-                    aria-hidden="true"
-                    className="text-muted-foreground max-sm:hidden"
-                  />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="slim-ui min-w-48">
-                  <DropdownMenuItem
-                    className={quietControl}
-                    onClick={settings.onDetails}
-                  >
-                    Details
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className={quietControl}
-                    onClick={settings.onAccess}
-                  >
-                    Check access
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className={quietControl}
-                    onClick={settings.onActivity}
-                  >
-                    Activity
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+            {onOpenSettings ? (
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(quietControl, "max-sm:min-w-11 max-sm:px-0")}
+                aria-label="Board settings"
+                onClick={onOpenSettings}
+              >
+                <Settings aria-hidden="true" />
+                <span className="max-sm:hidden">Board settings</span>
+              </Button>
             ) : null}
             {primary}
           </>

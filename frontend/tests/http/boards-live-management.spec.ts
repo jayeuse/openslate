@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -46,6 +46,25 @@ const purgePreview: BoardPurgePreview = {
   confirmation_name: board.name,
   last_successful_backup_at: "2026-09-23T18:30:00Z",
 };
+
+/** Board settings, found by its tabs, since its title follows the board's name. */
+function settingsSheet(page: Page): Locator {
+  return page.getByRole("dialog").filter({
+    has: page.getByRole("tablist", { name: "Board settings", exact: true }),
+  });
+}
+
+async function openBoardSettings(page: Page): Promise<Locator> {
+  await page
+    .getByRole("button", { name: "Board settings", exact: true })
+    .click();
+  return settingsSheet(page);
+}
+
+/** Opens the closed Advanced block of Details, which holds files and lifecycle. */
+async function openAdvanced(sheet: Locator): Promise<void> {
+  await sheet.getByRole("button", { name: /^Advanced/ }).click();
+}
 
 function purgeRow(entityType: string, entityId: string) {
   return {
@@ -124,6 +143,11 @@ async function installArchivedBoard(page: Page) {
       return route.fulfill({
         json: { board_id: boardId, revision: board.revision, groups: [] },
       });
+    if (
+      path === `/api/boards/${boardId}/preview-users` ||
+      path === `/api/boards/${boardId}/activity`
+    )
+      return route.fulfill({ json: pageOf([], { limit: 25 }) });
     return route.fulfill({
       json: { ...pageOf([], { limit: 25 }), board_revision: board.revision },
     });
@@ -144,17 +168,14 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     api.workspace.purge_enabled = state === "unknown" ? undefined : false;
     api.failWorkspaceRead(state === "unavailable");
     await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
-    await page
-      .getByRole("button", { name: "Board settings", exact: true })
-      .click();
-    await page.getByRole("menuitem", { name: "Details", exact: true }).click();
-    const manage = page.getByRole("dialog", { name: "Manage Board" });
+    const manage = await openBoardSettings(page);
+    await openAdvanced(manage);
     await expect(
-      manage.getByRole("button", { name: "Restore Board" }),
+      manage.getByRole("button", { name: "Restore board" }),
     ).toBeEnabled();
     await expect(
       manage.getByRole("button", {
-        name: "Permanently delete Board",
+        name: "Permanently delete board",
         exact: true,
       }),
     ).toHaveCount(0);
@@ -239,20 +260,17 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
     });
   });
   await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
-  await page
-    .getByRole("button", { name: "Board settings", exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
-  const manage = page.getByRole("dialog", { name: "Manage Board" });
+  const manage = await openBoardSettings(page);
+  await openAdvanced(manage);
   const begin = manage.getByRole("button", {
-    name: "Permanently delete Board",
+    name: "Permanently delete board",
     exact: true,
   });
   await begin.click();
   await expect(
     manage.getByText("This permanently removes 1 Board and 2 posts."),
   ).toBeVisible();
-  await expect(manage.getByText(board.name, { exact: true })).toBeVisible();
+  await expect(manage.getByRole("code")).toHaveText(board.name);
   await expect(manage.getByText(/Last successful backup/)).toHaveText(
     "Last successful backup: 24 Sept 2026, 02:30 · Asia/Manila",
   );
@@ -261,7 +279,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   await sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" });
   await expect(manage.getByLabel("Administrator password")).toHaveCount(0);
   await expect(
-    manage.getByRole("button", { name: "Restore Board" }),
+    manage.getByRole("button", { name: "Restore board" }),
   ).toBeEnabled();
   expect(deletions).toBe(0);
   api.failWorkspaceRead(false);
@@ -286,7 +304,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   });
   expect(destructiveColor.actual).toBe(destructiveColor.expected);
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    await manage.getByLabel("Type the Board name").fill(board.name);
+    await manage.getByLabel("Type the board name").fill(board.name);
     await manage
       .getByLabel("Administrator password")
       .fill("synthetic-test-passphrase");
@@ -295,7 +313,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
       manage.getByText("The review is unavailable. Request a new review."),
     ).toBeVisible();
     await expect(
-      manage.getByRole("button", { name: "Restore Board" }),
+      manage.getByRole("button", { name: "Restore board" }),
     ).toBeVisible();
     await manage
       .getByRole("button", { name: "Review again", exact: true })
@@ -311,7 +329,7 @@ test("Board purge explains its impact and keeps stale challenges recoverable wit
   expect(deletions).toBe(2);
 });
 
-test("Board creation closes its form and confirms the created Board", async ({
+test("New project board creates the board and opens its settings on Access", async ({
   page,
 }) => {
   await installArchivedBoard(page);
@@ -336,14 +354,43 @@ test("Board creation closes its form and confirms the created Board", async ({
       json: { level: "manage", read: true, write: true, manage: true },
     }),
   );
+  await page.route(`**/api/boards/${departmentId}/groups`, (route) =>
+    route.fulfill({
+      json: { board_id: departmentId, revision: 1, groups: [] },
+    }),
+  );
+  await page.route(`**/api/boards/${departmentId}/preview-users?*`, (route) =>
+    route.fulfill({ json: pageOf([], { limit: 25 }) }),
+  );
   await page.goto("/boards?section=all");
   await page
     .getByRole("button", { name: "New project board", exact: true })
     .click();
-  const form = page.getByRole("dialog", { name: "New project Board" });
-  await form.getByLabel("Board name").fill(created.name);
-  await form.getByRole("button", { name: "Create Board", exact: true }).click();
+  const form = page.getByRole("dialog", { name: "New project board" });
+  const create = form.getByRole("button", {
+    name: "Create board",
+    exact: true,
+  });
+  // Create says why it waits until the board has a name.
+  await expect(create).toHaveAccessibleDescription("Name the board first.");
+  await form.getByLabel("Name", { exact: true }).fill(created.name);
+  await create.click();
   await expect(form).toBeHidden();
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/boards\\?board=${departmentId}&section=posts&settings=access$`,
+    ),
+  );
+  const settings = page.getByRole("dialog", {
+    name: created.name,
+    exact: true,
+  });
+  await expect(
+    settings.getByRole("tab", { name: "Access", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    settings.getByText("No groups yet. Only administrators open this Board."),
+  ).toBeVisible();
   await expect(
     page
       .getByRole("region", { name: "Status messages", exact: true })
@@ -371,15 +418,12 @@ test("Board permanent deletion closes its review and confirms completion", async
         }),
   );
   await page.goto(`/boards?board=${boardId}&section=posts&status=archived`);
-  await page
-    .getByRole("button", { name: "Board settings", exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
-  const form = page.getByRole("dialog", { name: "Manage Board" });
+  const form = await openBoardSettings(page);
+  await openAdvanced(form);
   await form
-    .getByRole("button", { name: "Permanently delete Board", exact: true })
+    .getByRole("button", { name: "Permanently delete board", exact: true })
     .click();
-  await form.getByLabel("Type the Board name").fill(board.name);
+  await form.getByLabel("Type the board name").fill(board.name);
   await form
     .getByLabel("Administrator password")
     .fill("synthetic-owned-passphrase");
@@ -449,11 +493,8 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
     });
   });
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page
-    .getByRole("button", { name: "Board settings", exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
-  const manage = page.getByRole("dialog", { name: "Manage Board" });
+  const manage = await openBoardSettings(page);
+  await manage.getByRole("tab", { name: "Access", exact: true }).click();
   await manage
     .getByRole("combobox", { name: "Add a group", exact: true })
     .click();
@@ -702,26 +743,21 @@ test("live unattached-file list and Board metadata retain the management draft",
 }) => {
   const api = await installFileManagement(page);
   await page.goto(`/boards?board=${boardId}&section=posts`);
-  await page
-    .getByRole("button", { name: "Board settings", exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
-  const manage = page.getByRole("dialog", { name: "Manage Board" });
+  const manage = await openBoardSettings(page);
+  await openAdvanced(manage);
   await expect(
     manage.getByRole("button", {
       name: `Archive ${controlFile.filename}`,
       exact: true,
     }),
   ).toBeVisible();
-  await manage
-    .getByLabel("Board name", { exact: true })
-    .fill("My local Board name");
+  await manage.getByLabel("Name", { exact: true }).fill("My local Board name");
   api.archiveRemote();
   await sendOpenViewEvent(page, "invalidate", { entity: "files" });
   await expect(
     manage.getByText("No unattached files on this page.", { exact: true }),
   ).toBeVisible();
-  await expect(manage.getByLabel("Board name", { exact: true })).toHaveValue(
+  await expect(manage.getByLabel("Name", { exact: true })).toHaveValue(
     "My local Board name",
   );
   api.renameRemote();
@@ -730,11 +766,11 @@ test("live unattached-file list and Board metadata retain the management draft",
     board_id: boardId,
   });
   await expect(
-    manage.getByText("Changed by someone else — review latest", {
+    manage.getByText("Someone changed this board first.", {
       exact: true,
     }),
   ).toBeVisible();
-  await expect(manage.getByLabel("Board name", { exact: true })).toHaveValue(
+  await expect(manage.getByLabel("Name", { exact: true })).toHaveValue(
     "My local Board name",
   );
   expect(api.writes).toHaveLength(0);
@@ -759,11 +795,8 @@ for (const changed of [false, true]) {
         },
       );
     await page.goto(`/boards?board=${boardId}&section=posts`);
-    await page
-      .getByRole("button", { name: "Board settings", exact: true })
-      .click();
-    await page.getByRole("menuitem", { name: "Details", exact: true }).click();
-    const manage = page.getByRole("dialog", { name: "Manage Board" });
+    const manage = await openBoardSettings(page);
+    await openAdvanced(manage);
     await manage.getByLabel("File status").selectOption("only");
     await manage
       .getByRole("button", {
@@ -840,22 +873,15 @@ for (const startArchived of [false, true]) {
     await page.goto(
       `/boards?board=${boardId}&section=posts${startArchived ? "&status=archived" : ""}`,
     );
-    await page
-      .getByRole("button", { name: "Board settings", exact: true })
-      .click();
-    await page.getByRole("menuitem", { name: "Details", exact: true }).click();
-    const manage = page.getByRole("dialog", { name: "Manage Board" });
+    const manage = await openBoardSettings(page);
+    await openAdvanced(manage);
     if (startArchived) {
       await expect(
-        manage.getByText("Restore this Board to manage its unattached files."),
+        manage.getByText("Restore this board to manage its unattached files."),
       ).toBeVisible();
       expect(api.fileReadsWhileArchived).toBe(0);
       await manage
-        .getByRole("button", { name: "Restore Board", exact: true })
-        .click();
-      await page
-        .getByRole("alertdialog", { name: "Restore Board?" })
-        .getByRole("button", { name: "Restore Board", exact: true })
+        .getByRole("button", { name: "Restore board", exact: true })
         .click();
     }
     await manage
@@ -901,19 +927,16 @@ for (const startArchived of [false, true]) {
       manage.getByText("Permanently deleted", { exact: true }),
     ).toBeVisible();
     await manage
-      .getByRole("button", { name: "Archive Board", exact: true })
+      .getByRole("button", { name: "Archive board", exact: true })
       .click();
-    const archive = page.getByRole("alertdialog", { name: "Archive Board?" });
+    const archive = page.getByRole("alertdialog", { name: "Archive board?" });
     await archive
-      .getByLabel(`Type “${board.name}” to confirm`)
-      .fill(board.name);
-    await archive
-      .getByRole("button", { name: "Archive Board", exact: true })
+      .getByRole("button", { name: "Archive board", exact: true })
       .click();
     await manage
-      .getByRole("button", { name: "Permanently delete Board", exact: true })
+      .getByRole("button", { name: "Permanently delete board", exact: true })
       .click();
-    await manage.getByLabel("Type the Board name").fill(board.name);
+    await manage.getByLabel("Type the board name").fill(board.name);
     await manage
       .getByLabel("Administrator password")
       .fill("synthetic-file-password");
@@ -1034,11 +1057,8 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
       board_id: boardId,
     });
     await expect.poll(() => detailHeld).toBe(true);
-    await page
-      .getByRole("button", { name: "Board settings", exact: true })
-      .click();
-    await page.getByRole("menuitem", { name: "Details", exact: true }).click();
-    const manage = page.getByRole("dialog", { name: "Manage Board" });
+    const manage = await openBoardSettings(page);
+    await openAdvanced(manage);
     await manage
       .getByRole("button", {
         name: `Archive ${controlFile.filename}`,
@@ -1060,13 +1080,13 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
     };
     releaseDetail();
     await expect(
-      manage.getByText("Restore this Board to manage its unattached files."),
+      manage.getByText("Restore this board to manage its unattached files."),
     ).toBeVisible();
     await expect(
       page.getByRole("dialog", { name: "Permanently delete file?" }),
     ).toBeHidden();
     const begin = manage.getByRole("button", {
-      name: "Permanently delete Board",
+      name: "Permanently delete board",
       exact: true,
     });
     await expect(begin).toBeEnabled();
@@ -1083,7 +1103,7 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
     await expect(
       manage.getByText(controlFile.filename, { exact: true }),
     ).toHaveCount(0);
-    await expect(manage.getByLabel("Type the Board name")).toHaveCount(0);
+    await expect(manage.getByLabel("Type the board name")).toHaveCount(0);
     await expect(
       manage.getByRole("button", { name: "Preparing review…", exact: true }),
     ).toBeDisabled();
@@ -1091,11 +1111,327 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
     await expect(
       manage.getByText("This permanently removes 1 Board."),
     ).toBeVisible();
-    await expect(manage.getByLabel("Type the Board name")).toBeVisible();
+    await expect(manage.getByLabel("Type the board name")).toBeVisible();
     expect(purges).toBe(0);
   } finally {
     releaseDetail();
     releaseFile();
     releaseBoard();
   }
+});
+
+test("Board settings opens on each tab from the address and closes by name", async ({
+  page,
+}) => {
+  await installFileManagement(page);
+  let activityReads = 0;
+  await page.route(`**/api/boards/${boardId}/activity?*`, (route) => {
+    activityReads += 1;
+    return route.fulfill({
+      json: pageOf(
+        [
+          {
+            id: "00000000-0000-4000-8000-000000000071",
+            created_at: "2026-09-24T09:30:00Z",
+            kind: "board",
+            action: "update",
+            summary: "Board updated",
+            actor_label: "ho-admin",
+          },
+        ],
+        { limit: 25 },
+      ),
+    });
+  });
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const sheet = await openBoardSettings(page);
+  await expect(
+    page.getByRole("dialog", { name: board.name, exact: true }),
+  ).toBeVisible();
+  await expect(sheet.getByText("Project board · Active")).toBeVisible();
+  await expect(page).toHaveURL(/settings=details/);
+  const tab = (name: string) => sheet.getByRole("tab", { name, exact: true });
+  await tab("Access").click();
+  await expect(page).toHaveURL(/settings=access/);
+  await expect(tab("Access")).toHaveAttribute("aria-selected", "true");
+  await expect(
+    sheet.getByRole("heading", { name: "Check a person", exact: true }),
+  ).toBeVisible();
+  await tab("Activity").click();
+  await expect(page).toHaveURL(/settings=activity/);
+  await expect(tab("Activity")).toHaveAttribute("aria-selected", "true");
+  await expect(
+    sheet.getByRole("list", { name: "Board activity", exact: true }),
+  ).toContainText("Changed details · ho-admin · Sep 24, 2026, 9:30 AM UTC");
+  // Activity is read once, and once more for a change to this board.
+  expect(activityReads).toBe(1);
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "boards",
+    board_id: boardId,
+  });
+  await expect.poll(() => activityReads).toBe(2);
+  await expect(tab("Activity")).toHaveAttribute("aria-selected", "true");
+  await sheet
+    .getByRole("button", { name: "Close board settings", exact: true })
+    .click();
+  await expect(settingsSheet(page)).toBeHidden();
+  await expect(page).not.toHaveURL(/settings=/);
+  // A shared link opens the sheet on its tab.
+  await page.goto(`/boards?board=${boardId}&section=posts&settings=activity`);
+  await expect(
+    settingsSheet(page).getByRole("tab", { name: "Activity", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+});
+
+test("renaming a project board saves with its revision and names a conflict", async ({
+  page,
+}) => {
+  await installFileManagement(page);
+  const saves: unknown[] = [];
+  await page.route(`**/api/boards/${boardId}`, (route) => {
+    if (route.request().method() !== "PATCH") return route.fallback();
+    saves.push(route.request().postDataJSON());
+    if (saves.length === 1)
+      return route.fulfill({
+        status: 409,
+        json: {
+          detail: { code: "stale_revision", message: "Private detail" },
+        },
+      });
+    return route.fulfill({
+      json: wireBoard({
+        id: boardId,
+        name: "Dispatch desk",
+        description: board.description,
+        revision: board.revision + 1,
+        level: "manage",
+        created_at: board.createdAt,
+        updated_at: board.updatedAt,
+      }),
+    });
+  });
+  await page.goto(`/boards?board=${boardId}&section=posts&settings=details`);
+  const sheet = settingsSheet(page);
+  const save = sheet.getByRole("button", { name: "Save changes", exact: true });
+  await expect(save).toBeDisabled();
+  await expect(save).toHaveAccessibleDescription("No changes to save.");
+  await sheet.getByLabel("Name", { exact: true }).fill("Dispatch desk");
+  await save.click();
+  await expect(
+    sheet.getByText("Someone changed this board first.", { exact: true }),
+  ).toBeVisible();
+  await expect(save).toBeDisabled();
+  await sheet
+    .getByRole("button", { name: "Refresh latest Board", exact: true })
+    .click();
+  await sheet
+    .getByRole("button", { name: "Retry with my draft", exact: true })
+    .click();
+  await save.click();
+  await expect(
+    sheet.getByText("Board details saved.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Dispatch desk", exact: true }),
+  ).toBeVisible();
+  expect(saves).toEqual([
+    { revision: board.revision, name: "Dispatch desk" },
+    { revision: board.revision, name: "Dispatch desk" },
+  ]);
+});
+
+test("Archive asks once with its consequence and Restore acts at once with a toast", async ({
+  page,
+}) => {
+  const api = await installFileManagement(page);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  const sheet = await openBoardSettings(page);
+  await openAdvanced(sheet);
+  await sheet
+    .getByRole("button", { name: "Archive board", exact: true })
+    .click();
+  const archive = page.getByRole("alertdialog", { name: "Archive board?" });
+  await expect(archive).toContainText(
+    "Everyone can still read it; nobody can post.",
+  );
+  await expect(archive.getByRole("textbox")).toHaveCount(0);
+  const confirm = archive.getByRole("button", {
+    name: "Archive board",
+    exact: true,
+  });
+  await expect(confirm).not.toHaveAttribute("data-variant", "destructive");
+  await confirm.click();
+  const toasts = page.getByRole("region", {
+    name: "Status messages",
+    exact: true,
+  });
+  await expect(
+    toasts.getByText("Board archived.", { exact: true }),
+  ).toBeVisible();
+  const restore = sheet.getByRole("button", {
+    name: "Restore board",
+    exact: true,
+  });
+  await expect(restore).toHaveAttribute("data-variant", "outline");
+  await restore.click();
+  await expect(
+    toasts.getByText("Board restored.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(
+    sheet.getByRole("button", { name: "Archive board", exact: true }),
+  ).toBeVisible();
+  expect(api.writes).toEqual(["archived", "active"]);
+});
+
+test("Check a person shows a person's level on this board and why", async ({
+  page,
+}) => {
+  await installFileManagement(page);
+  const personId = "00000000-0000-4000-8000-000000000081";
+  const checked: string[] = [];
+  await page.route(`**/api/boards/${boardId}/preview-users?*`, (route) => {
+    const search = new URL(route.request().url()).searchParams.get("search");
+    return route.fulfill({
+      json: pageOf(
+        search === null || "sam".includes(search.toLowerCase())
+          ? [{ id: personId, username: "sam" }]
+          : [],
+        { limit: 25 },
+      ),
+    });
+  });
+  await page.route(`**/api/boards/${boardId}/access-preview?*`, (route) => {
+    checked.push(
+      new URL(route.request().url()).searchParams.get("user_id") ?? "",
+    );
+    return route.fulfill({
+      json: { level: "read", read: true, write: false, manage: false },
+    });
+  });
+  await page.goto(`/boards?board=${boardId}&section=posts&settings=access`);
+  const sheet = settingsSheet(page);
+  await sheet.getByRole("combobox", { name: "Person", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Search person", exact: true })
+    .fill("sa");
+  await page.getByRole("option", { name: "sam", exact: true }).click();
+  await expect(
+    sheet.getByText("can read · cannot post · cannot manage", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    sheet.getByText(
+      "Posting needs write access through one of this board's groups.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  expect(checked).toEqual([personId]);
+});
+
+const salesBoardId = "00000000-0000-4000-8000-000000000051";
+
+async function installSalesBoard(
+  page: Page,
+  viewer: { role: "admin" | "member"; level: "read" | "manage" },
+) {
+  await installOpenViewEventSource(page);
+  const sales = wireBoard({
+    id: salesBoardId,
+    scope: "department",
+    department_id: departmentId,
+    name: "Sales",
+    description: null,
+    level: viewer.level,
+    created_at: board.createdAt,
+    updated_at: board.updatedAt,
+  });
+  const reads: string[] = [];
+  await page.route("**/api/**", (route) => {
+    if (isEventStream(route)) return route.fallback();
+    const path = new URL(route.request().url()).pathname;
+    reads.push(path);
+    if (path === "/api/auth/session")
+      return route.fulfill({
+        json: {
+          authenticated: true,
+          organization_id: defaultOrganization.org_id,
+          user_id: actorId,
+          setup_required: false,
+          default_organization_blocked: null,
+        },
+      });
+    if (path === "/api/auth/me")
+      return route.fulfill({
+        json: authMeBody({
+          id: actorId,
+          role: viewer.role,
+          access: [],
+          default_organization_blocked: null,
+        }),
+      });
+    if (path === "/api/boards")
+      return route.fulfill({ json: pageOf([sales], { limit: 25 }) });
+    if (path === `/api/boards/${salesBoardId}`)
+      return route.fulfill({ json: sales });
+    if (path === `/api/boards/${salesBoardId}/my-access`)
+      return route.fulfill({
+        json: { level: "manage", read: true, write: true, manage: true },
+      });
+    if (path === `/api/boards/${salesBoardId}/preview-users`)
+      return route.fulfill({ json: pageOf([], { limit: 25 }) });
+    return route.fulfill({
+      json: { ...pageOf([], { limit: 25 }), board_revision: 1 },
+    });
+  });
+  return { reads };
+}
+
+test("a department board's name is read-only and Access shows how to let a group post", async ({
+  page,
+}) => {
+  await installSalesBoard(page, { role: "admin", level: "manage" });
+  await page.goto(`/boards?department=${departmentId}&section=posts`);
+  const sheet = await openBoardSettings(page);
+  await expect(
+    sheet.getByText("Named after its department", { exact: true }),
+  ).toBeVisible();
+  await expect(sheet.getByRole("textbox", { name: "Name" })).toHaveCount(0);
+  await expect(sheet.getByLabel("Description", { exact: true })).toBeEditable();
+  await sheet.getByRole("tab", { name: "Access", exact: true }).click();
+  await expect(
+    sheet.getByText("Write on some Sales modules", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    sheet.getByText(
+      "Give this group a department-level Write row in Access › Groups",
+    ),
+  ).toBeVisible();
+  await expect(
+    sheet
+      .getByRole("definition")
+      .getByRole("link", { name: "Access › Groups", exact: true }),
+  ).toHaveAttribute("href", "/access?view=groups");
+});
+
+test("a reader sees why they cannot post and no Board settings, even from a link", async ({
+  page,
+}) => {
+  const api = await installSalesBoard(page, { role: "member", level: "read" });
+  await page.goto(
+    `/boards?department=${departmentId}&section=posts&settings=details`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Sales announcements", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator('[data-slot="badge"]').filter({ hasText: /^Read$/ }),
+  ).toHaveAttribute("aria-description", "Posting needs write access to Sales.");
+  await expect(
+    page.getByRole("button", { name: "Board settings", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // Nothing of Board settings is read for a reader.
+  expect(
+    api.reads.filter((path) => /\/(activity|preview-users|files)$/.test(path)),
+  ).toEqual([]);
 });

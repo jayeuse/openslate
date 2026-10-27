@@ -676,17 +676,24 @@ async function exerciseConnectedBoard(
   await page
     .getByRole("button", { name: "New project board", exact: true })
     .click();
-  await page.getByLabel("Board name").fill(boardName);
+  await page
+    .getByRole("dialog", { name: "New project board" })
+    .getByLabel("Name", { exact: true })
+    .fill(boardName);
   const [createdBoard] = await Promise.all([
     page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/api/boards" &&
         response.request().method() === "POST",
     ),
-    page.getByRole("button", { name: "Create Board" }).click(),
+    page.getByRole("button", { name: "Create board" }).click(),
   ]);
   expect(createdBoard.status()).toBe(201);
   const boardId = ((await createdBoard.json()) as { id: string }).id;
+  // A new project board opens with Board settings on Access (BR30).
+  await page
+    .getByRole("button", { name: "Close board settings", exact: true })
+    .click();
   await expect(page.getByRole("heading", { name: boardName })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`board=${boardId}`));
 

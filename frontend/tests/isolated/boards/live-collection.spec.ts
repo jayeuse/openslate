@@ -11,6 +11,7 @@ import {
   transitionResource,
   type ResourceState,
 } from "../../../src/components/systems/boards/hooks/use-server-boards";
+import { boardSettingsTab } from "../../../src/components/systems/boards/domain/board-settings";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const homeId = "00000000-0000-4000-8000-000000000002";
@@ -336,4 +337,36 @@ test("each Board has one address: Company without an id, a department by its dep
   expect(
     chooseBoardCandidate(parseBoardRoute("?section=all"), listed),
   ).toBeNull();
+});
+
+test("Board settings opens on the tab in the address and keeps it on the board's own address", () => {
+  expect(boardSettingsTab("?section=posts&settings=details")).toBe("details");
+  expect(boardSettingsTab("settings=access")).toBe("access");
+  expect(boardSettingsTab("?settings=activity&post=p1")).toBe("activity");
+  // A closed sheet, an unknown tab, or two tabs keep the sheet closed.
+  for (const search of [
+    "?section=posts",
+    "?settings=",
+    "?settings=overview",
+    "?settings=Details",
+    "?settings=details&settings=access",
+  ])
+    expect(boardSettingsTab(search)).toBeNull();
+  // A new project board opens on Access (BR30), and the replace that gives a
+  // board its one address keeps the open tab.
+  const project = {
+    id: boardId,
+    scope: "project" as const,
+    departmentId: null,
+  };
+  expect(canonicalBoardUrl(project, "posts", "settings=access")).toBe(
+    `/boards?board=${boardId}&section=posts&settings=access`,
+  );
+  expect(
+    canonicalBoardUrl(
+      { id: homeId, scope: "company" as const, departmentId: null },
+      "calendar",
+      `?board=${homeId}&settings=activity`,
+    ),
+  ).toBe("/boards?section=calendar&settings=activity");
 });

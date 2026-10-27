@@ -6,15 +6,16 @@ import type {
   BoardManagementBoard,
   BoardPurgePreview,
 } from "../../../src/components/systems/boards/adapters/board-management-api";
+import { ServerBoardManagementDisplay } from "../../../src/components/systems/boards/components/board-settings-details";
 import {
-  ServerBoardManagementDisplay,
   boardCreateForDraft,
   boardUpdateForDraft,
   rebaseBoardDraft,
   revokeBoardManagementState,
   type BoardManagementDraft,
   type BoardManagementView,
-} from "../../../src/components/systems/boards/components/server-backed-board-management";
+} from "../../../src/components/systems/boards/domain/board-details";
+import { boardLifecycleConfirmation } from "../../../src/components/systems/boards/domain/board-settings";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";
@@ -42,7 +43,6 @@ const draft: BoardManagementDraft = {
   description: "Keep my draft",
 };
 const baseView: BoardManagementView = {
-  mode: "manage",
   board: departmentBoard,
   access: "ready",
   canManage: true,
@@ -78,22 +78,21 @@ const purgePreview: BoardPurgePreview = {
 };
 
 test("a new Board is a project Board with only a name and description", () => {
-  const html = markup({ ...baseView, mode: "create", board: null });
-  expect(html).toContain("Create Board");
-  expect(html).not.toContain("Department");
-  expect(html).not.toContain("Default section");
   expect(boardCreateForDraft(draft)).toEqual({
     name: "Dispatch updated",
     description: "Keep my draft",
   });
+  expect(
+    boardCreateForDraft({ name: "  Dispatch  ", description: "   " }),
+  ).toEqual({ name: "Dispatch", description: null });
 });
 
-test("a department Board keeps its department name and cannot be archived", () => {
+test("a department Board shows its name as text with the reason and cannot be archived", () => {
   const html = markup({ ...baseView, draft: { ...draft, name: "Operations" } });
-  expect(html).toContain("always has its department");
-  expect(html).toContain("readOnly");
-  expect(html).not.toContain("Archive Board");
-  expect(html).toContain("archived when its department closes");
+  expect(html).toContain("Named after its department");
+  expect(html).not.toContain('value="Operations"');
+  expect(html).not.toContain("Archive board");
+  expect(html).toContain("Archives when Operations closes.");
   expect(boardUpdateForDraft(departmentBoard, draft)).toEqual({
     revision: 4,
     description: "Keep my draft",
@@ -113,8 +112,9 @@ test("the company Board can be renamed but not archived", () => {
     board: company,
     draft: { name: "Company", description: "Daily handoffs" },
   });
-  expect(html).not.toContain("Archive Board");
-  expect(html).toContain("The company Board is always open.");
+  expect(html).not.toContain("Archive board");
+  expect(html).not.toContain("always open");
+  expect(html).toContain('value="Company"');
   expect(boardUpdateForDraft(company, { ...draft, name: "Everyone" })).toEqual({
     revision: 4,
     name: "Everyone",
@@ -122,30 +122,39 @@ test("the company Board can be renamed but not archived", () => {
   });
 });
 
-test("a project Board shows its group editor slot and can be archived", () => {
-  const html = renderToStaticMarkup(
-    createElement(ServerBoardManagementDisplay, {
-      view: { ...baseView, board, draft },
-      groups: createElement("p", null, "Group editor slot"),
-    }),
-  );
-  expect(html).toContain("Group editor slot");
-  expect(html.indexOf("Group editor slot")).toBeLessThan(
-    html.indexOf("Archive Board"),
-  );
-  expect(
-    renderToStaticMarkup(
-      createElement(ServerBoardManagementDisplay, {
-        view: baseView,
-        groups: createElement("p", null, "Group editor slot"),
-      }),
-    ),
-  ).not.toContain("Group editor slot");
+test("a project Board's Details rows come before Advanced, which holds Archive", () => {
+  const html = markup({ ...baseView, board, draft });
+  expect(html.indexOf("Description")).toBeLessThan(html.indexOf("Advanced"));
+  expect(html.indexOf("Advanced")).toBeLessThan(html.indexOf("Archive board"));
+  expect(html).toContain("Advanced");
+  expect(html).toContain("Save changes");
   expect(boardUpdateForDraft(board, draft)).toEqual({
     revision: 4,
     name: "Dispatch updated",
     description: "Keep my draft",
   });
+});
+
+test("Save changes says there is nothing to save until the draft changes", () => {
+  const html = markup({
+    ...baseView,
+    board,
+    draft: { name: board.name, description: board.description ?? "" },
+  });
+  expect(html).toContain("No changes to save.");
+  expect(html).toMatch(/disabled=""[^>]*>Save changes/);
+  expect(markup({ ...baseView, board, draft })).not.toContain(
+    "No changes to save.",
+  );
+});
+
+test("Archive asks once with its consequence and Restore acts at once", () => {
+  expect(boardLifecycleConfirmation("archive")).toEqual({
+    title: "Archive board?",
+    description: "Everyone can still read it; nobody can post.",
+    action: "Archive board",
+  });
+  expect(boardLifecycleConfirmation("restore")).toBeNull();
 });
 
 test("existing Board management requires server-confirmed manage access", () => {
@@ -157,14 +166,14 @@ test("existing Board management requires server-confirmed manage access", () => 
     const html = markup(view);
     expect(html).not.toContain("Keep my draft");
     expect(html).not.toContain("Save changes");
-    expect(html).not.toContain("Archive Board");
+    expect(html).not.toContain("Archive board");
   }
 });
 
 test("revision conflict retains the draft and blocks unreviewed overwrite", () => {
   const html = markup({ ...baseView, conflict: true });
   expect(html).toContain("Keep my draft");
-  expect(html).toContain("Changed by someone else — review latest");
+  expect(html).toContain("Someone changed this board first.");
   expect(html).toContain("Refresh latest Board");
   expect(html).toMatch(/disabled=""[^>]*>Save changes/);
 });
@@ -274,12 +283,14 @@ test("manage-only denial clears its editor without revoking the authorized Board
   expect(boardRevocations).toBe(0);
 });
 
-test("archived project Board offers restore without editable metadata", () => {
+test("archived project Board offers a neutral Restore without editable metadata", () => {
   const html = markup({
     ...baseView,
     board: { ...board, status: "archived" },
   });
-  expect(html).toContain("Restore Board");
+  expect(html).toMatch(/data-variant="outline"[^>]*>Restore board</);
+  expect(html).not.toContain('data-variant="destructive"');
+  expect(html).toContain("Archived boards are read-only.");
   expect(html).not.toContain("Save changes");
 });
 
@@ -292,13 +303,13 @@ test("archived Board permanent-deletion controls are hidden from non-admins", ()
     } as Parameters<typeof ServerBoardManagementDisplay>[0]),
   );
   expect(html).not.toContain("Permanent deletion");
-  expect(html).not.toContain("Permanently delete Board");
-  expect(html).toContain("Restore Board");
+  expect(html).not.toContain("Permanently delete board");
+  expect(html).toContain("Restore board");
 });
 
 test("Board purge preserves safe lifecycle messages when the server returns their actual status", async () => {
   const management =
-    (await import("../../../src/components/systems/boards/components/server-backed-board-management")) as unknown as {
+    (await import("../../../src/components/systems/boards/domain/board-details")) as unknown as {
       boardPurgeFailureMessage: (
         error: unknown,
         stage: "preview" | "execute",

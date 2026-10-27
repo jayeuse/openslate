@@ -34,29 +34,27 @@ test("Board settings holds a board's details, access and activity, and All board
     .getByRole("button", { name: "New project board", exact: true })
     .click();
   await expect(
-    page.getByRole("dialog", { name: "New project Board" }),
+    page.getByRole("dialog", { name: "New project board" }),
   ).toBeVisible();
   await page
-    .getByRole("dialog", { name: "New project Board" })
-    .getByRole("button", { name: "Close", exact: true })
-    .first()
+    .getByRole("dialog", { name: "New project board" })
+    .getByRole("button", { name: "Close new project board", exact: true })
     .click();
   await page.goto(`/boards?board=${boardId}&section=posts`);
   await page
     .getByRole("button", { name: "Board settings", exact: true })
     .click();
+  const settings = page.getByRole("dialog", { name: board.name, exact: true });
   // The exact list leaves no room for a retired item (access grants,
   // templates, favorites, a home Board, a new Board).
-  await expect(page.getByRole("menuitem")).toHaveText([
+  await expect(settings.getByRole("tab")).toHaveText([
     "Details",
-    "Check access",
+    "Access",
     "Activity",
   ]);
-  await page.getByRole("menuitem", { name: "Details", exact: true }).click();
-  const manage = page.getByRole("dialog", { name: "Manage Board" });
-  await expect(manage).toBeVisible();
+  await settings.getByRole("tab", { name: "Access", exact: true }).click();
   await expect(
-    manage.getByText("No groups yet. Only administrators open this Board."),
+    settings.getByText("No groups yet. Only administrators open this Board."),
   ).toBeVisible();
 });
 
@@ -426,14 +424,14 @@ test.describe("Boards workspace regional activity", () => {
     await page
       .getByRole("button", { name: "Board settings", exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "Activity", exact: true }).click();
     const activity = page.getByRole("dialog", {
-      name: "Board activity",
+      name: board.name,
       exact: true,
     });
+    await activity.getByRole("tab", { name: "Activity", exact: true }).click();
     await expect(
-      activity.getByText("Regional activity", { exact: true }),
-    ).toBeVisible();
+      activity.getByRole("list", { name: "Board activity", exact: true }),
+    ).toContainText("Changed details · Regional test actor");
     await expect(activity.locator("time")).toHaveText(
       /22 sept\. 2026.*17:00.*(?:UTC|GMT).*7/,
     );

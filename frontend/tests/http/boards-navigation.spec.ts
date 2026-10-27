@@ -433,7 +433,7 @@ test("All boards lists every readable board with its kind and level, searches, a
     .getByRole("button", { name: "New project board", exact: true })
     .click();
   await expect(
-    page.getByRole("dialog", { name: "New project Board" }),
+    page.getByRole("dialog", { name: "New project board" }),
   ).toBeVisible();
   for (const gone of ["Board type", "Board status"])
     await expect(page.getByRole("combobox", { name: gone })).toHaveCount(0);

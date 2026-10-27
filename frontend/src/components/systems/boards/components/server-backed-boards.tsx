@@ -11,7 +11,7 @@ import {
   type WorkspaceNavigationGuard,
 } from "@/components/workspace-navigation-guard";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LayoutDashboard, RefreshCw, X } from "lucide-react";
+import { LayoutDashboard, RefreshCw } from "lucide-react";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { departmentNavigationOptions } from "@/components/department-navigation";
 import { isRefusal } from "@/components/department-navigation-model";
@@ -25,19 +25,10 @@ import {
   type WorkspaceInvalidation,
 } from "../../shared/adapters/invalidation-events";
 import { useInvalidationRefresh } from "../../shared/adapters/use-invalidation-refresh";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { linkTabsListClass } from "@/components/ui/link-tabs";
 import { cn } from "@/lib/utils";
 import type { BoardManagementBoard } from "../adapters/board-management-api";
-import { ServerBackedBoardActivity } from "./server-backed-board-activity";
-import { ServerBackedBoardAccessPreview } from "./server-backed-board-access-preview";
 import {
   ServerBackedBoardPosts,
   type PostParams,
@@ -46,7 +37,12 @@ import {
   ServerBackedBoardCalendar,
   type BoardCalendarParams,
 } from "./server-backed-board-calendar";
-import { ServerBackedBoardManagement } from "./server-backed-board-management";
+import { ServerBackedBoardSettings } from "./server-backed-board-management";
+import { BoardNewProjectDialog } from "./board-new-project-dialog";
+import {
+  boardSettingsTab,
+  type BoardSettingsTab,
+} from "../domain/board-settings";
 import { ServerBackedMyCalendar } from "./server-backed-my-calendar";
 import {
   ServerBackedBoardKanban,
@@ -67,24 +63,6 @@ import {
   useServerBoardsResource,
   type BoardSection,
 } from "../hooks/use-server-boards";
-
-type BoardActivitySelection = {
-  boardId: string;
-  detailSequence: number;
-};
-
-export function isSelectedBoardActivityOpen(
-  selection: BoardActivitySelection | null,
-  boardId: string | null,
-  detailSequence: number,
-): boolean {
-  return (
-    selection !== null &&
-    boardId !== null &&
-    selection.boardId === boardId &&
-    selection.detailSequence === detailSequence
-  );
-}
 
 // From 1280px the page is still: the region fills the height under the
 // header, and its content is the one panel that scrolls (BR8).
@@ -169,13 +147,7 @@ function ServerBackedBoardsContent() {
   const searchParams = useSearchParams();
   const search = searchParams.toString();
   const route = parseBoardRoute(search);
-  const [managementMode, setManagementMode] = useState<
-    "create" | "manage" | null
-  >(null);
-  const [activitySelection, setActivitySelection] =
-    useState<BoardActivitySelection | null>(null);
-  const [previewSelection, setPreviewSelection] =
-    useState<BoardActivitySelection | null>(null);
+  const [creating, setCreating] = useState(false);
   const [primarySlot, setPrimarySlot] = useState<HTMLElement | null>(null);
   const [draftState, setDraftState] = useState<{
     boardId: string;
@@ -223,18 +195,8 @@ function ServerBackedBoardsContent() {
   );
   const eventsLiveKey = useInvalidationRefresh(boardId, invalidatesEvents);
   const canManage = board?.level === "manage";
-  const activityOpen = isSelectedBoardActivityOpen(
-    activitySelection,
-    board?.id ?? null,
-    resource.detail.sequence,
-  );
-  const previewOpen = isSelectedBoardActivityOpen(
-    previewSelection,
-    board?.id ?? null,
-    resource.detail.sequence,
-  );
-  const closeActivity = useCallback(() => setActivitySelection(null), []);
-  const closePreview = useCallback(() => setPreviewSelection(null), []);
+  // Board settings is open on the tab in the address, for managers only.
+  const settingsTab = canManage ? boardSettingsTab(search) : null;
   const section = resolveBoardSection(route);
   const myCalendar = route.kind === "my-calendar";
   const regionActive = board !== null || myCalendar;
@@ -286,7 +248,7 @@ function ServerBackedBoardsContent() {
       setPendingNavigation(() => resume);
       return false;
     },
-    [currentDraftState],
+    [currentDraftState, setPendingNavigation],
   );
   useWorkspaceNavigationGuard(guardWorkspaceNavigation);
   const updateBoardParams = useCallback(
@@ -369,7 +331,7 @@ function ServerBackedBoardsContent() {
         return { boardId, section: draftSection, dirty, pending };
       });
     },
-    [],
+    [setDraftState],
   );
   const onCalendarDraftStateChange = useCallback(
     (boardId: string, dirty: boolean, pending: boolean) =>
@@ -427,13 +389,18 @@ function ServerBackedBoardsContent() {
       router.replace(target, { scroll: false });
   }, [board, route.kind, router, section, search]);
 
-  useEffect(() => {
-    if (activitySelection && !activityOpen) closeActivity();
-  }, [activitySelection, activityOpen, closeActivity]);
-
-  useEffect(() => {
-    if (previewSelection && !previewOpen) closePreview();
-  }, [previewSelection, previewOpen, closePreview]);
+  // Opening, switching and closing Board settings keep any draft on the page
+  // under it, so they skip the unsaved-changes guard.
+  const setSettingsTab = useCallback(
+    (tab: BoardSettingsTab | null) => {
+      const next = new URLSearchParams(search);
+      if (tab) next.set("settings", tab);
+      else next.delete("settings");
+      const href = `/boards?${next.toString()}` as Route;
+      if (href !== `/boards?${search}`) router.replace(href, { scroll: false });
+    },
+    [router, search],
+  );
 
   const listPending =
     resource.list.data === null &&
@@ -467,14 +434,11 @@ function ServerBackedBoardsContent() {
     resource.list.data !== null &&
     resource.list.data.pagination.total === 0;
 
-  function navigateToBoard(target: BoardManagementBoard) {
-    const href = canonicalBoardUrl(target, "posts");
-    const resume = () => {
-      closeActivity();
-      closePreview();
-      setManagementMode(null);
-      router.push(href, { scroll: false });
-    };
+  // A new project board opens with Board settings on Access, where its
+  // groups are added next (BR30).
+  function openCreatedBoard(target: BoardManagementBoard) {
+    const href = canonicalBoardUrl(target, "posts", "settings=access");
+    const resume = () => router.push(href, { scroll: false });
     if (requestNavigation(href, resume)) resume();
   }
 
@@ -509,14 +473,13 @@ function ServerBackedBoardsContent() {
     </>
   );
 
-  const createSheet = (
-    <ServerBackedBoardManagement
-      mode="create"
-      open={managementMode === "create"}
-      onOpenChange={(open) => setManagementMode(open ? "create" : null)}
+  const createDialog = (
+    <BoardNewProjectDialog
+      open={creating}
+      onOpenChange={(next) => setCreating(next)}
       onCreated={(created) => {
         refreshBoard();
-        navigateToBoard(created);
+        openCreatedBoard(created);
       }}
     />
   );
@@ -556,11 +519,8 @@ function ServerBackedBoardsContent() {
   if (route.kind === "all")
     return (
       <div className={pageClass}>
-        <BoardDirectory
-          isAdmin={isAdmin}
-          onCreate={() => setManagementMode("create")}
-        />
-        {createSheet}
+        <BoardDirectory isAdmin={isAdmin} onCreate={() => setCreating(true)} />
+        {createDialog}
       </div>
     );
 
@@ -572,50 +532,34 @@ function ServerBackedBoardsContent() {
           departmentIndex={departmentIndex >= 0 ? departmentIndex : null}
           section={section}
           status={refreshStatus}
-          settings={
-            canManage
-              ? {
-                  onDetails: () => setManagementMode("manage"),
-                  onAccess: () =>
-                    setPreviewSelection({
-                      boardId: board.id,
-                      detailSequence: resource.detail.sequence,
-                    }),
-                  onActivity: () =>
-                    setActivitySelection({
-                      boardId: board.id,
-                      detailSequence: resource.detail.sequence,
-                    }),
-                }
-              : null
-          }
+          guest={identity.data?.role === "guest"}
+          onOpenSettings={canManage ? () => setSettingsTab("details") : null}
           primary={<div ref={setPrimarySlot} className="contents" />}
         />
       ) : (
         <BoardsLoadingHeader placeholders={loading} />
       )}
-      {createSheet}
-      {board && (
-        <ServerBackedBoardManagement
-          mode="manage"
-          isAdmin={isAdmin}
-          open={managementMode === "manage"}
-          onOpenChange={(open) => setManagementMode(open ? "manage" : null)}
+      {createDialog}
+      {board && canManage && (
+        <ServerBackedBoardSettings
           board={board}
+          isAdmin={isAdmin}
+          tab={settingsTab}
+          onTabChange={setSettingsTab}
+          onClose={() => setSettingsTab(null)}
+          refreshKey={resource.detail.sequence}
+          region={displayRegion}
           onUpdated={(updated) => {
             resource.applyBoardMutation(updated);
             refreshBoard();
           }}
           onAccessDenied={() => {
-            closeActivity();
-            closePreview();
+            setSettingsTab(null);
             resource.revokeAccess();
           }}
           onPurged={() => {
             const href: Route = "/boards";
             const resume = () => {
-              closeActivity();
-              closePreview();
               router.push(href, { scroll: false });
               refreshBoard();
             };
@@ -676,11 +620,8 @@ function ServerBackedBoardsContent() {
             {/* An empty workspace has its first step in view. The server
                 still decides who may create. */}
             {!unavailable && !resource.list.error && noBoards && isAdmin && (
-              <Button
-                className="min-h-11"
-                onClick={() => setManagementMode("create")}
-              >
-                New project Board
+              <Button className="min-h-11" onClick={() => setCreating(true)}>
+                New project board
               </Button>
             )}
           </BoardEmpty>
@@ -763,80 +704,11 @@ function ServerBackedBoardsContent() {
                 onChanged={refreshBoard}
                 onAccessDenied={(deniedId) => {
                   if (board.id !== deniedId) return;
-                  closeActivity();
-                  closePreview();
                   resource.revokeAccess();
                 }}
                 onDraftStateChange={onPostDraftStateChange}
               />
             )}
-            <Sheet
-              open={activityOpen}
-              onOpenChange={(open) => {
-                if (!open) closeActivity();
-              }}
-            >
-              <SheetContent className="w-full gap-6 sm:w-[min(92vw,40rem)]">
-                <SheetHeader className="pr-10">
-                  <SheetTitle>Board activity</SheetTitle>
-                  <SheetDescription>
-                    Changes to this Board and its groups.
-                  </SheetDescription>
-                </SheetHeader>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  type="button"
-                  aria-label="Close Board activity"
-                  className="absolute top-3 right-3 size-11"
-                  onClick={closeActivity}
-                >
-                  <X />
-                </Button>
-                {activityOpen && (
-                  <ServerBackedBoardActivity
-                    key={board.id}
-                    region={displayRegion}
-                    boardId={board.id}
-                    refreshKey={resource.detail.sequence}
-                    onAccessDenied={closeActivity}
-                  />
-                )}
-              </SheetContent>
-            </Sheet>
-            <Sheet
-              open={previewOpen}
-              onOpenChange={(open) => {
-                if (!open) closePreview();
-              }}
-            >
-              <SheetContent className="w-full gap-6 sm:w-[min(92vw,40rem)]">
-                <SheetHeader className="pr-10">
-                  <SheetTitle>Preview Board access</SheetTitle>
-                  <SheetDescription>
-                    Check the level an active person has on this Board without
-                    changing any access.
-                  </SheetDescription>
-                </SheetHeader>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  type="button"
-                  aria-label="Close Board access preview"
-                  className="absolute top-3 right-3 size-11"
-                  onClick={closePreview}
-                >
-                  <X />
-                </Button>
-                {previewOpen && (
-                  <ServerBackedBoardAccessPreview
-                    key={board.id}
-                    boardId={board.id}
-                    refreshKey={resource.detail.sequence}
-                  />
-                )}
-              </SheetContent>
-            </Sheet>
           </>
         )}
       </LoadingRegion>

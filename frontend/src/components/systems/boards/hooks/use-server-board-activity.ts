@@ -100,6 +100,12 @@ export function useServerBoardActivity(
   const [retryKey, setRetryKey] = useState(0);
   const sequence = useRef(0);
   const key = `${boardId}:${offset}`;
+  // The latest denial handler, so a new callback from the owner never reads
+  // the page again.
+  const deny = useRef(onAccessDenied);
+  useEffect(() => {
+    deny.current = onAccessDenied;
+  });
 
   useEffect(() => {
     const request = ++sequence.current;
@@ -139,12 +145,12 @@ export function useServerBoardActivity(
             retain: failure.retain,
           }),
         );
-        if (failure.denied) onAccessDenied();
+        if (failure.denied) deny.current();
       });
     return () => {
       sequence.current += 1;
     };
-  }, [boardId, key, offset, refreshKey, retryKey, onAccessDenied]);
+  }, [boardId, key, offset, refreshKey, retryKey]);
 
   return {
     state:
