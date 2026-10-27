@@ -187,3 +187,63 @@ def test_board_activity_names_each_group_change_for_board_managers_only(
     }
     for hidden in ("Internal Audit", "Field Crew", "previous_level"):
         assert hidden not in str(read)
+
+
+def test_board_activity_keeps_level_changes_after_the_group_is_removed(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    manager, reader = admin(db), member(db)
+    board, other = project_board(db), project_board(db)
+    readers = _named_group(db, board.org_id, "Readers")
+    triage = _named_group(db, board.org_id, "Service Triage")
+    board_group(db, board, [reader], AccessLevel.READ, group=readers)
+    db.commit()
+
+    def replace(target: object, revision: int, groups: dict[Group, str]) -> int:
+        response = client(db, manager, group_router).put(
+            f"/api/boards/{target}/groups",
+            json={"revision": revision, "groups": [
+                {"group_id": str(group.id), "level": level} for group, level in groups.items()
+            ]},
+        )
+        assert response.status_code == 200
+        revision_after = response.json()["revision"]
+        assert isinstance(revision_after, int)
+        return revision_after
+
+    # Board settings > Access: add at Read, change to Post, then Manager, then remove.
+    revision = board.revision
+    for level in ("read", "write", "manage"):
+        revision = replace(board.id, revision, {readers: "read", triage: level})
+    replace(board.id, revision, {readers: "read"})
+    # The same group's history on another Board stays on that Board.
+    revision = other.revision
+    for level in ("write", "read"):
+        revision = replace(other.id, revision, {triage: level})
+    replace(other.id, revision, {})
+
+    root = f"/api/boards/{board.id}/activity"
+    managed = client(db, manager, router).get(root).json()
+    assert managed["pagination"]["total"] == 6
+    assert len(managed["items"]) == 6
+    assert _rows(managed) == {
+        ("board", "create", None),
+        ("group", "create", _change("Readers", "read", None)),
+        ("group", "create", _change("Service Triage", "read", None)),
+        ("group", "update", _change("Service Triage", "write", "read")),
+        ("group", "update", _change("Service Triage", "manage", "write")),
+        ("group", "delete", _change("Service Triage", None, "manage")),
+    }
+
+    read = client(db, reader, router).get(root).json()
+    assert read["pagination"]["total"] == 6
+    assert [item["group"] for item in read["items"]] == [None] * 6
+    assert sorted((item["kind"], item["action"]) for item in read["items"]) == [
+        ("board", "create"),
+        ("group", "create"),
+        ("group", "create"),
+        ("group", "delete"),
+        ("group", "update"),
+        ("group", "update"),
+    ]

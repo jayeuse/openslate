@@ -4,8 +4,8 @@ from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy import and_, exists, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy.orm import Session, aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.dependencies import get_current_user
@@ -25,7 +25,7 @@ from app.systems.boards.activity_schemas import (
     BoardActivityResponse,
     BoardActivitySort,
 )
-from app.systems.boards.models import Board, BoardGroup
+from app.systems.boards.models import Board
 from app.systems.boards.router import _board_with_access
 from app.systems.manage.audit.models import AuditAction, AuditLog
 
@@ -63,12 +63,24 @@ _BOARD_METADATA_FIELDS = (
 )
 
 
-def _snapshot_board_matches(board_id: UUID) -> ColumnElement[bool]:
-    """Recover the Board of physically removed group rows without returning snapshots."""
-    board_text = str(board_id)
-    return or_(
-        AuditLog.before["board_id"].astext == board_text,
-        AuditLog.after["board_id"].astext == board_text,
+_GroupAudit = aliased(AuditLog)
+
+
+def _board_group_snapshots(board: Board) -> Select[Any]:
+    """The add and removal rows of this Board's group rows; their snapshots name the Board.
+
+    A level change records only the level, so a group row's history reaches the Board
+    through these rows, never through the live row, which a removal deletes.
+    """
+    board_text = str(board.id)
+    return select(_GroupAudit).where(
+        _GroupAudit.org_id == board.org_id,
+        _GroupAudit.entity_type == "board_groups",
+        _GroupAudit.entity_id.is_not(None),
+        or_(
+            _GroupAudit.before["board_id"].astext == board_text,
+            _GroupAudit.after["board_id"].astext == board_text,
+        ),
     )
 
 
@@ -98,28 +110,29 @@ def _snapshot_level(snapshot: dict[str, Any] | None) -> AccessLevel | None:
 def _group_changes(
     db: Session, board: Board, rows: list[AuditLog]
 ) -> dict[UUID, BoardActivityGroup]:
-    """Name each group change from its snapshots; a deleted group has no name.
+    """Name each group change from its entity's snapshots; a deleted group has no name.
 
     An add or a removal snapshot carries ``group_id``. A level change records only the
-    level, so its group comes from the live row, which is what keeps it on this Board.
+    level, so its group comes from the same entity's add or removal row.
     """
 
     changes = [row for row in rows if row.entity_type == "board_groups"]
-    live = dict(
+    entity_ids = {row.entity_id for row in changes if row.entity_id}
+    recorded = func.coalesce(
+        _GroupAudit.after["group_id"].astext, _GroupAudit.before["group_id"].astext
+    )
+    entity_groups = dict(
         db.execute(
-            select(BoardGroup.id, BoardGroup.group_id).where(
-                BoardGroup.board_id == board.id,
-                BoardGroup.id.in_({row.entity_id for row in changes if row.entity_id}),
-            )
+            _board_group_snapshots(board)
+            .with_only_columns(_GroupAudit.entity_id, func.min(recorded))
+            .where(_GroupAudit.entity_id.in_(entity_ids))
+            .group_by(_GroupAudit.entity_id)
         ).tuples().all()
-    ) if changes else {}
+    ) if entity_ids else {}
     group_ids: dict[UUID, UUID | None] = {}
     for row in changes:
-        recorded = (row.after or {}).get("group_id") or (row.before or {}).get("group_id")
-        group_ids[row.id] = (
-            UUID(recorded) if recorded
-            else live.get(row.entity_id) if row.entity_id else None
-        )
+        group_id = entity_groups.get(row.entity_id) if row.entity_id else None
+        group_ids[row.id] = UUID(group_id) if group_id else None
     wanted = {group_id for group_id in group_ids.values() if group_id is not None}
     names = dict(
         db.execute(
@@ -164,14 +177,8 @@ def list_board_activity(
     )
     group_event = and_(
         AuditLog.entity_type == "board_groups",
-        or_(
-            exists(
-                select(BoardGroup.id).where(
-                    BoardGroup.id == AuditLog.entity_id,
-                    BoardGroup.board_id == board.id,
-                )
-            ),
-            _snapshot_board_matches(board.id),
+        AuditLog.entity_id.in_(
+            _board_group_snapshots(board).with_only_columns(_GroupAudit.entity_id)
         ),
     )
     result = execute_standard_list(
