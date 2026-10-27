@@ -256,7 +256,7 @@ export function CalendarRow({
         onClick={(event) => onOpen(item, event.currentTarget)}
         className="hover:bg-accent focus-visible:outline-ring grid min-h-14 w-full grid-cols-[6rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 border-b px-4 py-2 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 md:min-h-10 md:grid-cols-[8rem_minmax(0,1fr)_minmax(0,15rem)] md:py-1.5"
       >
-        <span className="text-muted-foreground text-[13px] tabular-nums">
+        <span className="text-muted-foreground text-xs tabular-nums">
           {itemWhen(item, region, date)}
         </span>
         <span className="flex min-w-0 items-center gap-2 font-medium">

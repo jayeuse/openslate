@@ -41,7 +41,7 @@ import { useGanttStaging } from "../hooks/use-gantt-staging";
 import { useKanbanBoardData } from "../hooks/use-kanban-board-data";
 import { useKanbanCommands } from "../hooks/use-kanban-commands";
 import { KanbanCardSheet } from "./board-card-sheet";
-import { GanttChart } from "./board-gantt-chart";
+import { GANTT_KEYS_HINT, GanttChart } from "./board-gantt-chart";
 import { GanttToolbar } from "./board-gantt-toolbar";
 import { chartVar } from "./board-kanban-card";
 import { AddStage, KanbanSetup } from "./board-kanban-stage";
@@ -202,8 +202,7 @@ export function ServerBackedBoardGantt({
         />
       ) : null}
       <p id={describedBy} className="sr-only">
-        Arrow keys move the bar a day. Shift with an arrow key changes the due
-        date.
+        {GANTT_KEYS_HINT}
       </p>
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
@@ -294,7 +293,7 @@ export function ServerBackedBoardGantt({
                 legendLabels.length > 0 ? (
                   <ul
                     aria-label="Labels in use"
-                    className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[13px] md:ml-auto"
+                    className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-sm md:ml-auto"
                   >
                     {legendLabels.map((label) => (
                       <li

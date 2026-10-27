@@ -157,6 +157,68 @@ test("Archive asks once with its consequence and Restore acts at once", () => {
   expect(boardLifecycleConfirmation("restore")).toBeNull();
 });
 
+test("a lifecycle error shows beside its action inside an opened Advanced, not above Name", () => {
+  const html = markup({
+    ...baseView,
+    board,
+    draft: { name: board.name, description: board.description ?? "" },
+    lifecycleError: {
+      action: "lifecycle",
+      message: "Board could not be archived. Try again.",
+    },
+  });
+  expect(html).toMatch(/aria-expanded="true"[^>]*>[\s\S]*Advanced/);
+  expect(html.indexOf("Archive board")).toBeLessThan(
+    html.indexOf("Board could not be archived. Try again."),
+  );
+  expect(html.indexOf("Name")).toBeLessThan(
+    html.indexOf("Board could not be archived. Try again."),
+  );
+  // A purge error sits under Delete forever, after the lifecycle action.
+  const purge = renderToStaticMarkup(
+    createElement(ServerBoardManagementDisplay, {
+      view: {
+        ...baseView,
+        board: { ...board, status: "archived" },
+        lifecycleError: {
+          action: "purge",
+          message: "The board was not deleted. Request a new review.",
+        },
+      },
+      isAdmin: true,
+      purgeEnabled: true,
+    }),
+  );
+  expect(purge.indexOf("Restore board")).toBeLessThan(
+    purge.indexOf("Delete forever"),
+  );
+  expect(purge.indexOf("Delete forever")).toBeLessThan(
+    purge.indexOf("The board was not deleted. Request a new review."),
+  );
+});
+
+test("Archive and Restore say their result beside the action, in a status line kept mounted", () => {
+  const before = markup({
+    ...baseView,
+    board: { ...board, status: "archived" },
+  });
+  const after = markup({
+    ...baseView,
+    board: { ...board, status: "archived" },
+    lifecycleNotice: "Board archived.",
+  });
+  // The same status element is there before the result and holds it after.
+  expect(before).toMatch(
+    /role="status"[^>]*data-lifecycle-status=""[^>]*><\/p>/,
+  );
+  expect(after).toMatch(
+    /role="status"[^>]*data-lifecycle-status=""[^>]*>Board archived\.<\/p>/,
+  );
+  expect(after.indexOf("Advanced")).toBeLessThan(
+    after.indexOf("Board archived."),
+  );
+});
+
 test("existing Board management requires server-confirmed manage access", () => {
   for (const view of [
     { ...baseView, access: "loading" as const, canManage: false },
@@ -164,6 +226,11 @@ test("existing Board management requires server-confirmed manage access", () => 
     { ...baseView, access: "ready" as const, canManage: false },
   ]) {
     const html = markup(view);
+    // A manager check is not a failure: the notice takes the default band.
+    if (view.access === "ready")
+      expect(html).toMatch(
+        /data-variant="default"[^>]*>You cannot manage this board\./,
+      );
     expect(html).not.toContain("Keep my draft");
     expect(html).not.toContain("Save changes");
     expect(html).not.toContain("Archive board");

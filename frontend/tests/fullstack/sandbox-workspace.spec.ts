@@ -781,7 +781,7 @@ async function exerciseConnectedBoard(
     ).toBeVisible();
   await expect(attachedFiles.getByRole("listitem")).toHaveCount(2);
   await eventEditor
-    .getByLabel("Record data source")
+    .getByLabel("Record module")
     .selectOption({ label: "Suppliers" });
   await eventEditor
     .getByLabel("Record to link")
@@ -877,9 +877,7 @@ async function exerciseConnectedBoard(
   ).toBeVisible();
   await page.getByLabel("Add an attachment").setInputFiles(postImage);
   await expect(page.getByText(`${postImage.name} attached.`)).toBeVisible();
-  await page
-    .getByLabel("Record data source")
-    .selectOption({ label: "Suppliers" });
+  await page.getByLabel("Record module").selectOption({ label: "Suppliers" });
   await page.getByLabel("Record to link").selectOption(supplier.recordId);
   const [postLink] = await Promise.all([
     page.waitForResponse(

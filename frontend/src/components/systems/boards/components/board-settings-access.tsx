@@ -37,15 +37,13 @@ function AccessSummary({
           <dd className="text-muted-foreground">
             {row.can}
             {/* Module-only write reads here; posting needs a department row
-                (BR34). Only an admin can give it. */}
+                (BR34). Only an admin can give it, in the one place the
+                link under the summary names. */}
             {isAdmin &&
             board.scope === "department" &&
             row.who === moduleOnly ? (
               <span className="mt-0.5 block">
-                Give this group a department-level Write row in{" "}
-                <Link href={ACCESS_GROUPS_HREF} className={linkClass}>
-                  Access › Groups
-                </Link>
+                Give this group a department-level Write row.
               </span>
             ) : null}
           </dd>
@@ -92,6 +90,7 @@ function CheckPerson({
             <SearchSelect
               id={`${id}-person`}
               label="Person"
+              popupClassName="slim-ui"
               value={check.selected?.id ?? ""}
               placeholder="Choose a person"
               searchPlaceholder="Search people"
@@ -118,11 +117,15 @@ function CheckPerson({
               onValueChange={check.choose}
             />
           </div>
-          {check.selected && check.preview.status === "loading" ? (
-            <p role="status" className="text-muted-foreground text-sm">
-              Checking {check.selected.username}…
-            </p>
-          ) : null}
+          {/* Kept mounted, so only its words change and each is heard. */}
+          <p
+            role="status"
+            className="text-muted-foreground text-sm empty:sr-only"
+          >
+            {check.selected && check.preview.status === "loading"
+              ? `Checking ${check.selected.username}…`
+              : ""}
+          </p>
           {check.selected && check.preview.status === "error" ? (
             <Alert
               variant="destructive"
@@ -152,8 +155,12 @@ function CheckPerson({
                   <span className="text-muted-foreground">No access</span>
                 )}
               </dd>
-              <dt className="font-medium">Can</dt>
-              <dd className="text-muted-foreground">{shown.abilities}</dd>
+              {shown.abilities ? (
+                <>
+                  <dt className="font-medium">Access</dt>
+                  <dd className="text-muted-foreground">{shown.abilities}</dd>
+                </>
+              ) : null}
               {shown.reason ? (
                 <>
                   <dt className="font-medium">Why</dt>

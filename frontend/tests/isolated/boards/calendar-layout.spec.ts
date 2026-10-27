@@ -238,10 +238,13 @@ test("the week's all-day row holds all-day events, sources and due cards in lane
       lane.end,
       lane.lane,
       lane.continuesBefore,
+      lane.lines,
     ]),
   ).toEqual([
-    ["workshop", 0, 1, 0, true],
-    ["due", 1, 1, 1, false],
+    // A bar across days keeps one line; a one-day block may wrap to two,
+    // as Month titles do (BR55).
+    ["workshop", 0, 1, 0, true, 1],
+    ["due", 1, 1, 1, false, 2],
   ]);
 });
 

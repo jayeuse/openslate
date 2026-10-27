@@ -13,6 +13,11 @@ import {
 import { FileText } from "lucide-react";
 import type { WorkspaceRegion } from "@/lib/date-time";
 import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type {
   ChartColor,
   KanbanCard,
@@ -90,6 +95,10 @@ type Drag = {
  * the name when the bar is out of view; on phones the 44px row. A locked
  * card has none (BR63).
  */
+/** How a writer moves a focused bar: its description and tooltip (C9). */
+export const GANTT_KEYS_HINT =
+  "Arrow keys move the bar a day. Shift with an arrow key changes the due date.";
+
 export function GanttChart({
   window,
   zoom,
@@ -147,6 +156,9 @@ export function GanttChart({
     return () => observer.disconnect();
   }, []);
   const names = phone ? 120 : 248;
+  const firstDatable = canWrite
+    ? (unscheduled.find((card) => card.record?.locked !== true) ?? null)
+    : null;
   const day = dayWidth(zoom, Math.max(0, width - names), window.days);
   const track = Math.round(day * window.days);
   const x = (offset: number) => offset * day;
@@ -400,23 +412,36 @@ export function GanttChart({
             </div>
           ) : null}
           {place && barIsControl ? (
-            <button
-              type="button"
-              aria-label={label}
-              title={label}
-              aria-describedby={canMove ? describedBy : undefined}
-              className={cn(
-                barClass,
-                "outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]",
-                canMove
-                  ? "cursor-grab touch-none active:cursor-grabbing"
-                  : "cursor-pointer",
-              )}
-              style={barStyle}
-              {...barEvents(card)}
-            >
-              {inner}
-            </button>
+            // The shared tooltip opens on hover and on focus, so a sighted
+            // keyboard user reads the arrow keys too (C9).
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={label}
+                    aria-describedby={canMove ? describedBy : undefined}
+                    className={cn(
+                      barClass,
+                      "outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]",
+                      canMove
+                        ? "cursor-grab touch-none active:cursor-grabbing"
+                        : "cursor-pointer",
+                    )}
+                    style={barStyle}
+                    {...barEvents(card)}
+                  />
+                }
+              >
+                {inner}
+              </TooltipTrigger>
+              <TooltipContent className="flex-col items-start gap-0.5">
+                <span>{label}</span>
+                {canMove ? (
+                  <span className="opacity-80">{GANTT_KEYS_HINT}</span>
+                ) : null}
+              </TooltipContent>
+            </Tooltip>
           ) : place ? (
             <span
               aria-hidden="true"
@@ -446,7 +471,7 @@ export function GanttChart({
         >
           <h3 className="flex min-w-0 items-baseline gap-1.5 font-semibold">
             <span className="truncate">{group.name}</span>{" "}
-            <span className="text-muted-foreground text-[13px] font-medium tabular-nums">
+            <span className="text-muted-foreground text-xs font-medium tabular-nums">
               {group.cards.length}
             </span>
           </h3>
@@ -501,7 +526,7 @@ export function GanttChart({
       className="bg-card flex min-w-0 flex-col overflow-hidden rounded-lg border max-md:max-h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-1"
     >
       <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2.5">
-        <span className="text-muted-foreground text-[13px] tabular-nums">
+        <span className="text-muted-foreground text-xs tabular-nums">
           {facts}
         </span>
         {legend}
@@ -545,7 +570,7 @@ export function GanttChart({
                   }}
                 >
                   <span
-                    className="sticky flex items-end pb-1 pl-2 text-[13px] font-semibold whitespace-nowrap"
+                    className="sticky flex items-end pb-1 pl-2 text-xs font-semibold whitespace-nowrap"
                     style={{ left: names }}
                   >
                     {month.label}
@@ -592,7 +617,7 @@ export function GanttChart({
                 covers a week label. */}
             {today !== null ? (
               <span
-                className="absolute z-[1] -translate-x-1/2 rounded-[3px] bg-[var(--ink)] px-[5px] py-px text-[11px] font-semibold whitespace-nowrap text-[var(--background)]"
+                className="absolute z-[1] -translate-x-1/2 rounded-sm bg-[var(--ink)] px-1 py-px text-xs font-semibold whitespace-nowrap text-[var(--background)]"
                 style={{ left: x(today) + day / 2, top: 5 }}
               >
                 Today
@@ -610,6 +635,43 @@ export function GanttChart({
             />
           ) : null}
           {groups.map(groupRows)}
+          {/* Cards, but none dated: one line in the grid says so, and a
+              writer adds dates to the first card from it (C10). */}
+          {groups.length === 0 && unscheduled.length > 0 ? (
+            <>
+              <div
+                className={cn(
+                  nameCell,
+                  rowHeight,
+                  "text-muted-foreground border-b border-dotted text-sm",
+                )}
+              >
+                No dated cards
+              </div>
+              <div
+                className={cn(
+                  "relative flex items-center border-b border-dotted",
+                  rowHeight,
+                )}
+              >
+                {firstDatable ? (
+                  <span
+                    className="bg-card sticky z-[1] flex h-full items-center px-1.5"
+                    style={{ left: names }}
+                  >
+                    <button
+                      type="button"
+                      className="text-action-text focus-visible:outline-ring inline-flex h-11 items-center rounded-sm px-1 text-xs font-medium outline-none hover:underline focus-visible:outline-2 xl:h-8"
+                      onClick={() => onAddDates(firstDatable)}
+                    >
+                      Add dates
+                    </button>
+                  </span>
+                ) : null}
+              </div>
+              <Gap />
+            </>
+          ) : null}
           {unscheduled.length > 0 ? (
             <>
               {groups.length > 0 ? <Gap /> : null}
@@ -622,7 +684,7 @@ export function GanttChart({
               >
                 <h3 className="flex items-baseline gap-1.5 font-semibold">
                   Unscheduled{" "}
-                  <span className="text-muted-foreground text-[13px] font-medium tabular-nums">
+                  <span className="text-muted-foreground text-xs font-medium tabular-nums">
                     {unscheduled.length}
                   </span>
                 </h3>
@@ -683,7 +745,7 @@ export function GanttChart({
                           <button
                             type="button"
                             aria-label={`Add dates to ${name}`}
-                            className="inline-flex h-11 items-center rounded-sm px-1 font-medium text-[var(--action-text)] outline-none hover:underline focus-visible:outline-2 focus-visible:outline-[var(--focus)] xl:h-8"
+                            className="text-action-text focus-visible:outline-ring inline-flex h-11 items-center rounded-sm px-1 font-medium outline-none hover:underline focus-visible:outline-2 xl:h-8"
                             onClick={() => onAddDates(card)}
                           >
                             Add dates

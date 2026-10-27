@@ -1,7 +1,7 @@
 "use client";
 
 import type { Route } from "next";
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import {
   CalendarDays,
   ChartGantt,
@@ -15,6 +15,11 @@ import { DepartmentMark } from "@/components/sandbox/department-mark";
 import { LevelBadge } from "@/components/systems/comms/components/member-level";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   linkTabsIndicatorClass,
   linkTabsListClass,
@@ -83,6 +88,44 @@ export function BoardLevelChip({
   );
 }
 
+/**
+ * The header's level chip when it carries a reason (C2): a button that opens
+ * the reason on hover, focus and tap, and that screen readers hear as its
+ * description. Other chips stay plain text; OpenComms keeps its own chip.
+ */
+function HeaderLevelChip({
+  level,
+  reason,
+}: {
+  level: BoardAccessLevel;
+  reason: string;
+}) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Tooltip open={open} onOpenChange={setOpen}>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-describedby={id}
+              className="focus-visible:outline-ring -m-1 inline-flex shrink-0 rounded-md p-1 outline-none focus-visible:outline-2 max-sm:min-h-11 max-sm:min-w-11 max-sm:items-center max-sm:justify-center"
+              onClick={() => setOpen(true)}
+            />
+          }
+        >
+          <BoardLevelChip level={level} />
+        </TooltipTrigger>
+        <TooltipContent>{reason}</TooltipContent>
+      </Tooltip>
+      <span id={id} className="sr-only">
+        {reason}
+      </span>
+    </>
+  );
+}
+
 const quietControl = "min-h-11 xl:min-h-8";
 
 /**
@@ -127,12 +170,14 @@ export function BoardPageHeader({
         }
         badges={
           <>
-            <BoardLevelChip
-              level={board.level}
-              description={
-                board.level === "read" ? postingReason(board, guest) : null
-              }
-            />
+            {board.level === "read" ? (
+              <HeaderLevelChip
+                level={board.level}
+                reason={postingReason(board, guest)}
+              />
+            ) : (
+              <BoardLevelChip level={board.level} />
+            )}
             {board.status === "archived" ? (
               <Badge variant="outline" className="shrink-0">
                 Archived

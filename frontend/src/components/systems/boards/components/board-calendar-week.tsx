@@ -114,7 +114,8 @@ export function BoardCalendarWeek({
       </div>
       <div
         className="grid shrink-0 grid-cols-[64px_repeat(7,minmax(0,1fr))] border-b py-1"
-        style={{ gridTemplateRows: `repeat(${laneCount}, 24px)` }}
+        // A lane grows when a one-day title takes its second line (BR55).
+        style={{ gridTemplateRows: `repeat(${laneCount}, minmax(24px, auto))` }}
       >
         <span
           className="text-muted-foreground self-center pl-2 text-xs"
@@ -129,6 +130,7 @@ export function BoardCalendarWeek({
             calendar={calendars.get(lane.item.calendarId)}
             region={region}
             bar={lane.item.kind === "event"}
+            lines={lane.lines}
             continuesBefore={lane.continuesBefore}
             continuesAfter={lane.continuesAfter}
             onOpen={onOpen}

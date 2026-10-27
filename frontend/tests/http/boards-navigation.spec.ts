@@ -414,6 +414,11 @@ test("on a phone a board header is two short rows, the whole title, then the tab
   expect(chip.y + chip.height).toBeLessThanOrEqual(
     titleBox.y + titleBox.height,
   );
+  // The chip sits on the title's first line (30px), not in the middle of
+  // the wrapped title.
+  expect(Math.abs(chip.y + chip.height / 2 - (titleBox.y + 15))).toBeLessThan(
+    3,
+  );
   // Row 2: Board settings and the tab's primary, side by side, at 44px.
   const settings = (await page
     .getByRole("button", { name: "Board settings", exact: true })

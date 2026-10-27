@@ -63,6 +63,8 @@ export type CardFieldContext = {
   sheet: CardSheet;
   canWrite: boolean;
   region: WorkspaceRegion;
+  /** Managers: opens the board's Labels editor (BR70). */
+  onCreateLabels?: () => void;
 };
 
 /**
@@ -278,6 +280,18 @@ export function LabelsRow({
             })}
           </DropdownMenuContent>
         </DropdownMenu>
+      ) : null}
+      {/* No label exists yet: a manager makes them here, not a dead end. */}
+      {labels.length === 0 && context.onCreateLabels ? (
+        <Button
+          type="button"
+          variant="ghost"
+          className={cn(control, "px-2")}
+          onClick={context.onCreateLabels}
+        >
+          <Plus aria-hidden="true" data-icon="inline-start" />
+          Create labels
+        </Button>
       ) : null}
     </SheetRow>
   );

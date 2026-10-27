@@ -41,10 +41,20 @@ export function PageHeader({
     >
       <div className={cn((leading || badges) && "min-w-0")}>
         {leading || badges ? (
-          <div className="flex min-w-0 items-center gap-2.5">
-            {leading}
+          // On phones a long title wraps, so the row aligns to its start and
+          // the mark and chips sit on the title's first line (30px).
+          <div className="flex min-w-0 items-center gap-2.5 max-sm:items-start">
+            {leading ? (
+              <span className="flex shrink-0 items-center max-sm:h-[1.875rem]">
+                {leading}
+              </span>
+            ) : null}
             {heading}
-            {badges}
+            {badges ? (
+              <span className="flex shrink-0 items-center gap-2.5 max-sm:h-[1.875rem]">
+                {badges}
+              </span>
+            ) : null}
           </div>
         ) : (
           heading

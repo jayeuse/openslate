@@ -87,6 +87,8 @@ export type AllDayLane = {
   lane: number;
   continuesBefore: boolean;
   continuesAfter: boolean;
+  /** A one-day block may wrap its title to two lines, as Month does (BR55). */
+  lines: 1 | 2;
 };
 
 /** The all-day row: all-day events, record dates, and due cards in lanes. */
@@ -98,7 +100,11 @@ export function allDayLanes(
   return weekSpans(
     days,
     items.filter((item) => item.allDay),
-  ).map((span) => ({ ...span, lane: placeInLanes(span, used) }));
+  ).map((span) => ({
+    ...span,
+    lane: placeInLanes(span, used),
+    lines: span.start === span.end ? (2 as const) : (1 as const),
+  }));
 }
 
 /**

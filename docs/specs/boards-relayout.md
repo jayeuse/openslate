@@ -459,6 +459,9 @@ Choices the brief and comps left open; each is the smallest that fits DESIGN.md.
 | Gantt: the Today chip sits in the month row over its line, so it covers no week label. On the first two or three days of a month it can sit over the start of that month's name. | The chip over W labels |
 | Gantt: "No dates" and the out-of-view hints sit on the card fill above the grid lines. | A line through the text |
 | The card sheet's title field is a plain input in the sheet title's type (18px, weight 600), with an edge only on hover and focus, so the slim field skin does not make it a 32px, 14px field. | The small-field look |
+| **(Owner, final review D1) Board groups save at once**, as DESIGN's Access grants list does: adding a group, changing its level and Remove each send the whole set with the board revision. The row says "Saved." or its error; Remove leaves "Removed <group> · Undo"; a stale revision says "Someone changed this board first." and reads the groups and the board again. With no staged draft, Close needs no guard for groups. | "Save groups", "Discard changes" and staged group rows |
+| (Owner, final review D2) One set of level words: the group select says Read, Post, Manager (the values stay `read`, `write`, `manage`), a manager who is not an admin reads the level chip, and the hints say what each level adds on posts, events, cards, stages and labels. | Read · Write · Manage beside the chip's Read · Post · Manager |
+| Final review choices: one sheet width, 40rem (the OpenView record sheet and the card sheet), for the event, card and settings sheets; the record-link select is "Module"; Check a person cannot tell a guest from a member, so every Read reason adds "Guests read only."; after Remove, focus goes to the next row, else the row before, else Add a group. | 34rem and 42rem sheets; "Data source" |
 
 ## Comps
 

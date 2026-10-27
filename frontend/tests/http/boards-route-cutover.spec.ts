@@ -54,7 +54,7 @@ test("Board settings holds a board's details, access and activity, and All board
   ]);
   await settings.getByRole("tab", { name: "Access", exact: true }).click();
   await expect(
-    settings.getByText("No groups yet. Only administrators open this board."),
+    settings.getByText("No groups yet. Only admins open this board."),
   ).toBeVisible();
 });
 
@@ -385,9 +385,10 @@ test("a phone Calendar opens on the day list and permits Month", async ({
 });
 test.describe("Boards workspace regional activity", () => {
   test.use({ locale: "en-US", timezoneId: "UTC" });
-  test("Board activity retains its timezone label while formatting the workspace timestamp", async ({
+  test("Board activity formats the workspace timestamp and keeps its zone in the tooltip", async ({
     page,
   }) => {
+    await page.clock.setFixedTime(new Date("2026-10-27T12:00:00Z"));
     await installBoardApi(page, () => true);
     await page.route("**/api/workspace", (route) =>
       route.fulfill({
@@ -432,8 +433,11 @@ test.describe("Boards workspace regional activity", () => {
     await expect(
       activity.getByRole("list", { name: "Board activity", exact: true }),
     ).toContainText("Changed details · Regional test actor");
-    await expect(activity.locator("time")).toHaveText(
-      /22 sept\. 2026.*17:00.*(?:UTC|GMT).*7/,
+    // This year's rows drop the year and the zone; the tooltip keeps both.
+    await expect(activity.locator("time")).toHaveText("22 sept., 17:00");
+    await expect(activity.locator("time")).toHaveAttribute(
+      "title",
+      /mardi 22 septembre 2026.*17:00.*(?:UTC|GMT).*7/,
     );
   });
 
@@ -1395,33 +1399,31 @@ test("an author links a Record using its off-page title field without crawling t
   ).toBeVisible();
 
   await links
-    .getByRole("button", { name: "Next sources", exact: true })
+    .getByRole("button", { name: "Next modules", exact: true })
     .click();
-  await expect(links).toContainText("Data sources could not be loaded.");
+  await expect(links).toContainText("Modules could not be loaded.");
   await expect
     .soft(
       links
         .getByRole("alert")
-        .filter({ hasText: "Data sources could not be loaded." }),
+        .filter({ hasText: "Modules could not be loaded." }),
     )
     .toHaveAttribute("data-variant", "destructive");
   await expect(links).not.toContainText("Private failure canary");
   expect(submitted).toBeNull();
   sourcePageUnavailable = false;
   await links
-    .getByRole("button", { name: "Previous sources", exact: true })
+    .getByRole("button", { name: "Previous modules", exact: true })
     .click();
+  await expect(links.getByText("Modules could not be loaded.")).toHaveCount(0);
   await expect(
-    links.getByText("Data sources could not be loaded."),
-  ).toHaveCount(0);
-  await expect(
-    links.getByRole("button", { name: "Previous sources", exact: true }),
+    links.getByRole("button", { name: "Previous modules", exact: true }),
   ).toBeDisabled();
   await expect(
-    links.getByRole("button", { name: "Next sources", exact: true }),
+    links.getByRole("button", { name: "Next modules", exact: true }),
   ).toBeEnabled();
 
-  await links.getByLabel("Record data source").selectOption(moduleId);
+  await links.getByLabel("Record module").selectOption(moduleId);
   await expect(links).toContainText("Records could not be loaded.");
   await expect
     .soft(

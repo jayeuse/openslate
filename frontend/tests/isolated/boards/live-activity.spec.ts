@@ -7,7 +7,10 @@ import type {
   BoardToolsPage,
 } from "../../../src/components/systems/boards/adapters/board-tools-api";
 import { ServerBoardActivityDisplay } from "../../../src/components/systems/boards/components/server-backed-board-activity";
-import { boardActivitySentence } from "../../../src/components/systems/boards/domain/board-settings";
+import {
+  boardActivitySentence,
+  boardActivityTime,
+} from "../../../src/components/systems/boards/domain/board-settings";
 import {
   boardActivityFailure,
   transitionBoardActivity,
@@ -78,6 +81,29 @@ test("each Activity row reads as a verb with its dot", () => {
     { verb: "Changed groups", tone: "action" },
     { verb: "Changed groups", tone: "action" },
   ]);
+});
+
+test("an Activity row's time drops the zone, and the year within the current year", () => {
+  const utc = { timezone: "UTC", locale: "en-US" };
+  const now = new Date("2026-10-27T12:00:00Z");
+  // This year: no year and no zone; the tooltip keeps the full time.
+  expect(boardActivityTime("2026-09-24T09:30:00Z", utc, now)).toEqual({
+    text: "Sep 24, 9:30 AM",
+    full: "Thursday, September 24, 2026 at 9:30:00 AM UTC",
+  });
+  // An earlier year keeps its year.
+  expect(boardActivityTime("2025-12-30T09:30:00Z", utc, now).text).toBe(
+    "Dec 30, 2025, 9:30 AM",
+  );
+  // The year is the workspace's: New Year's Eve in UTC is already this year
+  // in Manila.
+  expect(
+    boardActivityTime(
+      "2025-12-31T23:30:00Z",
+      { timezone: "Asia/Manila", locale: "en-US" },
+      new Date("2026-01-01T12:00:00Z"),
+    ).text,
+  ).toBe("Jan 1, 7:30 AM");
 });
 
 test("Board Activity clears denied and switched history and ignores stale completion", () => {

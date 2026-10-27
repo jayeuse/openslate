@@ -263,7 +263,7 @@ test("a writer links a record they can read to a card", async ({ page }) => {
   });
   await sheet.getByRole("tab", { name: "Linked records" }).click();
   await sheet
-    .getByRole("combobox", { name: "Record data source" })
+    .getByRole("combobox", { name: "Record module" })
     .selectOption({ label: "Quotes" });
   await sheet
     .getByRole("combobox", { name: "Record to link" })
@@ -599,4 +599,59 @@ test("a writer's card title reads as the sheet title, with a field only on hover
   expect(await look()).toEqual({ fill: none, edges: [none, none, none, none] });
   await field.focus();
   expect((await look()).edges).not.toContain(none);
+});
+
+test("a manager on a board with no labels creates them from the card's Labels row", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const renewal = wireCard("Renewal terms", stageIds.doing, 1024);
+  await installKanbanApi(page, {
+    level: "manage",
+    cards: [renewal],
+    labels: [],
+  });
+  await page.goto(kanbanHref(`card=${renewal.id}`));
+  const sheet = page.getByRole("dialog", {
+    name: "Renewal terms",
+    exact: true,
+  });
+  await sheet
+    .getByRole("button", { name: "Create labels", exact: true })
+    .click();
+  const labels = page.getByRole("dialog", { name: "Labels", exact: true });
+  await expect(labels.getByLabel("New label name")).toBeVisible();
+});
+
+test("a writer's long card title wraps in its field, and Enter saves it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const renewal = wireCard("Renewal terms", stageIds.doing, 1024);
+  const api = await installKanbanApi(page, {
+    level: "write",
+    cards: [renewal],
+  });
+  await page.goto(kanbanHref(`card=${renewal.id}`));
+  // The sheet takes the new title as its name, so find it by its field.
+  const sheet = page
+    .getByRole("dialog")
+    .filter({ has: page.getByRole("textbox", { name: "Card title" }) });
+  const field = sheet.getByRole("textbox", { name: "Card title" });
+  const long =
+    "Renewal terms for the 2027 harbor services contract, with the expo crew rates";
+  await field.fill(long);
+  // The whole title shows: the field grows a line instead of scrolling.
+  expect(
+    await field.evaluate(
+      (node) =>
+        node.scrollWidth <= node.clientWidth &&
+        node.scrollHeight <= node.clientHeight + 1,
+    ),
+  ).toBe(true);
+  await field.press("Enter");
+  await expect(sheet.getByRole("status")).toHaveText("Title saved.");
+  await expect(field).toHaveValue(long);
+  // One save: the field locking while it saves does not send it again.
+  expect(cardPatches(api)).toEqual([{ revision: 1, title: long }]);
 });

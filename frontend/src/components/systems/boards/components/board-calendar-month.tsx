@@ -370,7 +370,7 @@ export function BoardCalendarPhoneMonth({
               >
                 <span
                   className={cn(
-                    "grid h-6 min-w-7 place-items-center rounded-full text-[13px] font-medium tabular-nums",
+                    "grid h-6 min-w-7 place-items-center rounded-full text-sm font-medium tabular-nums",
                     monthOf(date) !== month && "text-muted-foreground",
                     date === today && "bg-foreground text-background",
                   )}

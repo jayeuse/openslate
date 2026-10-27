@@ -472,6 +472,45 @@ test("on a phone one stage shows at a time, with a switcher and Move to stage", 
   expect(await documentScrolls(page)).toMatchObject({ across: false });
 });
 
+test("on a phone Filters opens a sheet with Labels and Due, and the board follows each choice", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installKanbanApi(page, {
+    level: "write",
+    cards: [
+      wireCard("Book the expo booth crew", stageIds.todo, 1024, {
+        label_ids: [labelIds.expo],
+      }),
+      wireCard("Price list", stageIds.todo, 2048, {
+        label_ids: [labelIds.pricing],
+      }),
+    ],
+  });
+  await page.goto(kanbanHref());
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  const filters = page.getByRole("dialog", { name: "Filters", exact: true });
+  // The 44px row is the target; the box inside is drawn, not native.
+  await filters.getByText("Expo", { exact: true }).click();
+  await expect(
+    filters.getByRole("checkbox", { name: "Expo", exact: true }),
+  ).toBeChecked();
+  await expect(page).toHaveURL(new RegExp(`label=${labelIds.expo}`));
+  await filters.getByLabel("Due", { exact: true }).selectOption("overdue");
+  await expect(page).toHaveURL(/due=overdue/);
+  const heights = await filters.evaluate((root) =>
+    [...root.querySelectorAll("button, select, label:has(input)")].map(
+      (node) => node.getBoundingClientRect().height,
+    ),
+  );
+  expect(Math.min(...heights)).toBeGreaterThanOrEqual(44);
+  await filters.getByRole("button", { name: "Clear all", exact: true }).click();
+  await expect(page).not.toHaveURL(/label=|due=/);
+  await page.keyboard.press("Escape");
+  await expect(stage(page, "To do")).toContainText("Price list");
+  expect(await documentScrolls(page)).toMatchObject({ across: false });
+});
+
 test("a lifted card is put back when focus leaves it, so another card can be lifted", async ({
   page,
 }) => {

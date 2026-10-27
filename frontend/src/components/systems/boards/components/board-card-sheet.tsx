@@ -73,6 +73,8 @@ export type KanbanCardSheetProps = {
   onClose: () => void;
   /** The Gantt's "Add dates": the sheet opens on the card's first date field. */
   focusDates?: boolean;
+  /** Managers: the Labels row opens the board's Labels editor (C4). */
+  onCreateLabels?: () => void;
 };
 
 const DATES_FIELD = "[data-card-dates]";
@@ -198,7 +200,13 @@ function ReadySheet({
 }) {
   const { boardId, canWrite, stages, region, today, onClose } = props;
   const card = sheet.card;
-  const context: CardFieldContext = { model, sheet, canWrite, region };
+  const context: CardFieldContext = {
+    model,
+    sheet,
+    canWrite,
+    region,
+    onCreateLabels: props.onCreateLabels,
+  };
   const stage = stages.find((item) => item.id === card.stageId) ?? null;
   const [moving, setMoving] = useState(false);
   // A sheet that opened loading has no date field yet: focus it once ready.
@@ -508,7 +516,9 @@ function TitleField({ context }: { context: CardFieldContext }) {
     null,
   );
   const commit = () => {
-    if (!draft) return;
+    // A save in flight locks the field, which blurs it: that blur is not a
+    // second edit.
+    if (!draft || context.model.saving === "title") return;
     const text = draft.text.trim();
     if (!text || text === saved) return setDraft(null);
     void context.model
@@ -516,17 +526,20 @@ function TitleField({ context }: { context: CardFieldContext }) {
       .finally(() => setDraft(null));
   };
   // The sheet title in type and place; a field shows only under the pointer
-  // and in focus. A plain input, so the slim field size and skin (a 32px
-  // well at 14px) do not turn the title into a small field.
+  // and in focus. A plain one-row text area that grows with its words, so a
+  // long title wraps as the sheet title does; the slim field size and skin
+  // (a 32px well at 14px) do not turn it into a small field. Enter saves.
   return (
-    <input
+    <textarea
       aria-label="Card title"
+      rows={1}
       maxLength={200}
-      className="hover:border-input focus-visible:border-input focus-visible:outline-ring -mx-2 mt-0.5 min-h-11 w-full min-w-0 rounded-[var(--radius)] border border-transparent bg-transparent px-2 py-1 text-lg leading-tight font-semibold wrap-anywhere text-[color:var(--data-ink)] outline-none focus-visible:outline-2 focus-visible:outline-offset-1 disabled:cursor-not-allowed xl:min-h-9"
+      className="hover:border-input focus-visible:border-input focus-visible:outline-ring -mx-2 mt-0.5 field-sizing-content min-h-11 w-full min-w-0 resize-none overflow-hidden rounded-[var(--radius)] border border-transparent bg-transparent px-2 py-1 text-lg leading-tight font-semibold wrap-anywhere text-[color:var(--data-ink)] outline-none focus-visible:outline-2 focus-visible:outline-offset-1 disabled:cursor-not-allowed xl:min-h-9"
       value={draft?.text ?? saved}
       disabled={context.model.saving === "title"}
       onChange={(event) => {
-        const text = event.currentTarget.value;
+        // A title is one line: a pasted line break becomes a space.
+        const text = event.currentTarget.value.replace(/\s*\n\s*/g, " ");
         setDraft((current) => ({
           text,
           revision: current?.revision ?? card.revision,

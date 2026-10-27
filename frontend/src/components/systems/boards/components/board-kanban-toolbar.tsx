@@ -1,10 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, Search, Trash2 } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  Check,
+  ChevronDown,
+  Search,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogCloseButton,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Field, FieldLabel } from "@/components/ui/field";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import {
   DialogFrameHeader,
   dialogFrameContentClass,
@@ -98,16 +114,10 @@ export function KanbanToolbar({
           onChange={(event) => onFilters({ search: event.currentTarget.value })}
         />
       </label>
-      {/* Phones hide the other filters; a filtered link can still be cleared. */}
-      {phone && hasCardFilters(filters) ? (
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11 shrink-0"
-          onClick={() => onFilters(NO_FILTERS)}
-        >
-          Clear filters
-        </Button>
+      {/* Phones keep Search in the row; Labels and Due open in a bottom
+          sheet (DESIGN Filters), and Clear all there empties every filter. */}
+      {phone ? (
+        <PhoneFilters filters={filters} onFilters={onFilters} labels={labels} />
       ) : null}
       {!phone && people.length > 0 ? (
         <div
@@ -133,7 +143,7 @@ export function KanbanToolbar({
                   name={person.name}
                   avatarUrl={person.avatarUrl}
                   className={cn(
-                    "size-7 text-[10px] shadow-[0_0_0_2px_var(--background)]",
+                    "size-7 text-xs shadow-[0_0_0_2px_var(--background)]",
                     on &&
                       "shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--action)]",
                   )}
@@ -278,6 +288,162 @@ export function KanbanToolbar({
         </>
       ) : null}
     </div>
+  );
+}
+
+/** The phone's Filters sheet: Labels and Due, applied as they are chosen. */
+function PhoneFilters({
+  filters,
+  onFilters,
+  labels,
+}: {
+  filters: KanbanFilters;
+  onFilters: (changes: Partial<KanbanFilters>) => void;
+  labels: readonly KanbanLabel[];
+}) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  // The address answers a choice a moment later; until it does, the sheet
+  // shows the choice made, so a box never flickers back (kept per address).
+  const shownKey = JSON.stringify([filters.labels, filters.due]);
+  const [chosen, setChosen] = useState<{
+    key: string;
+    labels: string[];
+    due: KanbanDue | null;
+  } | null>(null);
+  const shown =
+    chosen && chosen.key === shownKey
+      ? chosen
+      : { labels: filters.labels, due: filters.due };
+  const choose = (changes: { labels?: string[]; due?: KanbanDue | null }) => {
+    setChosen({
+      key: shownKey,
+      labels: changes.labels ?? shown.labels,
+      due: changes.due === undefined ? shown.due : changes.due,
+    });
+    onFilters(changes);
+  };
+  const count =
+    filters.labels.length + (filters.due ? 1 : 0) + (filters.assignee ? 1 : 0);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Button
+        type="button"
+        variant="ghost"
+        className="min-h-11 shrink-0 gap-1.5 px-3"
+        aria-describedby={`${id}-count`}
+        onClick={() => setOpen(true)}
+      >
+        <SlidersHorizontal aria-hidden="true" />
+        Filters
+        {count > 0 ? (
+          <span
+            aria-hidden="true"
+            className="bg-action-tint text-action-text inline-grid h-[18px] min-w-[18px] place-items-center rounded-full px-1 text-xs font-semibold tabular-nums"
+          >
+            {count}
+          </span>
+        ) : null}
+      </Button>
+      <span id={`${id}-count`} className="sr-only">
+        {count} active {count === 1 ? "filter" : "filters"}
+      </span>
+      <DialogContent
+        aria-label="Filters"
+        className="slim-ui -mx-4 -mb-4 w-[calc(100%+2rem)] max-w-none self-end rounded-b-none p-0"
+      >
+        <DialogTitle className="px-3.5 pt-4 pb-1 text-base">
+          Filters
+        </DialogTitle>
+        <DialogCloseButton />
+        <div className="grid gap-3 px-3.5 py-3">
+          <fieldset className="flex min-w-0 flex-col">
+            <legend
+              data-slot="field-label"
+              className="mb-1 text-sm font-medium"
+            >
+              Labels
+            </legend>
+            {labels.length === 0 ? (
+              <p className="text-muted-foreground text-sm">No labels yet</p>
+            ) : (
+              labels.map((label) => {
+                const on = shown.labels.includes(label.id);
+                return (
+                  <label
+                    key={label.id}
+                    className="flex min-h-11 items-center gap-2.5"
+                  >
+                    {/* The 44px row is the target; the box is drawn from
+                        the label, so the native box is not a 16px target. */}
+                    <input
+                      type="checkbox"
+                      className="peer sr-only"
+                      checked={on}
+                      onChange={() =>
+                        choose({
+                          labels: on
+                            ? shown.labels.filter((item) => item !== label.id)
+                            : [...shown.labels, label.id],
+                        })
+                      }
+                    />
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "peer-focus-visible:outline-ring grid size-4 shrink-0 place-items-center rounded-[4px] border peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2",
+                        on
+                          ? "border-[var(--action)] bg-[var(--action)] text-[var(--action-ink)]"
+                          : "border-[var(--control-edge)]",
+                      )}
+                    >
+                      <Check className={cn("size-3", !on && "invisible")} />
+                    </span>
+                    <LabelChip label={label} />
+                  </label>
+                );
+              })
+            )}
+          </fieldset>
+          <Field>
+            <FieldLabel htmlFor={`${id}-due`}>Due</FieldLabel>
+            <NativeSelect
+              id={`${id}-due`}
+              className="w-full [&_select]:min-h-11"
+              value={shown.due ?? "any"}
+              onChange={(event) => {
+                const value = event.target.value;
+                choose({
+                  due: value === "overdue" || value === "week" ? value : null,
+                });
+              }}
+            >
+              <NativeSelectOption value="any">Any date</NativeSelectOption>
+              <NativeSelectOption value="overdue">
+                {DUE_NAMES.overdue}
+              </NativeSelectOption>
+              <NativeSelectOption value="week">
+                {DUE_NAMES.week}
+              </NativeSelectOption>
+            </NativeSelect>
+          </Field>
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t px-2.5 py-2">
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11 px-2"
+            disabled={!hasCardFilters(filters)}
+            onClick={() => onFilters(NO_FILTERS)}
+          >
+            Clear all
+          </Button>
+          <span className="text-muted-foreground text-xs">
+            Filters apply as you choose
+          </span>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

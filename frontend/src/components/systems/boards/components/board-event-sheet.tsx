@@ -170,7 +170,7 @@ export function BoardEventSheet({
       }}
     >
       <SheetContent
-        className="slim-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,34rem)]"
+        className="slim-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,40rem)]"
         finalFocus={finalFocus}
       >
         <header className="flex shrink-0 items-start gap-3 border-b p-5 pr-3">

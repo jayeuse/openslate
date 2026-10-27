@@ -119,8 +119,10 @@ test("a writer drags a bar; its old place shows dashed until Save changes sends 
     page,
     /^Book the expo booth crew, Expo, Sep 16 to Sep 20, checklist 1 of 2 done, unsaved, was Sep 14 to Sep 18$/,
   );
-  await expect(staged).toHaveAttribute(
-    "title",
+  // The bar's tooltip says the same as its name, unsaved state included.
+  await page.mouse.move(0, 0);
+  await staged.hover();
+  await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(
     "Book the expo booth crew, Expo, Sep 16 to Sep 20, checklist 1 of 2 done, unsaved, was Sep 14 to Sep 18",
   );
   await expect(page.getByTestId("gantt-was")).toHaveCount(1);
@@ -669,4 +671,42 @@ test("no grid line crosses the Unscheduled row's No dates", async ({
   });
   expect(crossings.length).toBeGreaterThan(0);
   expect(crossings).not.toContain(false);
+});
+
+test("a focused bar's tooltip tells a writer the arrow keys, as its name does", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const cards = boardCards();
+  await installKanbanApi(page, {
+    level: "write",
+    cards: Object.values(cards),
+  });
+  await page.goto(ganttHref("zoom=month"));
+  const booth = bar(page, /^Book the expo booth crew, Expo, Sep 14 to Sep 18/);
+  await booth.focus();
+  await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(
+    "Arrow keys move the bar a day. Shift with an arrow key changes the due date.",
+  );
+});
+
+test("a board whose cards have no dates says so, and a writer adds dates from there", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const plan = wireCard("Plan the Q4 reviews", stageIds.todo, 1024);
+  const venue = wireCard("Call the venue", stageIds.todo, 2048);
+  await installKanbanApi(page, { level: "write", cards: [plan, venue] });
+  await page.goto(ganttHref("zoom=month"));
+  await expect(
+    gantt(page).getByText("No dated cards", { exact: true }),
+  ).toBeVisible();
+  await gantt(page)
+    .getByRole("button", { name: "Add dates", exact: true })
+    .click();
+  const sheet = page.getByRole("dialog", {
+    name: "Plan the Q4 reviews",
+    exact: true,
+  });
+  await expect(sheet.getByLabel("Start", { exact: true })).toBeFocused();
 });

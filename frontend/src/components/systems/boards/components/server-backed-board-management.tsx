@@ -152,6 +152,27 @@ function SettingsInstance(props: Props) {
   const [latestReady, setLatestReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Lifecycle and purge results show beside their action in Advanced (R2).
+  const [lifecycleError, setLifecycleError] =
+    useState<BoardManagementView["lifecycleError"]>(null);
+  const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  // Archive and Restore swap one button for the other, and the access check
+  // that follows a board change redraws Details: focus waits for the new
+  // button and goes to it (R5).
+  // After the action, Details waits for the access check the board change
+  // starts ("check"), then draws again ("after"): focus moves then.
+  const [focusLifecycle, setFocusLifecycle] = useState<
+    "check" | "after" | null
+  >(null);
+  const lifecycleAction = useCallback(
+    () =>
+      tabsRef.current
+        ?.closest('[data-slot="sheet-content"]')
+        ?.querySelector<HTMLElement>("[data-lifecycle-action]") ?? null,
+    [],
+  );
+
   const pendingRef = useRef(false);
   const mountedRef = useRef(false);
   const deniedRef = useRef(false);
@@ -199,8 +220,14 @@ function SettingsInstance(props: Props) {
           setAccess,
           setConflict,
           setLatestReady,
-          setError,
-          setNotice,
+          setError: (value) => {
+            setError(value);
+            setLifecycleError(null);
+          },
+          setNotice: (value) => {
+            setNotice(value);
+            setLifecycleNotice(null);
+          },
           setConfirmation,
           setDiscardOpen,
           onAccessDenied: () => onAccessDenied(boardId),
@@ -280,6 +307,16 @@ function SettingsInstance(props: Props) {
     };
   }, [open, incomingBoard, accessRetry, handleDenied]);
 
+  useEffect(() => {
+    if (focusLifecycle === "check" && access === "loading")
+      setFocusLifecycle("after");
+    if (focusLifecycle !== "after" || access !== "ready") return;
+    const target = lifecycleAction();
+    if (!target) return;
+    target.focus();
+    setFocusLifecycle(null);
+  }, [focusLifecycle, access, board, lifecycleAction]);
+
   const view: BoardManagementView = {
     board,
     access,
@@ -290,6 +327,8 @@ function SettingsInstance(props: Props) {
     latestReady,
     error,
     notice,
+    lifecycleError,
+    lifecycleNotice,
   };
   const dirty = board !== null && boardUpdateForDraft(board, draft) !== null;
 
@@ -495,8 +534,8 @@ function SettingsInstance(props: Props) {
       if (!stillCurrent(request)) return;
       clearPurgeReview();
       setFileRefresh((value) => value + 1);
+      // The sheet stays open, so the result shows in it, not in a toast.
       setNotice("File deleted forever.");
-      reportDone("File deleted forever.");
     } catch (failure) {
       if (!stillCurrent(request)) return;
       if (
@@ -548,6 +587,7 @@ function SettingsInstance(props: Props) {
     setPending(true);
     setError(null);
     setNotice(null);
+    setLifecycleNotice(null);
     try {
       const saved = await updateBoard(board.id, update);
       if (!stillCurrent(request)) return;
@@ -641,6 +681,8 @@ function SettingsInstance(props: Props) {
     setPending(true);
     setError(null);
     setNotice(null);
+    setLifecycleError(null);
+    setLifecycleNotice(null);
     try {
       const changed =
         action === "archive"
@@ -652,7 +694,12 @@ function SettingsInstance(props: Props) {
       setDraft(draftFromBoard(changed));
       setConfirmation(null);
       clearPurgeReview();
-      reportDone(action === "archive" ? "Board archived." : "Board restored.");
+      // Inside the open sheet the result is inline (Request feedback).
+      setLifecycleNotice(
+        action === "archive" ? "Board archived." : "Board restored.",
+      );
+      setFocusLifecycle("check");
+
       props.onUpdated(changed);
     } catch (failure) {
       if (!stillCurrent(request)) return;
@@ -666,9 +713,10 @@ function SettingsInstance(props: Props) {
         setConflict(true);
         setLatestReady(false);
       } else
-        setError(
-          `Board could not be ${action === "archive" ? "archived" : "restored"}. Try again.`,
-        );
+        setLifecycleError({
+          action: "lifecycle",
+          message: `Board could not be ${action === "archive" ? "archived" : "restored"}. Try again.`,
+        });
     } finally {
       pendingRef.current = false;
       if (mountedRef.current) setPending(false);
@@ -701,6 +749,8 @@ function SettingsInstance(props: Props) {
     setPurgePreviewLoading(true);
     setError(null);
     setNotice(null);
+    setLifecycleError(null);
+    setLifecycleNotice(null);
     try {
       const preview = await previewBoardPurge(board.id);
       if (!stillCurrent(request)) return;
@@ -715,7 +765,10 @@ function SettingsInstance(props: Props) {
         handleDenied(failure)
       )
         return;
-      setError(boardPurgeFailureMessage(failure, "preview"));
+      setLifecycleError({
+        action: "purge",
+        message: boardPurgeFailureMessage(failure, "preview"),
+      });
       setPurgeReviewAgain(true);
     } finally {
       if (request === actionRequest.current) {
@@ -758,6 +811,7 @@ function SettingsInstance(props: Props) {
     setPending(true);
     setError(null);
     setNotice(null);
+    setLifecycleError(null);
     try {
       await purgeBoard(purgedId, {
         token: purgePreview.token,
@@ -777,7 +831,10 @@ function SettingsInstance(props: Props) {
         handleDenied(failure)
       )
         return;
-      setError(boardPurgeFailureMessage(failure, "execute"));
+      setLifecycleError({
+        action: "purge",
+        message: boardPurgeFailureMessage(failure, "execute"),
+      });
       clearPurgeReview();
       setPurgeReviewAgain(true);
     } finally {
@@ -800,7 +857,16 @@ function SettingsInstance(props: Props) {
           if (!next) close();
         }}
       >
-        <SheetContent className="slim-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,42rem)]">
+        <SheetContent
+          // One sheet width across Boards: the record sheet's (C7).
+          className="slim-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,40rem)]"
+          // Focus starts on the open tab, not on Close (C13).
+          initialFocus={() =>
+            tabsRef.current?.querySelector<HTMLElement>(
+              '[role="tab"][aria-selected="true"]',
+            ) ?? true
+          }
+        >
           <header className="flex shrink-0 items-start gap-3 border-b p-5 pr-3">
             <div className="min-w-0 flex-1">
               <SheetTitle className="text-lg leading-tight font-semibold wrap-anywhere">
@@ -830,7 +896,7 @@ function SettingsInstance(props: Props) {
             }}
             className="min-h-0 flex-1 gap-0"
           >
-            <div className="shrink-0 border-b px-5 py-3">
+            <div ref={tabsRef} className="shrink-0 border-b px-5 py-3">
               <TabsList
                 aria-label="Board settings"
                 className="grid w-full grid-cols-3 sm:w-fit"
@@ -907,6 +973,7 @@ function SettingsInstance(props: Props) {
                 onCancelPurge={() => {
                   clearPurgeReview();
                   setError(null);
+                  setLifecycleError(null);
                 }}
                 onConfirmPurge={() => {
                   void confirmPurge();
@@ -968,6 +1035,26 @@ function SettingsInstance(props: Props) {
               ) : null}
             </TabsContent>
           </Tabs>
+          {/* Inside the sheet, so the sheet knows this dialog is its own
+              and never hides it when its modal scope is set again. */}
+          {archiveStep ? (
+            <ConfirmAction
+              key={board?.id ?? "board-access-denied"}
+              open={confirmation === "archive"}
+              title={archiveStep.title}
+              description={archiveStep.description}
+              action={archiveStep.action}
+              tone="neutral"
+              disabled={pending}
+              pending={pending}
+              pendingLabel="Archiving…"
+              finalFocus={lifecycleAction}
+              onConfirm={() => {
+                void changeLifecycle("archive");
+              }}
+              onCancel={() => setConfirmation(null)}
+            />
+          ) : null}
         </SheetContent>
       </Sheet>
       <BoardFilePurgeDialog
@@ -1026,21 +1113,6 @@ function SettingsInstance(props: Props) {
         }}
         onCancel={() => setDiscardOpen(false)}
       />
-      {archiveStep ? (
-        <ConfirmAction
-          key={board?.id ?? "board-access-denied"}
-          open={confirmation === "archive"}
-          title={archiveStep.title}
-          description={archiveStep.description}
-          action={archiveStep.action}
-          tone="neutral"
-          disabled={pending}
-          onConfirm={() => {
-            void changeLifecycle("archive");
-          }}
-          onCancel={() => setConfirmation(null)}
-        />
-      ) : null}
     </>
   );
 }

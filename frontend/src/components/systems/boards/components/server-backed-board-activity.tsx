@@ -5,31 +5,19 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { StatusDot } from "@/components/ui/status-word";
 import { TablePagination } from "@/components/ui/table-pagination";
-import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
+import type { WorkspaceRegion } from "@/lib/date-time";
 import type {
   BoardActivity,
   BoardToolsPage,
 } from "../adapters/board-tools-api";
-import { boardActivitySentence } from "../domain/board-settings";
+import {
+  boardActivitySentence,
+  boardActivityTime,
+} from "../domain/board-settings";
 import { useServerBoardActivity } from "../hooks/use-server-board-activity";
 
 const PAGE_SIZE = 25;
 const control = "min-h-11 xl:min-h-8";
-
-function activityTime(
-  timestamp: string,
-  region: WorkspaceRegion | undefined,
-): string {
-  if (!region) return "";
-  return formatWorkspaceDateTime(timestamp, region, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
-  });
-}
 
 /**
  * Activity rows (BR29), in the Audit sentence grammar: a dot, the verb at
@@ -42,6 +30,7 @@ export function ServerBoardActivityDisplay({
   page: BoardToolsPage<BoardActivity>;
   region?: WorkspaceRegion;
 }) {
+  const now = new Date();
   if (page.items.length === 0)
     return (
       <div className="flex flex-col gap-1 rounded-lg border border-dashed p-5 text-sm">
@@ -64,7 +53,9 @@ export function ServerBoardActivityDisplay({
     >
       {page.items.map((item) => {
         const { verb, tone } = boardActivitySentence(item);
-        const time = activityTime(item.createdAt, region);
+        const time = region
+          ? boardActivityTime(item.createdAt, region, now)
+          : null;
         return (
           <li
             key={item.id}
@@ -80,8 +71,12 @@ export function ServerBoardActivityDisplay({
                 {time ? (
                   <>
                     {" · "}
-                    <time dateTime={item.createdAt} className="tabular-nums">
-                      {time}
+                    <time
+                      dateTime={item.createdAt}
+                      title={time.full}
+                      className="tabular-nums"
+                    >
+                      {time.text}
                     </time>
                   </>
                 ) : null}

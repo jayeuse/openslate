@@ -133,7 +133,8 @@ export function ServerBoardManagementDisplay({
             Checking your access to this board…
           </p>
         ) : (
-          <Alert variant="destructive">
+          // Only a failed read is an error; a manager check is a fact.
+          <Alert variant={failed ? "destructive" : "default"}>
             {failed
               ? "Board settings could not be loaded. Try again."
               : "You cannot manage this board."}
@@ -164,6 +165,17 @@ export function ServerBoardManagementDisplay({
     validDraft(view.draft) &&
     dirty;
   const showPurge = archived && isAdmin && purgeEnabled;
+  const lifecycleError = view.lifecycleError ?? null;
+  // A result line beside an action; kept mounted so only its words change.
+  const lifecycleStatus = (
+    <p role="status" data-lifecycle-status="" className="text-sm empty:sr-only">
+      {view.lifecycleNotice ?? ""}
+    </p>
+  );
+  const errorBeside = (action: "lifecycle" | "purge") =>
+    lifecycleError?.action === action ? (
+      <Alert variant="destructive">{lifecycleError.message}</Alert>
+    ) : null;
   const advancedParts = [
     files ? "Files" : null,
     project && !archived ? "Archive" : null,
@@ -174,11 +186,10 @@ export function ServerBoardManagementDisplay({
   return (
     <section aria-label="Board details" className="flex min-w-0 flex-col gap-5">
       {view.error ? <Alert variant="destructive">{view.error}</Alert> : null}
-      {view.notice ? (
-        <p role="status" className="text-sm">
-          {view.notice}
-        </p>
-      ) : null}
+      {/* Kept mounted, so only its words change and each is heard. */}
+      <p role="status" className="text-sm empty:sr-only">
+        {view.notice ?? ""}
+      </p>
       {view.conflict ? (
         <Alert variant="destructive">
           <div className="flex flex-col gap-3">
@@ -318,6 +329,8 @@ export function ServerBoardManagementDisplay({
       <AdvancedSection
         storageKey="boards:settings:details"
         summary={advancedParts.length ? advancedParts.join(", ") : undefined}
+        // An error inside opens the block, so the action that failed shows.
+        forceOpen={lifecycleError !== null}
       >
         {files}
         {board.scope === "company" ? null : board.scope === "department" &&
@@ -327,9 +340,6 @@ export function ServerBoardManagementDisplay({
           </p>
         ) : archived ? (
           <div className="flex flex-col gap-2">
-            <h3 data-slot="section-title" className="text-sm font-medium">
-              Restore board
-            </h3>
             <p className="text-muted-foreground text-sm">
               People with access can post again.
             </p>
@@ -337,17 +347,22 @@ export function ServerBoardManagementDisplay({
               type="button"
               variant="outline"
               className={`${control} self-start`}
-              disabled={view.pending || view.conflict}
-              onClick={onRestore}
+              data-lifecycle-action=""
+              // Locked while it runs but focusable: the board's Archive
+              // button takes this one's place, and focus stays on it (R5).
+              aria-disabled={view.pending || undefined}
+              disabled={view.conflict}
+              onClick={() => {
+                if (!view.pending) onRestore();
+              }}
             >
               Restore board
             </Button>
+            {lifecycleStatus}
+            {errorBeside("lifecycle")}
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            <h3 data-slot="section-title" className="text-sm font-medium">
-              Archive board
-            </h3>
             <p className="text-muted-foreground text-sm">
               Everyone can still read it; nobody can post.
             </p>
@@ -355,6 +370,7 @@ export function ServerBoardManagementDisplay({
               type="button"
               variant="outline"
               className={`${control} self-start`}
+              data-lifecycle-action=""
               disabled={view.pending || view.conflict || dirty}
               aria-describedby={dirty ? `${id}-archive-reason` : undefined}
               onClick={onArchive}
@@ -369,20 +385,21 @@ export function ServerBoardManagementDisplay({
                 Save or discard changes before archiving.
               </p>
             ) : null}
+            {lifecycleStatus}
+            {errorBeside("lifecycle")}
           </div>
         )}
         {showPurge ? (
           <div className="border-border flex flex-col gap-3 border-t pt-4">
-            <h3 data-slot="section-title" className="text-sm font-medium">
-              Delete forever
-            </h3>
             <p className="text-muted-foreground text-sm">
               Removes the board and its content. This cannot be undone.
             </p>
+            {/* The first step only opens the review: quiet danger. The
+                final "Delete board forever" keeps the fill. */}
             <Button
               type="button"
-              variant="destructive"
-              className={`${control} self-start`}
+              variant="outline"
+              className={`${control} border-danger-rule text-danger-text self-start`}
               disabled={view.pending || view.conflict || purgePreviewLoading}
               onClick={onBeginPurge}
             >
@@ -392,6 +409,7 @@ export function ServerBoardManagementDisplay({
                   ? "Review again"
                   : "Delete forever"}
             </Button>
+            {errorBeside("purge")}
             {purgePreview ? (
               <div className="border-border flex flex-col gap-4 rounded-lg border p-4">
                 <LifecyclePurgeReview preview={purgePreview} region={region} />

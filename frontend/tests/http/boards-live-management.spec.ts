@@ -389,7 +389,7 @@ test("New project board creates the board and opens its settings on Access", asy
     settings.getByRole("tab", { name: "Access", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(
-    settings.getByText("No groups yet. Only administrators open this board."),
+    settings.getByText("No groups yet. Only admins open this board."),
   ).toBeVisible();
   await expect(
     page
@@ -492,6 +492,27 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
       }),
     });
   });
+  const puts: unknown[] = [];
+  await page.route(`**/api/boards/${boardId}/groups`, (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    const body = route.request().postDataJSON() as {
+      revision: number;
+      groups: { group_id: string; level: string }[];
+    };
+    puts.push(body);
+    return route.fulfill({
+      json: {
+        board_id: boardId,
+        revision: body.revision + 1,
+        groups: body.groups.map((entry) => ({
+          ...entry,
+          name:
+            choices.find((choice) => choice.id === entry.group_id)?.name ??
+            "Unknown",
+        })),
+      },
+    });
+  });
   await page.goto(`/boards?board=${boardId}&section=posts`);
   const manage = await openBoardSettings(page);
   await manage.getByRole("tab", { name: "Access", exact: true }).click();
@@ -528,12 +549,215 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
       .filter({ hasText: "Zora group beyond one hundred" }),
   ).toContainText("Zora group beyond one hundred");
   await manage.getByRole("button", { name: "Add group", exact: true }).click();
+  const groups = manage.getByRole("list", {
+    name: "Board groups",
+    exact: true,
+  });
+  await expect(groups).toContainText("Zora group beyond one hundred");
+  // Adding saves at once with the board revision; focus waits on the picker
+  // for the next group, since Add group turns off with nothing chosen.
+  await expect(groups.getByText("Saved.", { exact: true })).toBeVisible();
+  expect(puts).toEqual([
+    {
+      revision: board.revision,
+      groups: [{ group_id: choices[124].id, level: "read" }],
+    },
+  ]);
   await expect(
-    manage.getByRole("list", { name: "Board groups", exact: true }),
-  ).toContainText("Zora group beyond one hundred");
+    manage.getByRole("combobox", { name: "Add a group", exact: true }),
+  ).toBeFocused();
+  // Removing the last group leaves focus on the picker too.
+  await manage
+    .getByRole("button", {
+      name: "Remove access for Zora group beyond one hundred",
+      exact: true,
+    })
+    .click();
   await expect(
-    manage.getByRole("button", { name: "Save groups", exact: true }),
-  ).toBeEnabled();
+    manage.getByText("Removed Zora group beyond one hundred", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    manage.getByRole("combobox", { name: "Add a group", exact: true }),
+  ).toBeFocused();
+  expect(puts.at(-1)).toEqual({ revision: board.revision + 1, groups: [] });
+});
+
+const fieldCrewId = "00000000-0000-4000-8000-000000000061";
+const guestReadersId = "00000000-0000-4000-8000-000000000062";
+const nightShiftId = "00000000-0000-4000-8000-000000000063";
+
+/** A project board's groups, saved whole with the board revision. */
+async function installBoardGroups(page: Page) {
+  let state = {
+    board_id: boardId,
+    revision: board.revision,
+    groups: [
+      { group_id: fieldCrewId, name: "Field Crew", level: "write" },
+      { group_id: guestReadersId, name: "Guest Readers", level: "read" },
+    ],
+  };
+  const names = new Map(state.groups.map((g) => [g.group_id, g.name]));
+  const puts: unknown[] = [];
+  let reads = 0;
+  let stale = false;
+  await page.route(`**/api/boards/${boardId}/groups`, (route) => {
+    if (route.request().method() === "GET") {
+      reads += 1;
+      return route.fulfill({ json: state });
+    }
+    const body = route.request().postDataJSON() as {
+      revision: number;
+      groups: { group_id: string; level: string }[];
+    };
+    puts.push(body);
+    if (stale) {
+      stale = false;
+      // Someone else added a group first.
+      names.set(nightShiftId, "Night Shift");
+      state = {
+        ...state,
+        revision: state.revision + 1,
+        groups: [
+          ...state.groups,
+          { group_id: nightShiftId, name: "Night Shift", level: "read" },
+        ],
+      };
+      return route.fulfill({
+        status: 409,
+        json: { detail: { code: "stale_revision", message: "Private" } },
+      });
+    }
+    state = {
+      ...state,
+      revision: body.revision + 1,
+      groups: body.groups.map((entry) => ({
+        ...entry,
+        name: names.get(entry.group_id) ?? "Unknown",
+      })),
+    };
+    return route.fulfill({ json: state });
+  });
+  await page.route("**/api/access/groups?*", (route) =>
+    route.fulfill({ json: pageOf([], { limit: 25 }) }),
+  );
+  return {
+    puts,
+    get reads() {
+      return reads;
+    },
+    staleNext() {
+      stale = true;
+    },
+  };
+}
+
+test("Access saves each group change at once, offers Undo after Remove, and reads a stale board again", async ({
+  page,
+}) => {
+  await installFileManagement(page);
+  const api = await installBoardGroups(page);
+  await page.goto(`/boards?board=${boardId}&section=posts&settings=access`);
+  const sheet = settingsSheet(page);
+  const groups = sheet.getByRole("list", { name: "Board groups", exact: true });
+  const level = (name: string) =>
+    sheet.getByRole("combobox", { name: `Level for ${name}`, exact: true });
+  // One set of level words: the select says what the level chip says.
+  await expect(level("Field Crew").locator("option")).toHaveText([
+    "Read",
+    "Post",
+    "Manager",
+  ]);
+  await expect(level("Field Crew")).toHaveValue("write");
+  await expect(
+    sheet.getByText("also adds posts, events and cards."),
+  ).toBeVisible();
+  await expect(
+    sheet.getByText("also edits stages and labels, and pins posts."),
+  ).toBeVisible();
+  await expect(
+    sheet.getByText("A person in several groups gets the highest level.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(sheet.getByRole("button", { name: /^Save/ })).toHaveCount(0);
+
+  // A level change saves at once with the board revision.
+  await level("Field Crew").selectOption("manage");
+  await expect(groups.getByText("Saved.", { exact: true })).toBeVisible();
+  expect(api.puts).toEqual([
+    {
+      revision: board.revision,
+      groups: [
+        { group_id: fieldCrewId, level: "manage" },
+        { group_id: guestReadersId, level: "read" },
+      ],
+    },
+  ]);
+
+  // Remove saves at once and offers Undo; focus moves to the next row.
+  await sheet
+    .getByRole("button", { name: "Remove access for Field Crew", exact: true })
+    .click();
+  await expect(
+    sheet.getByText("Removed Field Crew", { exact: false }),
+  ).toBeVisible();
+  await expect(level("Guest Readers")).toBeFocused();
+  await expect(groups).not.toContainText("Field Crew");
+  expect(api.puts.at(-1)).toEqual({
+    revision: board.revision + 1,
+    groups: [{ group_id: guestReadersId, level: "read" }],
+  });
+  await sheet.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(level("Field Crew")).toHaveValue("manage");
+  await expect(level("Field Crew")).toBeFocused();
+  expect(api.puts.at(-1)).toEqual({
+    revision: board.revision + 2,
+    groups: [
+      { group_id: fieldCrewId, level: "manage" },
+      { group_id: guestReadersId, level: "read" },
+    ],
+  });
+
+  // A stale revision says so and reads the groups again.
+  const readsBefore = api.reads;
+  api.staleNext();
+  await level("Guest Readers").selectOption("write");
+  await expect(
+    sheet.getByText("Someone changed this board first.", { exact: true }),
+  ).toBeVisible();
+  await expect(groups).toContainText("Night Shift");
+  await expect(level("Guest Readers")).toHaveValue("read");
+  expect(api.reads).toBeGreaterThan(readsBefore);
+});
+
+test("a manager who is not an admin reads the groups as level chips", async ({
+  page,
+}) => {
+  await installFileManagement(page);
+  await installBoardGroups(page);
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: authMeBody({
+        id: actorId,
+        role: "member",
+        access: [],
+        default_organization_blocked: null,
+      }),
+    }),
+  );
+  await page.goto(`/boards?board=${boardId}&section=posts&settings=access`);
+  const sheet = settingsSheet(page);
+  const groups = sheet.getByRole("list", { name: "Board groups", exact: true });
+  await expect(
+    groups
+      .getByRole("listitem")
+      .filter({ hasText: "Field Crew" })
+      .locator('[data-slot="badge"]'),
+  ).toHaveText("Post");
+  await expect(groups.getByRole("combobox")).toHaveCount(0);
+  await expect(
+    sheet.getByText("Only an admin can change these groups.", { exact: true }),
+  ).toBeVisible();
 });
 
 const controlFileId = "00000000-0000-4000-8000-000000000041";
@@ -926,6 +1150,15 @@ for (const startArchived of [false, true]) {
     await expect(
       manage.getByText("Deleted forever", { exact: true }),
     ).toBeVisible();
+    // Said once, in the sheet that stays open; no toast under it.
+    await expect(
+      manage.getByText("File deleted forever.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("region", { name: "Status messages", exact: true })
+        .getByText("File deleted forever.", { exact: true }),
+    ).toHaveCount(0);
     await manage
       .getByRole("button", { name: "Archive board", exact: true })
       .click();
@@ -1143,6 +1376,7 @@ test("Board settings opens on each tab from the address and closes by name", asy
       ),
     });
   });
+  await page.clock.setFixedTime(new Date("2026-10-27T12:00:00Z"));
   await page.goto(`/boards?board=${boardId}&section=posts`);
   const sheet = await openBoardSettings(page);
   await expect(
@@ -1151,6 +1385,8 @@ test("Board settings opens on each tab from the address and closes by name", asy
   await expect(sheet.getByText("Project board · Active")).toBeVisible();
   await expect(page).toHaveURL(/settings=details/);
   const tab = (name: string) => sheet.getByRole("tab", { name, exact: true });
+  // The sheet opens on its tab, not on Close.
+  await expect(tab("Details")).toBeFocused();
   await tab("Access").click();
   await expect(page).toHaveURL(/settings=access/);
   await expect(tab("Access")).toHaveAttribute("aria-selected", "true");
@@ -1162,7 +1398,11 @@ test("Board settings opens on each tab from the address and closes by name", asy
   await expect(tab("Activity")).toHaveAttribute("aria-selected", "true");
   await expect(
     sheet.getByRole("list", { name: "Board activity", exact: true }),
-  ).toContainText("Changed details · ho-admin · Sep 24, 2026, 9:30 AM UTC");
+  ).toContainText("Changed details · ho-admin · Sep 24, 9:30 AM");
+  await expect(sheet.locator("time")).toHaveAttribute(
+    "title",
+    "Thursday, September 24, 2026 at 9:30:00 AM UTC",
+  );
   // Activity is read once, and once more for a change to this board.
   expect(activityReads).toBe(1);
   await sendOpenViewEvent(page, "invalidate", {
@@ -1181,6 +1421,9 @@ test("Board settings opens on each tab from the address and closes by name", asy
   await expect(
     settingsSheet(page).getByRole("tab", { name: "Activity", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    settingsSheet(page).getByRole("tab", { name: "Activity", exact: true }),
+  ).toBeFocused();
 });
 
 test("renaming a project board saves with its revision and names a conflict", async ({
@@ -1240,7 +1483,7 @@ test("renaming a project board saves with its revision and names a conflict", as
   ]);
 });
 
-test("Archive asks once with its consequence and Restore acts at once with a toast", async ({
+test("Archive asks once with its consequence, Restore acts at once, and each says so in the sheet", async ({
   page,
 }) => {
   const api = await installFileManagement(page);
@@ -1255,6 +1498,13 @@ test("Archive asks once with its consequence and Restore acts at once with a toa
     "Everyone can still read it; nobody can post.",
   );
   await expect(archive.getByRole("textbox")).toHaveCount(0);
+  // The question sits inside Board settings: Escape closes it alone.
+  await page.keyboard.press("Escape");
+  await expect(archive).toBeHidden();
+  await expect(sheet).toBeVisible();
+  await sheet
+    .getByRole("button", { name: "Archive board", exact: true })
+    .click();
   const confirm = archive.getByRole("button", {
     name: "Archive board",
     exact: true,
@@ -1265,18 +1515,27 @@ test("Archive asks once with its consequence and Restore acts at once with a toa
     name: "Status messages",
     exact: true,
   });
+  // The sheet stays open over the toasts, so the result shows in it.
   await expect(
-    toasts.getByText("Board archived.", { exact: true }),
+    sheet.getByText("Board archived.", { exact: true }),
   ).toBeVisible();
   const restore = sheet.getByRole("button", {
     name: "Restore board",
     exact: true,
   });
   await expect(restore).toHaveAttribute("data-variant", "outline");
+  // Archive's button is gone; focus follows to the one that took its place.
+  await expect(restore).toBeFocused();
   await restore.click();
   await expect(
-    toasts.getByText("Board restored.", { exact: true }),
+    sheet.getByText("Board restored.", { exact: true }),
   ).toBeVisible();
+  await expect(
+    sheet.getByRole("button", { name: "Archive board", exact: true }),
+  ).toBeFocused();
+  await expect(toasts.getByText(/^Board (archived|restored)\.$/)).toHaveCount(
+    0,
+  );
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(
     sheet.getByRole("button", { name: "Archive board", exact: true }),
@@ -1316,12 +1575,16 @@ test("Check a person shows a person's level on this board and why", async ({
     .getByRole("combobox", { name: "Search person", exact: true })
     .fill("sa");
   await page.getByRole("option", { name: "sam", exact: true }).click();
+  const result = sheet.getByRole("definition").filter({
+    hasText: "can read · cannot post · cannot manage",
+  });
+  await expect(result).toBeVisible();
   await expect(
-    sheet.getByText("can read · cannot post · cannot manage", { exact: true }),
+    sheet.getByRole("term").filter({ hasText: /^Access$/ }),
   ).toBeVisible();
   await expect(
     sheet.getByText(
-      "Posting needs write access through one of this board's groups.",
+      "Posting needs write access through one of this board's groups. Guests read only.",
       { exact: true },
     ),
   ).toBeVisible();
@@ -1402,14 +1665,17 @@ test("a department board's name is read-only and Access shows how to let a group
     sheet.getByText("Write on some Sales modules", { exact: true }),
   ).toBeVisible();
   await expect(
-    sheet.getByText(
-      "Give this group a department-level Write row in Access › Groups",
-    ),
+    sheet.getByText("Give this group a department-level Write row.", {
+      exact: true,
+    }),
   ).toBeVisible();
+  // One place to change it: one link, named for the place.
+  await expect(sheet.getByRole("link")).toHaveCount(1);
   await expect(
-    sheet
-      .getByRole("definition")
-      .getByRole("link", { name: "Access › Groups", exact: true }),
+    sheet.getByRole("link", {
+      name: "Change department roles in Access › Groups",
+      exact: true,
+    }),
   ).toHaveAttribute("href", "/access?view=groups");
 });
 
@@ -1423,9 +1689,18 @@ test("a reader sees why they cannot post and no Board settings, even from a link
   await expect(
     page.getByRole("heading", { name: "Sales announcements", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.locator('[data-slot="badge"]').filter({ hasText: /^Read$/ }),
-  ).toHaveAttribute("aria-description", "Posting needs write access to Sales.");
+  // The reason opens on focus and on a tap, not on hover alone.
+  const chip = page.getByRole("button", { name: "Read", exact: true });
+  await expect(chip).toHaveAccessibleDescription(
+    "Posting needs write access to Sales.",
+  );
+  const tooltip = page.locator('[data-slot="tooltip-content"]');
+  await chip.focus();
+  await expect(tooltip).toHaveText("Posting needs write access to Sales.");
+  await page.keyboard.press("Escape");
+  await expect(tooltip).toHaveCount(0);
+  await chip.click();
+  await expect(tooltip).toHaveText("Posting needs write access to Sales.");
   await expect(
     page.getByRole("button", { name: "Board settings", exact: true }),
   ).toHaveCount(0);

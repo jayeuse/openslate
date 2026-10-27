@@ -23,6 +23,8 @@ export type BoardManagementView = {
   latestReady?: boolean;
   error: string | null;
   notice: string | null;
+  lifecycleError?: { action: "lifecycle" | "purge"; message: string } | null;
+  lifecycleNotice?: string | null;
 };
 
 export const blankDraft: BoardManagementDraft = { name: "", description: "" };

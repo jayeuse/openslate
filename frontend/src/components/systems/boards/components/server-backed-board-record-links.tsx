@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { subscribeWorkspaceInvalidations } from "@/components/systems/shared/adapters/invalidation-events";
 import { invalidatesRecords } from "@/components/systems/openview/adapters/openview-queries";
 import {
@@ -74,6 +79,7 @@ export function recordTitleForLink(
 }
 
 export function ServerBoardRecordLinks(props: Props) {
+  const fieldId = useId();
   const editable = props.access === "edit" ? props : null;
   const kind = props.target.kind;
   const boardId = props.target.boardId;
@@ -355,12 +361,13 @@ export function ServerBoardRecordLinks(props: Props) {
       {editable && !editable.locked && items.length < 20 && (
         <div className="space-y-3 rounded-md border p-3">
           <p className="text-sm font-medium">Link an existing record</p>
-          <label className="block space-y-1 text-sm">
-            <span>Data source</span>
-            <select
-              data-slot="select"
-              aria-label="Record data source"
-              className="border-input bg-background min-h-11 w-full rounded-md border px-3"
+          {/* "Module", the word the rest of the product uses (C5). */}
+          <Field>
+            <FieldLabel htmlFor={`${fieldId}-module`}>Module</FieldLabel>
+            <NativeSelect
+              id={`${fieldId}-module`}
+              aria-label="Record module"
+              className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-8"
               value={moduleId}
               onChange={(event) => {
                 setModuleId(event.currentTarget.value);
@@ -369,18 +376,16 @@ export function ServerBoardRecordLinks(props: Props) {
                 setTitleField(null);
               }}
             >
-              <option value="">Choose a data source</option>
+              <NativeSelectOption value="">Choose a module</NativeSelectOption>
               {sources.map((source) => (
-                <option key={source.id} value={source.id}>
+                <NativeSelectOption key={source.id} value={source.id}>
                   {source.name}
-                </option>
+                </NativeSelectOption>
               ))}
-            </select>
-          </label>
+            </NativeSelect>
+          </Field>
           {sourceError && (
-            <Alert variant="destructive">
-              Data sources could not be loaded.
-            </Alert>
+            <Alert variant="destructive">Modules could not be loaded.</Alert>
           )}
           <div className="flex gap-2">
             <Button
@@ -389,7 +394,7 @@ export function ServerBoardRecordLinks(props: Props) {
               disabled={sourceOffset === 0}
               onClick={() => setSourceOffset(Math.max(0, sourceOffset - 25))}
             >
-              Previous sources
+              Previous modules
             </Button>
             <Button
               type="button"
@@ -397,7 +402,7 @@ export function ServerBoardRecordLinks(props: Props) {
               disabled={!sourceHasMore}
               onClick={() => setSourceOffset(sourceOffset + 25)}
             >
-              Next sources
+              Next modules
             </Button>
           </div>
           {moduleId && (
@@ -425,26 +430,30 @@ export function ServerBoardRecordLinks(props: Props) {
               )}
               {recordStatus === "ready" && (
                 <>
-                  <label className="block space-y-1 text-sm">
-                    <span>Record</span>
-                    <select
-                      data-slot="select"
+                  <Field>
+                    <FieldLabel htmlFor={`${fieldId}-record`}>
+                      Record
+                    </FieldLabel>
+                    <NativeSelect
+                      id={`${fieldId}-record`}
                       aria-label="Record to link"
-                      className="border-input bg-background min-h-11 w-full rounded-md border px-3"
+                      className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-8"
                       value={recordId}
                       onChange={(event) => {
                         const id = event.currentTarget.value;
                         setRecordId(id);
                       }}
                     >
-                      <option value="">Choose a record</option>
+                      <NativeSelectOption value="">
+                        Choose a record
+                      </NativeSelectOption>
                       {records.map((record) => (
-                        <option key={record.id} value={record.id}>
+                        <NativeSelectOption key={record.id} value={record.id}>
                           {recordTitleForLink(record, titleField)}
-                        </option>
+                        </NativeSelectOption>
                       ))}
-                    </select>
-                  </label>
+                    </NativeSelect>
+                  </Field>
                   {records.length === 0 && (
                     <p className="text-muted-foreground text-sm">
                       No records match on this page.

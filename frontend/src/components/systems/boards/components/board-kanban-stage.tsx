@@ -2,7 +2,13 @@
 
 import { useId, useState, type ReactNode } from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { Archive, ArrowLeft, ArrowRight, Plus } from "lucide-react";
+import {
+  Archive,
+  ArrowLeft,
+  ArrowRight,
+  ChevronDown,
+  Plus,
+} from "lucide-react";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -131,7 +137,7 @@ export function StageHeader({
             aria-label={`${stage.name}, ${shown.label}. Stage settings`}
             className={cn(
               headerClass,
-              "hover:bg-[color-mix(in_oklab,var(--ink)_5%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]",
+              "group/stage hover:bg-[color-mix(in_oklab,var(--ink)_5%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--focus)]",
               canDrag && "cursor-grab",
             )}
             {...listeners}
@@ -139,6 +145,12 @@ export function StageHeader({
         }
       >
         <HeaderFace stage={stage} count={count} />
+        {/* The cue that the header opens its settings: on hover, focus,
+            while open, and always on a touch screen, which has no hover. */}
+        <ChevronDown
+          aria-hidden="true"
+          className="text-muted-foreground size-3.5 shrink-0 opacity-0 transition-opacity duration-(--motion-fast) group-hover/stage:opacity-100 group-focus-visible/stage:opacity-100 group-aria-expanded/stage:opacity-100 motion-reduce:transition-none pointer-coarse:opacity-100"
+        />
       </PopoverTrigger>
       <PopoverContent
         align="start"

@@ -24,7 +24,9 @@ const sales = {
 
 test("Check a person states what the person can do on this board and why", () => {
   // Each row reaches a different branch: read with its reason, post, manage,
-  // and no access on each kind of board.
+  // and no access on each kind of board. The preview cannot tell a guest
+  // from a member, so a Read reason also names the guest cap; no access
+  // shows no Access row (null).
   const cases = [
     {
       board: sales,
@@ -37,7 +39,7 @@ test("Check a person states what the person can do on this board and why", () =>
       expected: {
         level: "Read",
         abilities: "can read · cannot post · cannot manage",
-        reason: "Posting needs write access to Sales.",
+        reason: "Posting needs write access to Sales. Guests read only.",
       },
     },
     {
@@ -52,7 +54,7 @@ test("Check a person states what the person can do on this board and why", () =>
         level: "Read",
         abilities: "can read · cannot post · cannot manage",
         reason:
-          "Posting needs write access through one of this board's groups.",
+          "Posting needs write access through one of this board's groups. Guests read only.",
       },
     },
     {
@@ -66,7 +68,7 @@ test("Check a person states what the person can do on this board and why", () =>
       expected: {
         level: "Read",
         abilities: "can read · cannot post · cannot manage",
-        reason: "Only admins post on the Company board.",
+        reason: "Only admins post on the Company board. Guests read only.",
       },
     },
     {
@@ -102,7 +104,7 @@ test("Check a person states what the person can do on this board and why", () =>
       access: { level: null, view: false, edit: false, manage: false },
       expected: {
         level: null,
-        abilities: "cannot read · cannot post · cannot manage",
+        abilities: null,
         reason: "No access to Sales.",
       },
     },
@@ -111,7 +113,7 @@ test("Check a person states what the person can do on this board and why", () =>
       access: { level: null, view: false, edit: false, manage: false },
       expected: {
         level: null,
-        abilities: "cannot read · cannot post · cannot manage",
+        abilities: null,
         reason: "Not in any of this board's groups.",
       },
     },
@@ -124,7 +126,7 @@ test("Check a person states what the person can do on this board and why", () =>
       { ...sales, status: "archived" },
       { level: "read", view: true, edit: false, manage: false },
     ).reason,
-  ).toBe("Posting needs write access to Sales.");
+  ).toBe("Posting needs write access to Sales. Guests read only.");
 });
 
 test("Board access preview clears old data on target or Board switch and ignores stale completions", () => {

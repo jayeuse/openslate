@@ -60,6 +60,9 @@ export function ConfirmAction({
   onConfirm,
   onCancel,
   disabled = false,
+  pending = false,
+  pendingLabel,
+  finalFocus,
   tone = "destructive",
 }: {
   open: boolean;
@@ -69,6 +72,11 @@ export function ConfirmAction({
   onConfirm: () => void;
   onCancel: () => void;
   disabled?: boolean;
+  /** The action runs: its button says so ("Archiving…") and keeps its width. */
+  pending?: boolean;
+  pendingLabel?: string;
+  /** Where focus goes on close, when the trigger is gone after the action. */
+  finalFocus?: () => HTMLElement | null;
   /** Danger marks only destruction (One Meaning Rule); a reversible step is neutral. */
   tone?: "destructive" | "neutral";
 }) {
@@ -79,7 +87,10 @@ export function ConfirmAction({
         if (!next && !disabled) onCancel();
       }}
     >
-      <AlertDialogContent>
+      <AlertDialogContent
+        className="slim-ui"
+        finalFocus={finalFocus ? () => finalFocus() ?? true : undefined}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
@@ -88,7 +99,7 @@ export function ConfirmAction({
           <Button
             type="button"
             variant="outline"
-            className="min-h-11"
+            className="min-h-11 xl:min-h-8"
             disabled={disabled}
             onClick={onCancel}
           >
@@ -97,9 +108,11 @@ export function ConfirmAction({
           <Button
             type="button"
             variant={tone === "destructive" ? "destructive" : "default"}
-            className="min-h-11"
+            className="min-h-11 xl:min-h-8"
             onClick={onConfirm}
             disabled={disabled}
+            pending={pending}
+            pendingLabel={pendingLabel}
           >
             {action}
           </Button>

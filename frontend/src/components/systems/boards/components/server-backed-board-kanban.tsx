@@ -495,6 +495,7 @@ export function ServerBackedBoardKanban({
         }
         onArchive={(card) => void commands.archive(card, cardName(card))}
         onClose={() => onParams({ card: null })}
+        onCreateLabels={manage ? () => setEditingLabels(true) : undefined}
       />
     </div>
   );

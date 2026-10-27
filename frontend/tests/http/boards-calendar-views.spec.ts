@@ -5,6 +5,8 @@ import {
   calendarHref,
   calendarName,
   installCalendarApi,
+  wireEvent,
+  wireOccurrence,
 } from "./helpers/board-calendar-api";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -418,4 +420,39 @@ test("an alert above the month keeps its bars at 1280×720, and the page still d
     }),
   ).toBeVisible();
   expect((await documentScrolls(page)).down).toBe(false);
+});
+
+test("at 1280 a one-day all-day block in Week wraps its title to two lines, as Month does", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const renewal = wireEvent({
+    id: "00000000-0000-4000-8000-000000000e91",
+    title: "Customer account renewal review",
+    author: "00000000-0000-4000-8000-000000000e92",
+    allDay: true,
+    start: "2026-11-17",
+    end: "2026-11-17",
+  });
+  await installCalendarApi(page, {
+    occurrences: () => [
+      wireOccurrence(renewal, "2026-11-17", "2026-11-17", "2026-11-17"),
+    ],
+  });
+  await page.goto(calendarHref("&view=week"));
+  const block = page.getByRole("button", {
+    name: /^Customer account renewal review,.*all day$/,
+  });
+  await expect(block).toBeVisible();
+  // The whole title shows: nothing is cut across or below.
+  expect(
+    await block.evaluate((node) =>
+      [...node.querySelectorAll("span")].every(
+        (span) =>
+          span.scrollWidth <= span.clientWidth + 1 &&
+          span.scrollHeight <= span.clientHeight + 1,
+      ),
+    ),
+  ).toBe(true);
+  expect((await block.boundingBox())!.height).toBeGreaterThan(30);
 });

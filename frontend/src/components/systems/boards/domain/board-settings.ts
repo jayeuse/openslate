@@ -1,4 +1,5 @@
 import type { StatusTone } from "@/components/ui/status-word";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import type {
   BoardAccessLevel,
   BoardManagementBoard,
@@ -71,7 +72,7 @@ export function boardAccessSummary(
   if (board.scope === "company")
     return [
       { who: "Everyone", can: "can read" },
-      { who: "Administrators", can: "can post and manage" },
+      { who: "Admins", can: "can post and manage" },
     ];
   if (board.scope === "department")
     return [
@@ -79,11 +80,11 @@ export function boardAccessSummary(
       { who: `Write on some ${board.name} modules`, can: "can read" },
       { who: `Write on ${board.name}`, can: "can post" },
       { who: `Manage on ${board.name}`, can: "can manage" },
-      { who: "Administrators", can: "can manage" },
+      { who: "Admins", can: "can manage" },
       { who: "Guests", can: "can read only" },
     ];
   return [
-    { who: "Administrators", can: "can manage" },
+    { who: "Admins", can: "can manage" },
     { who: "Guests", can: "can read only" },
   ];
 }
@@ -97,8 +98,8 @@ const LEVEL_WORD: Record<BoardAccessLevel, string> = {
 export type CheckPersonResult = {
   /** The level word, as the level chip shows it; null when they cannot open it. */
   level: string | null;
-  /** "can read · can post · cannot manage". */
-  abilities: string;
+  /** "can read · can post · cannot manage"; null when they cannot open it. */
+  abilities: string | null;
   /** Why they stop where they do; null when nothing is missing. */
   reason: string | null;
 };
@@ -106,7 +107,7 @@ export type CheckPersonResult = {
 /**
  * What Check a person shows for one person on this board (BR28). The read
  * reason is the level chip's own sentence (BR34); the preview cannot tell a
- * guest from a member, so it gives the member's reason.
+ * guest from a member, so a Read reason also names the guest cap.
  */
 export function checkPersonResult(
   board: Pick<BoardManagementBoard, "scope" | "name" | "status">,
@@ -120,7 +121,7 @@ export function checkPersonResult(
   if (preview.level === null)
     return {
       level: null,
-      abilities,
+      abilities: null,
       reason:
         board.scope === "department"
           ? `No access to ${board.name}.`
@@ -133,7 +134,7 @@ export function checkPersonResult(
     abilities,
     reason:
       preview.level === "read"
-        ? postingReason({ ...board, status: "active" }, false)
+        ? `${postingReason({ ...board, status: "active" }, false)} Guests read only.`
         : null,
   };
 }
@@ -151,4 +152,32 @@ export function boardActivitySentence(
   if (activity.action === "delete")
     return { verb: "Deleted board", tone: "danger" };
   return { verb: "Changed details", tone: "action" };
+}
+
+/**
+ * One Activity row's time (BR29): month, day and time in the workspace's
+ * zone, with the year only when it is not the current one there, and no zone
+ * name (as post rows, BF-11). `full` keeps the whole time for the tooltip.
+ */
+export function boardActivityTime(
+  timestamp: string,
+  region: WorkspaceRegion,
+  now: Date,
+): { text: string; full: string } {
+  const year = (value: string) =>
+    formatWorkspaceDateTime(value, region, { year: "numeric" });
+  const thisYear = year(timestamp) === year(now.toISOString());
+  return {
+    text: formatWorkspaceDateTime(timestamp, region, {
+      ...(thisYear ? {} : { year: "numeric" as const }),
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }),
+    full: formatWorkspaceDateTime(timestamp, region, {
+      dateStyle: "full",
+      timeStyle: "long",
+    }),
+  };
 }

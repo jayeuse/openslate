@@ -173,6 +173,14 @@ test("Kanban and its card sheet keep 44px targets at 390", async ({ page }) => {
     }),
   ).toBeVisible();
   await expectPhoneTargets(page, "Kanban");
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "Filters", exact: true })
+      .getByRole("checkbox", { name: "Expo" }),
+  ).toBeAttached();
+  await expectPhoneTargets(page, "Kanban filters");
+  await page.keyboard.press("Escape");
   await page.goto(kanbanHref(`card=${card.id}`));
   await expect(
     page
