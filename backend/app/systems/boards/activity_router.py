@@ -11,18 +11,21 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.common.dependencies import get_current_user
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
-from app.systems.access.policy.models import AccessLevel
+from app.systems.access.policy.models import AccessLevel, Group
+from app.systems.access.policy.scope import includes
 from app.systems.access.users.eligibility import established_user_clause
 from app.systems.access.users.membership import bound_membership_join
 from app.systems.access.users.models import Membership, User, UserStatus
+from app.systems.boards.access import board_level
 from app.systems.boards.activity_schemas import (
+    BoardActivityGroup,
     BoardActivityKind,
     BoardActivityListRequest,
     BoardActivityListResponse,
     BoardActivityResponse,
     BoardActivitySort,
 )
-from app.systems.boards.models import BoardGroup
+from app.systems.boards.models import Board, BoardGroup
 from app.systems.boards.router import _board_with_access
 from app.systems.manage.audit.models import AuditAction, AuditLog
 
@@ -87,6 +90,56 @@ def _active_actor_labels(db: Session, rows: list[AuditLog]) -> dict[UUID, str]:
     return {actor_id: username for actor_id, username in actors}
 
 
+def _snapshot_level(snapshot: dict[str, Any] | None) -> AccessLevel | None:
+    value = (snapshot or {}).get("level")
+    return AccessLevel(value) if value else None
+
+
+def _group_changes(
+    db: Session, board: Board, rows: list[AuditLog]
+) -> dict[UUID, BoardActivityGroup]:
+    """Name each group change from its snapshots; a deleted group has no name.
+
+    An add or a removal snapshot carries ``group_id``. A level change records only the
+    level, so its group comes from the live row, which is what keeps it on this Board.
+    """
+
+    changes = [row for row in rows if row.entity_type == "board_groups"]
+    live = dict(
+        db.execute(
+            select(BoardGroup.id, BoardGroup.group_id).where(
+                BoardGroup.board_id == board.id,
+                BoardGroup.id.in_({row.entity_id for row in changes if row.entity_id}),
+            )
+        ).tuples().all()
+    ) if changes else {}
+    group_ids: dict[UUID, UUID | None] = {}
+    for row in changes:
+        recorded = (row.after or {}).get("group_id") or (row.before or {}).get("group_id")
+        group_ids[row.id] = (
+            UUID(recorded) if recorded
+            else live.get(row.entity_id) if row.entity_id else None
+        )
+    wanted = {group_id for group_id in group_ids.values() if group_id is not None}
+    names = dict(
+        db.execute(
+            select(Group.id, Group.name).where(
+                Group.org_id == board.org_id,
+                Group.id.in_(wanted),
+                Group.is_deleted.is_(False),
+            )
+        ).tuples().all()
+    ) if wanted else {}
+    return {
+        row.id: BoardActivityGroup(
+            name=names.get(group_id) if (group_id := group_ids[row.id]) else None,
+            level=_snapshot_level(row.after),
+            previous_level=_snapshot_level(row.before),
+        )
+        for row in changes
+    }
+
+
 @router.get("/{board_id}/activity", response_model=BoardActivityListResponse)
 def list_board_activity(
     board_id: UUID,
@@ -128,6 +181,12 @@ def list_board_activity(
         ACTIVITY_LIST_SPEC,
     )
     labels = _active_actor_labels(db, result.items)
+    # Board settings > Access, which names groups and levels, is manager-only.
+    groups = (
+        _group_changes(db, board, result.items)
+        if includes(board_level(db, user, board), AccessLevel.MANAGE)
+        else {}
+    )
     items = [
         BoardActivityResponse(
             id=row.id,
@@ -136,6 +195,7 @@ def list_board_activity(
             action=row.action,
             summary=_SUMMARY[_KIND[row.entity_type]][row.action],
             actor_label=labels.get(row.performed_by) if row.performed_by else None,
+            group=groups.get(row.id),
         )
         for row in result.items
     ]

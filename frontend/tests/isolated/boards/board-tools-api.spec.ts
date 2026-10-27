@@ -41,6 +41,17 @@ const activity = {
   action: "create",
   summary: "Board created",
   actor_label: "Avery",
+  group: null,
+};
+const groupActivityId = "00000000-0000-4000-8000-000000000004";
+const groupActivity = {
+  id: groupActivityId,
+  created_at: "2026-09-24T00:00:00Z",
+  kind: "group",
+  action: "update",
+  summary: "Board groups changed",
+  actor_label: "Avery",
+  group: { name: "Internal Audit", level: "write", previous_level: "read" },
 };
 
 test("my Board access reads the actor's level and its flags", async () => {
@@ -141,7 +152,7 @@ test("Board access preview sends only validated IDs and receives the person's le
 test("Board preview user chooser validates and pages only active-label DTOs", async () => {
   const fetch = installFetch(() =>
     jsonResponse({
-      items: [{ id: userId, username: "Avery" }],
+      items: [{ id: userId, username: "avery", display_name: "Avery Lin" }],
       pagination: page,
     }),
   );
@@ -149,11 +160,11 @@ test("Board preview user chooser validates and pages only active-label DTOs", as
     await expect(
       listBoardPreviewUsers(boardId, { search: "  Ave  ", sortOrder: "desc" }),
     ).resolves.toEqual({
-      items: [{ id: userId, username: "Avery" }],
+      items: [{ id: userId, username: "avery", displayName: "Avery Lin" }],
       pagination: { limit: 25, offset: 0, count: 1, total: 1, hasMore: false },
     });
     expect(fetch.paths).toEqual([
-      `/api/boards/${boardId}/preview-users?limit=25&offset=0&sort_by=username&sort_order=desc&search=Ave`,
+      `/api/boards/${boardId}/preview-users?limit=25&offset=0&sort_by=display_name&sort_order=desc&search=Ave`,
     ]);
     await expect(
       listBoardPreviewUsers(boardId, { limit: 0 }),
@@ -172,7 +183,10 @@ test("Board preview user chooser validates and pages only active-label DTOs", as
 
 test("Board Activity uses supported paging and sort but never sends unsupported search", async () => {
   const fetch = installFetch(() =>
-    jsonResponse({ items: [activity], pagination: page }),
+    jsonResponse({
+      items: [activity, groupActivity],
+      pagination: { ...page, count: 2, total: 2 },
+    }),
   );
   try {
     await expect(listBoardActivity(boardId)).resolves.toEqual({
@@ -184,9 +198,23 @@ test("Board Activity uses supported paging and sort but never sends unsupported 
           action: "create",
           summary: "Board created",
           actorLabel: "Avery",
+          group: null,
+        },
+        {
+          id: groupActivityId,
+          createdAt: "2026-09-24T00:00:00Z",
+          kind: "group",
+          action: "update",
+          summary: "Board groups changed",
+          actorLabel: "Avery",
+          group: {
+            name: "Internal Audit",
+            level: "write",
+            previousLevel: "read",
+          },
         },
       ],
-      pagination: { limit: 25, offset: 0, count: 1, total: 1, hasMore: false },
+      pagination: { limit: 25, offset: 0, count: 2, total: 2, hasMore: false },
     });
     expect(fetch.paths).toEqual([
       `/api/boards/${boardId}/activity?limit=25&offset=0&sort_by=created_at&sort_order=desc`,
@@ -201,24 +229,35 @@ test("Board Activity uses supported paging and sort but never sends unsupported 
 });
 
 test("Board tools reject raw audit snapshots and principal fields in responses", async () => {
-  const activityFetch = installFetch(() =>
-    jsonResponse({
-      items: [{ ...activity, before: { private_token: "not-public" } }],
-      pagination: page,
-    }),
-  );
-  try {
-    await expect(listBoardActivity(boardId)).rejects.toBeInstanceOf(
-      ApiContractError,
+  for (const item of [
+    { ...activity, before: { private_token: "not-public" } },
+    // A group change names the group, never its id.
+    {
+      ...groupActivity,
+      group: { ...groupActivity.group, group_id: userId },
+    },
+  ]) {
+    const activityFetch = installFetch(() =>
+      jsonResponse({ items: [item], pagination: page }),
     );
-  } finally {
-    activityFetch.restore();
+    try {
+      await expect(listBoardActivity(boardId)).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
+    } finally {
+      activityFetch.restore();
+    }
   }
 
   const chooserFetch = installFetch(() =>
     jsonResponse({
       items: [
-        { id: userId, username: "Avery", email: "private@example.invalid" },
+        {
+          id: userId,
+          username: "avery",
+          display_name: "Avery Lin",
+          email: "private@example.invalid",
+        },
       ],
       pagination: page,
     }),

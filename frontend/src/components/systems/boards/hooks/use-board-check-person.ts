@@ -106,7 +106,7 @@ export function useBoardCheckPerson(boardId: string, refreshKey: number) {
         void listBoardPreviewUsers(boardId, {
           limit: PAGE_SIZE,
           offset: currentOffset,
-          sortBy: "username",
+          sortBy: "display_name",
           sortOrder: "asc",
           ...(trimmed ? { search: trimmed } : {}),
         })

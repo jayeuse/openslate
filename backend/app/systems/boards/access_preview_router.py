@@ -57,8 +57,11 @@ def _preview(level: AccessLevel | None) -> BoardAccessPreview:
 
 
 class PreviewUser(BaseModel):
+    """``display_name`` is the chooser label; it falls back to the username."""
+
     id: UUID
     username: str
+    display_name: str
 
 
 class PreviewUserList(StandardListResponse[PreviewUser]):
@@ -66,6 +69,7 @@ class PreviewUserList(StandardListResponse[PreviewUser]):
 
 
 class PreviewUserSort(StrEnum):
+    DISPLAY_NAME = "display_name"
     USERNAME = "username"
 
 
@@ -73,11 +77,20 @@ class PreviewUserListRequest(StandardListRequest[PreviewUserSort]):
     pass
 
 
+# The name a person shows: the display name, else the username.
+_DISPLAY_NAME = func.coalesce(func.nullif(User.display_name, ""), User.username)
+# A Board manager picks people by the name the chooser shows, or by the username.
 PREVIEW_USER_LIST_SPEC = ListQuerySpec(
-    sort_fields={PreviewUserSort.USERNAME: cast(ColumnElement[Any], User.username)},
-    default_sort=PreviewUserSort.USERNAME,
+    sort_fields={
+        PreviewUserSort.DISPLAY_NAME: cast(ColumnElement[Any], func.lower(_DISPLAY_NAME)),
+        PreviewUserSort.USERNAME: cast(ColumnElement[Any], User.username),
+    },
+    default_sort=PreviewUserSort.DISPLAY_NAME,
     tie_breaker=cast(ColumnElement[Any], User.id),
-    search_fields=(cast(ColumnElement[str], User.username),),
+    search_fields=(
+        cast(ColumnElement[str], _DISPLAY_NAME),
+        cast(ColumnElement[str], User.username),
+    ),
     deleted_field=None,
 )
 
@@ -102,7 +115,6 @@ class BoardPersonListRequest(StandardListRequest[BoardPersonSort]):
     pass
 
 
-_DISPLAY_NAME = func.coalesce(func.nullif(User.display_name, ""), User.username)
 # The email is on the person card of every Board reader that a member opens; the
 # username is not, so it is not searched.
 BOARD_PERSON_LIST_SPEC = ListQuerySpec(
@@ -188,7 +200,14 @@ def list_preview_users(
     result = execute_standard_list(db, _eligible_users(), params, PREVIEW_USER_LIST_SPEC)
     response.headers["Cache-Control"] = "no-store"
     return PreviewUserList(
-        items=[PreviewUser(id=user.id, username=user.username) for user in result.items],
+        items=[
+            PreviewUser(
+                id=user.id,
+                username=user.username,
+                display_name=user.display_name or user.username,
+            )
+            for user in result.items
+        ],
         pagination=result.pagination,
     )
 

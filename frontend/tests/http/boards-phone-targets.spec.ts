@@ -246,6 +246,7 @@ test("Board settings keeps 44px targets at 390 on each tab", async ({
             action: "update",
             summary: "Board updated",
             actor_label: "ho-admin",
+            group: null,
           },
         ],
         { limit: 25 },

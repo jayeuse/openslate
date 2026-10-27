@@ -415,6 +415,7 @@ test.describe("Boards workspace regional activity", () => {
               action: "update",
               summary: "Regional activity",
               actor_label: "Regional test actor",
+              group: null,
             },
           ],
           { limit: 25 },

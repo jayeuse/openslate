@@ -141,12 +141,36 @@ export function checkPersonResult(
 
 export type BoardActivitySentence = { verb: string; tone: StatusTone };
 
-/** The verb and dot of one Activity row (the Audit sentence row, BR29). */
+/**
+ * The verb and dot of one Activity row (the Audit sentence row, BR29). A
+ * group row names the group and its level in the level chip's words; a
+ * group deleted since reads "a removed group". Only the board's managers get
+ * the group, so for anyone else it stays "Changed groups".
+ */
 export function boardActivitySentence(
-  activity: Pick<BoardActivity, "kind" | "action">,
+  activity: Pick<BoardActivity, "kind" | "action" | "group">,
 ): BoardActivitySentence {
-  if (activity.kind === "group")
-    return { verb: "Changed groups", tone: "action" };
+  if (activity.kind === "group") {
+    const { group } = activity;
+    if (!group) return { verb: "Changed groups", tone: "action" };
+    const name = group.name ?? "a removed group";
+    if (activity.action === "delete")
+      return { verb: `Removed ${name}`, tone: "danger" };
+    if (activity.action === "create")
+      return {
+        verb: group.level
+          ? `Added ${name} · ${LEVEL_WORD[group.level]}`
+          : `Added ${name}`,
+        tone: "flow",
+      };
+    return {
+      verb:
+        group.level && group.previousLevel
+          ? `Changed ${name} · ${LEVEL_WORD[group.previousLevel]} → ${LEVEL_WORD[group.level]}`
+          : `Changed ${name}`,
+      tone: "action",
+    };
+  }
   if (activity.action === "create")
     return { verb: "Created board", tone: "flow" };
   if (activity.action === "delete")

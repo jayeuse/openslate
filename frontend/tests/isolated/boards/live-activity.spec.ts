@@ -28,10 +28,17 @@ const entry: BoardActivity = {
   action: "update",
   summary: "Board groups changed",
   actorLabel: "Team <script>member</script>",
+  group: null,
+};
+const namedEntry: BoardActivity = {
+  ...entry,
+  id: "00000000-0000-4000-8000-000000000004",
+  action: "create",
+  group: { name: "Internal <b>Audit</b>", level: "read", previousLevel: null },
 };
 const page: BoardToolsPage<BoardActivity> = {
-  items: [entry],
-  pagination: { limit: 25, offset: 0, count: 1, total: 26, hasMore: true },
+  items: [entry, namedEntry],
+  pagination: { limit: 25, offset: 0, count: 2, total: 26, hasMore: true },
 };
 const initial: BoardActivityState = {
   key: null,
@@ -46,6 +53,7 @@ test("Board Activity renders sentence rows without ids and names why it is empty
     createElement(ServerBoardActivityDisplay, { page }),
   );
   expect(html).toContain("Changed groups");
+  expect(html).toContain("Added Internal &lt;b&gt;Audit&lt;/b&gt; · Read");
   expect(html).toContain("Team &lt;script&gt;member&lt;/script&gt;");
   expect(html).not.toContain(activityId);
   expect(html).not.toContain("<script>");
@@ -68,11 +76,11 @@ test("Board Activity renders sentence rows without ids and names why it is empty
 test("each Activity row reads as a verb with its dot", () => {
   expect(
     [
-      { kind: "board" as const, action: "create" as const },
-      { kind: "board" as const, action: "update" as const },
-      { kind: "board" as const, action: "delete" as const },
-      { kind: "group" as const, action: "create" as const },
-      { kind: "group" as const, action: "delete" as const },
+      { kind: "board" as const, action: "create" as const, group: null },
+      { kind: "board" as const, action: "update" as const, group: null },
+      { kind: "board" as const, action: "delete" as const, group: null },
+      { kind: "group" as const, action: "create" as const, group: null },
+      { kind: "group" as const, action: "delete" as const, group: null },
     ].map(boardActivitySentence),
   ).toEqual([
     { verb: "Created board", tone: "flow" },
@@ -81,6 +89,39 @@ test("each Activity row reads as a verb with its dot", () => {
     { verb: "Changed groups", tone: "action" },
     { verb: "Changed groups", tone: "action" },
   ]);
+});
+
+test("a group row names the group and its level in the level words", () => {
+  const group = (
+    action: BoardActivity["action"],
+    name: string | null,
+    level: "read" | "write" | "manage" | null,
+    previousLevel: "read" | "write" | "manage" | null,
+  ) =>
+    boardActivitySentence({
+      kind: "group",
+      action,
+      group: { name, level, previousLevel },
+    });
+  expect(group("create", "Internal Audit", "read", null)).toEqual({
+    verb: "Added Internal Audit · Read",
+    tone: "flow",
+  });
+  expect(group("update", "Internal Audit", "manage", "write")).toEqual({
+    verb: "Changed Internal Audit · Post → Manager",
+    tone: "action",
+  });
+  expect(group("delete", "Field Crew", null, "write")).toEqual({
+    verb: "Removed Field Crew",
+    tone: "danger",
+  });
+  // A group deleted since keeps its row without a name.
+  expect(group("create", null, "manage", null).verb).toBe(
+    "Added a removed group · Manager",
+  );
+  expect(group("delete", null, null, "read").verb).toBe(
+    "Removed a removed group",
+  );
 });
 
 test("an Activity row's time drops the zone, and the year within the current year", () => {

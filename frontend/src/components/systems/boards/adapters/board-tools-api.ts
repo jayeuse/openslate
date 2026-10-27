@@ -39,9 +39,35 @@ const accessPreviewSchema = z
     manage,
   }));
 const myAccessSchema = accessPreviewSchema.refine(({ view }) => view);
+/** The chooser shows ``displayName``: the display name, else the username. */
 const previewUserSchema = z
-  .object({ id: uuidSchema, username: z.string().min(1).max(100) })
-  .strict();
+  .object({
+    id: uuidSchema,
+    username: z.string().min(1).max(100),
+    display_name: z.string().min(1).max(200),
+  })
+  .strict()
+  .transform(({ display_name, ...user }) => ({
+    ...user,
+    displayName: display_name,
+  }));
+const levelSchema = z.enum(["read", "write", "manage"]);
+/**
+ * The group of a group change, for the board's managers only (others get
+ * null). ``name`` is null once the group is deleted; ``level`` is null for a
+ * removal and ``previousLevel`` for an add.
+ */
+const activityGroupSchema = z
+  .object({
+    name: z.string().min(1).max(200).nullable(),
+    level: levelSchema.nullable(),
+    previous_level: levelSchema.nullable(),
+  })
+  .strict()
+  .transform(({ previous_level, ...group }) => ({
+    ...group,
+    previousLevel: previous_level,
+  }));
 const activitySchema = z
   .object({
     id: uuidSchema,
@@ -50,6 +76,7 @@ const activitySchema = z
     action: z.enum(["create", "update", "delete"]),
     summary: z.string().min(1).max(100),
     actor_label: z.string().min(1).max(100).nullable(),
+    group: activityGroupSchema.nullable(),
   })
   .strict()
   .transform(({ created_at, actor_label, ...event }) => ({
@@ -75,7 +102,7 @@ const pageOptions = {
 const previewUserListOptionsSchema = z
   .object({
     ...pageOptions,
-    sortBy: z.literal("username").default("username"),
+    sortBy: z.enum(["display_name", "username"]).default("display_name"),
     sortOrder: z.enum(["asc", "desc"]).default("asc"),
     search: z.string().trim().min(1).max(100).optional(),
   })

@@ -99,11 +99,18 @@ function CheckPerson({
               }
               options={check.options.map((user) => ({
                 value: user.id,
-                label: user.username,
+                label: user.displayName,
+                // The username tells two people of one name apart.
+                ...(user.displayName === user.username
+                  ? {}
+                  : { description: user.username }),
               }))}
               selectedOption={
                 check.selected
-                  ? { value: check.selected.id, label: check.selected.username }
+                  ? {
+                      value: check.selected.id,
+                      label: check.selected.displayName,
+                    }
                   : undefined
               }
               search={check.search}
@@ -123,7 +130,7 @@ function CheckPerson({
             className="text-muted-foreground text-sm empty:sr-only"
           >
             {check.selected && check.preview.status === "loading"
-              ? `Checking ${check.selected.username}…`
+              ? `Checking ${check.selected.displayName}…`
               : ""}
           </p>
           {check.selected && check.preview.status === "error" ? (
@@ -144,7 +151,7 @@ function CheckPerson({
           ) : null}
           {check.selected && result && shown ? (
             <dl
-              aria-label={`${check.selected.username} on this board`}
+              aria-label={`${check.selected.displayName} on this board`}
               className="bg-muted grid max-w-prose grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-center gap-x-4 gap-y-1.5 rounded-lg px-3 py-2.5 text-sm"
             >
               <dt className="font-medium">Level</dt>

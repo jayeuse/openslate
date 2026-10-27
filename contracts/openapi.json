@@ -2483,6 +2483,49 @@
         "title": "BoardAccessPreview",
         "type": "object"
       },
+      "BoardActivityGroup": {
+        "description": "``name`` is null once the group is deleted; ``level`` is null for a removal and\n``previous_level`` is null for an add.",
+        "properties": {
+          "level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "previous_level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "level",
+          "previous_level"
+        ],
+        "title": "BoardActivityGroup",
+        "type": "object"
+      },
       "BoardActivityKind": {
         "enum": [
           "board",
@@ -2532,6 +2575,16 @@
             "title": "Created At",
             "type": "string"
           },
+          "group": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoardActivityGroup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -2551,7 +2604,8 @@
           "kind",
           "action",
           "summary",
-          "actor_label"
+          "actor_label",
+          "group"
         ],
         "title": "BoardActivityResponse",
         "type": "object"
@@ -14791,7 +14845,12 @@
         "type": "object"
       },
       "PreviewUser": {
+        "description": "``display_name`` is the chooser label; it falls back to the username.",
         "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -14804,7 +14863,8 @@
         },
         "required": [
           "id",
-          "username"
+          "username",
+          "display_name"
         ],
         "title": "PreviewUser",
         "type": "object"
@@ -14831,6 +14891,7 @@
       },
       "PreviewUserSort": {
         "enum": [
+          "display_name",
           "username"
         ],
         "title": "PreviewUserSort",

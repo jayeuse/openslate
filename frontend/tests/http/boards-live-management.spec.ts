@@ -1374,6 +1374,20 @@ test("Board settings opens on each tab from the address and closes by name", asy
             action: "update",
             summary: "Board updated",
             actor_label: "ho-admin",
+            group: null,
+          },
+          {
+            id: "00000000-0000-4000-8000-000000000072",
+            created_at: "2026-09-24T09:00:00Z",
+            kind: "group",
+            action: "update",
+            summary: "Board groups changed",
+            actor_label: "ho-admin",
+            group: {
+              name: "Internal Audit",
+              level: "write",
+              previous_level: "read",
+            },
           },
         ],
         { limit: 25 },
@@ -1403,7 +1417,13 @@ test("Board settings opens on each tab from the address and closes by name", asy
   await expect(
     sheet.getByRole("list", { name: "Board activity", exact: true }),
   ).toContainText("Changed details · ho-admin · Sep 24, 9:30 AM");
-  await expect(sheet.locator("time")).toHaveAttribute(
+  // A group row says which group changed, and from which level to which.
+  await expect(
+    sheet.getByRole("list", { name: "Board activity", exact: true }),
+  ).toContainText(
+    "Changed Internal Audit · Read → Post · ho-admin · Sep 24, 9:00 AM",
+  );
+  await expect(sheet.locator("time").first()).toHaveAttribute(
     "title",
     "Thursday, September 24, 2026 at 9:30:00 AM UTC",
   );
@@ -1547,7 +1567,7 @@ test("Archive asks once with its consequence, Restore acts at once, and each say
   expect(api.writes).toEqual(["archived", "active"]);
 });
 
-test("Check a person shows a person's level on this board and why", async ({
+test("Check a person finds a person by name and shows their level on this board and why", async ({
   page,
 }) => {
   await installFileManagement(page);
@@ -1557,8 +1577,8 @@ test("Check a person shows a person's level on this board and why", async ({
     const search = new URL(route.request().url()).searchParams.get("search");
     return route.fulfill({
       json: pageOf(
-        search === null || "sam".includes(search.toLowerCase())
-          ? [{ id: personId, username: "sam" }]
+        search === null || "sam rivera".includes(search.toLowerCase())
+          ? [{ id: personId, username: "sam", display_name: "Sam Rivera" }]
           : [],
         { limit: 25 },
       ),
@@ -1577,12 +1597,19 @@ test("Check a person shows a person's level on this board and why", async ({
   await sheet.getByRole("combobox", { name: "Person", exact: true }).click();
   await page
     .getByRole("combobox", { name: "Search person", exact: true })
-    .fill("sa");
-  await page.getByRole("option", { name: "sam", exact: true }).click();
+    .fill("rive");
+  // The option names the person; the username is its second line.
+  const option = page.getByRole("option", { name: /^Sam Rivera/ });
+  await expect(option).toContainText("sam");
+  await option.click();
   const result = sheet.getByRole("definition").filter({
     hasText: "can read · cannot post · cannot manage",
   });
   await expect(result).toBeVisible();
+  // The result is named for the person by name, not by username.
+  await expect(
+    sheet.getByLabel("Sam Rivera on this board", { exact: true }),
+  ).toContainText("can read · cannot post · cannot manage");
   await expect(
     sheet.getByRole("term").filter({ hasText: /^Access$/ }),
   ).toBeVisible();
