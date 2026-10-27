@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -250,8 +251,13 @@ def cleanup_artifact(
     storage: StorageBackend,
     *,
     now: datetime | None = None,
+    slot_held: bool = False,
 ) -> bool:
-    """Own commits around I/O; an unknown upload is not confirmed absence."""
+    """Own commits around I/O; an unknown upload is not confirmed absence.
+
+    ``slot_held`` means the caller's request already holds a file transfer slot; a second
+    slot would be refused whenever another transfer holds the other one.
+    """
     current = now or utc_now()
     job, _ = load(db, identity, lock=True)
     if not job.cleanup_pending:
@@ -269,7 +275,7 @@ def cleanup_artifact(
     db.commit()
     if key is None or size is None or digest is None or not 0 <= size <= MAX_BYTES:
         raise ProviderUnavailable("Artifact cleanup metadata is unavailable")
-    with transfer_slot():
+    with nullcontext() if slot_held else transfer_slot():
         content = storage.download(key)
         if content is None and not confirmed:
             return False  # A failed/abandoned upload may still have an unknown provider outcome.
