@@ -353,7 +353,11 @@ test("a Board page has one header: the title, the level, one meta line, tabs and
   const tabs = page.getByRole("navigation", {
     name: "Company announcements views",
   });
-  await expect(tabs.getByRole("link")).toHaveText(["Posts", "Calendar"]);
+  await expect(tabs.getByRole("link")).toHaveText([
+    "Posts",
+    "Calendar",
+    "Kanban",
+  ]);
   await expect(tabs.getByRole("link", { name: "Posts" })).toHaveAttribute(
     "aria-current",
     "page",

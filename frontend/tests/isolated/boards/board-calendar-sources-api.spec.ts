@@ -259,3 +259,13 @@ test("a calendar source change reaches the stream as a board invalidation", () =
     boardId,
   });
 });
+
+test("Kanban stage, card and label changes reach the stream as board invalidations", () => {
+  for (const entity of ["board_stages", "board_cards", "board_labels"])
+    expect(
+      parseWorkspaceInvalidation(
+        "invalidate",
+        JSON.stringify({ entity, board_id: boardId }),
+      ),
+    ).toEqual({ type: "invalidate", entity, boardId });
+});

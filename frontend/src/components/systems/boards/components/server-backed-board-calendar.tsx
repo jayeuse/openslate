@@ -521,6 +521,19 @@ export function ServerBackedBoardCalendar({
           void queryClient.invalidateQueries({
             queryKey: boardCalendarKeys.sources(boardId),
           });
+        // "Cards · Due" follows the board's cards, and their stage names.
+        else if (
+          (event.entity === "board_cards" || event.entity === "board_stages") &&
+          event.boardId === boardId
+        )
+          void queryClient.invalidateQueries({
+            queryKey: [
+              "boards",
+              "calendar",
+              event.entity === "board_cards" ? "due-cards" : "stage-names",
+              boardId,
+            ],
+          });
         else if (invalidatesRecords(event.entity))
           void queryClient.invalidateQueries({
             queryKey: boardCalendarKeys.sourceRecords,

@@ -331,21 +331,117 @@
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-due-cards-api.ts",
-    "function": "listBoardStageNames",
+    "function": "listMyDueCards",
     "method": "GET",
+    "path": "/api/boards/cards/due"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "archiveKanbanCard",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "archiveKanbanStage",
+    "method": "POST",
+    "path": "/api/boards/{param}/stages/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "createKanbanLabel",
+    "method": "POST",
+    "path": "/api/boards/{param}/labels"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "createKanbanStage",
+    "method": "POST",
     "path": "/api/boards/{param}/stages"
   },
   {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-due-cards-api.ts",
-    "function": "listDueBoardCards",
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "createObjectiveCard",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "createRecordCard",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "deleteKanbanLabel",
+    "method": "DELETE",
+    "path": "/api/boards/{param}/labels/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "listBoardCards",
     "method": "GET",
     "path": "/api/boards/{param}/cards"
   },
   {
-    "adapter": "frontend/src/components/systems/boards/adapters/board-due-cards-api.ts",
-    "function": "listMyDueCards",
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "listKanbanLabels",
     "method": "GET",
-    "path": "/api/boards/cards/due"
+    "path": "/api/boards/{param}/labels"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "listKanbanStages",
+    "method": "GET",
+    "path": "/api/boards/{param}/stages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "moveKanbanCard",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/cards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "orderKanbanStages",
+    "method": "PUT",
+    "path": "/api/boards/{param}/stages/order"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "readKanbanCard",
+    "method": "GET",
+    "path": "/api/boards/{param}/cards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "readKanbanRecordValues",
+    "method": "GET",
+    "path": "/api/records/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "restoreKanbanCard",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "setKanbanCardLabels",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/cards/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "updateKanbanLabel",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/labels/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "updateKanbanStage",
+    "method": "PATCH",
+    "path": "/api/boards/{param}/stages/{param}"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-events-api.ts",

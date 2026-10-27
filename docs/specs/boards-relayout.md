@@ -402,6 +402,20 @@ The analysis holds the full text. "Refined" and "superseded" name the later deci
 - **Sources cap:** the 5-source limit counts sources the viewer cannot see, so a manager may be refused below 5 visible sources. The refusal names no module. Personal sources publish no live event.
 - **`GET /api/boards/occurrences` pages at 100** (the shared pagination cap), so My calendar pages through a busy month.
 
+### Recorded during P4a (2026-10-27)
+
+Choices the code forced that the rows above leave open; each is the smallest that fits DESIGN.md.
+
+| Choice | Removes |
+| --- | --- |
+| The Kanban reads the board's **complete** active card list (pages of 100 to the end, a 5,000-card guard) and filters, sorts and pages in the browser. A drop's `position` is an index into the stage's whole order, which a filtered or paged read cannot give. The Gantt (P4c) reuses the read. | Per-stage server pages and filters |
+| A drop's place is the unfiltered index of the visible card below the slot; with no card below, the card is appended. A stage sorted by Due date, Newest or Title has no manual places: a drop appends and the sort draws it. Title sort runs in the browser (the server has no title sort). | — |
+| The people filter holds one person (the server's `assignee` is one id). | Several people at once |
+| Group by Label puts a card in the lane of its first label in board order. Grouped, a card drops only in its own lane (a lane is the card's assignee or label, which a move never changes); Add a card sits at the foot of each stage. Phones never group. | A card in two lanes |
+| Stage settings open in a popover from the stage header (labeled fields cannot live in `role="menu"`); Move left and Move right are the keyboard path for column order (WCAG 2.5.7). | — |
+| A record card's dates: the record's date and datetime values in field order (a datetime is its day in the workspace zone); one value is the due date, two or more prefill start with the first and due with the second, and the person picks from selects. | — |
+| Until the card sheets (P4b), opening a card names it in the address (`card=<id>`) and shows a read-only summary popover; `openKanbanCard` in `server-backed-board-kanban.tsx` is the one function P4b replaces. A locked card never opens; a `card=` link to a card the viewer cannot open says "This card is not available." | — |
+
 ## Comps
 
 Comps draw the novel parts only, in Slate dark with Harbor content and the sidebar's Announcements rows. Serve them over HTTP from `.impeccable/mocks/boards/` (`python3 -m http.server <port>`). They reuse the OpenView comp kit (`openview.css` as a symlink, the icon sprite with calendar, Kanban, and Gantt icons, and the `_next`/`app-out` links to the app's tokens). New classes start with `bd-`.
@@ -463,7 +477,7 @@ Each phase ends with tests that fail first, one code review, targeted screenshot
 | Exit | Criterion |
 | --- | --- |
 | EXIT-1 | Posts, Calendar (Month and Week), Kanban, Gantt, My calendar, and All boards do not scroll the document at 1280×720 or 1440×900; only panels scroll. |
-| EXIT-2 | From 1280px, controls are 32px and rows 40px, with two exceptions: the Posts list's two-line rows (BR11), and Month cell targets (day numbers, chips, bars, and "+n more"), which are 24px, the WCAG 2.5.8 floor, so six week rows stay legible at 1280×720 (BR55); at 390, every target is at least 44px and nothing scrolls the page sideways (the Gantt panel may). |
+| EXIT-2 | From 1280px, controls are 32px and rows 40px, with three exceptions: the Posts list's two-line rows (BR11); Month cell targets (day numbers, chips, bars, and "+n more"), which are 24px, the WCAG 2.5.8 floor, so six week rows stay legible at 1280×720 (BR55); and Kanban cards, which are as tall as their content (labels, a two-line title, record fields, one fact line; BR67); at 390, every target is at least 44px and nothing scrolls the page sideways (the Gantt panel may). |
 | EXIT-3 | No request to a removed route from any page; FN1 holds for every role. |
 | EXIT-4 | Every capability in both maps has its home or its recorded removal, for each role that has it now; every URL in Preserved behavior opens the same thing. |
 | EXIT-5 | Cold Comms JavaScript stays under 548,000 gzip bytes locally and in CI. |

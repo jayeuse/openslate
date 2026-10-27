@@ -11,6 +11,9 @@ const boards = new Set([
   "board_posts",
   "board_events",
   "board_calendar_sources",
+  "board_stages",
+  "board_cards",
+  "board_labels",
 ]);
 
 export function parseWorkspaceInvalidation(

@@ -47,6 +47,12 @@ const PAIRS = [
   // Rows a Test run changed take the action tint on the canvas.
   ["canvas-field-ink", "action-tint", 4.5],
   ["canvas-type-ink", "action-tint", 4.5],
+  // Board Kanban (BR66, BR67): stage names, counts, "Add a card", the WIP
+  // overrun count and "Show 16 more" sit on the board surface.
+  ["foreground", "canvas-background", 4.5],
+  ["muted-foreground", "canvas-background", 4.5],
+  ["warn-text", "canvas-background", 4.5],
+  ["action-text", "canvas-background", 4.5],
   ["data-ink", "card", 4.5],
   ["data-ink", "background", 4.5],
   ["button-ink", "card", 4.5],
@@ -276,6 +282,34 @@ for (const [mode, tokens] of Object.entries(modes)) {
         );
     }
 }
+// Board Kanban tints: label chips are ink on a chart series at 22% over the
+// card (BR69); a locked card is muted ink on the sunken fill at 60% over the
+// card; the drop slot's words are action text on the target stage's 65%
+// action tint over the board surface.
+const KANBAN_TINTS = [
+  ...[1, 2, 3, 4, 5].map((n) => ["foreground", `chart-${n}`, 22, "card"]),
+  ["muted-foreground", "surface-sunken", 60, "card"],
+  ["action-text", "action-tint", 65, "canvas-background"],
+];
+for (const [mode, tokens] of Object.entries(modes))
+  for (const [fg, tint, percent, ground] of KANBAN_TINTS) {
+    const fill = mixOklab(
+      resolve(tokens, tint),
+      percent,
+      resolve(tokens, ground),
+    );
+    const ratio = contrast(resolve(tokens, fg), fill);
+    const pair = `--${fg} on --${tint} ${percent}% over --${ground}`;
+    const key = `${fg} ${tint.startsWith("chart-") ? "chart" : tint}`;
+    const known = lowest.get(key);
+    if (!known || ratio < known.ratio) lowest.set(key, { ratio, mode, pair });
+    const ok = ratio >= 4.5;
+    if (!ok) failures += 1;
+    if (!ok || process.argv.includes("--verbose"))
+      console.log(
+        `${ok ? "ok  " : "FAIL"} ${mode.padEnd(16)} ${pair}: ${ratio.toFixed(2)} (needs 4.5)`,
+      );
+  }
 if (process.argv.includes("--verbose"))
   for (const { ratio, mode, pair } of lowest.values())
     console.log(`lowest ${pair}: ${ratio.toFixed(2)} (${mode})`);

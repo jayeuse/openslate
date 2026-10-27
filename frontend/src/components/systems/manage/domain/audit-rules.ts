@@ -147,6 +147,19 @@ const kinds: Readonly<Record<string, Kind>> = {
     plural: "Calendar record sources",
     area: "Boards",
   },
+  board_stages: { noun: "Stage", plural: "Stages", area: "Boards" },
+  board_cards: { noun: "Card", plural: "Cards", area: "Boards" },
+  board_labels: { noun: "Label", plural: "Labels", area: "Boards" },
+  board_card_labels: {
+    noun: "Card label",
+    plural: "Card labels",
+    area: "Boards",
+  },
+  board_card_checklist_items: {
+    noun: "Checklist item",
+    plural: "Checklist items",
+    area: "Boards",
+  },
   board_event_reminders: {
     noun: "Event reminder",
     plural: "Event reminders",

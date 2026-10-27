@@ -20,6 +20,11 @@ const entityLabels: Record<string, readonly [string, string]> = {
   ],
   board_record_links: ["Board link", "Board links"],
   board_calendar_sources: ["calendar record source", "calendar record sources"],
+  board_stages: ["Kanban stage", "Kanban stages"],
+  board_cards: ["Kanban card", "Kanban cards"],
+  board_labels: ["card label", "card labels"],
+  board_card_labels: ["label on a card", "labels on cards"],
+  board_card_checklist_items: ["checklist item", "checklist items"],
   board_post_revision_record_links: [
     "post revision link",
     "post revision links",

@@ -18,7 +18,7 @@ import {
 import { boardsNavigationOptions } from "../adapters/boards-queries";
 
 const uuidSchema = z.string().uuid();
-const SECTIONS = ["posts", "calendar"] as const;
+const SECTIONS = ["posts", "calendar", "kanban"] as const;
 const invalidatesBoardList = (event: WorkspaceInvalidation) =>
   event.type === "invalidate" && event.entity === "boards";
 export type BoardSection = (typeof SECTIONS)[number];

@@ -324,6 +324,10 @@ export function ServerBackedMyCalendar({
             ...current,
             [boardId]: (current[boardId] ?? 0) + 1,
           }));
+      } else if (event.entity === "board_cards") {
+        // "My cards · Due" spans every board the person reads.
+        if (!event.boardId || ids.has(event.boardId))
+          void queryClient.invalidateQueries({ queryKey: myCalendarKeys.due });
       } else if (invalidatesRecords(event.entity))
         void queryClient.invalidateQueries({
           queryKey: ["boards", "calendar", "source-records"],

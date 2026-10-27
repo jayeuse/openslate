@@ -48,6 +48,10 @@ import {
 } from "./server-backed-board-calendar";
 import { ServerBackedBoardManagement } from "./server-backed-board-management";
 import { ServerBackedMyCalendar } from "./server-backed-my-calendar";
+import {
+  ServerBackedBoardKanban,
+  type BoardKanbanParams,
+} from "./server-backed-board-kanban";
 import { BoardDirectory } from "./board-directory";
 import { BoardPageHeader, boardPageTitle } from "./board-page-header";
 import { BoardEmpty, ConfirmAction } from "./ui";
@@ -129,7 +133,7 @@ function BoardsSkeleton({ section }: { section: BoardSection | null }) {
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <Skeleton className="h-11 w-48" />
-      {section === "calendar" ? (
+      {section === "calendar" || section === "kanban" ? (
         <Skeleton className="h-[28rem] rounded-xl" />
       ) : (
         <div className="flex min-w-0 flex-col gap-4">
@@ -311,6 +315,22 @@ function ServerBackedBoardsContent() {
         if (value === undefined) continue;
         if (value === null) next.delete(name);
         else next.set(name, value);
+      }
+      const href = `/boards?${next.toString()}` as Route;
+      if (href !== `/boards?${search}`) router.replace(href, { scroll: false });
+    },
+    [router, search],
+  );
+  // Kanban filters and `card=` are the viewer's own: no draft to guard.
+  const updateKanbanParams = useCallback(
+    (changes: BoardKanbanParams) => {
+      const next = new URLSearchParams(search);
+      for (const [name, value] of Object.entries(changes)) {
+        if (value === undefined) continue;
+        next.delete(name);
+        if (Array.isArray(value))
+          for (const item of value) next.append(name, item);
+        else if (value !== null) next.set(name, value);
       }
       const href = `/boards?${next.toString()}` as Route;
       if (href !== `/boards?${search}`) router.replace(href, { scroll: false });
@@ -677,7 +697,17 @@ function ServerBackedBoardsContent() {
               </Alert>
             )}
 
-            {section === "calendar" ? (
+            {section === "kanban" ? (
+              <ServerBackedBoardKanban
+                key={board.id}
+                board={board}
+                search={search}
+                region={displayRegion ?? { timezone: "UTC", locale: "en-US" }}
+                today={workspaceCalendar.data?.today ?? ""}
+                weekStart={workspaceCalendar.data?.week_start ?? "monday"}
+                onParams={updateKanbanParams}
+              />
+            ) : section === "calendar" ? (
               <ServerBackedBoardCalendar
                 key={board.id}
                 primarySlot={primarySlot}

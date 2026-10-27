@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import {
   CalendarDays,
   ChevronDown,
+  Kanban,
   Newspaper,
   Settings,
   type LucideIcon,
@@ -37,8 +38,8 @@ import {
 } from "../hooks/use-server-boards";
 
 /**
- * A board's views, in order, each with its icon (BR50). Kanban and Gantt join
- * this list in P4; the row has room for them at 1280.
+ * A board's views, in order, each with its icon (BR50). The Gantt joins this
+ * list in P4c; the row has room for it at 1280.
  */
 const BOARD_TABS: readonly {
   id: BoardSection;
@@ -47,6 +48,7 @@ const BOARD_TABS: readonly {
 }[] = [
   { id: "posts", label: "Posts", icon: Newspaper },
   { id: "calendar", label: "Calendar", icon: CalendarDays },
+  { id: "kanban", label: "Kanban", icon: Kanban },
 ];
 
 /** "Sales announcements", "Company announcements" (BR47). */
