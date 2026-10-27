@@ -469,6 +469,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
+    "function": "saveCardDates",
+    "method": "POST",
+    "path": "/api/boards/{param}/cards/batch-dates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-kanban-api.ts",
     "function": "setKanbanCardLabels",
     "method": "PATCH",
     "path": "/api/boards/{param}/cards/{param}"

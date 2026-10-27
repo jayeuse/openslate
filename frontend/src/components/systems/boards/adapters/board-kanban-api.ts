@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
 import {
+  cardDatesResultsWire,
   cardDetailWire,
   cardPageWire,
   cardWire,
@@ -17,6 +18,7 @@ import {
   type KanbanStage,
 } from "./board-kanban-schemas";
 import { recordSchema } from "../../openview/adapters/views-schemas";
+import type { CardDatesResult } from "../domain/gantt";
 
 /**
  * The board Kanban's reads and commands (BE7). Managers change stages and
@@ -267,6 +269,42 @@ export async function createRecordCard(
     }),
   });
   return checkCard(boardId, card);
+}
+
+/**
+ * The Gantt's Save changes (BR65, BR75): every staged card's dates with the
+ * revision its change began on, in one request. Each card gets its own
+ * result; one result per card sent is the contract.
+ */
+export async function saveCardDates(
+  boardId: string,
+  payload: {
+    items: {
+      card_id: string;
+      revision: number;
+      start_on: string | null;
+      due_on: string | null;
+    }[];
+  },
+): Promise<CardDatesResult[]> {
+  const { results } = await apiFetch(
+    boardPath(boardId, "/cards/batch-dates"),
+    cardDatesResultsWire,
+    {
+      method: "POST",
+      cache: "no-store",
+      body: JSON.stringify({
+        items: payload.items.map((item) => ({
+          ...item,
+          card_id: uuid.parse(item.card_id),
+        })),
+      }),
+    },
+  );
+  const sent = payload.items.map((item) => item.card_id).sort();
+  const answered = results.map((result) => result.cardId).sort();
+  if (sent.join() !== answered.join()) throw new ApiContractError();
+  return results;
 }
 
 /**

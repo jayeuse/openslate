@@ -52,6 +52,10 @@ import {
   ServerBackedBoardKanban,
   type BoardKanbanParams,
 } from "./server-backed-board-kanban";
+import {
+  ServerBackedBoardGantt,
+  type BoardGanttParams,
+} from "./server-backed-board-gantt";
 import { BoardDirectory } from "./board-directory";
 import { BoardPageHeader, boardPageTitle } from "./board-page-header";
 import { BoardEmpty, ConfirmAction } from "./ui";
@@ -133,7 +137,7 @@ function BoardsSkeleton({ section }: { section: BoardSection | null }) {
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <Skeleton className="h-11 w-48" />
-      {section === "calendar" || section === "kanban" ? (
+      {section === "calendar" || section === "kanban" || section === "gantt" ? (
         <Skeleton className="h-[28rem] rounded-xl" />
       ) : (
         <div className="flex min-w-0 flex-col gap-4">
@@ -321,9 +325,10 @@ function ServerBackedBoardsContent() {
     },
     [router, search],
   );
-  // Kanban filters and `card=` are the viewer's own: no draft to guard.
+  // Kanban filters, Gantt zoom and grouping, and `card=` are the viewer's
+  // own: no draft to guard, and staged Gantt changes stay.
   const updateKanbanParams = useCallback(
-    (changes: BoardKanbanParams) => {
+    (changes: BoardKanbanParams & BoardGanttParams) => {
       const next = new URLSearchParams(search);
       for (const [name, value] of Object.entries(changes)) {
         if (value === undefined) continue;
@@ -386,6 +391,12 @@ function ServerBackedBoardsContent() {
       return index >= 0 ? index : null;
     },
     [departments.data, departments.error],
+  );
+  const onGanttDraftStateChange = useCallback(
+    (dirty: boolean, pending: boolean) => {
+      if (boardId) updateDraftState(boardId, "gantt", dirty, pending);
+    },
+    [boardId, updateDraftState],
   );
   const onPostDraftStateChange = useCallback(
     (boardId: string, dirty: boolean, pending: boolean) =>
@@ -697,7 +708,19 @@ function ServerBackedBoardsContent() {
               </Alert>
             )}
 
-            {section === "kanban" ? (
+            {section === "gantt" ? (
+              <ServerBackedBoardGantt
+                key={board.id}
+                board={board}
+                search={search}
+                region={displayRegion ?? { timezone: "UTC", locale: "en-US" }}
+                today={workspaceCalendar.data?.today ?? ""}
+                weekStart={workspaceCalendar.data?.week_start ?? "monday"}
+                kanbanHref={canonicalBoardUrl(board, "kanban")}
+                onParams={updateKanbanParams}
+                onDraftStateChange={onGanttDraftStateChange}
+              />
+            ) : section === "kanban" ? (
               <ServerBackedBoardKanban
                 key={board.id}
                 board={board}
@@ -820,7 +843,11 @@ function ServerBackedBoardsContent() {
       <ConfirmAction
         open={pendingNavigation !== null}
         title="Discard unsaved Board changes?"
-        description="Your unsaved Event or post changes will be lost."
+        description={
+          currentDraftState?.section === "gantt"
+            ? "Your staged date changes on the Gantt will be lost."
+            : "Your unsaved Event or post changes will be lost."
+        }
         action="Discard changes"
         disabled={currentDraftState?.pending ?? false}
         onCancel={() => setPendingNavigation(null)}

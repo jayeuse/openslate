@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -77,7 +77,11 @@ export type KanbanCardSheetProps = {
   /** Archive card: no question; the board's Undo toast (Four Moments Rule). */
   onArchive: (card: KanbanCard) => void;
   onClose: () => void;
+  /** The Gantt's "Add dates": the sheet opens on the card's first date field. */
+  focusDates?: boolean;
 };
+
+const DATES_FIELD = "[data-card-dates]";
 
 /**
  * A card's sheet (BR64): an objective opens a right sheet in the record
@@ -101,6 +105,11 @@ export function KanbanCardSheet(props: KanbanCardSheetProps) {
     >
       <SheetContent
         className="slim-ui flex w-full max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(92vw,40rem)]"
+        initialFocus={() =>
+          (props.focusDates
+            ? document.querySelector<HTMLElement>(DATES_FIELD)
+            : null) ?? true
+        }
         finalFocus={() =>
           (cardId
             ? document.querySelector<HTMLElement>(
@@ -198,6 +207,13 @@ function ReadySheet({
   const context: CardFieldContext = { model, sheet, canWrite, region };
   const stage = stages.find((item) => item.id === card.stageId) ?? null;
   const [moving, setMoving] = useState(false);
+  // A sheet that opened loading has no date field yet: focus it once ready.
+  const focusedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!props.focusDates || focusedFor.current === card.id) return;
+    focusedFor.current = card.id;
+    document.querySelector<HTMLElement>(DATES_FIELD)?.focus();
+  }, [props.focusDates, card.id]);
   const move = async (target: KanbanStage) => {
     if (target.id === card.stageId || moving) return;
     setMoving(true);

@@ -6,6 +6,7 @@ import {
   kanbanErrorMessage,
   listBoardCards,
   moveKanbanCard,
+  saveCardDates,
 } from "../../../src/components/systems/boards/adapters/board-kanban-api";
 import { installFetch } from "../helpers/fake-fetch";
 
@@ -255,5 +256,99 @@ test("a stage archive names where its cards go; a record card names its record a
     ]);
   } finally {
     mock.restore();
+  }
+});
+
+test("Save changes sends every staged card's dates in one batch and reads one result per card", async () => {
+  const ids = [1, 2, 3].map((n) => `00000000-0000-4000-8000-40000000000${n}`);
+  const requests: { url: string; method?: string; body: unknown }[] = [];
+  const mock = installFetch((input, init) => {
+    requests.push({
+      url: String(input),
+      method: init?.method,
+      body: JSON.parse(String(init?.body)),
+    });
+    return Response.json({
+      results: [
+        {
+          status: "updated",
+          card_id: ids[0],
+          revision: 5,
+          start_on: "2026-10-07",
+          due_on: "2026-11-04",
+        },
+        { status: "stale", card_id: ids[1] },
+        { status: "forbidden", card_id: ids[2] },
+      ],
+    });
+  });
+  try {
+    const results = await saveCardDates(boardId, {
+      items: [
+        {
+          card_id: ids[0],
+          revision: 4,
+          start_on: "2026-10-07",
+          due_on: "2026-11-04",
+        },
+        { card_id: ids[1], revision: 2, start_on: null, due_on: "2026-10-28" },
+        { card_id: ids[2], revision: 1, start_on: null, due_on: "2026-10-29" },
+      ],
+    });
+    expect(results).toEqual([
+      {
+        status: "updated",
+        cardId: ids[0],
+        revision: 5,
+        startOn: "2026-10-07",
+        dueOn: "2026-11-04",
+      },
+      { status: "stale", cardId: ids[1] },
+      { status: "forbidden", cardId: ids[2] },
+    ]);
+    expect(requests).toEqual([
+      {
+        url: `/api/boards/${boardId}/cards/batch-dates`,
+        method: "POST",
+        body: {
+          items: [
+            {
+              card_id: ids[0],
+              revision: 4,
+              start_on: "2026-10-07",
+              due_on: "2026-11-04",
+            },
+            {
+              card_id: ids[1],
+              revision: 2,
+              start_on: null,
+              due_on: "2026-10-28",
+            },
+            {
+              card_id: ids[2],
+              revision: 1,
+              start_on: null,
+              due_on: "2026-10-29",
+            },
+          ],
+        },
+      },
+    ]);
+  } finally {
+    mock.restore();
+  }
+
+  // A result for a card that was not sent, or a missing one, is refused.
+  const wrong = installFetch(() =>
+    Response.json({ results: [{ status: "stale", card_id: ids[2] }] }),
+  );
+  try {
+    await expect(
+      saveCardDates(boardId, {
+        items: [{ card_id: ids[0], revision: 4, start_on: null, due_on: null }],
+      }),
+    ).rejects.toThrow("The server returned an invalid response");
+  } finally {
+    wrong.restore();
   }
 });

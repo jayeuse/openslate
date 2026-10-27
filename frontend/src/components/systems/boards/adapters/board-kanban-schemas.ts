@@ -235,3 +235,46 @@ export type KanbanLabel = z.output<typeof labelWire>;
 export const labelListWire = z
   .object({ items: z.array(labelWire).max(100), pagination })
   .strict();
+
+/**
+ * `POST /cards/batch-dates` (the Gantt's Save changes): one result per card,
+ * in the `/records/batch-update` grammar.
+ */
+export const cardDatesResultsWire = z
+  .object({
+    results: z.array(
+      z.discriminatedUnion("status", [
+        z
+          .object({
+            status: z.literal("updated"),
+            card_id: uuid,
+            revision: z.number().int(),
+            start_on: date.nullable(),
+            due_on: date.nullable(),
+          })
+          .strict()
+          .transform((result) => ({
+            status: result.status,
+            cardId: result.card_id,
+            revision: result.revision,
+            startOn: result.start_on,
+            dueOn: result.due_on,
+          })),
+        z
+          .object({ status: z.literal("stale"), card_id: uuid })
+          .strict()
+          .transform((result) => ({
+            status: result.status,
+            cardId: result.card_id,
+          })),
+        z
+          .object({ status: z.literal("forbidden"), card_id: uuid })
+          .strict()
+          .transform((result) => ({
+            status: result.status,
+            cardId: result.card_id,
+          })),
+      ]),
+    ),
+  })
+  .strict();

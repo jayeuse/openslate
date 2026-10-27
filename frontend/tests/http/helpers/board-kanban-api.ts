@@ -15,6 +15,8 @@ import {
 
 export const kanbanHref = (params = "") =>
   `/boards?board=${boardId}&section=kanban${params ? `&${params}` : ""}`;
+export const ganttHref = (params = "") =>
+  `/boards?board=${boardId}&section=gantt${params ? `&${params}` : ""}`;
 
 export const stageIds = {
   todo: "00000000-0000-4000-8000-00000000e001",
@@ -261,6 +263,8 @@ export async function installKanbanApi(
     cardReads: 0,
     /** Answer the next card change with a stale revision, as another person's save would. */
     staleNext: false,
+    /** Cards another person changes just before the next batch of dates. */
+    staleDates: new Set<string>(),
     boardRevision: 1,
     descriptions: new Map<string, string | null>(),
     checklists: new Map<string, WireChecklistItem[]>(),
@@ -684,6 +688,48 @@ export async function installKanbanApi(
       state.cards.push(card);
       place(card, card.stage_id);
       return reply(201, detail(card));
+    }
+    // The Gantt's Save changes, as card_batch_router.py answers it: a card
+    // that is gone, archived or locked is forbidden; a changed revision is
+    // stale; equal dates keep the revision.
+    if (path === "/cards/batch-dates" && method === "POST") {
+      if (!writer) return reply(403, { detail: "Forbidden" });
+      const items = body.items as {
+        card_id: string;
+        revision: number;
+        start_on: string | null;
+        due_on: string | null;
+      }[];
+      const results = items.map((item) => {
+        const card = state.cards.find(
+          (entry) => entry.id === item.card_id && entry.archived_at === null,
+        );
+        if (
+          !card ||
+          (card.record as { locked?: boolean } | null)?.locked === true
+        )
+          return { status: "forbidden", card_id: item.card_id };
+        if (state.staleDates.delete(card.id)) {
+          card.start_on = "2026-09-21";
+          card.due_on = "2026-09-23";
+          card.revision += 1;
+        }
+        if (card.revision !== item.revision)
+          return { status: "stale", card_id: item.card_id };
+        if (card.start_on !== item.start_on || card.due_on !== item.due_on) {
+          card.start_on = item.start_on;
+          card.due_on = item.due_on;
+          card.revision += 1;
+        }
+        return {
+          status: "updated",
+          card_id: card.id,
+          revision: card.revision,
+          start_on: card.start_on,
+          due_on: card.due_on,
+        };
+      });
+      return reply(200, { results });
     }
     if (await sheetRoute(path, method, body, url, route)) return;
     const cardMatch = path.match(/^\/cards\/([^/]+)(\/archive|\/restore)?$/);

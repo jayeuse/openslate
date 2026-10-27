@@ -431,6 +431,22 @@ Choices the code forced in the card sheets; each is the smallest that fits DESIG
 | A checklist tick shows at once; Move up and Move down in each item's menu order it (WCAG 2.5.7). | Drag-only checklist order |
 | A `card=` link to an unknown, unreadable, locked or archived card opens the sheet with "This card is not available." over "It may have been removed, or you may not have access."; only a failed read (not a refusal) offers Retry. | The P4a toast |
 
+### Recorded during P4c (2026-10-27)
+
+Choices the code forced in the Gantt; each is the smallest that fits DESIGN.md.
+
+| Choice | Removes |
+| --- | --- |
+| A zoom's period is a calendar unit, as on the Calendar tab: Quarter shows the whole weeks that touch the quarter ("Q4 2026"), Month the weeks that touch the month ("October 2026"), Week the anchor's week and the two after it. Previous and next step a quarter, a month, or a week; the period is the viewer's own and not in the address. The comp's Month (six weeks from the week before today) is not kept; the panel scrolls today into view instead. | A window that moves with today |
+| A day is the panel's width shared by the days, never under 6px (Quarter), 14px (Month) or 40px (Week); below that the panel scrolls sideways. Names are 248px, 120px on phones. | — |
+| A month with under a week in view keeps its solid line but no name, so names never overlap; a month's name stays at the panel's left edge while its days are in view. | — |
+| Each row has one control: on desktop the bar (writers drag it or its end, and move it by keyboard; Enter or a click opens the card for everyone), or the name while the bar is out of view; on phones the 44px row. A locked record card has none, and its bar is neutral. Bars are 24px tall (the WCAG 2.5.8 floor) in 40px rows. | Two tab stops per card |
+| The tints are the comp's: a label bar is its chart series at 52% with the checklist segment at full strength; a bar with no label is ink-muted at 34%; the summary bar is ink-muted at 16% with a hairline and its 36% segment. In dark looks the no-label bar reads lighter than the summary, as BR74 says; in light looks it reads darker, and the summary keeps its rank by its height, hairline and bold name. A staged bar takes a 2px warn ring (an unsaved change asks for attention). | — |
+| Group progress counts checklist items across the group's objectives (done ÷ total), not the mean of each card's share. A group with no dated card is left out. | — |
+| Save changes sends at most 100 cards (the route's limit); a 101st change waits with "Save these changes first: one save holds 100 cards." A forbidden result carries no reason on the wire, so it reads "This card is no longer on this board, or you cannot read its record." Stale and forbidden cards leave the staged set and the board is read again; a failed request keeps every change. Results show inline above the save bar (Request feedback); "Dates saved." is announced. | — |
+| Phones group by stage and hide Group by, as the comp draws them; zoom is kept in the address on every size. | — |
+| "Add dates" opens the card sheet with its first date field (Start, or Card start on a record card) focused. | — |
+
 ## Comps
 
 Comps draw the novel parts only, in Slate dark with Harbor content and the sidebar's Announcements rows. Serve them over HTTP from `.impeccable/mocks/boards/` (`python3 -m http.server <port>`). They reuse the OpenView comp kit (`openview.css` as a symlink, the icon sprite with calendar, Kanban, and Gantt icons, and the `_next`/`app-out` links to the app's tokens). New classes start with `bd-`.
@@ -492,7 +508,7 @@ Each phase ends with tests that fail first, one code review, targeted screenshot
 | Exit | Criterion |
 | --- | --- |
 | EXIT-1 | Posts, Calendar (Month and Week), Kanban, Gantt, My calendar, and All boards do not scroll the document at 1280×720 or 1440×900; only panels scroll. |
-| EXIT-2 | From 1280px, controls are 32px and rows 40px, with three exceptions: the Posts list's two-line rows (BR11); Month cell targets (day numbers, chips, bars, and "+n more"), which are 24px, the WCAG 2.5.8 floor, so six week rows stay legible at 1280×720 (BR55); and Kanban cards, which are as tall as their content (labels, a two-line title, record fields, one fact line; BR67); at 390, every target is at least 44px and nothing scrolls the page sideways (the Gantt panel may). |
+| EXIT-2 | From 1280px, controls are 32px and rows 40px, with four exceptions: the Posts list's two-line rows (BR11); Month cell targets (day numbers, chips, bars, and "+n more"), which are 24px, the WCAG 2.5.8 floor, so six week rows stay legible at 1280×720 (BR55); Kanban cards, which are as tall as their content (labels, a two-line title, record fields, one fact line; BR67); and Gantt bars, which are 24px (the WCAG 2.5.8 floor) in 40px rows and are not targets on phones (BR76); at 390, every target is at least 44px and nothing scrolls the page sideways (the Gantt panel may). |
 | EXIT-3 | No request to a removed route from any page; FN1 holds for every role. |
 | EXIT-4 | Every capability in both maps has its home or its recorded removal, for each role that has it now; every URL in Preserved behavior opens the same thing. |
 | EXIT-5 | Cold Comms JavaScript stays under 548,000 gzip bytes locally and in CI. |

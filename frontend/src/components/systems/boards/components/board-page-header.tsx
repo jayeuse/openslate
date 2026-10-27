@@ -4,6 +4,7 @@ import type { Route } from "next";
 import type { ReactNode } from "react";
 import {
   CalendarDays,
+  ChartGantt,
   ChevronDown,
   Kanban,
   Newspaper,
@@ -37,10 +38,7 @@ import {
   type BoardSection,
 } from "../hooks/use-server-boards";
 
-/**
- * A board's views, in order, each with its icon (BR50). The Gantt joins this
- * list in P4c; the row has room for it at 1280.
- */
+/** A board's views, in order, each with its icon (BR50). */
 const BOARD_TABS: readonly {
   id: BoardSection;
   label: string;
@@ -49,6 +47,7 @@ const BOARD_TABS: readonly {
   { id: "posts", label: "Posts", icon: Newspaper },
   { id: "calendar", label: "Calendar", icon: CalendarDays },
   { id: "kanban", label: "Kanban", icon: Kanban },
+  { id: "gantt", label: "Gantt", icon: ChartGantt },
 ];
 
 /** "Sales announcements", "Company announcements" (BR47). */

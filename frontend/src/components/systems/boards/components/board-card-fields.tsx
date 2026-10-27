@@ -102,6 +102,10 @@ export function DateRow({
       <Input
         id={id}
         type="date"
+        // "Add dates" on the Gantt opens the sheet on the first date field.
+        data-card-dates={
+          field === "start" || field === "cardStart" ? "" : undefined
+        }
         className={cn(control, "max-w-48 tabular-nums")}
         value={draft ?? value ?? ""}
         disabled={context.model.saving === field}

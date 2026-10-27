@@ -285,11 +285,15 @@ for (const [mode, tokens] of Object.entries(modes)) {
 // Board Kanban tints: label chips are ink on a chart series at 22% over the
 // card (BR69); a locked card is muted ink on the sunken fill at 60% over the
 // card; the drop slot's words are action text on the target stage's 65%
-// action tint over the board surface.
+// action tint over the board surface. The Gantt's group summary bar (BR73)
+// carries the group name in ink on ink-muted at 16% over the card, and on its
+// darker 36% checklist segment.
 const KANBAN_TINTS = [
   ...[1, 2, 3, 4, 5].map((n) => ["foreground", `chart-${n}`, 22, "card"]),
   ["muted-foreground", "surface-sunken", 60, "card"],
   ["action-text", "action-tint", 65, "canvas-background"],
+  ["foreground", "ink-muted", 16, "card"],
+  ["foreground", "ink-muted", 36, "card"],
 ];
 for (const [mode, tokens] of Object.entries(modes))
   for (const [fg, tint, percent, ground] of KANBAN_TINTS) {
@@ -300,7 +304,7 @@ for (const [mode, tokens] of Object.entries(modes))
     );
     const ratio = contrast(resolve(tokens, fg), fill);
     const pair = `--${fg} on --${tint} ${percent}% over --${ground}`;
-    const key = `${fg} ${tint.startsWith("chart-") ? "chart" : tint}`;
+    const key = `${fg} ${tint.startsWith("chart-") ? "chart" : `${tint} ${percent}`}`;
     const known = lowest.get(key);
     if (!known || ratio < known.ratio) lowest.set(key, { ratio, mode, pair });
     const ok = ratio >= 4.5;

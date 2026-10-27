@@ -357,6 +357,7 @@ test("a Board page has one header: the title, the level, one meta line, tabs and
     "Posts",
     "Calendar",
     "Kanban",
+    "Gantt",
   ]);
   await expect(tabs.getByRole("link", { name: "Posts" })).toHaveAttribute(
     "aria-current",
