@@ -554,7 +554,7 @@ Each phase ends with tests that fail first, one code review, targeted screenshot
 | EXIT-8 | A critique scores at least 28/40 with no P1. |
 | EXIT-9 | Each finding has a test that failed first, or a recorded reason; focused batches pass; the gate passes before the push. |
 | EXIT-10 | A release smoke pass on a fresh organization and on Harbor finds no blocking defect for any hands-on account, including two-account live delivery of a post, an event, and a card move. |
-| EXIT-11 | The owner reviews the live app and approves the result. |
+| EXIT-11 | The owner reviews the live app and approves the result. Approved 2026-10-27. |
 
 ## Risks
 
