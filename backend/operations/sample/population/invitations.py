@@ -99,7 +99,7 @@ class CredentialRoster:
         for source in accounts:
             row = {key: value for key, value in source.items()}
             row["state"] = "planned"
-            if row["status"] != "pending":
+            if row["status"] != "pending" and not row.get("password"):
                 password = secrets.token_urlsafe(27)
                 while password in passwords:
                     password = secrets.token_urlsafe(27)

@@ -59,11 +59,11 @@ def _invite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, pack_key: str = 
 @pytest.mark.parametrize(
     ("pack_key", "email", "username"),
     (
-        ("harbor", "administrator@harbor-ops.example", "harbor-administrator"),
-        ("school", "administrator@school.example", "school-administrator"),
+        ("harbor", "admin@harbor.test", "harbor-administrator"),
+        ("school", "admin@school.test", "school-administrator"),
     ),
 )
-def test_the_operator_invites_one_pack_administrator_in_the_pack_domain(
+def test_the_operator_invites_one_pack_administrator_as_a_testing_account(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pack_key: str, email: str, username: str
 ) -> None:
     run, operator, _inbox, roster_path, acceptances = _invite(
@@ -143,3 +143,15 @@ def test_the_administrator_must_not_collide_with_a_pack_person(tmp_path: Path) -
     with pytest.raises(SamplePopulationError, match="username collides"):
         create_run_roster(tmp_path / "credentials.json", pack)
     assert not (tmp_path / "credentials.json").exists()
+
+
+def test_a_permanent_run_keeps_the_administrators_testing_password(tmp_path: Path) -> None:
+    from operations.sample.population.administrator import ADMINISTRATOR_KEY, create_run_roster
+
+    pack = get_pack("harbor")
+    kept = create_run_roster(tmp_path / "kept.json", pack, "kept-testing-password")
+    generated = create_run_roster(tmp_path / "generated.json", pack)
+
+    assert kept.password(ADMINISTRATOR_KEY) == "kept-testing-password"
+    assert generated.password(ADMINISTRATOR_KEY) not in {"", "kept-testing-password"}
+    assert kept.accounts[ADMINISTRATOR_KEY]["email"] == "admin@harbor.test"

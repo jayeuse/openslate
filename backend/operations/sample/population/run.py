@@ -80,8 +80,11 @@ def create_private_run_directory(root: Path, run_id: str) -> Path:
         raise SamplePopulationError("Sample run directory must be owner-only") from None
 
 
-def read_admin_password(path: Path, expected_email: str) -> str:
-    """Read only a private administrator password file matching the local account."""
+def read_admin_password(path: Path, expected_email: str | None) -> str:
+    """Read only a private administrator password file matching the local account.
+
+    With ``expected_email`` None the file holds only a password (the pack administrator's).
+    """
     target = Path(path).expanduser()
     if not target.is_absolute():
         raise SamplePopulationError("Administrator credential path must be absolute")
@@ -111,7 +114,9 @@ def read_admin_password(path: Path, expected_email: str) -> str:
         raise SamplePopulationError("Administrator credential file is invalid")
     email = payload.get("email")
     password = payload.get("password")
-    if not isinstance(email, str) or email.strip().casefold() != expected_email.strip().casefold():
+    if expected_email is not None and (
+        not isinstance(email, str) or email.strip().casefold() != expected_email.strip().casefold()
+    ):
         raise SamplePopulationError(
             "Administrator credential identity does not match this instance"
         )
@@ -400,6 +405,7 @@ def populate_sample_data(
     host_control: Callable[..., object] | None = None,
     organization_id: str | None = None,
     partner_organization_id: str | None = None,
+    administrator_password: str | None = None,
 ) -> SamplePopulationReport:
     """Create a private run, populate through user APIs, then prove the readback."""
     dataset = build_dataset(
@@ -471,6 +477,7 @@ def populate_sample_data(
             host_control=host_control,
             organization_id=organization_id,
             partner_organization_id=partner_organization_id,
+            administrator_password=administrator_password,
         )
         manifest["mappings"] = _journal_mappings(directory / "requests.jsonl")
         manifest["observed"] = dict(observed)

@@ -282,8 +282,12 @@ def _local_preflight(
         # The pack organization, then its partner; each is absent or holds only the operator
         # and the pack administrator.
         usage, partner = (
-            organization_usage(connection, sample_slug(pack.identity.key, partner=side),
-                               reset_plan.preserved_admin_id, pack_administrator=administrator)
+            organization_usage(
+                connection,
+                sample_slug(pack.identity.key, partner=side),
+                reset_plan.preserved_admin_id,
+                pack_administrator=administrator,
+            )
             if pack is not None
             else None
             for side in (False, True)
@@ -336,6 +340,9 @@ def _parser() -> argparse.ArgumentParser:
         if name == "populate":
             command.add_argument("--run-root", type=Path, required=True)
             command.add_argument("--admin-password-file", type=Path)
+            # Owner-only JSON {"password": ...}: the kept testing password of the pack
+            # administrator (admin@<pack>.test). Without it, the run generates one.
+            command.add_argument("--administrator-password-file", type=Path)
     verify = commands.add_parser("verify", help="read back an existing private sample run")
     verify.add_argument("--run-directory", type=Path, required=True)
     verify.add_argument("--admin-password-file", type=Path)
@@ -405,12 +412,18 @@ def main(
                 )
                 _print_plan(dataset, report, mailpit_url)
                 assert pack is not None
+
                 def create(partner: bool) -> str:
                     admin_id = UUID(str(report["admin_id"]))
                     return str(
                         create_sample_organization(values, target, pack, admin_id, partner=partner)
                     )
 
+                administrator_password = (
+                    read_admin_password(args.administrator_password_file, None)
+                    if args.administrator_password_file
+                    else None
+                )
                 organization_id = report.get("organization_id") or create(False)
                 partner_id = report.get("partner_organization_id") or create(True)
                 # ADMIN_EMAIL is the installation operator; it invites the pack administrator.
@@ -428,6 +441,7 @@ def main(
                     organization=pack,
                     mfa_observer=mfa_observer,
                     host_control=host_control,
+                    administrator_password=administrator_password,
                     organization_id=organization_id,
                     partner_organization_id=partner_id,
                 )

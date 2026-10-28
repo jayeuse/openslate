@@ -80,6 +80,7 @@ def run_population(
     manifest: dict[str, Any],
     mfa_observer: Callable[..., object] | None = None,
     host_control: Callable[..., object] | None = None,
+    administrator_password: str | None = None,
     organization_id: str | None = None,
     partner_organization_id: str | None = None,
 ) -> dict[str, int]:
@@ -98,7 +99,9 @@ def run_population(
 
         manifest["stage"] = "administrator"
         _write_manifest(run_directory, manifest)
-        roster = create_run_roster(run_directory / "credentials.json", dataset.organization)
+        roster = create_run_roster(
+            run_directory / "credentials.json", dataset.organization, administrator_password
+        )
         administrator = invite_pack_administrator(
             operator, roster, api_url=api_url, origin=origin, mailpit_url=mailpit_url,
             organization_id=organization_id, operator_id=expected_operator_id,

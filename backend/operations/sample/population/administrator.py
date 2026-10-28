@@ -3,7 +3,7 @@
 The operator owns the installation and creates the pack organization. Right after the pristine
 baseline, the operator invites one pack administrator in the pack's own email domain; the
 administrator completes the invitation through the owned Mailpit and then runs population and
-every organization control. The generated password stays in the run's owner-only roster.
+every organization control. Its password stays in the run's owner-only roster.
 """
 
 from __future__ import annotations
@@ -50,9 +50,17 @@ def administrator_identity(pack: OrganizationPack) -> dict[str, str]:
     }
 
 
-def create_run_roster(path: Path, pack: OrganizationPack) -> CredentialRoster:
-    """Create the run's private roster: the pack administrator first, then the pack's people."""
-    rows = [administrator_identity(pack), *people_roster_rows(pack)]
+def create_run_roster(
+    path: Path, pack: OrganizationPack, administrator_password: str | None = None
+) -> CredentialRoster:
+    """Create the run's private roster: the pack administrator first, then the pack's people.
+
+    A permanent run gives the administrator its kept testing password; otherwise it is generated.
+    """
+    administrator = administrator_identity(pack)
+    if administrator_password:
+        administrator["password"] = administrator_password
+    rows = [administrator, *people_roster_rows(pack)]
     for field in ("key", "email", "username"):
         values = [row[field].casefold() for row in rows]
         if len(set(values)) != len(values):
@@ -180,4 +188,3 @@ def partner_client_factory(
         return client
 
     return partner_client
-

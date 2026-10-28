@@ -68,26 +68,22 @@ def test_provider_inventory_without_the_administrator_is_refused() -> None:
         pack_provider_accounts(_auth(users), ADMIN_PROVIDER, "owner@install.example", frozenset())
 
 
-def test_a_resumed_pack_ignores_exactly_its_pack_administrator_account() -> None:
+def test_the_pack_administrator_is_a_testing_account_outside_the_pack_domains() -> None:
+    # The administrator is admin@<pack>.test, a kept testing account; the populate-once
+    # guard still counts every account in the pack's own email domains.
     harbor = get_pack("harbor")
+    person = harbor.actors.people[0].email
     users = [
         {"id": str(ADMIN_PROVIDER), "email": "owner@install.example"},
-        {"id": "0190a000-0000-7000-8000-000000000006", "email": "administrator@harbor-ops.example"},
-        {"id": "0190a000-0000-7000-8000-000000000007", "email": "administrator@school.example"},
+        {"id": "0190a000-0000-7000-8000-000000000006", "email": "admin@harbor.test"},
+        {"id": "0190a000-0000-7000-8000-000000000007", "email": person},
     ]
-    domains = pack_email_domains(harbor) | pack_email_domains(get_pack("school"))
-    resumed = frozenset({pack_administrator_email(harbor)})
+    domains = pack_email_domains(harbor)
 
-    assert pack_administrator_email(harbor) == "administrator@harbor-ops.example"
-    # A fresh pack still refuses: its own administrator counts like any pack account.
+    assert pack_administrator_email(harbor) == "admin@harbor.test"
+    assert pack_administrator_email(get_pack("local_government")) == "admin@local-government.test"
     operator = "owner@install.example"
-    assert pack_provider_accounts(_auth(users), ADMIN_PROVIDER, operator, domains) == 2
-    assert (
-        pack_provider_accounts(
-            _auth(users), ADMIN_PROVIDER, "owner@install.example", domains, ignored_emails=resumed
-        )
-        == 1
-    )
+    assert pack_provider_accounts(_auth(users), ADMIN_PROVIDER, operator, domains) == 1
 
 
 class _Connection:
@@ -109,7 +105,7 @@ def test_organization_usage_excludes_the_operator_and_the_pack_administrator() -
         connection,
         "sample-harbor",
         ADMIN_PROVIDER,
-        pack_administrator="administrator@harbor-ops.example",
+        pack_administrator="admin@harbor.test",
     )
 
     assert usage is not None and usage.other_members == 0
@@ -117,7 +113,7 @@ def test_organization_usage_excludes_the_operator_and_the_pack_administrator() -
     assert values == {
         "admin": ADMIN_PROVIDER,
         "slug": "sample-harbor",
-        "pack_administrator": "administrator@harbor-ops.example",
+        "pack_administrator": "admin@harbor.test",
     }
     assert "u.email <> %(pack_administrator)s" in statement
 

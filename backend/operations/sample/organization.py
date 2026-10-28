@@ -61,9 +61,14 @@ def pack_email_domains(pack: OrganizationPack) -> frozenset[str]:
     )
 
 
+def testing_domain(pack: OrganizationPack) -> str:
+    """The reserved test domain of a pack's testing accounts, for example ``harbor.test``."""
+    return f"{pack.identity.key.replace('_', '-')}.test"
+
+
 def pack_administrator_email(pack: OrganizationPack) -> str:
-    """The pack organization's own administrator, in the pack's own email domain."""
-    return f"administrator@{pack.identity.email_domain}".casefold()
+    """The pack organization's own administrator, a testing account: ``admin@harbor.test``."""
+    return f"admin@{testing_domain(pack)}"
 
 
 def organization_usage(

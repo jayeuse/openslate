@@ -307,7 +307,7 @@ def test_verifier_rebuilds_from_the_recorded_seed_without_drawing_randomness(
     )
     monkeypatch.setattr(verifier, "SampleClient", FakeClient)
     monkeypatch.setattr(
-        verifier, "roster_logins", lambda *_a: [("administrator@harbor-ops.example", "synthetic")]
+        verifier, "roster_logins", lambda *_a: [("admin@harbor.test", "synthetic")]
     )
     monkeypatch.setattr(verifier, "verify_records_and_relationships", lambda *_a, **_k: ({}, []))
     monkeypatch.setattr(verifier, "verify_history", lambda *_a, **_k: ({}, []))

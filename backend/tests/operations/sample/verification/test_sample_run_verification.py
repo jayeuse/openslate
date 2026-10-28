@@ -24,7 +24,7 @@ from tests.operations.sample.sample_datasets import (
 # The installation operator verifies the run; the pack administrator ran it.
 OPERATOR_EMAIL = "admin@example.test"
 PACK_ADMIN_ID = str(uuid5(NAMESPACE_DNS, "sample-verification:pack-administrator"))
-PACK_ADMIN_EMAIL = "administrator@harbor-ops.example"
+PACK_ADMIN_EMAIL = "admin@harbor.test"
 PACK_ADMIN_ROW = {
     "id": PACK_ADMIN_ID,
     "email": PACK_ADMIN_EMAIL,
