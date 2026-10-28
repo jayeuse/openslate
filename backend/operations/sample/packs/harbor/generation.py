@@ -38,7 +38,14 @@ from operations.sample.packs.harbor.text import (
 from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.types import OMIT as _OMIT
 from operations.sample.packs.types import FieldSpec, JsonValue, ModuleSpec
-from operations.sample.realism import long_tail_amount, ordered_skew, weighted_label
+from operations.sample.realism import (
+    DIRT,
+    dirty_text,
+    dirty_value,
+    long_tail_amount,
+    ordered_skew,
+    weighted_label,
+)
 
 # Records below this index carry named business cases; the realism rules leave them alone.
 PINNED = 10
@@ -176,7 +183,7 @@ def _status_rng(module: ModuleSpec, index: int, seed: int) -> random.Random:
     return random.Random(f"{seed}:{module.key}:{index}:status")
 
 
-def _field_value(
+def _clean_field_value(
     organization: OrganizationPack,
     module: ModuleSpec,
     field: FieldSpec,
@@ -318,3 +325,49 @@ def _field_value(
             return index % 4 == 0
         return index % 3 == 0
     return _OMIT
+
+
+def _field_value(
+    organization: OrganizationPack,
+    module: ModuleSpec,
+    field: FieldSpec,
+    index: int,
+    seed: int,
+    anchor: date,
+    counts: dict[str, int],
+) -> JsonValue | object:
+    """The value as people type it (spec R6, R7); pinned records stay exact."""
+    value = _clean_field_value(organization, module, field, index, seed, anchor, counts)
+    if index < PINNED or value is _OMIT or field.value_kind not in _DIRTY_KINDS:
+        return value
+    kind = field.value_kind
+    previous = index - 1 >= PINNED
+    redone = _RECREATED.get(module.key)
+    if kind == "title" and previous and redone is not None:
+        # Refused or cancelled, then entered again: the new record repeats the old title.
+        if _status_label(module, index - 1, seed, counts, anchor) == redone:
+            return _clean_field_value(organization, module, field, index - 1, seed, anchor, counts)
+    if kind == "title" and module.key in _NEAR_DUPLICATE_MODULES and index >= 2 * PINNED:
+        rng = random.Random(f"{seed}:{module.key}:{index}:near-duplicate")
+        if rng.random() < 0.02:
+            other = _clean_field_value(organization, module, field, index - 7, seed, anchor, counts)
+            if isinstance(other, str):
+                return dirty_text(rng, other)
+    note = (_clean_field_value(organization, module, field, index - 1, seed, anchor, counts)
+            if kind == "notes" and previous else None)  # fmt: skip
+    return dirty_value(
+        random.Random(f"{seed}:{module.key}:{index}:{field.key}:dirt"),
+        kind,
+        value,
+        required=field.required,
+        country_code="63",
+        quick_entry=random.Random(f"{seed}:{module.key}:{index}:quick").random() < DIRT.quick_entry,
+        previous_note=note if isinstance(note, str) else None,
+    )
+
+
+# A record entered again after this status; its title names no linked parent.
+_RECREATED = {"expenses": "Rejected"}
+_DIRTY_KINDS = frozenset({"title", "notes", "phone", "email", "url"})
+# Named things where a second, slightly different entry for the same company appears.
+_NEAR_DUPLICATE_MODULES = frozenset({"customers", "suppliers"})

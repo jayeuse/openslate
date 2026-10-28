@@ -251,6 +251,16 @@ def test_contact_email_uses_the_domain_of_its_linked_customer() -> None:
         assert str(contacts[edge.target_record_id].data[email]).endswith("@" + domain)
 
 
+def _as_read(text: str) -> str:
+    """Text as a reader compares it: any case, single spaces, long forms of short words."""
+    from operations.sample.realism import _ABBREVIATIONS
+
+    words = " ".join(text.split()).casefold()
+    for long, short in _ABBREVIATIONS:
+        words = words.replace(short.casefold(), long.casefold())
+    return words
+
+
 @pytest.mark.parametrize(
     ("relationship", "parent_module", "child_module"),
     [
@@ -273,7 +283,8 @@ def test_child_titles_name_their_linked_parent(
         if edge.relationship_id != link:
             continue
         parent = str(records[edge.source_record_id].data[parent_name]).split(" — ")[0]
-        assert parent in str(records[edge.target_record_id].data[child_name])
+        # Spec R6: people type names in capitals, with extra spaces or short forms.
+        assert _as_read(parent) in _as_read(str(records[edge.target_record_id].data[child_name]))
         checked += 1
     assert checked
 

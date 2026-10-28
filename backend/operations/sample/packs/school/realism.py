@@ -113,6 +113,7 @@ def england_holidays(year: int) -> set[date]:
 def holidays(anchor: date) -> frozenset[date]:
     return frozenset().union(*(england_holidays(anchor.year + offset) for offset in (-1, 0, 1)))
 
+
 # R9. Every department board has a Kanban whose stages fit the department's work.
 BOARD_STAGES: dict[str, tuple[str, ...]] = {
     "admissions": ("Inquiry", "Tour booked", "Assessment", "Offer", "Enrolled"),

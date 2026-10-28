@@ -114,7 +114,8 @@ def test_dirty_emails_and_urls_still_pass_the_server_checks() -> None:
     urls = {url_variant(rng, "https://portal.harbor-ops.example/orders") for _ in range(200)}
 
     assert len(emails) > 3 and all(map(_valid_email, emails))
-    assert len(urls) > 1 and all(map(_valid_http_url, urls))
+    assert all(email.endswith("@harbor-ops.example") for email in emails)
+    assert urls == {"https://portal.harbor-ops.example/orders/"} and all(map(_valid_http_url, urls))
 
 
 def test_text_dirt_changes_the_value_the_way_people_type_it() -> None:
@@ -136,3 +137,21 @@ def test_phone_variants_keep_the_same_number_in_different_formats() -> None:
     assert all(
         "".join(ch for ch in value if ch.isdigit()).endswith("1234567") for value in variants
     )
+
+
+def test_dirty_values_blank_quick_entries_and_copy_notes_but_keep_required_text() -> None:
+    from operations.sample.realism import dirty_value
+
+    rng = _rng("dirty")
+    quick = dirty_value(rng, "notes", "Checked the seals.", required=False, country_code="63",
+                        quick_entry=True)  # fmt: skip
+    kept = dirty_value(rng, "notes", "Checked the seals.", required=True, country_code="63",
+                       quick_entry=True)  # fmt: skip
+    notes = {
+        dirty_value(rng, "notes", f"Note {n}", required=False, country_code="63",
+                    previous_note="Same as the last batch.")
+        for n in range(500)
+    }  # fmt: skip
+
+    assert quick == "" and kept == "Checked the seals."
+    assert "Same as the last batch." in notes and notes & set(FILLER_NOTES)

@@ -109,6 +109,7 @@ def date_cluster(module_key: str, anchor: date, earliest: int, latest: int) -> D
         )
     )
 
+
 # R9. Every department board has a Kanban whose stages fit the department's work.
 BOARD_STAGES: dict[str, tuple[str, ...]] = {
     "sales": ("Leads", "Qualifying", "Quoted", "Negotiating", "Won"),

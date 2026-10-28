@@ -288,21 +288,65 @@ def phone_variant(rng: random.Random, digits: str, country_code: str) -> str:
 
 
 def email_variant(rng: random.Random, email: str) -> str:
-    """Case or plus-addressing only, so the server's email check still passes."""
+    """The local part's case or a plus-address; the domain stays as it is."""
     local, _, domain = email.partition("@")
-    match rng.randrange(3):
-        case 0:
-            return f"{local.capitalize()}@{domain}"
-        case 1:
-            return f"{local}@{domain.upper()}"
-        case _:
-            return f"{local}+{rng.choice(('work', 'orders', 'billing'))}@{domain}"
+    if rng.random() < 0.5:
+        return f"{local.capitalize()}@{domain}"
+    return f"{local}+{rng.choice(('work', 'orders', 'billing'))}@{domain}"
 
 
 def url_variant(rng: random.Random, url: str) -> str:
-    """A case or trailing-slash change that keeps an http(s) URL with a host."""
-    scheme, separator, rest = url.partition("://")
-    host, slash, path = rest.partition("/")
-    if rng.random() < 0.5:
-        return f"{scheme}{separator}{host.upper()}{slash}{path}"
+    """A trailing slash added or dropped; the scheme and host stay as they are."""
+    del rng
     return url.rstrip("/") if url.endswith("/") else url + "/"
+
+
+@dataclass(frozen=True)
+class DirtRates:
+    """How often people leave each kind of slip (spec R6) and quick entries (R7)."""
+
+    title: float = 0.03
+    filler_note: float = 0.06
+    copied_note: float = 0.03
+    phone: float = 0.35
+    email: float = 0.12
+    url: float = 0.08
+    quick_entry: float = 0.04
+
+
+DIRT = DirtRates()
+
+
+def dirty_value(
+    rng: random.Random,
+    kind: str,
+    value: object,
+    *,
+    required: bool,
+    country_code: str,
+    rates: DirtRates | None = None,
+    quick_entry: bool = False,
+    previous_note: str | None = None,
+) -> object:
+    """A value as a person typed it; the server accepts every result."""
+    rates = rates or DIRT
+    if not isinstance(value, str) or not value:
+        return value
+    if quick_entry and not required and kind in {"notes", "email", "url", "phone"}:
+        return ""  # A quick entry leaves the optional details blank.
+    draw = rng.random()
+    if kind == "title" and draw < rates.title:
+        return dirty_text(rng, value)
+    if kind == "notes" and not required:
+        if draw < rates.filler_note:
+            return filler_note(rng)
+        if previous_note and draw < rates.filler_note + rates.copied_note:
+            return previous_note  # One note pasted across a batch.
+    if kind == "phone" and draw < rates.phone:
+        digits = "".join(ch for ch in value if ch.isdigit())
+        return phone_variant(rng, digits, country_code) if len(digits) >= 7 else value
+    if kind == "email" and draw < rates.email and "@" in value:
+        return email_variant(rng, value)
+    if kind == "url" and draw < rates.url:
+        return url_variant(rng, value)
+    return value
