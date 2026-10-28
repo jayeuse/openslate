@@ -1,6 +1,6 @@
 # Sample packs: natural data and the remaining packs
 
-Status: **draft for owner approval** (2026-10-27). Baseline: `main` at `e1e9fc6f` (after PR #67 Profile, #68 OpenView department pages, #69 Boards team space).
+Status: **approved by the owner** (2026-10-27); P0 merged in PR #70, P1–P3 in progress on `sample-pack-realism-p1` (2026-10-28). Baseline: `main` at `e1e9fc6f` (after PR #67 Profile, #68 OpenView department pages, #69 Boards team space).
 
 ## Outcome
 
@@ -165,7 +165,9 @@ Gaps to close in this spec:
 
 Today every pack organization is run by the installation operator (`ADMIN_EMAIL`). The operator owns the whole installation: installation settings and backups (`require_platform_operator`). It is not the administrator of one organization. In production, each organization has its own administrator, and that administrator is not the operator.
 
-Change: the operator creates each pack organization and invites one pack administrator. The administrator signs in through Mailpit, then runs the organization's population and controls. The operator keeps only the installation controls: the backup policy, queued backups and installation settings. These controls move out of the pack runs into one operator step, which runs once for each installation after the packs finish. Pack runs then share no installation state, so two pack runs can run at the same time. The partner organization keeps the operator as a member, so the organization-switch control still has a member of two organizations.
+Change: the operator creates each pack organization and invites one pack administrator. The administrator signs in through Mailpit, then runs the organization's population and controls. Only the steps that need the operator run as the operator: the backup controls, the installation fields of the security settings, and the restore of a removed account.
+
+Decision (2026-10-28): the operator stays the owner and an admin member of each pack organization and of the partner organization. Restoring a removed account and changing installation fields need an operator who is an admin member of the bound organization (`account_operations.py::restore_user`). The owner can also open every permanent pack organization with their own account. The operator-only steps stay inside the pack run under a separate `operator` actor; the separate operator step after all packs is deferred, because it only helps concurrent Large runs, and P5 runs them one after the other. The partner organization's administrator is the operator. The member of two organizations for the switch control is the invited account-control member, not the operator. The cross-pack isolation probe logs in as the operator, so it still probes real peer organizations.
 
 This removes the operator from organization work. The run then tests the non-operator administrator path, which no run tests today. Example: `revoke_admin_sessions` keeps sessions of people who belong to another organization only when the caller is not the operator (`sessions_router.py`).
 
@@ -213,15 +215,24 @@ Wrong: API smoke runs a pack again on the development stack, so the permanent La
 
 These are offline checks on the generated plan, plus the live runs.
 
-1. In every module with 4 or more statuses, the most common status holds 50% or more, and no two statuses have the same count.
-2. For each amount field, p99 divided by p50 is 5 or more, and 5% or more of values are round numbers.
-3. Weekdays hold 85% or more of records. Every pack holiday has no records, or almost none.
+1. In every module with 4 or more statuses, the most common status holds 50% or more, and it is at least twice the second (a long tail, not a flat split).
+2. For each typed amount field, p99 divided by p50 is 5 or more, and 5% or more of values are round numbers. A computed amount (a sum or product of other fields) is not checked; it takes its shape from its inputs. A fee-schedule amount is checked for round numbers only.
+3. On each module's main business date (never a birth date), weekdays hold 85% or more of records. Every pack holiday has no records, or almost none.
 4. In each department, the top two writers hold 40% or more of writes.
-5. 5% or more of parents have no children.
+5. 5% or more of parents have no children, for each one-to-many link that is not structural (a structural link has one child per parent slot, such as two lines per order).
+
+Checks 1–5 run at Standard and Large (`verification/realism.py`); a module or department with fewer than 30 records is skipped. Each pack's `realism.py` names its holidays, computed and tiered amounts, numbers that are not money, and structural links.
 6. Every dashboard has 6 or more widgets, and at least one `sum` or `average` and one `date_series`.
 7. Every department board has a Kanban with cards that have `start_on` and `due_on`, and 1 or more calendar sources.
 8. The Step 4a preflight passes. A live Small run has no 4xx responses except the planned refusals.
 9. The pinned business cases and refusals are unchanged in the golden-master comparison.
+
+## Delivered decisions (2026-10-28)
+
+- R1–R5 for Harbor and School: weights, amount shapes, seasons and holidays live in each pack's `realism.py`; records below index 10 keep their named business cases. An invoice bills its sales order's customer, so order links can be uneven. Unpaid Harbor invoices are the recent ones. School fees are round tiers by year group with a long-tailed bursary for a fifth of pupils.
+- R8: each department dashboard uses 7 widgets in the Overview shape (four numbers, a monthly trend, workload by owner, open records). The first 2 × 2 of rows 4–5 stays free, for the department's own charts and for the Charts control, which adds one there.
+- R9: every department board has a Kanban with the department's stages; the demo Kanban keeps its named cards. Cards per board follow the profile (12, 24, 60), read from the size of the seeded organization. Each board has one or two calendar sources, and some team members (never the lead) add a personal source. Posts and events per board do not scale yet (needs the profile in `prepare_content`).
+- R6–R7: dirt applies from index 10. Email and URL dirt changes only the local part or a trailing slash, so hosts stay lower-case reserved domains. Refused-then-entered-again pairs use only modules whose title names no linked parent (Harbor expenses, School leave requests). Records owned by a disabled person are not done.
 
 ## Risks
 
