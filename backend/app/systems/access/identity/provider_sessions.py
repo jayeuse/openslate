@@ -405,9 +405,13 @@ def refresh_provider_session(
     try:
         tokens = client.refresh(current_refresh)
         claims = client.verify_access_token(tokens.access_token)
-    except (InvalidProviderCredentials, InvalidProviderToken) as error:
+    except InvalidProviderCredentials as error:
         _revoke_locked_session(db, session, timestamp)
         raise InvalidCredentials(reason="provider_refused") from error
+    except InvalidProviderToken as error:
+        # Auth issued the pair but its fresh access token failed local validation.
+        _revoke_locked_session(db, session, timestamp)
+        raise InvalidCredentials(reason=f"fresh_token_{error.kind or 'invalid'}") from error
     except SupabaseAuthUnavailable:
         _revoke_locked_session(db, session, timestamp)
         raise

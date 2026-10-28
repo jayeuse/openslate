@@ -138,8 +138,10 @@ def test_expiry_has_zero_leeway(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(jwt.api_jwt, "datetime", FrozenDatetime)
 
-    with pytest.raises(InvalidProviderToken):
+    with pytest.raises(InvalidProviderToken) as refused:
         client.verify_access_token(expired_this_second)
+    # The kind names the failed check for refresh logs (live seven-pack run).
+    assert refused.value.kind == "ExpiredSignatureError"
     assert client.verify_access_token(valid_next_second).expires_at == datetime.fromtimestamp(
         1_900_000_001, UTC
     )

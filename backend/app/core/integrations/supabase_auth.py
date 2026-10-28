@@ -37,6 +37,11 @@ class ProviderUserNotFound(InvalidProviderCredentials):
 class InvalidProviderToken(Exception):
     """An access token failed local signature or claim validation."""
 
+    def __init__(self, message: str, *, kind: str | None = None) -> None:
+        super().__init__(message)
+        # The failed check's class name (ExpiredSignatureError, ...) for operational logs.
+        self.kind = kind
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderAccessIdentity:
@@ -312,7 +317,7 @@ class SupabaseAuthClient:
                 assurance_level=assurance,
             )
         except (InvalidTokenError, KeyError, TypeError, ValueError) as error:
-            raise InvalidProviderToken("Invalid access token") from error
+            raise InvalidProviderToken("Invalid access token", kind=type(error).__name__) from error
 
     def _key_for(self, kid: str) -> Any:
         with self._jwks_lock:
