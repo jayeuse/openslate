@@ -183,3 +183,16 @@ def test_the_session_revocation_target_never_belongs_to_a_second_organization(
                   for key in action.values["member_keys"])  # fmt: skip
 
     assert plan_read_controls(dataset)[0].target_key not in shared
+
+
+@pytest.mark.parametrize("pack_key", pack_keys())
+def test_the_audit_review_searches_a_module_name_no_other_module_contains(pack_key: str) -> None:
+    # Live Manufacturer run: searching "Customer" also listed Customer Invoice and Customer
+    # Payment entries, so the review saw another module's audit rows.
+    from operations.sample.controls.actions import _audit_actions
+
+    dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
+    label = str(_audit_actions(dataset)[0].values["expected_label"])
+    others = [m.name for m in dataset.organization.catalog.modules if m.name != label]
+
+    assert not [name for name in others if label.lower() in name.lower()]
