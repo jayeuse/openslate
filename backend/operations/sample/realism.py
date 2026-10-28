@@ -207,19 +207,25 @@ def pareto_weights(rng: random.Random, team: Sequence[str], alpha: float = 1.2) 
 
 
 @lru_cache(maxsize=256)
-def _parent_table(key: str, parents: int, pinned: int, dormant_share: float) -> tuple[
-    tuple[int, ...], tuple[float, ...]
-]:
+def _parent_table(
+    key: str, parents: int, pinned: int, dormant_share: float, alpha: float
+) -> tuple[tuple[int, ...], tuple[float, ...]]:
     rng = random.Random(f"links:{key}:{parents}")
     eligible = [
         index for index in range(parents) if index < pinned or rng.random() >= dormant_share
     ]
-    weights = pareto_weights(rng, [str(index) for index in eligible], alpha=0.8)
+    weights = pareto_weights(rng, [str(index) for index in eligible], alpha=alpha)
     return tuple(eligible), tuple(accumulate(weights))
 
 
 def skewed_parent(
-    key: str, child: int, parents: int, *, pinned: int = 10, dormant_share: float = 0.08
+    key: str,
+    child: int,
+    parents: int,
+    *,
+    pinned: int = 10,
+    dormant_share: float = 0.08,
+    alpha: float = 0.8,
 ) -> int:
     """The parent a child links to: a few parents get many children and some get none.
 
@@ -227,7 +233,7 @@ def skewed_parent(
     """
     if child < min(pinned, parents):
         return child
-    eligible, cumulative = _parent_table(key, parents, pinned, dormant_share)
+    eligible, cumulative = _parent_table(key, parents, pinned, dormant_share, alpha)
     point = random.Random(f"links:{key}:{child}").random() * cumulative[-1]
     return eligible[bisect_left(cumulative, point)]
 

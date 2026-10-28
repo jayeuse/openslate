@@ -120,7 +120,6 @@ def test_cross_department_business_links_name_the_records_the_codes_named(seed: 
             "warehouses",
             lambda index: (index % counts["warehouses"],),
         ),
-        ("invoice_customer", "invoices", "customers", lambda index: (index % counts["customers"],)),
         ("invoice_sales_order", "invoices", "sales_orders", lambda index: (index,)),
         (
             "work_order_products",

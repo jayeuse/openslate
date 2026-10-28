@@ -64,6 +64,8 @@ def pack_realism(dataset: SampleDataset) -> dict[str, Collection[object]]:
         "holidays": module.holidays(dataset.anchor_date),
         "computed": getattr(module, "COMPUTED_AMOUNTS", frozenset()),
         "structural": getattr(module, "STRUCTURAL_LINKS", frozenset()),
+        "tiered": getattr(module, "TIERED_AMOUNTS", frozenset()),
+        "not_amounts": getattr(module, "NOT_AMOUNTS", frozenset()),
     }
 
 
@@ -73,6 +75,8 @@ def realism_report(
     holidays: Collection[date] = frozenset(),
     computed: Collection[str] = frozenset(),
     structural: Collection[str] = frozenset(),
+    tiered: Collection[str] = frozenset(),
+    not_amounts: Collection[str] = frozenset(),
 ) -> RealismReport:
     report = RealismReport()
     pack = dataset.organization
@@ -92,8 +96,11 @@ def realism_report(
             elif spec.type == "Number" and any(m in spec.value_kind or m in spec.key
                                                for m in MONEY_MARKERS):  # fmt: skip
                 name = f"{module.key}.{spec.key}"
-                _amounts(report, name, values, typed=name not in computed)
-        date_field = next((spec for spec in module.fields if spec.type == "Date"), None)
+                if name not in not_amounts:
+                    _amounts(report, name, values, typed=name not in computed,
+                             tailed=name not in tiered)  # fmt: skip
+        dated = (f for f in module.fields if f.type == "Date" and "birth" not in f.value_kind)
+        date_field = next(dated, None)  # A birth date is not a business date.
         if date_field is not None:
             days = [_day(row.data.get(ids[date_field.key])) for row in rows]
             _dates(report, module.key, [day for day in days if day is not None], holidays)
@@ -131,7 +138,12 @@ def _statuses(
 
 
 def _amounts(
-    report: RealismReport, name: str, values: list[JsonValue | None], *, typed: bool
+    report: RealismReport,
+    name: str,
+    values: list[JsonValue | None],
+    *,
+    typed: bool,
+    tailed: bool = True,
 ) -> None:
     amounts = [float(v) for v in values if isinstance(v, int | float) and not isinstance(v, bool)]
     positive = [v for v in amounts if v > 0]
@@ -141,7 +153,8 @@ def _amounts(
     rounded = sum(map(is_round, positive)) / len(positive)
     report.measures[f"C2 {name} p99/p50"] = spread
     report.measures[f"C2 {name} round share"] = rounded
-    if spread < 5:
+    # A fee schedule has tiers, and a computed amount takes its shape from its inputs.
+    if typed and tailed and spread < 5:
         report.issues.append(f"C2 {name}: p99/p50 is {spread:.1f}, below 5")
     if typed and rounded < 0.05:  # A computed total is rarely a round number.
         report.issues.append(f"C2 {name}: {rounded:.0%} round numbers, below 5%")

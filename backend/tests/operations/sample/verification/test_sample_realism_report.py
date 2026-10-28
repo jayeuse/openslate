@@ -2,7 +2,7 @@
 
 import random
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -28,32 +28,15 @@ def test_round_numbers_are_the_ones_people_type(value: float, expected: bool) ->
     assert is_round(value) is expected
 
 
-# Packs that already apply rules R1-R5 (P2). The others are strict xfails until they do.
-REALISTIC = {"harbor"}
-
-
-@pytest.mark.parametrize(
-    "pack,criterion",
-    [
-        pytest.param(
-            pack,
-            criterion,
-            marks=()
-            if pack in REALISTIC or criterion == 4
-            else pytest.mark.xfail(strict=True, reason=f"P2 applies rule C{criterion}"),
-        )
-        for pack in pack_keys()
-        for criterion in (1, 2, 3, 4, 5)
-    ],
-)
+@pytest.mark.parametrize("pack", pack_keys())
+@pytest.mark.parametrize("criterion", [1, 2, 3, 4, 5])
 @pytest.mark.parametrize("profile", ["standard", "large"])
 def test_pack_plan_has_a_real_organizations_shape(pack: str, criterion: int, profile: str) -> None:
     dataset = build_dataset(profile, 42, ANCHOR, organization=get_pack(pack))
     assert realism_report(dataset, **pack_realism(dataset)).failed(criterion) == []
 
 
-def test_status_and_date_checks_accept_values_drawn_by_the_rules() -> None:
-    # School still has the old flat values, so its first big module shows both issues.
+def test_status_and_date_checks_find_flat_values_and_accept_values_drawn_by_the_rules() -> None:
     dataset = _dataset("school")
     module = next(
         m for m in dataset.organization.catalog.modules
@@ -64,27 +47,32 @@ def test_status_and_date_checks_accept_values_drawn_by_the_rules() -> None:
     status = next(f for f in module.fields if f.value_kind == "status")
     day_field = next(f for f in module.fields if f.type == "Date")
     ids = dataset.field_ids[module.key]
-    weights = {label: 100 / (rank + 1) ** 2 for rank, label in enumerate(module.statuses)}
-    cluster = DateCluster(DateShape(date(2025, 10, 1), ANCHOR))
-    rng = random.Random("42:report")
     label_id = {
         label: _option_id(dataset.seed, module.key, status.key, label, dataset.organization)
         for label in module.statuses
     }
-    records = tuple(
-        replace(record, data={
-            **record.data,
-            ids[status.key]: label_id[weighted_label(rng, weights)],
-            ids[day_field.key]: cluster.pick(rng).isoformat(),
-        }) if record.module_key == module.key else record
-        for record in dataset.records
-    )  # fmt: skip
-    prefixes = (f"C1 {module.key}:", f"C3 {module.key}:")
-    before = realism_report(dataset).issues
-    after = realism_report(replace(dataset, records=records)).issues
+    weights = {label: 100 / (rank + 1) ** 2 for rank, label in enumerate(module.statuses)}
+    cluster = DateCluster(DateShape(date(2025, 10, 1), ANCHOR))
+    rng = random.Random("42:report")
 
-    assert any(issue.startswith(prefixes) for issue in before)
-    assert not any(issue.startswith(prefixes) for issue in after)
+    def rewrite(flat: bool):
+        rows = []
+        for position, record in enumerate(dataset.records):
+            if record.module_key != module.key:
+                rows.append(record)
+                continue
+            label = (module.statuses[position % len(module.statuses)] if flat
+                     else weighted_label(rng, weights))  # fmt: skip
+            day = date(2025, 10, 1) + timedelta(days=position % 300) if flat else cluster.pick(rng)
+            data = {**record.data, ids[status.key]: label_id[label],
+                    ids[day_field.key]: day.isoformat()}  # fmt: skip
+            rows.append(replace(record, data=data))
+        return realism_report(replace(dataset, records=tuple(rows))).issues
+
+    prefixes = (f"C1 {module.key}:", f"C3 {module.key}:")
+    flat = rewrite(flat=True)
+    assert all(any(issue.startswith(prefix) for issue in flat) for prefix in prefixes)
+    assert not any(issue.startswith(prefixes) for issue in rewrite(flat=False))
 
 
 def test_holiday_records_are_reported_only_for_the_given_holidays() -> None:

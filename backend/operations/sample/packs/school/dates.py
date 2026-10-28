@@ -7,6 +7,9 @@ from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from operations.sample.packs.school.realism import holidays
+from operations.sample.realism import entry_time, working_day
+
 
 def activity_date(
     module_key: str,
@@ -18,7 +21,22 @@ def activity_date(
     return _activity_date(module_key, index, seed, anchor)
 
 
+def school_day(day: date, anchor: date) -> date:
+    """Move a date to a working day without moving it across the anchor date."""
+    if day < anchor:
+        low, high = day - timedelta(days=4), anchor - timedelta(days=1)
+    elif day > anchor:
+        low, high = anchor + timedelta(days=1), day + timedelta(days=4)
+    else:
+        return day
+    return working_day(day, holidays(anchor), low, high)
+
+
 def _activity_date(module_key: str, index: int, seed: int, anchor: date) -> date:
+    return school_day(_window_date(module_key, index, seed, anchor), anchor)
+
+
+def _window_date(module_key: str, index: int, seed: int, anchor: date) -> date:
     rng = random.Random(f"{seed}:{module_key}:{index}:school-date")
     if module_key in {"admission_inquiries", "applications"}:
         return anchor - timedelta(days=rng.randint(30, 140))
@@ -50,6 +68,20 @@ def related_date(
     past_due: bool = False,
 ) -> date:
     """Return a date field ordered around the record's principal school event."""
+    when = _related_date(module_key, field_key, index, seed, anchor, counts, past_due=past_due)
+    return when if module_key == "students" else school_day(when, anchor)
+
+
+def _related_date(
+    module_key: str,
+    field_key: str,
+    index: int,
+    seed: int,
+    anchor: date,
+    counts: Mapping[str, int],
+    *,
+    past_due: bool = False,
+) -> date:
     rng = random.Random(f"{seed}:{module_key}:{index}:{field_key}:school-date")
     main = _activity_date(module_key, index, seed, anchor)
     if module_key == "admission_inquiries" and field_key == "inquiry_date":
@@ -93,9 +125,11 @@ def related_datetime(
 ) -> str:
     when = related_date(module_key, field_key, index, seed, anchor, counts)
     local_zone = ZoneInfo("Europe/London")
-    hour = 7 + (index * 5 + seed) % 10
-    minute = (index * 11 + seed) % 60
-    return datetime.combine(when, time(hour, minute), local_zone).isoformat(timespec="minutes")
+    if field_key == "arrival_at":  # A late arrival is a morning time.
+        local_time = time(7 + (index * 5 + seed) % 10, (index * 11 + seed) % 60)
+    else:
+        local_time = entry_time(random.Random(f"{seed}:{module_key}:{index}:{field_key}:time"))
+    return datetime.combine(when, local_time, local_zone).isoformat(timespec="minutes")
 
 
 def birth_date(index: int, year_group_index: int, seed: int, anchor: date) -> date:
