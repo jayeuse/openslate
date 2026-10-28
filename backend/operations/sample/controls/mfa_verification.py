@@ -483,8 +483,10 @@ def verify_mfa_controls(
         TypeError,
         ValueError,
         StopIteration,
-    ):
-        issues.append("MFA control event correlation or final-state readback is invalid")
+    ) as error:
+        # The step names the failed readback; a bare message hid it in a live run.
+        step = getattr(error, "step", None) or type(error).__name__
+        issues.append(f"MFA control event correlation or final-state readback is invalid ({step})")
     if not issues:
         counts["mfa_control_actions"] = 1
     return counts, issues

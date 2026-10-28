@@ -23,6 +23,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
+from app.core.observability import log_event
 from app.systems.access.auth.cookies import (
     clear_browser_session as _clear_browser_session,
 )
@@ -161,7 +162,14 @@ def refresh(
         issued = refresh_provider_session(
             db, raw_refresh, get_supabase_auth_client(), csrf_token=csrf_token
         )
-    except InvalidCredentials:
+    except InvalidCredentials as error:
+        log_event(
+            "http_failure",
+            method="POST",
+            route="/api/auth/refresh",
+            status=401,
+            reason_code=f"refresh_{error.reason or 'unspecified'}",
+        )
         return _cleared_auth_error()
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
         db.rollback()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import math
 import re
@@ -152,6 +153,9 @@ class SampleClient:
         )
         self._journal_path = Path(journal_path)
         self._last_auth_at: float | None = None
+        # A short hash of the signed-in email: one account reads the same in every pack's
+        # journal, so a shared account's failures line up without naming it.
+        self._account_tag: str | None = None
         organization = {"X-Org": self._organization_id} if self._organization_id else {}
         self._client = httpx.Client(
             base_url=f"{api_origin}/",
@@ -168,6 +172,7 @@ class SampleClient:
     def login(self, email: str, password: str) -> httpx.Response:
         self._last_auth_at = None
         self._client.cookies.clear()
+        self._account_tag = hashlib.sha256(email.strip().lower().encode()).hexdigest()[:12]
         response = self._request(
             "POST",
             _LOGIN_PATH,
@@ -307,6 +312,7 @@ class SampleClient:
                     "attempt_id": attempt_id,
                     "method": normalized_method,
                     "route_template": route_template(normalized_method, path),
+                    **({"account": self._account_tag} if self._account_tag else {}),
                 }
             )
             try:

@@ -570,3 +570,25 @@ def test_an_organization_bound_client_sends_its_organization_on_every_request(
         ("/api/events", organization, organization),
         ("/api/records", None, None),
     ]
+
+
+def test_journal_tags_each_request_with_a_hashed_account_and_never_the_email(
+    tmp_path: Path,
+) -> None:
+    # Live seven-pack run: five packs' refreshes failed at once, and the journal could
+    # not say whether they were one shared account.
+    import hashlib
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return _login_response()
+        return httpx.Response(200, json={"ok": True})
+
+    with _client(tmp_path, httpx.MockTransport(handler)) as client:
+        client.login(EMAIL, PASSWORD)
+        client.request("GET", "/api/auth/me")
+    journal = (tmp_path / "private" / "requests.jsonl").read_text()
+    started = [json.loads(line) for line in journal.splitlines() if "request_started" in line]
+    tag = hashlib.sha256(EMAIL.strip().lower().encode()).hexdigest()[:12]
+    assert [row.get("account") for row in started] == [tag, tag]
+    assert EMAIL not in journal

@@ -114,12 +114,18 @@ def test_refresh_browser_session_enforces_cookie_csrf_and_clears_invalid_state(
     db.commit.assert_not_called()
     assert _cookie_contains(response, "openslate_access=access-token")
 
+    # Live seven-pack run: refreshes were refused with no hint of which check failed.
+    logged = Mock()
+    monkeypatch.setattr(auth_router, "log_event", logged)
     monkeypatch.setattr(
-        auth_router, "refresh_provider_session", Mock(side_effect=InvalidCredentials("revoked"))
+        auth_router,
+        "refresh_provider_session",
+        Mock(side_effect=InvalidCredentials(reason="session_revoked")),
     )
     replay = auth_router.refresh(request, Response(), db)
     assert replay.status_code == 401
     assert any('openslate_refresh=""' in item for item in replay.headers.getlist("set-cookie"))
+    assert logged.call_args.kwargs["reason_code"] == "refresh_session_revoked"
 
     monkeypatch.setattr(
         auth_router,
