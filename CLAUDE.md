@@ -69,27 +69,30 @@ Fresh organizations expose first-run and empty-state defects; sample-pack organi
 
 ### Hands-on accounts
 
-Each sample-pack organization keeps one dedicated account per access level (`ho-` means hands-on). Leave the sample people untouched.
+The operator account (`openslate.business@outlook.com`) belongs to the owner. Use it only to run sample packs (the operator credential of `seed_sample_data.py`), never for hands-on tests. The only accounts Claude may use are the testing accounts of each sample-pack organization. They are permanent: never delete, rename or demote them, and leave the sample people untouched.
+
+`<org>` is the pack key with hyphens (`harbor`, `school`, `clinic`, `nonprofit`, `local-government`, `fmcg-distributor`, `manufacturer`); `<dept>` is the department key.
 
 | Account | Level | Expected |
 |---|---|---|
-| `ho-admin` | Organization admin | Manages the organization; cannot read others' DMs or private channels (D43) |
-| `ho-manager` | Member, manage on one department | Manages that department's conversations only |
-| `ho-writer` | Member, write on some modules | Posts where readable; no admin or manager tools |
-| `ho-reader` | Member, read only | Reads; cannot post where posting needs write |
-| `ho-noaccess` | Member, no group access | Sees only conversations they belong to |
-| `ho-guest` | Guest in one group | Read-capped; no admin or manager actions |
+| `admin@<org>.test` | Organization admin (the pack administrator; it ran the population) | Manages the organization; cannot read others' DMs or private channels (D43) |
+| `<dept>.manager@<org>.test` | Member, manage on that department | Manages that department's conversations only |
+| `<dept>.writer@<org>.test` | Member, write on that department's modules | Posts where readable; no admin or manager tools |
+| `<dept>.reader@<org>.test` | Member, read only | Reads; cannot post where posting needs write |
+| `general.noaccess@<org>.test` | Member, no group access | Sees only conversations they belong to |
+| `<dept>.guest@<org>.test` | Guest in one group | Read-capped; no admin or manager actions |
 
-- Create them by inviting in Access → People and completing each invitation through Mailpit (`127.0.0.1:<SUPABASE_MAIL_PORT>`). The owner signs in once to invite `ho-admin`; `ho-admin` invites the rest, so later passes need no owner sign-in.
-- Keep the generated passwords only in `~/.config/openslate-handson/accounts.json` (mode 600, outside the repo). If the file is lost, reset through Forgot password and Mailpit.
+- All testing accounts share one password chosen by the owner. It lives only in `~/.config/openslate-handson/accounts.json` (every testing account) and `~/.config/openslate-handson/administrator-password.json` (the pack administrators; a populate run passes it with `--administrator-password-file`). Both are mode 600, outside the repo. Never repeat it in chat, tracked files or memory.
+- A populate run creates `admin@<org>.test`. The admin invites the other testing accounts in Access → People, and each invitation is completed through Mailpit (`127.0.0.1:<SUPABASE_MAIL_PORT>`).
 - Never read `.env` or sample-run credential files (SEC-R3).
-- The S34 guarded reset removes these accounts' organization data; recreate them afterwards.
+- The guarded reset removes these accounts with their organizations; recreate them afterwards.
 
 Correct: `Admin in the pane, invited member in playwright MCP: delivery 250 ms, reply live; B7 first send after load dropped with no POST and no "Not sent" (high); sent to the implementer as a failing-first test; retest after the fix.`
 Correct: `Release smoke pass on a fresh organization and on Harbor before the gate: admin, member and guest end to end in both; one cross-feature defect (scheduled message ignores a later block) fixed with a failing-first test; then the gate ran on the freed machine.`
 Wrong: `HTTP suite is green, so the cutover works.`
 Wrong: `Ran the release smoke pass while prepush.py was running.`
 Wrong: `Logged in as a sample person using the password from the sample-run file.`
+Wrong: `Ran the admin hands-on pass as the operator account.`
 Wrong: `Tested only as admin; the feature works.`
 
 ## Advisor (Fable)
