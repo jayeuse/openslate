@@ -45,7 +45,7 @@ _SESSION_QUERY = {
 
 def organization_settings(dataset: SampleDataset) -> dict[str, str]:
     identity = dataset.organization.identity
-    currency = {"₱": "PHP", "£": "GBP"}.get(identity.currency_symbol)
+    currency = identity.currency_code or {"₱": "PHP", "£": "GBP"}.get(identity.currency_symbol)
     if currency is None:
         raise ValueError("The pack currency symbol has no declared ISO currency")
     return {

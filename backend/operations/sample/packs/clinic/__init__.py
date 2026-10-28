@@ -82,6 +82,7 @@ PACK = OrganizationPack(
         locale="en-US",
         timezone="America/Chicago",
         currency_symbol="$",
+        currency_code="USD",
         email_domain=people.INTERNAL_DOMAIN,
         uuid_namespace="openslate:lakeshore-clinic:v1",
         span="one quarter of outpatient care, including the start of flu season",
