@@ -406,6 +406,7 @@ def populate_sample_data(
     organization_id: str | None = None,
     partner_organization_id: str | None = None,
     administrator_password: str | None = None,
+    installation_controls: bool = True,
 ) -> SamplePopulationReport:
     """Create a private run, populate through user APIs, then prove the readback."""
     dataset = build_dataset(
@@ -414,6 +415,7 @@ def populate_sample_data(
         anchor_date,
         organization=organization,
         host_acceptance=host_control is not None,
+        installation_controls=installation_controls,
     )
     from operations.sample.phases.expectations import phase_plan_summary
 
@@ -440,6 +442,7 @@ def populate_sample_data(
         "seed": seed,
         "anchor_date": anchor_date.isoformat(),
         "host_acceptance": host_control is not None,
+        "installation_controls": installation_controls,
         "admin_id": None,
         "operator_id": expected_operator_id,
         "organization_id": organization_id,

@@ -464,8 +464,22 @@ HOST_ACCEPTANCE_ROUTES: frozenset[Route] = frozenset(
 )
 
 
+# Only the installation controls call these (backups and the installation security fields);
+# a pack populating beside another one in the same installation leaves them out.
+INSTALLATION_ROUTES: frozenset[Route] = frozenset(
+    {
+        ("GET", "/api/backups"),
+        ("POST", "/api/backups"),
+        ("GET", "/api/backups/status"),
+        ("PATCH", "/api/backups/status"),
+        ("GET", "/api/version"),
+        ("PATCH", "/api/workspace/security"),
+    }
+)
+
+
 def verify_route_coverage(
-    directory: Path, *, host_acceptance: bool = False
+    directory: Path, *, host_acceptance: bool = False, installation_controls: bool = True
 ) -> tuple[dict[str, int], list[str]]:
     """Require executed UI coverage across population and its read-only verification."""
     requests: Counter[Route] = Counter()
@@ -479,6 +493,8 @@ def verify_route_coverage(
     except (OSError, ValueError, UnicodeError):
         return {}, ["Actual UI route evidence is missing, unfinished or invalid"]
     required = SEEDER_ROUTES if host_acceptance else SEEDER_ROUTES - HOST_ACCEPTANCE_ROUTES
+    if not installation_controls:
+        required = required - INSTALLATION_ROUTES
     missing = required - requests.keys()
     report = {
         "event": "route_coverage",

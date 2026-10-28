@@ -343,6 +343,9 @@ def _parser() -> argparse.ArgumentParser:
             # Owner-only JSON {"password": ...}: the kept testing password of the pack
             # administrator (admin@<pack>.test). Without it, the run generates one.
             command.add_argument("--administrator-password-file", type=Path)
+            # A pack populating beside another one leaves the installation controls (backups,
+            # installation security) to the pack that runs them.
+            command.add_argument("--without-installation-controls", action="store_true")
     verify = commands.add_parser("verify", help="read back an existing private sample run")
     verify.add_argument("--run-directory", type=Path, required=True)
     verify.add_argument("--admin-password-file", type=Path)
@@ -409,6 +412,7 @@ def main(
                     args.anchor_date,
                     organization=pack,
                     host_acceptance=host_control is not None,
+                    installation_controls=not args.without_installation_controls,
                 )
                 _print_plan(dataset, report, mailpit_url)
                 assert pack is not None
@@ -442,6 +446,7 @@ def main(
                     mfa_observer=mfa_observer,
                     host_control=host_control,
                     administrator_password=administrator_password,
+                    installation_controls=not args.without_installation_controls,
                     organization_id=organization_id,
                     partner_organization_id=partner_id,
                 )

@@ -34,6 +34,7 @@ def main(arguments: list[str]) -> int:
         organization=get_pack(parameters["organization"]),
         organization_id=parameters["organization_id"],
         partner_organization_id=parameters["partner_organization_id"],
+        installation_controls=parameters.get("installation_controls", True) is not False,
     )
     print(f"status={report.status}", flush=True)
     print(f"run_directory={report.run_directory}", flush=True)

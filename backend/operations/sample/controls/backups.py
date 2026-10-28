@@ -54,6 +54,8 @@ _UNSTARTED_FACTS = (
 
 
 def plan_backup_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
+    if not dataset.installation_controls:
+        return ()  # Another pack in this installation runs the installation controls.
     if dataset.organization.phases is None:
         return ()
     specs: tuple[tuple[str, int, dict[str, PhaseJsonValue]], ...] = (

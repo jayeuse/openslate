@@ -132,6 +132,8 @@ def plan_manage_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             expected_end_state=end_state,
         )
         for operation, actor, status, end_state in specs
+        # The installation security fields are shared; one pack per installation changes them.
+        if dataset.installation_controls or operation != "update_workspace_security"
     )
 
 

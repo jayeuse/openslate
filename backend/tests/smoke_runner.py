@@ -26,6 +26,7 @@ import tempfile
 import time
 from collections import Counter, defaultdict
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -81,7 +82,14 @@ def parse_options(argv: Sequence[str]) -> argparse.Namespace:
         help="seed the listed packs at Small and skip the browser suite",
     )
     parser.add_argument("--packs", help="comma-separated pack keys (with --seed-only)")
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="seed the listed packs at the same time; the first runs the installation controls",
+    )
     options = parser.parse_args(list(argv))
+    if options.parallel and not options.seed_only:
+        parser.error("--parallel needs --seed-only")
     if options.packs is None:
         options.packs = (ORGANIZATION,)
         return options
@@ -355,8 +363,9 @@ def main(argv: Sequence[str] = ()) -> int:
         caddy.start()
         wait_for(WEB + "/login", caddy, verify=False)
         certificate = gateway_root_certificate(caddy, private)
-        for pack in options.packs:
-            timed(f"{pack.title()} Small seeding")
+        env = {**api_env, "SSL_CERT_FILE": str(certificate)}
+
+        def prepare(pack: str, installation_controls: bool) -> Path:
             pack_results[pack] = {"status": "failed"}
             parameters = _write_private(
                 private / f"seed-parameters-{pack}.json",
@@ -371,22 +380,42 @@ def main(argv: Sequence[str] = ()) -> int:
                     "seed": SEED,
                     "anchor_date": ANCHOR_DATE,
                     "organization": pack,
+                    "installation_controls": installation_controls,
                     **create_pack_organizations(owner_url, pack, admin["id"]),
                 },
             )
             (private / "sample-runs" / pack).mkdir(mode=0o700)
+            return parameters
+
+        def seed_pack(pack: str, parameters: Path) -> None:
             seeding_started = time.monotonic()
-            run(
-                [sys.executable, "-m", "tests.smoke_seed", str(parameters)],
-                BACKEND,
-                {**api_env, "SSL_CERT_FILE": str(certificate)},
-            )
+            run_streamed([sys.executable, "-m", "tests.smoke_seed", str(parameters)],
+                         BACKEND, env, log)  # fmt: skip
             sample_run = next((private / "sample-runs" / pack).iterdir())
             pack_results[pack] = {
                 "status": "complete",
                 "seconds": round(time.monotonic() - seeding_started, 1),
+                "installation_controls": pack == options.packs[0] or not options.parallel,
                 **request_timings(sample_run / "requests.jsonl"),
             }
+
+        if options.parallel:
+            # Packs share one installation; only the first runs the installation controls.
+            timed(f"Parallel Small seeding ({', '.join(options.packs)})")
+            print(f"Smoke: {stage}", flush=True)
+            prepared = {pack: prepare(pack, pack == options.packs[0]) for pack in options.packs}
+            with ThreadPoolExecutor(max_workers=len(options.packs)) as pool:
+                futures = [pool.submit(seed_pack, pack, path) for pack, path in prepared.items()]
+                errors = [future.exception() for future in futures]
+            failed = next((error for error in errors if error is not None), None)
+            if failed is not None:
+                raise failed
+        else:
+            for pack in options.packs:
+                timed(f"{pack.title()} Small seeding")
+                print(f"Smoke: {stage}", flush=True)
+                seed_pack(pack, prepare(pack, True))
+        sample_run = next((private / "sample-runs" / options.packs[-1]).iterdir())
         if not options.seed_only:
             credentials = json.loads((sample_run / "credentials.json").read_text(encoding="utf-8"))
             fixture = _write_private(

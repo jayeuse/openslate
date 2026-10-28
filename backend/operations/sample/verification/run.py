@@ -259,6 +259,7 @@ def verify_sample_data(
         organization=pack,
         module_counts_override=counts,
         host_acceptance=manifest.get("host_acceptance") is True,
+        installation_controls=manifest.get("installation_controls", True) is not False,
     )
     observed: dict[str, int] = {}
     issues: list[str] = []
@@ -413,7 +414,9 @@ def verify_sample_data(
             operator.request("POST", "/api/auth/logout")
     if "control_plan" in manifest:
         route_counts, route_issues = verify_route_coverage(
-            run_directory, host_acceptance=dataset.host_acceptance
+            run_directory,
+            host_acceptance=dataset.host_acceptance,
+            installation_controls=dataset.installation_controls,
         )
         observed.update(route_counts)
         issues.extend(route_issues)

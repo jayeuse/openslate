@@ -342,8 +342,11 @@ def test_smoke_options_take_a_pack_list_only_for_a_seed_only_run() -> None:
     assert (default.seed_only, default.packs) == (False, ("harbor",))
     seeded = runner.parse_options(["--seed-only", "--packs", "harbor,school"])
     assert (seeded.seed_only, seeded.packs) == (True, ("harbor", "school"))
+    parallel = runner.parse_options(["--seed-only", "--parallel", "--packs", "harbor,school"])
+    assert (parallel.parallel, parallel.packs) == (True, ("harbor", "school"))
+    assert default.parallel is False
     for argv in (["--packs", "school"], ["--seed-only", "--packs", "harbor,unknown"],
-                 ["--seed-only", "--packs", "harbor,harbor"]):  # fmt: skip
+                 ["--seed-only", "--packs", "harbor,harbor"], ["--parallel"]):  # fmt: skip
         with pytest.raises(SystemExit):
             runner.parse_options(argv)
 
@@ -422,6 +425,13 @@ def test_smoke_seed_populates_the_pack_organization_it_is_given(
     assert seen["organization_id"] == "0190a000-0000-7000-8000-00000000000a"
     assert seen["partner_organization_id"] == "0190a000-0000-7000-8000-00000000000b"
     assert seen["organization"].identity.key == "school"
+    # A seed file written before concurrent runs keeps the installation controls.
+    assert seen["installation_controls"] is True
+
+    document = json.loads(parameters.read_text(encoding="utf-8"))
+    parameters.write_text(json.dumps({**document, "installation_controls": False}), "utf-8")
+    assert smoke_seed.main([str(parameters)]) == 0
+    assert seen["installation_controls"] is False
 
 
 def test_smoke_seed_prints_each_verification_issue_as_the_cli_does(
