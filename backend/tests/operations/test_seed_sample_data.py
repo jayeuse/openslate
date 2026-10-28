@@ -346,7 +346,7 @@ def test_baseline_refuses_partial_workspace_or_sandbox_without_any_write() -> No
         fresh_sandbox,
     )
     with pytest.raises(SampleVerificationError, match="workspace"):
-        assert_pristine_baseline(workspace_client, admin_id="admin-id")
+        assert_pristine_baseline(workspace_client, operator_id="admin-id")
     assert workspace_client.methods == ["GET"]
 
     sandbox_client = _BaselineClient(
@@ -367,7 +367,7 @@ def test_baseline_refuses_partial_workspace_or_sandbox_without_any_write() -> No
         ),
     )
     with pytest.raises(SampleVerificationError, match="Sandbox"):
-        assert_pristine_baseline(sandbox_client, admin_id="admin-id")
+        assert_pristine_baseline(sandbox_client, operator_id="admin-id")
     assert sandbox_client.methods == ["GET", "GET"]
 
 

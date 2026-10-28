@@ -16,8 +16,9 @@ from operations.sample.packs.interface import OrganizationPack
 _INITIAL_NAME = "OpenSlate"
 _USAGE_STATEMENT = """
 SELECT o.id,
-       (SELECT count(*) FROM public.memberships m
-         WHERE m.org_id = o.id AND m.user_id <> %(admin)s),
+       (SELECT count(*) FROM public.memberships m JOIN public.users u ON u.id = m.user_id
+         WHERE m.org_id = o.id AND m.user_id <> %(admin)s
+           AND u.email <> %(pack_administrator)s),
        (SELECT count(*) FROM public.records r WHERE r.org_id = o.id),
        EXISTS (SELECT 1 FROM public.memberships m
                 WHERE m.org_id = o.id AND m.user_id = %(admin)s AND m.role = 'admin'
@@ -59,9 +60,22 @@ def pack_email_domains(pack: OrganizationPack) -> frozenset[str]:
     )
 
 
-def organization_usage(connection: Any, slug: str, admin_id: UUID) -> OrganizationUsage | None:
-    """Read the pack organization's sample footprint; None when it does not exist yet."""
-    rows = connection.execute(_USAGE_STATEMENT, {"admin": admin_id, "slug": slug}).fetchall()
+def pack_administrator_email(pack: OrganizationPack) -> str:
+    """The pack organization's own administrator, in the pack's own email domain."""
+    return f"administrator@{pack.identity.email_domain}".casefold()
+
+
+def organization_usage(
+    connection: Any, slug: str, admin_id: UUID, *, pack_administrator: str
+) -> OrganizationUsage | None:
+    """Read the pack organization's sample footprint; None when it does not exist yet.
+
+    Other members leave out the operator and the pack administrator.
+    """
+    rows = connection.execute(
+        _USAGE_STATEMENT,
+        {"admin": admin_id, "slug": slug, "pack_administrator": pack_administrator},
+    ).fetchall()
     if not rows:
         return None
     ((organization_id, members, records, administered),) = rows
@@ -79,9 +93,17 @@ def organization_storage_objects(object_keys: Iterable[str], organization_id: UU
 
 
 def pack_provider_accounts(
-    auth: ResetAuth, admin_provider_id: UUID, admin_email: str, domains: frozenset[str]
+    auth: ResetAuth,
+    admin_provider_id: UUID,
+    admin_email: str,
+    domains: frozenset[str],
+    *,
+    ignored_emails: frozenset[str] = frozenset(),
 ) -> int:
-    """Count provider Auth accounts in the pack's email domains; other packs do not count."""
+    """Count provider Auth accounts in the pack's email domains; other packs do not count.
+
+    A resumed pack organization passes its own pack administrator in ``ignored_emails``.
+    """
     admin_seen = False
     count = 0
     for page in range(1, _MAX_ACCOUNT_PAGES + 1):
@@ -98,7 +120,7 @@ def pack_provider_accounts(
                 user_id, email = UUID(user["id"]), str(user["email"]).strip().casefold()
                 if user_id == admin_provider_id:
                     admin_seen = email == admin_email.strip().casefold()
-                else:
+                elif email not in ignored_emails:
                     count += email.rpartition("@")[2] in domains
         except (ValueError, TypeError, KeyError):
             raise ResetError("The provider Auth inventory is invalid") from None

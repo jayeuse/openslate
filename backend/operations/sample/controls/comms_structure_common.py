@@ -10,6 +10,7 @@ from app.common.listing import StandardListResponse
 from app.systems.comms.conversations.schemas import DirectBlockResponse, MemberResponse
 from app.systems.comms.messages.schemas import Category, Conversation
 from operations.sample.client import SampleClient
+from operations.sample.controls.planned_actors import OPERATOR
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import (
     PhaseExecutionContext,
@@ -46,7 +47,22 @@ def member_keys(action: PhaseAction) -> tuple[str, str]:
 def bound_context(
     context: PhaseExecutionContext, clients: dict[str, SampleClient]
 ) -> PhaseExecutionContext:
-    value = replace(context, clients=clients)
+    """Bind the partner organization: its administrator ("admin") is the operator.
+
+    Evidence, identity checks and password proofs then name the operator, who signed in.
+    """
+    operator_id = context.user_ids.get(OPERATOR)
+    password = context.private_values.get("operator_password")
+    if not isinstance(operator_id, str) or not isinstance(password, str) or not password:
+        raise SamplePhaseActionError(
+            "The partner administrator (the operator) is unavailable", step="partner_binding"
+        )
+    value = replace(
+        context,
+        clients=clients,
+        user_ids={**context.user_ids, "admin": operator_id},
+        admin_password=password,
+    )
     value.runtime_mappings = context.runtime_mappings
     return value
 

@@ -130,7 +130,7 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
     assert actions[-3] == bulk
     assert actions[-2].values["operation"] == "review_notifications"
     assert actions[-1].values["operation"] == "revoke_user_sessions"
-    actors = {person.key for person in dataset.organization.actors.people} | {"admin"}
+    actors = {person.key for person in dataset.organization.actors.people} | {"admin", "operator"}
     assert all(action.actor_key in actors for action in actions)
     assert read_phase_plan({"phase_plan": [asdict(action) for action in actions]}) == actions
     unknown_pack = replace(

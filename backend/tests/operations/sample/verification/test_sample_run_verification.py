@@ -21,13 +21,37 @@ from tests.operations.sample.sample_datasets import (
     sample_dataset,
 )
 
+# The installation operator verifies the run; the pack administrator ran it.
+OPERATOR_EMAIL = "admin@example.test"
+PACK_ADMIN_ID = str(uuid5(NAMESPACE_DNS, "sample-verification:pack-administrator"))
+PACK_ADMIN_EMAIL = "administrator@harbor-ops.example"
+PACK_ADMIN_ROW = {
+    "id": PACK_ADMIN_ID,
+    "email": PACK_ADMIN_EMAIL,
+    "username": "harbor-administrator",
+    "role": "admin",
+    "status": "active",
+    "is_deleted": False,
+}
+LOGIN_IDS = {OPERATOR_EMAIL: "admin-a", PACK_ADMIN_EMAIL: PACK_ADMIN_ID}
+
+
+def write_roster(directory: Path) -> None:
+    """The run's private roster holds the pack administrator's generated password."""
+    path = directory / "credentials.json"
+    account = {"key": "administrator", "email": PACK_ADMIN_EMAIL, "password": "synthetic-admin"}
+    path.write_text(json.dumps({"accounts": [account]}))
+    path.chmod(0o600)
+
 
 def _manifest(directory: Path, **changes: object) -> None:
     directory.mkdir(mode=0o700)
+    write_roster(directory)
     payload = {
         "schema_version": 1,
         "run_id": directory.name,
-        "admin_id": "admin-a",
+        "admin_id": PACK_ADMIN_ID,
+        "operator_id": "admin-a",
         "status": "complete",
         "profile": "small",
         "seed": 42,
@@ -45,11 +69,21 @@ def _manifest(directory: Path, **changes: object) -> None:
     path.chmod(0o600)
 
 
-def test_manifest_refuses_another_administrator_before_network(tmp_path: Path) -> None:
+def test_manifest_refuses_another_operator_before_network(tmp_path: Path) -> None:
     directory = tmp_path / ("a" * 32)
     _manifest(directory)
-    with pytest.raises(SampleVerificationError, match="administrator"):
+    with pytest.raises(SampleVerificationError, match="another operator"):
         read_run_manifest(directory, "admin-b")
+
+
+@pytest.mark.parametrize("admin_id", [None, "admin-a", "not-a-uuid", PACK_ADMIN_ID.upper()])
+def test_manifest_refuses_a_missing_or_operator_pack_administrator(
+    tmp_path: Path, admin_id: object
+) -> None:
+    directory = tmp_path / ("a" * 32)
+    _manifest(directory, admin_id=admin_id)
+    with pytest.raises(SampleVerificationError, match="pack administrator"):
+        read_run_manifest(directory, "admin-a")
 
 
 def test_manifest_refuses_public_or_symlinked_evidence(tmp_path: Path) -> None:
@@ -64,6 +98,12 @@ def test_manifest_refuses_public_or_symlinked_evidence(tmp_path: Path) -> None:
     alias.symlink_to(directory, target_is_directory=True)
     with pytest.raises(SampleVerificationError, match="private"):
         read_run_manifest(alias, "admin-a")
+
+
+def test_a_run_stopped_before_its_invitation_reads_as_incomplete(tmp_path: Path) -> None:
+    directory = tmp_path / ("a" * 32)
+    _manifest(directory, status="incomplete", admin_id=None)
+    assert read_run_manifest(directory, "admin-a")["admin_id"] is None
 
 
 def test_manifest_preserves_incomplete_state_for_reporting(tmp_path: Path) -> None:
@@ -173,7 +213,7 @@ def _configuration_base() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any
         for person in _people()
     }
     sponsor = mappings["user"]["internal_sales_lead"]
-    users = [{"id": "admin-a", "role": "admin", "status": "active"}]
+    users = [{"id": "admin-a", "role": "admin", "status": "active"}, dict(PACK_ADMIN_ROW)]
     for person in _people():
         users.append(
             {
@@ -351,6 +391,8 @@ def _configuration_base() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any
         payloads[f"/api/sandbox/versions/{version['id']}"] = {**version, "document": document}
     manifest = {
         "schema_version": 1,
+        "admin_id": PACK_ADMIN_ID,
+        "operator_id": "admin-a",
         "status": "complete",
         "profile": "small",
         "seed": 42,
@@ -382,6 +424,8 @@ def _configuration_base() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any
         "test_history",
         "control_plan",
         "route_coverage",
+        "pack_administrator",
+        "operator_missing",
     ),
 )
 def test_verifier_requires_exact_foundation_readback(
@@ -430,10 +474,14 @@ def test_verifier_requires_exact_foundation_readback(
         manifest["control_results"] = []
     elif changed == "route_coverage":
         manifest["control_plan"] = []
+    elif changed == "pack_administrator":
+        next(row for row in payloads["/api/users"] if row["id"] == PACK_ADMIN_ID)["role"] = "member"
+    elif changed == "operator_missing":
+        payloads["/api/users"] = [row for row in payloads["/api/users"] if row["id"] != "admin-a"]
 
     class FakeClient:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+            self.email = ""
 
         def __enter__(self) -> FakeClient:
             return self
@@ -441,14 +489,15 @@ def test_verifier_requires_exact_foundation_readback(
         def __exit__(self, *_args: object) -> None:
             pass
 
-        def login(self, _email: str, _password: str) -> httpx.Response:
+        def login(self, email: str, _password: str) -> httpx.Response:
+            self.email = email
             return httpx.Response(200, json={})
 
         def request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
             if method == "POST" and path == "/api/auth/logout":
                 return httpx.Response(200, json={})
             if path == "/api/auth/me":
-                return httpx.Response(200, json={"id": "admin-a"})
+                return httpx.Response(200, json={"id": LOGIN_IDS[self.email]})
             if path not in payloads:
                 raise AssertionError(f"Unexpected API read: {path}")
             value = payloads[path]
@@ -499,12 +548,17 @@ def test_verifier_requires_exact_foundation_readback(
             verifier, "verify_controls", lambda *_args, **_kwargs: ({}, []), raising=False
         )
         monkeypatch.setattr(verifier, "configuration_mappings", lambda *_args: manifest["mappings"])
+    write_roster(tmp_path)
     result = verify_sample_data(
         api_url="https://api.example.test",
         origin="https://ui.example.test",
-        admin_email="admin@example.test",
-        expected_admin_id="admin-a",
-        admin_password="synthetic",
+        operator_email=OPERATOR_EMAIL,
+        expected_operator_id="admin-a",
+        operator_password="synthetic",
         run_directory=tmp_path,
     )
     assert result.status == ("complete" if changed == "none" else "incomplete")
+    if changed == "pack_administrator":
+        assert "the pack administrator's identity, role or account state differs" in result.issues
+    if changed == "operator_missing":
+        assert "identity roster differs from the recorded run" in result.issues

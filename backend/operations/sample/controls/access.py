@@ -10,6 +10,7 @@ from operations.sample.controls.access_verification import _pending_invitation
 from operations.sample.controls.access_verification import (
     verify_access_controls as verify_access_controls,
 )
+from operations.sample.controls.planned_actors import OPERATOR
 from operations.sample.packs.phase_types import PhaseAction, PhaseActionKind, PhaseJsonValue
 from operations.sample.phases.action_routes import _group_snapshot, _updated_group
 from operations.sample.phases.actions import (
@@ -53,12 +54,13 @@ def _make_action(
     values: dict[str, PhaseJsonValue],
     expected_status: int,
     expected_end_state: dict[str, PhaseJsonValue],
+    actor_key: str = "admin",
 ) -> PhaseAction:
     return PhaseAction(
         key=key,
         phase="admin",
         kind=kind,
-        actor_key="admin",
+        actor_key=actor_key,
         target_key=target_key,
         values={"operation": operation, **values},
         expected_status=expected_status,
@@ -140,6 +142,9 @@ def plan_access_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             values={"role": "guest"},
             expected_status=200,
             expected_end_state={"role": "guest", "status": "active", "is_deleted": False},
+            # Deleting a single-organization guest removes the account; only the
+            # installation owner restores a removed account.
+            actor_key=OPERATOR,
         ),
         _make_action(
             key="controls:access:resend_invitation",

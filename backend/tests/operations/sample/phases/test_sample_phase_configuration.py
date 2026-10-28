@@ -70,7 +70,7 @@ def test_people_readback_uses_the_recorded_promotion_not_result_claims(tmp_path,
         transport=httpx.MockTransport(handler),
     ) as client:
         _, issues = _people_issues(
-            client, manifest, "admin-a", organization=context["dataset"].organization
+            client, manifest, manifest["admin_id"], organization=context["dataset"].organization
         )
     if actual_role == "admin":
         assert issues == []

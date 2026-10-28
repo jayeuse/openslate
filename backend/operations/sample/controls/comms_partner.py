@@ -38,7 +38,9 @@ def execute_partner(
     if admin.organization_id is None or admin.organization_id == primary_org:
         raise SamplePhaseActionError("Partner organization differs from plan", step=action.key)
     clients = {**context.clients, "admin": admin}
-    run = StructureRun(action, bound_context(context, clients), on_substep)
+    # From here on "admin" is the partner's administrator: the operator.
+    context = bound_context(context, clients)
+    run = StructureRun(action, context, on_substep)
     run.identity()
     keys = member_keys(action)
     first, second = keys

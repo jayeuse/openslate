@@ -46,7 +46,8 @@ def has_matching_audit(
     return False
 
 
-def assert_pristine_baseline(client: SampleClient, *, admin_id: str) -> dict[str, Any]:
+def assert_pristine_baseline(client: SampleClient, *, operator_id: str) -> dict[str, Any]:
+    """The operator's new organization holds only the operator, before its administrator."""
     workspace = _api_object(client, "/api/workspace")
     assert_pristine_workspace(workspace)
     sandbox = _api_object(client, "/api/sandbox/document")
@@ -55,12 +56,12 @@ def assert_pristine_baseline(client: SampleClient, *, admin_id: str) -> dict[str
     users = list_all_rows(client, "/api/users")
     if (
         len(users) != 1
-        or str(users[0].get("id")) != admin_id
+        or str(users[0].get("id")) != operator_id
         or users[0].get("role") != "admin"
         or users[0].get("status") != "active"
         or users[0].get("is_deleted") is not False
     ):
-        raise SampleVerificationError("The baseline must contain only the active administrator")
+        raise SampleVerificationError("The baseline must contain only the active operator")
 
     for path, page_size in (
         ("/api/access/groups", 100),

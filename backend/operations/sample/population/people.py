@@ -225,6 +225,22 @@ def _new_acceptance_client(
     return SampleClient(api_url, origin, journal_path, organization_id)
 
 
+def people_roster_rows(organization: OrganizationPack | None = None) -> list[dict[str, str]]:
+    """The private roster rows of the pack-defined people."""
+    return [
+        {
+            "key": item.key,
+            "email": item.email,
+            "username": item.username,
+            "display_name": item.name,
+            "job_title": item.title,
+            "role": item.role,
+            "status": item.status,
+        }
+        for item in _people(organization or default_pack())
+    ]
+
+
 def populate_people(
     admin: SampleClient,
     api_url: str,
@@ -232,33 +248,18 @@ def populate_people(
     module_ids: Mapping[str, str],
     mailpit_url: str,
     origin: str,
-    roster_path: Path,
+    roster: CredentialRoster,
     organization: OrganizationPack | None = None,
     organization_id: str | None = None,
 ) -> SamplePeopleResult:
-    """Create the pack-defined identities and access groups."""
+    """Create the pack-defined identities and access groups in the run's private roster."""
     pack = organization or default_pack()
     departments = _ids(department_ids, pack.actors.department_keys)
     modules = _ids(module_ids, pack.actors.required_module_keys)
     people = _people(pack)
-    try:
-        roster = CredentialRoster.create(
-            roster_path,
-            [
-                {
-                    "key": item.key,
-                    "email": item.email,
-                    "username": item.username,
-                    "display_name": item.name,
-                    "job_title": item.title,
-                    "role": item.role,
-                    "status": item.status,
-                }
-                for item in people
-            ],
-        )
-    except SampleInvitationError as error:
-        raise SamplePeopleError(str(error)) from None
+    if any(person.key not in roster.accounts for person in people):
+        raise SamplePeopleError("The private roster does not cover the pack's people")
+    roster_path = roster.path
     mailbox = InvitationMailbox(mailpit_url, origin)
     try:
         mailbox.snapshot()

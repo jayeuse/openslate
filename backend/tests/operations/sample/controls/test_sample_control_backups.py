@@ -1,6 +1,7 @@
 """Sample backup planning and the isolated metadata control boundary."""
 
 import copy
+from dataclasses import replace
 from datetime import date
 from uuid import uuid4
 
@@ -25,6 +26,18 @@ from tests.operations.sample.controls.test_sample_control_host_delivery import (
 )
 from tests.operations.sample.controls.test_sample_control_sandbox import _context, _login_response
 
+OPERATOR_ID = "0b6f1f5e-2c39-4f4e-9d0a-0c2bb1f6a1d4"
+
+
+def _operator_context(tmp_path, handler):
+    """Backups need the installation operator; the pack administrator has no client here."""
+    context = _context(tmp_path, handler)
+    return replace(
+        context,
+        clients={"operator": context.clients["admin"]},
+        user_ids={"operator": OPERATOR_ID},
+    )
+
 
 @pytest.mark.parametrize("pack_key", ("harbor", "school"))
 def test_backup_plan_adds_one_action_per_public_operation_with_authored_name(pack_key):
@@ -39,7 +52,7 @@ def test_backup_plan_adds_one_action_per_public_operation_with_authored_name(pac
         "review_version",
     ]
     assert len({row.key for row in actions}) == len(actions)
-    assert all(row.actor_key == "admin" and row.phase == "reorganization" for row in backups)
+    assert all(row.actor_key == "operator" and row.phase == "reorganization" for row in backups)
     queue = backups[2]
     assert queue.expected_status == 201
     assert (
@@ -226,7 +239,7 @@ def _run_controls(actions, dataset, context):
 def _backup_journey(tmp_path, fault=None, version_status="unknown", pack_key="harbor"):
     dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
     wire = BackupWire(fault, version_status)
-    context = _context(tmp_path, wire.handle)
+    context = _operator_context(tmp_path, wire.handle)
     from operations.sample.controls.backups import plan_backup_controls
 
     actions = plan_backup_controls(dataset)
@@ -263,7 +276,8 @@ def test_backup_controls_restore_policy_and_verify_queue_beyond_visible_history(
         assert "Idempotency-Key" not in journal
         assert dataset.organization.identity.workspace_name not in journal
     finally:
-        context.clients["admin"].close()
+        for client in context.clients.values():
+            client.close()
 
 
 @pytest.mark.parametrize(
@@ -292,7 +306,8 @@ def test_backup_controls_refuse_wire_or_state_mismatch_without_repeated_writes(t
             _run_controls(actions, dataset, context)
         assert sum(request.method == "POST" for request in wire.requests) <= 1
     finally:
-        context.clients["admin"].close()
+        for client in context.clients.values():
+            client.close()
 
 
 def test_backup_queue_unknown_outcome_stops_without_replay(tmp_path):
@@ -302,7 +317,8 @@ def test_backup_queue_unknown_outcome_stops_without_replay(tmp_path):
             _run_controls(actions, dataset, context)
         assert sum(request.method == "POST" for request in wire.requests) == 1
     finally:
-        context.clients["admin"].close()
+        for client in context.clients.values():
+            client.close()
 
 
 def test_version_review_preserves_non_numeric_running_version_and_last_observation(tmp_path):
@@ -319,7 +335,8 @@ def test_version_review_preserves_non_numeric_running_version_and_last_observati
         assert result["version_observation"] == wire.version
         assert all(request.method == "GET" for request in wire.requests)
     finally:
-        context.clients["admin"].close()
+        for client in context.clients.values():
+            client.close()
 
 
 @pytest.mark.parametrize(
@@ -363,6 +380,7 @@ def test_backup_reconciliation_requires_exact_descriptors_and_current_owned_read
             "control_results": results,
             "mappings": copy.deepcopy(context.runtime_mappings),
             "actor_ids": {},
+            "operator_id": OPERATOR_ID,
         }
         evidence = results[1]["request_evidence"]
         if tamper == "missing_step":
@@ -397,8 +415,9 @@ def test_backup_reconciliation_requires_exact_descriptors_and_current_owned_read
             wire.version["current_version"] = "9.9.9"
         elif tamper == "final_no_store":
             wire.fault = "no_store"
+        operator = context.clients["operator"]
         counts, issues = verify_controls(
-            context.clients["admin"], dataset, manifest, context.user_ids["admin"]
+            operator, dataset, manifest, str(uuid4()), operator=operator
         )
         assert bool(issues) is (tamper is not None)
         if tamper is None:
@@ -408,7 +427,8 @@ def test_backup_reconciliation_requires_exact_descriptors_and_current_owned_read
             assert counts["backup_version_reviewed"] == 1
             assert sum(request.method == "POST" for request in wire.requests) == 1
     finally:
-        context.clients["admin"].close()
+        for client in context.clients.values():
+            client.close()
 
 
 @pytest.mark.parametrize("callback", [None, "untrusted-input"])
@@ -454,13 +474,17 @@ def test_host_callback_and_public_receipts_reconcile_through_common_verifier(
         "control_results": [result],
         "actor_ids": context.user_ids,
         "mappings": {"user": context.user_ids, "group": context.group_ids},
+        "operator_id": OWNER_ID,
     }
     _patch_plan_and_final_verifiers(monkeypatch, action)
     # Only the host action is under this harness; the legacy queued control has
     # its own unstarted-request fixture above.
-    monkeypatch.setattr(verification, "_verify_backup_final", lambda *a: None)
+    from operations.sample.controls import backups_verification
+
+    monkeypatch.setattr(backups_verification, "verify_backup_final", lambda *a: None)
+    operator = context.clients["operator"]
     counts, issues = verification.verify_controls(
-        context.clients["admin"], dataset, manifest, OWNER_ID
+        operator, dataset, manifest, str(uuid4()), operator=operator
     )
     assert issues == []
     assert counts["host_control_actions"] == 1

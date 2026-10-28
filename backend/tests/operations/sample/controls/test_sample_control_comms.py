@@ -28,6 +28,7 @@ from tests.operations.sample.controls.comms_support import (
     DIRECT,
     GROUP,
     INVITATION,
+    OPERATOR,
     ORIGIN,
     PARTNER,
     PRIMARY,
@@ -105,8 +106,17 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
     assert members[0] == account.actor_key
     chosen = [next(person for person in people if person.key == key) for key in members]
     assert all(person.role == "member" and person.status == "active" for person in chosen)
-    ids = {"admin": ADMIN, **{p.key: str(uuid5(NAMESPACE_URL, p.key)) for p in chosen}}
-    emails = {"admin": "fixture-admin@example.test", **{p.key: p.email for p in chosen}}
+    # The pack administrator runs the primary organization; the operator the partner.
+    ids = {
+        "admin": ADMIN,
+        "operator": OPERATOR,
+        **{p.key: str(uuid5(NAMESPACE_URL, p.key)) for p in chosen},
+    }
+    emails = {
+        "admin": "fixture-admin@example.test",
+        "operator": "fixture-operator@example.test",
+        **{p.key: p.email for p in chosen},
+    }
     journal = tmp_path / "requests.jsonl"
     seen, factory_calls, member_reads, resource_reads = [], [], set(), set()
     partner_identity_reads = set()
@@ -160,7 +170,7 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                 {
                     "id": ids[actor],
                     "email": emails[actor],
-                    "role": "admin" if actor == "admin" else "member",
+                    "role": "admin" if actor in {"admin", "operator"} else "member",
                     "status": "active",
                     "current_organization": {"org_id": org},
                     "pending_invitations": [
@@ -171,7 +181,7 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                 },
             )
         if (method, path) == ("POST", "/api/auth/invitations"):
-            assert actor == "admin" and org == PARTNER and not invited
+            assert actor == "operator" and org == PARTNER and not invited
             assert body == {
                 "email": chosen[1].email,
                 "username": chosen[1].username,
@@ -200,7 +210,7 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
         assert actor in partner_identity_reads, "Partner identity must be read before Comms use"
         assert PRIMARY_DEPARTMENT not in request.content.decode()
         assert PRIMARY_GROUP not in request.content.decode()
-        assert actor == "admin" or actor in admitted
+        assert actor == "operator" or actor in admitted
         if (method, path) == ("POST", "/api/comms/categories"):
             assert body == {
                 "name": action.values["category_name"],
@@ -234,7 +244,7 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
             }
             return response(201, created[CHANNEL], tag='"channel"', location=f"{path}/{CHANNEL}")
         if (method, path) == ("POST", "/api/comms/directs"):
-            assert actor == "admin" and body == {"recipient_id": ids[members[0]]}
+            assert actor == "operator" and body == {"recipient_id": ids[members[0]]}
             direct_calls += 1
             assert direct_calls <= 2
             created[DIRECT] = {
@@ -244,8 +254,8 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                 "level": "manage",
                 "member_role": "manager",
                 "member_count": 2,
-                "participant_ids": [ADMIN, ids[members[0]]],
-                "participants": _participants([ADMIN, ids[members[0]]]),
+                "participant_ids": [OPERATOR, ids[members[0]]],
+                "participants": _participants([OPERATOR, ids[members[0]]]),
             }
             return response(
                 201 if direct_calls == 1 else 200,
@@ -254,11 +264,11 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                 location=f"/api/comms/conversations/{DIRECT}" if direct_calls == 1 else None,
             )
         if (method, path) == ("POST", "/api/comms/groups"):
-            assert actor == "admin" and admitted == set(members)
+            assert actor == "operator" and admitted == set(members)
             assert set(body) == {"name", "participant_ids"}
             assert body["name"] == action.values["group_name"]
             assert len(body["participant_ids"]) == 3
-            assert set(body["participant_ids"]) == {ADMIN, *(ids[key] for key in members)}
+            assert set(body["participant_ids"]) == {OPERATOR, *(ids[key] for key in members)}
             created[GROUP] = {
                 **_resource(GROUP, PARTNER),
                 "kind": "group",
@@ -267,8 +277,8 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                 "member_role": "manager",
                 "member_count": 3,
                 "name": body["name"],
-                "participant_ids": [ADMIN, *(ids[key] for key in members)],
-                "participants": _participants([ADMIN, *(ids[key] for key in members)]),
+                "participant_ids": [OPERATOR, *(ids[key] for key in members)],
+                "participants": _participants([OPERATOR, *(ids[key] for key in members)]),
             }
             return response(
                 201,
@@ -284,7 +294,7 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
             }
             row = dict(created[identifier])
             resource_reads.add(identifier)
-            if actor != "admin":
+            if actor != "operator":
                 assert identifier == CHANNEL
                 member_reads.add(actor)
                 row.update(level="post", member_role="member")
@@ -330,7 +340,8 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                     key: SampleActorCredential(ids[key], emails[key], "fixture-only")
                     for key in members
                 },
-                "partner_admin": lambda: client("admin", PARTNER),
+                "partner_admin": lambda: client("operator", PARTNER),
+                "operator_password": "fixture-only",
                 "partner_actor": partner_actor,
             },
         )
@@ -343,7 +354,7 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
             assert result["partner_members_verified"] is True
             assert invited and admitted == set(members)
             assert set(factory_calls) == set(members) and member_reads == set(members)
-            assert partner_identity_reads == {"admin", *members}
+            assert partner_identity_reads == {"operator", *members}
             assert direct_calls == 2 and set(created) == {CATEGORY, CHANNEL, DIRECT, GROUP}
             assert resource_reads == {CATEGORY, CHANNEL, DIRECT, GROUP}
             receipts = result["mappings"]
@@ -356,7 +367,7 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
             evidence = result["request_evidence"]
             assert any(
                 row["path"] == "/api/auth/invitations"
-                and row["actor_id"] == ADMIN
+                and row["actor_id"] == OPERATOR
                 and row["status_code"] == 201
                 for row in evidence
             )

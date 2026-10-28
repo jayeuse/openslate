@@ -31,6 +31,7 @@ from operations.sample.controls.host_environment import (
 from operations.sample.controls.host_verification import verify_delivery
 from operations.sample.controls.mfa import plan_mfa_controls
 from operations.sample.controls.mfa_verification import _factor_inventory, _group_members, _uuid
+from operations.sample.controls.planned_actors import OPERATOR
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import (
     PhaseExecutionContext,
@@ -85,7 +86,7 @@ def execute_host_control(
         attempted = True  # A lost promotion response still requires fresh cleanup.
         promoted = run.read_response(
             run.request(
-                "admin",
+                OPERATOR,
                 "promote_actor",
                 "PATCH",
                 f"/api/users/{run.actor_id}",
@@ -264,7 +265,7 @@ def execute_host_control(
             "original_actor_group_ids": run.actor_groups,
             "original_group_members": run.groups,
             "owner_factors": run.owner_factors,
-            "primary_actor_keys": sorted(key for key in context.clients if key != "admin"),
+            "primary_actor_keys": sorted(set(context.clients) - {"admin", OPERATOR}),
         },
     )
 
@@ -298,7 +299,8 @@ class _Delivery:
             substep,
         )
         self.actor_id = _uuid(context.user_ids.get(action.actor_key), "host_actor")
-        self.owner_id = _uuid(context.user_ids.get("admin"), "host_owner")
+        # The installation operator owns the host backup; the pack administrator does not.
+        self.owner_id = _uuid(context.user_ids.get(OPERATOR), "host_owner")
         require(
             self.actor_id != self.owner_id
             and len([v for v in context.user_ids.values() if v == self.actor_id]) == 1,
@@ -308,7 +310,7 @@ class _Delivery:
         require(isinstance(raw, Mapping), "host_credential")
         self.credentials = cast(Mapping[str, SampleActorCredential], raw)
         for key in context.clients:
-            if key != "admin":
+            if key not in {"admin", OPERATOR}:
                 credential = self.credentials.get(key)
                 require(
                     isinstance(credential, SampleActorCredential)
@@ -316,7 +318,7 @@ class _Delivery:
                     "host_credential",
                 )
         self.credential = self.credentials[action.actor_key]
-        self.admin, self.actor = context.clients["admin"], context.clients[action.actor_key]
+        self.admin, self.actor = context.clients[OPERATOR], context.clients[action.actor_key]
         self.person_spec = next(
             p for p in dataset.organization.actors.people if p.key == action.actor_key
         )
@@ -422,7 +424,7 @@ class _Delivery:
     def admit(self) -> None:
         self.capture = admit_development(self.runtime)
         require(self.capture["owner_user_id"] == self.owner_id, "host_owner")
-        self.owner = self.read("admin", "owner_identity", "/api/auth/me")
+        self.owner = self.read(OPERATOR, "owner_identity", "/api/auth/me")
         require(
             self.owner.get("id") == self.owner_id
             and self.owner.get("role") == "admin"
@@ -430,9 +432,9 @@ class _Delivery:
             "host_owner",
         )
         self.owner_factors = _factor_inventory(
-            self.read("admin", "owner_factors", "/api/auth/mfa"), self.owner_id, "host_owner"
+            self.read(OPERATOR, "owner_factors", "/api/auth/mfa"), self.owner_id, "host_owner"
         )[1]
-        self.person(self.read("admin", "actor_profile", f"/api/users/{self.actor_id}"), "member")
+        self.person(self.read(OPERATOR, "actor_profile", f"/api/users/{self.actor_id}"), "member")
         self.person(self.read(self.action.actor_key, "actor_identity", "/api/auth/me"), "member")
         require(
             _factor_inventory(
@@ -444,12 +446,12 @@ class _Delivery:
             "host_actor",
         )
         require(
-            self.read("admin", "mfa_policy", "/api/workspace/security").get("mfa_require_admin")
+            self.read(OPERATOR, "mfa_policy", "/api/workspace/security").get("mfa_require_admin")
             is False,
             "host_policy",
         )
         status = BackupStatusResponse.model_validate(
-            self.read("admin", "development_idle", "/api/backups/status")
+            self.read(OPERATOR, "development_idle", "/api/backups/status")
         )
         self.policy = status.policy
         require(

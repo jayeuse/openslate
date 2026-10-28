@@ -30,6 +30,7 @@ from tests.operations.sample.controls.access_invitation_fixtures import (
 )
 
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
+OPERATOR_ID = "0b6f1f5e-2c39-4f4e-9d0a-0c2bb1f6a1d4"
 GUEST_ID = "e40862a7-fbb7-4e71-a590-90e11f4e893d"
 PENDING_ID = "9ec0d287-ae14-4603-91c2-f9a4d7b73c0a"
 GROUP_ID = "4f10e3a8-6798-4ae8-bf5a-66ef6c54c02e"
@@ -85,9 +86,10 @@ def _client(tmp_path: Path, handler) -> SampleClient:
 
 def _context(tmp_path: Path, dataset: SampleDataset, handler) -> PhaseExecutionContext:
     return PhaseExecutionContext(
-        clients={"admin": _client(tmp_path, handler)},
+        clients={"admin": _client(tmp_path, handler), "operator": _client(tmp_path, handler)},
         user_ids={
             "admin": ADMIN_ID,
+            "operator": OPERATOR_ID,
             _guest_key(dataset): GUEST_ID,
             _pending_key(dataset): PENDING_ID,
         },
@@ -154,7 +156,11 @@ def test_access_control_plan_is_repeatable_and_restores_people(pack_key: str) ->
     assert all(action.target_key == actions[5].target_key for action in actions[5:])
     assert len({action.key for action in actions}) == len(actions)
     assert people[actions[5].target_key].status == "pending"
-    assert all(action.actor_key == "admin" for action in actions)
+    # Only the installation owner restores the account a single-organization delete removed.
+    assert [action.key for action in actions if action.actor_key != "admin"] == [
+        "controls:access:restore_guest"
+    ]
+    assert actions[4].actor_key == "operator"
     assert all(action.expected_end_state for action in actions)
 
 

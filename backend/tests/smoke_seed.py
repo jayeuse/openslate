@@ -23,9 +23,10 @@ def main(arguments: list[str]) -> int:
         api_url=parameters["api_url"],
         origin=parameters["origin"],
         mailpit_url=parameters["mailpit_url"],
-        admin_email=parameters["admin_email"],
-        expected_admin_id=parameters["admin_id"],
-        admin_password=parameters["admin_password"],
+        # The installation operator; it invites the pack's own administrator.
+        operator_email=parameters["admin_email"],
+        expected_operator_id=parameters["admin_id"],
+        operator_password=parameters["admin_password"],
         run_root=Path(parameters["run_root"]),
         profile="small",
         seed=int(parameters["seed"]),

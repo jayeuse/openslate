@@ -1,6 +1,6 @@
 """Public host-control request contract and final correlated readback."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from app.systems.manage.audit.schemas import SecurityEventResponse
@@ -9,6 +9,7 @@ from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient
 from operations.sample.controls.host_environment import require
 from operations.sample.controls.mfa_verification import _factor_inventory, _group_members, _uuid
+from operations.sample.controls.planned_actors import OPERATOR
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import _read_json
 from operations.sample.verification.core import list_all_rows
@@ -21,14 +22,14 @@ def host_request_contract(
     export_path = f"/api/backups/exports/{export}"
     # fmt: off
     specs = {
-        "owner_identity": ("admin", "GET", "/api/auth/me", 200),
-        "owner_factors": ("admin", "GET", "/api/auth/mfa", 200),
-        "actor_profile": ("admin", "GET", f"/api/users/{user}", 200),
+        "owner_identity": (OPERATOR, "GET", "/api/auth/me", 200),
+        "owner_factors": (OPERATOR, "GET", "/api/auth/mfa", 200),
+        "actor_profile": (OPERATOR, "GET", f"/api/users/{user}", 200),
         "actor_identity": (actor, "GET", "/api/auth/me", 200),
         "actor_factors": (actor, "GET", "/api/auth/mfa", 200),
-        "mfa_policy": ("admin", "GET", "/api/workspace/security", 200),
-        "development_idle": ("admin", "GET", "/api/backups/status", 200),
-        "promote_actor": ("admin", "PATCH", f"/api/users/{user}", 200),
+        "mfa_policy": (OPERATOR, "GET", "/api/workspace/security", 200),
+        "development_idle": (OPERATOR, "GET", "/api/backups/status", 200),
+        "promote_actor": (OPERATOR, "PATCH", f"/api/users/{user}", 200),
         "host_health": (actor, "GET", "/api/health", 200),
         "host_readiness": (actor, "GET", "/api/ready", 200),
         "login_actor": (actor, "POST", "/api/auth/login", 200),
@@ -44,19 +45,19 @@ def host_request_contract(
         "native_identity": (actor, "GET", "/api/auth/me", 200),
         "native_admission": (actor, "POST", export_path + "/download-admission", 200),
         "native_content": (actor, "GET", f"/api/backups/exports/{export}/content", 200),
-        "restore_owner_refresh": ("admin", "POST", "/api/auth/refresh", 200),
-        "restore_owner_identity": ("admin", "GET", "/api/auth/me", 200),
-        "restore_actor_read": ("admin", "GET", f"/api/users/{user}", 200),
-        "restore_actor_role": ("admin", "PATCH", f"/api/users/{user}", 200),
+        "restore_owner_refresh": (OPERATOR, "POST", "/api/auth/refresh", 200),
+        "restore_owner_identity": (OPERATOR, "GET", "/api/auth/me", 200),
+        "restore_actor_read": (OPERATOR, "GET", f"/api/users/{user}", 200),
+        "restore_actor_role": (OPERATOR, "PATCH", f"/api/users/{user}", 200),
         "restored_actor": (actor, "GET", "/api/auth/me", 200),
         "restored_factors": (actor, "GET", "/api/auth/mfa", 200),
-        "restored_owner_factors": ("admin", "GET", "/api/auth/mfa", 200),
+        "restored_owner_factors": (OPERATOR, "GET", "/api/auth/mfa", 200),
     }
     # fmt: on
     for group in result["original_actor_group_ids"]:
-        specs["restore_group_read:" + group] = ("admin", "GET", f"/api/access/groups/{group}", 200)
+        specs["restore_group_read:" + group] = (OPERATOR, "GET", f"/api/access/groups/{group}", 200)
         specs["restore_group:" + group] = (
-            "admin",
+            OPERATOR,
             "PUT",
             f"/api/access/groups/{group}/members",
             200,
@@ -68,8 +69,9 @@ def host_request_contract(
 
 
 def verify_host_controls(
-    admin: SampleClient, dataset: SampleDataset, manifest: Mapping[str, Any], admin_id: str
+    admin: SampleClient, dataset: SampleDataset, manifest: Mapping[str, Any], operator_id: str
 ) -> tuple[dict[str, int], list[str]]:
+    """Read back the host export as the installation operator, who owns it."""
     from operations.sample.controls.host_delivery import plan_host_controls
 
     counts = {
@@ -87,7 +89,7 @@ def verify_host_controls(
         actor_id = _uuid(result["actor_id"], "host_result")
         require(
             actor_id == actors[action.actor_key] == manifest["mappings"]["user"][action.actor_key]
-            and actor_id != admin_id
+            and actor_id != operator_id
             and result["outcome"] == "completed"
             and result["actor_key"] == action.actor_key
             and result["target_key"] == action.target_key
@@ -103,7 +105,7 @@ def verify_host_controls(
                 == contract[step]
                 and row["expected_status"] == row["status_code"]
                 and row["actor_id"]
-                == (admin_id if row["actor_key"] == "admin" else actors[row["actor_key"]]),
+                == (operator_id if row["actor_key"] == OPERATOR else actors[row["actor_key"]]),
                 "host_result",
             )
             identifier = _uuid(row["request_id"], "host_result")
@@ -130,12 +132,12 @@ def verify_host_controls(
         )
         owner = _read_json(admin.request("GET", "/api/auth/me"), step="host_result")
         require(
-            owner.get("id") == admin_id
+            owner.get("id") == operator_id
             and owner.get("role") == "admin"
             and owner.get("status") == "active"
             and _factor_inventory(
                 _read_json(admin.request("GET", "/api/auth/mfa"), step="host_result"),
-                admin_id,
+                operator_id,
                 "host_result",
             )[1]
             == result["owner_factors"],
@@ -194,3 +196,72 @@ def verify_host_controls(
         return counts, []
     except Exception:
         return counts, ["Physical host control receipt or final readback is not verified"]
+
+
+def verify_host_evidence(
+    dataset: SampleDataset,
+    action: PhaseAction,
+    result: Mapping[str, Any],
+    expected_id: Callable[[str], str | None],
+    seen_request_ids: set[str],
+    observed: dict[str, int],
+    issues: list[str],
+) -> None:
+    """Every host request matches its route, planned account and a fresh request ID."""
+    from operations.sample.controls.host_delivery import plan_host_controls
+    from operations.sample.controls.request_verification import _canonical_uuid
+    from operations.sample.verification.route_coverage import SEEDER_ROUTES, route_template
+
+    evidence_rows = result["request_evidence"]
+    try:
+        contract = host_request_contract(action, result)
+        optional = {
+            "restore_actor_role",
+            *("restore_group:" + g for g in result["original_actor_group_ids"]),
+        }
+        host_steps = [row["step"] for row in evidence_rows]
+        if (
+            action not in plan_host_controls(dataset)
+            or any(
+                result.get(key) is not value for key, value in action.expected_end_state.items()
+            )
+            or len(set(host_steps)) != len(host_steps)
+            or not set(contract) - optional <= set(host_steps) <= set(contract)
+        ):
+            raise ValueError
+        identifiers: set[str] = set()
+        for row in evidence_rows:
+            actor, host_method, host_path, status = contract[row["step"]]
+            identifier = _canonical_uuid(row["request_id"])
+            if (
+                set(row)
+                != {
+                    "step",
+                    "actor_key",
+                    "actor_id",
+                    "method",
+                    "path",
+                    "expected_status",
+                    "status_code",
+                    "request_id",
+                }
+                or (row["actor_key"], row["method"], row["path"], row["status_code"])
+                != (actor, host_method, host_path, status)
+                or type(row["status_code"]) is not int
+                or type(row["expected_status"]) is not int
+                or row["expected_status"] != status
+                or row["actor_id"] != expected_id(actor)
+                or _canonical_uuid(row["actor_id"]) is None
+                or (host_method, route_template(host_method, host_path)) not in SEEDER_ROUTES
+                or identifier is None
+                or identifier in identifiers | seen_request_ids
+            ):
+                raise ValueError
+            identifiers.add(identifier)
+    except (KeyError, TypeError, ValueError):
+        issues.append(
+            "Host control evidence differs from its route or request identity contract"
+        )
+        return
+    seen_request_ids.update(identifiers)
+    observed["control_requests_verified"] += len(identifiers)

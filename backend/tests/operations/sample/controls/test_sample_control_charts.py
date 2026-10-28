@@ -426,6 +426,7 @@ def test_run_count_boundary_credits_only_native_certified_dashboard(
 
     monkeypatch.setattr(boundary, "verify_content", content)
     original = wire.__call__
+    reads: list[httpx.Request] = []
 
     def with_identity(request):
         if request.url.path == "/api/dashboards":
@@ -436,9 +437,11 @@ def test_run_count_boundary_credits_only_native_certified_dashboard(
                 json={"items": list(wire.dashboards.values())},
             )
         if request.url.path == "/api/auth/me":
+            # The operator and the pack administrator each read their identity once.
+            reads.append(request)
             return httpx.Response(
                 200,
-                headers={"X-Request-ID": identity("verify identity")},
+                headers={"X-Request-ID": identity(f"verify identity {len(reads)}")},
                 json={"id": context.user_ids["admin"]},
             )
         if request.url.path == "/api/auth/logout":
@@ -446,12 +449,18 @@ def test_run_count_boundary_credits_only_native_certified_dashboard(
         return original(request)
 
     context.clients["admin"]._client._transport = httpx.MockTransport(with_identity)
+    # One fixture session answers for both the operator and the pack administrator.
+    manifest.update(admin_id=context.user_ids["admin"], operator_id=context.user_ids["admin"])
+    before = deepcopy(manifest)
+    monkeypatch.setattr(
+        boundary, "roster_logins", lambda *_args: [("administrator@sample.test", "fixture")]
+    )
     report = boundary.verify_sample_data(
         api_url="http://sample.test",
         origin="http://localhost",
-        admin_email="admin@sample.test",
-        expected_admin_id=context.user_ids["admin"],
-        admin_password="fixture-password",
+        operator_email="admin@sample.test",
+        expected_operator_id=context.user_ids["admin"],
+        operator_password="fixture-password",
         run_directory=directory,
     )
     assert report.status == ("complete" if fault is None else "incomplete")

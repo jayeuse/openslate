@@ -218,8 +218,10 @@ def host_journey(host_dataset, topology_runtime, tmp_path, monkeypatch):
 
         monkeypatch.setattr(delivery, "verify_delivery", verified, raising=False)
         # fmt: off
-        context = PhaseExecutionContext(clients={"admin": admin, wire.selected[0]: actor},
-            user_ids={key: u["id"] for key, u in wire.users.items()},
+        # The installation operator owns the host backup; it is the wire's owner session.
+        context = PhaseExecutionContext(clients={"operator": admin, wire.selected[0]: actor},
+            user_ids={("operator" if key == "admin" else key): u["id"]
+                      for key, u in wire.users.items()},
             group_ids={key: g["id"] for key, g in wire.groups.items()},
             department_ids={}, module_ids={}, field_ids={}, mappings={}, admin_password=PASSWORD,
             private_values={"credentials": {wire.selected[0]: SampleActorCredential(
@@ -513,7 +515,9 @@ def test_final_host_readback_cannot_accept_forged_delivery_or_lost_restoration(h
         "actor_ids": context.user_ids,
         "mappings": {"user": context.user_ids, "group": context.group_ids},
     }
-    counts, issues = verify_host_controls(context.clients["admin"], dataset, manifest, OWNER_ID)
+    counts, issues = verify_host_controls(
+        context.clients["operator"], dataset, manifest, OWNER_ID
+    )
     if fault is None:
         assert issues == [] and counts["host_control_actions"] == 1
         assert counts["host_control_security_events"] == 1

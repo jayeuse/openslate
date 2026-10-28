@@ -407,7 +407,8 @@ def verify_settings_runs(
     api_url: str,
     origin: str,
     journal: Path,
-    admin_login: tuple[str, str],
+    operator_login: tuple[str, str],
+    operator_id: str,
 ) -> tuple[dict[str, int], list[str]]:
     """Final verification rebinds the run's partner explicitly, never through session selection."""
     rows = manifest.get("control_results", [])
@@ -440,12 +441,12 @@ def verify_settings_runs(
                 issues.append("Partner settings binding differs")
                 continue
             with SampleClient(api_url, origin, journal, partner_id) as partner:
-                if partner.login(*admin_login).status_code != 200:
+                if partner.login(*operator_login).status_code != 200:
                     issues.append("Partner settings verification sign-in failed")
                     continue
                 try:
                     current = verify_settings_control(
-                        partner, action, row, manifest.get("mappings", {}), admin_id
+                        partner, action, row, manifest.get("mappings", {}), operator_id
                     )
                 finally:
                     partner.request("POST", "/api/auth/logout")

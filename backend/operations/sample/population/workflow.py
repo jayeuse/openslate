@@ -15,6 +15,11 @@ from operations.sample.phases.population import run_population_phases
 from operations.sample.population.activity import build_record_payload as build_record_payload
 from operations.sample.population.activity import relationship_write as relationship_write
 from operations.sample.population.activity import run_activity
+from operations.sample.population.administrator import (
+    create_run_roster,
+    invite_pack_administrator,
+    partner_client_factory,
+)
 from operations.sample.population.content import (
     assert_empty_content,
     finish_content,
@@ -24,11 +29,11 @@ from operations.sample.population.people import populate_people
 from operations.sample.population.run import (
     SamplePopulationError,
     _api,
-    _api_id,
     _catalogue,
     _login,
     _write_manifest,
 )
+from operations.sample.population.sandbox_publication import _publish_sandbox
 from operations.sample.population.triggers import (
     exercise_record_triggers,
     validate_record_trigger_candidates,
@@ -65,9 +70,9 @@ def run_population(
     api_url: str,
     origin: str,
     mailpit_url: str,
-    admin_email: str,
-    admin_password: str,
-    expected_admin_id: str,
+    operator_email: str,
+    operator_password: str,
+    expected_operator_id: str,
     run_directory: Path,
     run_id: str,
     dataset: SampleDataset,
@@ -77,18 +82,31 @@ def run_population(
     organization_id: str | None = None,
     partner_organization_id: str | None = None,
 ) -> dict[str, int]:
-    """Perform the sample workflow sequentially and persist only safe evidence."""
+    """Run the sample as the pack administrator the operator invites; persist safe evidence."""
     journal = run_directory / "requests.jsonl"
     clients: dict[str, SampleClient] = {}
     try:
-        admin = SampleClient(api_url, origin, journal, organization_id)
-        clients["admin"] = admin
-        _login(admin, admin_email, admin_password, expected_id=expected_admin_id)
+        operator = SampleClient(api_url, origin, journal, organization_id)
+        clients["operator"] = operator
+        _login(operator, operator_email, operator_password, expected_id=expected_operator_id)
         manifest["stage"] = "baseline"
         _write_manifest(run_directory, manifest)
-        baseline = assert_pristine_baseline(admin, admin_id=expected_admin_id)
-        assert_empty_content(admin, baseline["boards"])
+        baseline = assert_pristine_baseline(operator, operator_id=expected_operator_id)
+        assert_empty_content(operator, baseline["boards"])
         validate_record_trigger_candidates(dataset)
+
+        manifest["stage"] = "administrator"
+        _write_manifest(run_directory, manifest)
+        roster = create_run_roster(run_directory / "credentials.json", dataset.organization)
+        administrator = invite_pack_administrator(
+            operator, roster, api_url=api_url, origin=origin, mailpit_url=mailpit_url,
+            organization_id=organization_id, operator_id=expected_operator_id,
+        )  # fmt: skip
+        admin_password, expected_admin_id = administrator.password, administrator.user_id
+        manifest["admin_id"] = expected_admin_id
+        _write_manifest(run_directory, manifest)
+        admin = clients["admin"] = SampleClient(api_url, origin, journal, organization_id)
+        _login(admin, administrator.email, admin_password, expected_id=expected_admin_id)
 
         from datetime import UTC, datetime
 
@@ -144,7 +162,7 @@ def run_population(
             module_ids,
             mailpit_url,
             origin,
-            run_directory / "credentials.json",
+            roster,
             organization=dataset.organization,
             organization_id=organization_id,
         )
@@ -301,23 +319,18 @@ def run_population(
             "new_client": new_client,
             "mailpit_url": mailpit_url,
             "origin": origin,
+            "operator_password": operator_password,
         }
         if prune_fixture is not None:
             private_values["sandbox_prune_fixture"] = prune_fixture
-        if partner_organization_id is not None:
-
-            def partner_client(actor_key: str = "admin") -> SampleClient:
-                client = SampleClient(api_url, origin, journal, partner_organization_id)
-                clients[f"partner-{actor_key}-{len(clients)}"] = client
-                if actor_key == "admin":
-                    _login(client, admin_email, admin_password, expected_id=expected_admin_id)
-                else:
-                    credential = people_result.actors[actor_key]
-                    _login(client, credential.email, credential.password,
-                           expected_id=credential.user_id)
-                return client
-
-            private_values["partner_admin"] = private_values["partner_actor"] = partner_client
+        if partner_organization_id is not None:  # The operator administers the partner.
+            private_values["partner_admin"] = private_values["partner_actor"] = (
+                partner_client_factory(
+                    api_url=api_url, origin=origin, journal=journal, clients=clients,
+                    partner_organization_id=partner_organization_id, actors=people_result.actors,
+                    operator=(operator_email, operator_password, expected_operator_id),
+                )
+            )  # fmt: skip
         if mfa_observer is not None:
             private_values["mfa_observer"] = mfa_observer
         if host_control is not None:
@@ -328,6 +341,7 @@ def run_population(
             clients=clients,
             user_ids={
                 "admin": expected_admin_id,
+                "operator": expected_operator_id,
                 **{key: row["user_id"] for key, row in people.items()},
             },
             group_ids=people_result.groups,
@@ -341,95 +355,6 @@ def run_population(
     finally:
         for client in clients.values():
             client.close()
-
-
-def _publish_sandbox(
-    admin: SampleClient, dataset: SampleDataset, admin_password: str, run_id: str, admin_id: str
-) -> dict[str, Any] | None:
-    saved = _api(
-        admin,
-        "PUT",
-        "/api/sandbox/document",
-        body={"expectedRevision": 1, "document": dataset.document},
-    )
-    revision = _positive_int(saved.get("revision"), "Sandbox revision")
-    from operations.sample.controls.version_prune import prepare_prune_fixture
-
-    revision, fixture = prepare_prune_fixture(
-        admin, dataset, actor_id=admin_id, run_id=run_id, document_response=saved
-    )
-    checkpoint = _api(
-        admin,
-        "POST",
-        "/api/sandbox/versions",
-        body={
-            "expectedRevision": revision,
-            "kind": "checkpoint",
-            "label": "Initial organization design",
-            "note": "Departments, modules and automation rules for review.",
-        },
-        expected=(201,),
-    )
-    admin.record_mapping("sandbox_versions", "initial_checkpoint", _api_id(checkpoint))
-    current = _api(admin, "GET", "/api/sandbox/document")
-    revision = _positive_int(current.get("revision"), "Sandbox revision")
-    for vector in dataset.test_vectors:
-        result = _api(
-            admin,
-            "POST",
-            "/api/sandbox/tests",
-            body={
-                "expectedRevision": revision,
-                "moduleId": dataset.module_ids[vector.module_key],
-                "values": vector.values,
-                "event": vector.event,
-                "triggerIds": list(vector.trigger_ids),
-            },
-            expected=(201,),
-        )
-        admin.record_mapping("sandbox_tests", vector.key.replace("-", "_"), _api_id(result))
-    preview = _api(
-        admin,
-        "POST",
-        "/api/sandbox/publication-previews",
-        body={"expectedRevision": revision},
-    )
-    counts = preview.get("counts")
-    expected_counts = {
-        "departments": len(dataset.department_ids),
-        "modules": len(dataset.module_ids),
-        "relationships": len(dataset.relationship_ids),
-        "triggers": len(dataset.trigger_ids),
-    }
-    if (
-        preview.get("blockers") != []
-        or not isinstance(counts, Mapping)
-        or any(counts.get(key) != value for key, value in expected_counts.items())
-        or not isinstance(preview.get("previewToken"), str)
-        or not isinstance(preview.get("impactDigest"), str)
-    ):
-        raise SamplePopulationError(
-            "Sandbox publication preview did not match the generated design"
-        )
-    publication = _api(
-        admin,
-        "POST",
-        "/api/sandbox/publications",
-        body={
-            "expectedRevision": revision,
-            "previewToken": preview["previewToken"],
-            "impactDigest": preview["impactDigest"],
-            "password": admin_password,
-            "note": "Publish the initial organization structure.",
-        },
-        headers={"Idempotency-Key": f"sample-{run_id}"},
-        expected=(201,),
-    )
-    version = publication.get("version")
-    if not isinstance(version, Mapping):
-        raise SamplePopulationError("Sandbox publication did not return a published version")
-    admin.record_mapping("sandbox_versions", "published", _api_id(version))
-    return fixture
 
 
 def _document_field_map(
@@ -493,9 +418,3 @@ def _journal_mappings(path: Path) -> dict[str, dict[str, str]]:
         if singular in mappings:
             mappings[plural] = dict(mappings[singular])
     return mappings
-
-
-def _positive_int(value: Any, label: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise SamplePopulationError(f"{label} is missing or invalid")
-    return value
