@@ -165,3 +165,21 @@ def test_generic_control_planners_contain_no_fixed_pack_module_or_department_key
             ):
                 violations.append(f"{path.name}:{node.lineno}: {node.value}")
     assert not violations, f"Pack-specific keys in generic control code: {violations}"
+
+
+@pytest.mark.parametrize("pack_key", pack_keys())
+def test_the_session_revocation_target_never_belongs_to_a_second_organization(
+    pack_key: str,
+) -> None:
+    # Live Local government run: the target was also a partner-structure member, so the
+    # pack administrator's revocation was refused (409) for a shared account.
+    from operations.sample.controls.account import plan_account_controls
+    from operations.sample.controls.comms_structure import plan_structure_controls
+    from operations.sample.controls.reads import plan_read_controls
+
+    dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
+    shared = {plan_account_controls(dataset)[0].actor_key}
+    shared.update(key for action in plan_structure_controls(dataset)
+                  for key in action.values["member_keys"])  # fmt: skip
+
+    assert plan_read_controls(dataset)[0].target_key not in shared
