@@ -13,7 +13,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from app.core.config import Settings
 from app.core.database import session as database_session
-from app.main import _read_bounded_body, create_app
+from app.main import _database_reason, _read_bounded_body, create_app
 from tests.config_support import settings_values
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
@@ -77,6 +77,28 @@ def test_database_availability_failure_is_mapped_to_safe_503_with_diagnostic_id(
     assert response.json() == {"detail": "Database unavailable"}
     assert len(response.headers["X-Request-ID"]) == 36
     assert "private database detail" not in response.text
+
+
+class _DriverError(Exception):
+    def __init__(self, sqlstate: str | None) -> None:
+        self.sqlstate = sqlstate
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (OperationalError("SELECT 1", {}, _DriverError("40P01")), "database_deadlock"),
+        (OperationalError("SELECT 1", {}, _DriverError("40001")), "database_serialization_failure"),
+        (OperationalError("SELECT 1", {}, _DriverError("55P03")), "database_lock_unavailable"),
+        (OperationalError("SELECT 1", {}, _DriverError("57014")), "database_statement_timeout"),
+        (OperationalError("SELECT 1", {}, _DriverError(None)), "database_operation_failed"),
+        (SQLAlchemyTimeoutError("checkout timed out"), "database_pool_timeout"),
+    ],
+)
+def test_a_database_failure_logs_its_kind_without_exception_detail(error, reason) -> None:
+    # Live seven-pack run: a 503 logged only database_operation_failed, so a lock conflict
+    # could not be told from an outage.
+    assert _database_reason(error) == reason
 
 
 def test_non_file_timeout_is_not_mislabeled_as_a_file_transfer_timeout() -> None:

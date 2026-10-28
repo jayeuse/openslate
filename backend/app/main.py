@@ -130,14 +130,32 @@ def _request_headers(context: RequestContext) -> dict[str, str]:
     return {"X-Request-ID": str(context.request_id)}
 
 
-def _database_unavailable_response(request: Request, context: RequestContext) -> JSONResponse:
+# A fixed vocabulary by SQLSTATE, so the log names the failure without exception data.
+_DATABASE_REASONS = {
+    "40P01": "database_deadlock",
+    "40001": "database_serialization_failure",
+    "55P03": "database_lock_unavailable",
+    "57014": "database_statement_timeout",
+}
+
+
+def _database_reason(error: Exception) -> str:
+    if isinstance(error, SQLAlchemyTimeoutError):
+        return "database_pool_timeout"
+    sqlstate = getattr(getattr(error, "orig", None), "sqlstate", None)
+    return _DATABASE_REASONS.get(str(sqlstate), "database_operation_failed")
+
+
+def _database_unavailable_response(
+    request: Request, context: RequestContext, error: Exception
+) -> JSONResponse:
     log_event(
         "database_unavailable",
         request_id=context.request_id,
         method=request.method,
         route=_request_route(request),
         status=503,
-        reason_code="database_operation_failed",
+        reason_code=_database_reason(error),
     )
     return JSONResponse(
         status_code=503,
@@ -333,8 +351,8 @@ def create_app() -> FastAPI:
                 )
             else:
                 response = _unexpected_error_response(request, context)
-        except (OperationalError, SQLAlchemyTimeoutError):
-            response = _database_unavailable_response(request, context)
+        except (OperationalError, SQLAlchemyTimeoutError) as error:
+            response = _database_unavailable_response(request, context, error)
         except Exception:
             response = _unexpected_error_response(request, context)
         except BaseException:
