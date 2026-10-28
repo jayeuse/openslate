@@ -123,7 +123,7 @@ def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
     )
     # Authorization takes no locks, so the expiry commits cannot release any.
     expire_unused_reservations(db, datetime.now(UTC))
-    lock_quota(db)
+    lock_quota(db, account=user.id if payload.purpose == "user_avatar" else None)
     # Expiry may commit; recheck the current actor and grants at final admission.
     authorize(
         db,
@@ -352,7 +352,7 @@ def reconcile(
     token: UUID | None
     candidate = load(db, file_id)
     authorize_lifecycle(db, actor_id, candidate)
-    lock_quota(db)
+    lock_quota(db, account=candidate.creator_id if candidate.org_id is None else None)
     if candidate.purpose == "workspace_logo":
         profile = db.scalar(
             select(WorkspaceProfile)

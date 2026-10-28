@@ -114,7 +114,7 @@ def update_self_profile(
     with transfer_slot() if avatar_supplied else nullcontext():
         try:
             if avatar_supplied:
-                lock_quota(db)
+                lock_quota(db, account=actor_id)
             require_live_session(db, actor_id=actor_id, session_id=identity.session_id)
             db.refresh(identity.user, with_for_update={"nowait": True} if avatar_supplied else True)
             actor = fresh_user(db, actor_id)
