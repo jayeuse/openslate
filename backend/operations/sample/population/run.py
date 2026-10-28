@@ -148,6 +148,25 @@ def _write_manifest(directory: Path, document: Mapping[str, Any]) -> None:
             os.unlink(temporary)
 
 
+def refusal_detail(response: Any) -> str:
+    """The API's error code and up to three field errors (field ID and rule, never a value)."""
+    try:
+        detail = response.json().get("detail")
+    except (AttributeError, TypeError, ValueError):
+        return ""
+    if not isinstance(detail, Mapping):
+        return ""
+    code = detail.get("code")
+    parts = [code] if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code) else []
+    errors = detail.get("errors")
+    for error in errors[:3] if isinstance(errors, list) else []:
+        if isinstance(error, Mapping):
+            field = str(error.get("field_id", ""))[:36]
+            rule = str(error.get("message", ""))[:80]
+            parts.append(f"{field}: {rule}" if field else rule)
+    return f" ({'; '.join(parts)})" if parts else ""
+
+
 def _api(
     client: SampleClient,
     method: str,
@@ -160,7 +179,9 @@ def _api(
 ) -> dict[str, Any]:
     response = client.request(method, path, json_body=body, params=params, headers=headers)
     if response.status_code not in expected:
-        raise SamplePopulationError(f"{method} {path} returned HTTP {response.status_code}")
+        raise SamplePopulationError(
+            f"{method} {path} returned HTTP {response.status_code}{refusal_detail(response)}"
+        )
     if response.status_code == 204:
         return {}
     try:
