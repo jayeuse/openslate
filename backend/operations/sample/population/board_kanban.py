@@ -72,8 +72,9 @@ def seed_kanban(
         seeded.add(spec.board)
         stages = _ids(admin, board, "stages")
         if realism is not None and len(spec.cards) < target:
+            used = {card.record for card in spec.cards if card.record is not None}
             _generate_cards(pack, board, stages, _ids(admin, board, "labels"), clients, records,
-                            anchor_date, target - len(spec.cards), counts)  # fmt: skip
+                            anchor_date, target - len(spec.cards), counts, used)  # fmt: skip
     if realism is None:
         return counts
     modules = _pages(admin, "/api/modules")
@@ -175,14 +176,18 @@ def _generate_cards(
     anchor_date: date,
     count: int,
     counts: dict[str, int],
+    used: set[str] | None = None,
 ) -> None:
-    """Cards spread over the stages: many finished, some overdue, a few archived."""
+    """Cards spread over the stages: many finished, some overdue, a few archived. A Board
+    takes each record once, so record cards draw from the records not yet on it."""
     department = board["department_key"]
     logical = board["logical_id"]
     writer = clients[board["authors"][0]]
     base = f"/api/boards/{board['id']}"
     own = {module.key for module in pack.catalog.modules if module.department == department}
-    record_ids = sorted(key for key in records if key.partition(":")[0] in own)
+    record_ids = sorted(key for key in records if key.partition(":")[0] in own
+                        and key not in (used or set()))  # fmt: skip
+    random.Random(f"kanban:{pack.identity.key}:{logical}:records").shuffle(record_ids)
     objectives = _pack_realism(pack).BOARD_OBJECTIVES[department]
     last = len(stages) - 1
     weights = [20.0, *([45.0 / max(1, last - 1)] * max(0, last - 1)), 35.0][: len(stages)]
@@ -198,7 +203,7 @@ def _generate_cards(
             "label_ids": rng.sample(list(labels), k=rng.choice((0, 0, 1, 1, 2))) if labels else [],
         }
         if record_ids and rng.random() < 0.55:
-            body.update(kind="record", record_id=_id(records[rng.choice(record_ids)]))
+            body.update(kind="record", record_id=_id(records[record_ids.pop()]))
         else:
             title = objectives[number % len(objectives)]
             if number >= len(objectives):

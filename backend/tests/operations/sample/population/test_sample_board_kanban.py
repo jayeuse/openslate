@@ -162,3 +162,42 @@ def test_kanban_readback_counts_cards_and_their_checklists(
                                     0)  # fmt: skip
     else:
         assert (counts, failed) == (dict.fromkeys(counts, 0), 1)
+
+
+def test_a_board_never_gets_the_same_record_card_twice(tmp_path: Path) -> None:
+    # A Board accepts a record once (409 record_card_exists); the first live run hit it.
+    pack = get_pack("harbor")
+    seen: dict[str, set[str]] = {}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return _login(request)
+        if request.method == "GET":
+            return _page([], request)
+        body = json.loads(request.content)
+        if request.url.path.endswith("/cards") and body.get("kind") == "record":
+            used = seen.setdefault(request.url.path, set())
+            if body["record_id"] in used:
+                return httpx.Response(409, json={"detail": {"code": "record_card_exists"}})
+            used.add(body["record_id"])
+        return httpx.Response(201, json={"id": str(uuid5(UUID(BOARD_ID), str(body))),
+                                         "revision": 1})  # fmt: skip
+
+    client = _client(tmp_path, "admin", respond)
+    # Few records and many cards: without care, the draw repeats a record.
+    records = {f"service_requests:{n:06d}": {"id": _uuid("record", n)} for n in range(1, 4)}
+    records |= {key: {"id": _uuid(key)} for key in
+                ("customers:000001", "customers:000003", "quotes:000001", "quotes:000002")}
+    boards = {
+        name: {"id": _uuid("board", name), "logical_id": name, "scope": "department",
+               "department_key": name.split(":")[1], "authors": ("admin",), "board": {}}
+        for name in ("department:sales", "department:service")
+    }  # fmt: skip
+
+    counts = seed_kanban(client, boards=boards, clients={"admin": client}, records=records,
+                         anchor_date=ANCHOR, organization=pack)  # fmt: skip
+
+    assert counts["kanban_cards"] == 24
+    service = seen[f"/api/boards/{_uuid('board', 'department:service')}/cards"]
+    assert len(service) == 3  # Every record once; the other cards are objectives.
+    client.close()
