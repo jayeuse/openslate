@@ -123,6 +123,16 @@ The counts below are the proposed Standard counts. The Small profile is about on
   - A storekeeper opens a Patient and gets 404.
   - A guest surveyor edits a Staff Credential and gets 403.
 - **Trade phrases:** rapid test, lab test, QC run, proficiency testing, specimen, sample collection, test result.
+- **Implementation decisions (2026-10-28).** The pack data files in `backend/operations/sample/packs/clinic/` are the source of truth.
+  - Country: United States. US federal holidays (observed dates), USD, `America/Chicago`, fictional 555-01xx phone numbers, reserved `.example` domains.
+  - Payment sits in Revenue Cycle, not Patient Access. The named scenario (Claim 1, charge $420, payer payment $300, balance $120) then stays inside one department, and the payment poster records copays too.
+  - One payer remittance pays one claim. The research's 150 batched remittances become about 290 payer payments at Standard (one for each paid claim); the other payments are copays and self-pay amounts.
+  - Clinical content is a chief complaint, an ICD-10-CM code, an E/M level and a disposition. The Prescription has no dose instructions, and the Incident Report has no patient MRN field (rule 8 and rule 11).
+  - Stock lot expiry and credential expiry are month/year text with an expiry band, because Sandbox date fields accept only dates from a year before to 90 days after the run's anchor date.
+  - The Staff Credential's staff member is text: most of the 70 staff have no OpenSlate account.
+  - Automations become checkbox flags on the same module: Ready to claim (visit finished), denials queue (claim denied), Reorder needed (lot below 20), Work order needed (device out of service), Call-back needed (critical result), Incident report needed (fridge above 8 °C), Root-cause analysis needed (severe harm), and a disabled weekly maintenance review. Planned follow-ups: Claim 1 after visit 5 finishes, Purchase Request 1 after lot 5 drops below 20, Work Order 1 after device 5 goes out of service, Incident Report 1 after the fridge excursion on log 1.
+  - Guests: an accreditation surveyor reads Staff Credentials; a biomedical contractor reads Equipment and Maintenance Work Orders. No guest reads a patient module.
+  - "Proficiency testing" is not a trade phrase in the pack: it holds no marker word, so it needs no allowance.
 
 ### Nonprofit (`nonprofit`)
 

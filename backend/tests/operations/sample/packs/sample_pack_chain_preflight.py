@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import date
+from importlib import import_module
 from typing import Any, cast
 
 from operations.sample.actors import planned_access_level
@@ -198,9 +199,13 @@ def validate_record_chain_consistency(dataset: SampleDataset) -> None:
     elif dataset.organization.identity.key == "school":
         _validate_school_dates(dataset)
     else:
-        raise AssertionError(
-            f"No record/date chain admission rules for {dataset.organization.identity.key}"
-        )
+        # A later pack keeps its chain rules in sample_pack_<key>_chain.validate_dates.
+        key = dataset.organization.identity.key
+        try:
+            rules = import_module(f"tests.operations.sample.packs.sample_pack_{key}_chain")
+        except ModuleNotFoundError:
+            raise AssertionError(f"No record/date chain admission rules for {key}") from None
+        rules.validate_dates(dataset)
 
 
 def _updated_pack(
