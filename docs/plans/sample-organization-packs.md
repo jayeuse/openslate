@@ -215,6 +215,20 @@ The counts below are the proposed Standard counts. The Small profile is about on
   - The accountant releases a Payment Release and gets 403.
   - A council clerk opens a Civil Registry Entry and gets 404.
   - A guest state auditor disallows a voucher and gets 403.
+- **Implementation decisions (2026-10-28).** The pack data files in `backend/operations/sample/packs/local_government/` are the source of truth.
+  - Pack key: `local_government`, not `local-government`. The shared engine imports `operations.sample.packs.<key>.realism` and the chain rules `sample_pack_<key>_chain` by key, and a hyphen cannot be imported. The organization slug is `sample-local_government`.
+  - Country: Philippines. The fictional City Government of Dalisay: `en-PH`, `Asia/Manila`, PHP (₱), regular holidays and special non-working days plus an invented city charter day (September 15), `+63 9xx` mobile numbers, reserved `.example` domains. Reference numbers carry no year, because pack reference codes are built without the anchor date.
+  - Finance keeps one signature per module (research §11). Treasury has an assessment, a collection and a disbursing group; Budget and Accounting has a budget office and an accounting office. Everyone reads their own department; each group writes only its own module.
+  - The civil registry has its own group inside the City Clerk's department. The council secretariat writes only Communications and Legislative Measures, so the registry is hidden from it (404). Entries hold no personal names; the title is the event and the registry number. Civil registry fees are not linked to an Order of Payment, because the Treasury cannot read the registry.
+  - Refusal "A licensing officer creates a Disbursement Voucher" returns 404 "Module not found", not 403: the licensing office cannot read Budget and Accounting, and a hidden module answers 404 (`policy/checks.py`).
+  - The mayor and the executive office have no accounts. The Purchase Order "Approved by" and the voucher "Claim certified by" are text fields that name the signatory's position.
+  - Collection Deposit Reports are daily records (one for each working day, one for each collector at Large) with an OR series and a day total. They are not linked to Official Receipts: links come from record indexes only, and a link by day would need the anchor date.
+  - A business permit's "Valid until" is dropped (Sandbox dates accept at most 90 days after the anchor date); the permit keeps its number and release date. Occupancy fees are Orders of Payment with source Occupancy, linked to the building permit.
+  - Named scenario: Order of Payment 1 assesses ₱32,400 of business tax; Official Receipt 1 pays the first quarter, ₱8,100; the balance is ₱24,300.
+  - Automations: three record-created rules (drainage and flooding requests get High priority; a failed inspection flags a notice; a delayed registration flags the 10-day posting), four change rules (an assessed application flags its order of payment; a complex building permit past 7 days pending is breached; a request with an ABC of ₱2,000,000 or more gets competitive bidding; a measure approved on third reading flags its transmittal) and a disabled weekly review of work orders on hold. Planned follow-ups: Order of Payment 1 after application 5 is assessed, Enforcement Notice 1 after the failed inspection 1, and Communication 1 (the transmittal) after measure 5 passes third reading.
+  - Guests: a state auditor reads Treasury, Budget and Accounting, and Procurement; a fire safety inspector reads Business and Building Inspections. No guest reads the civil registry or the permit applications.
+  - Legislative Measures carry "Amount appropriated" (appropriation ordinances only), so the Clerk's dashboard has a sum widget (spec R8).
+  - Trade phrases: soil test, concrete cylinder test, water sample, bacteriological test.
 
 ### FMCG distributor (`fmcg-distributor`)
 
