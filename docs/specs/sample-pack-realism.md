@@ -234,6 +234,24 @@ Checks 1–5 run at Standard and Large (`verification/realism.py`); a module or 
 - R9: every department board has a Kanban with the department's stages; the demo Kanban keeps its named cards. Cards per board follow the profile (12, 24, 60), read from the size of the seeded organization. Each board has one or two calendar sources, and some team members (never the lead) add a personal source. Posts and events per board do not scale yet (needs the profile in `prepare_content`).
 - R6–R7: dirt applies from index 10. Email and URL dirt changes only the local part or a trailing slash, so hosts stay lower-case reserved domains. Refused-then-entered-again pairs use only modules whose title names no linked parent (Harbor expenses, School leave requests). Records owned by a disabled person are not done.
 
+## P4 results (2026-10-28)
+
+Five new packs are registered, each built on rules R1–R9 from its first commit, and each passed the offline acceptance (pack, scenario, text, realism, control, population and phase suites) and one live Small run in a disposable stack:
+
+| Pack key | Organization | Live Small |
+|---|---|---|
+| `clinic` | US outpatient clinic | 463 s, 8,258 requests |
+| `nonprofit` | Philippine relief and development nonprofit | 511 s, 9,051 requests |
+| `local_government` | Philippine city government | 519 s, 8,881 requests |
+| `fmcg_distributor` | Philippine consumer-goods distributor | 536 s, 8,844 requests |
+| `manufacturer` | US sauce and condiments plant | 449 s, 9,275 requests |
+
+Harbor and School Small also pass live on the same branch (527 s and 648 s). No live run had a 5xx response.
+
+Generic fixes the live runs found: a Board takes each record card once; the run keeps the calendar-source count; a pack names its ISO currency (`currency_code`); a refused write names the API code and fields; a User field must name a reader of the module (now in the shared preflight); a pack key with an underscore gets a valid slug; the session-revocation target never belongs to a second organization; the audit review searches a module name no other module contains; North American phone formats have no trunk 0; board files cover every file type in every pack.
+
+Known limits: pack keys must be Python package names; link rules get no seed or anchor date; the realism date check reads Date fields, not Date/Time; the generic writer weights are not Pareto, so packs keep writer teams at four people or fewer.
+
 ## Risks
 
 | Risk | Solution |
