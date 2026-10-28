@@ -201,3 +201,11 @@ def test_a_board_never_gets_the_same_record_card_twice(tmp_path: Path) -> None:
     service = seen[f"/api/boards/{_uuid('board', 'department:service')}/cards"]
     assert len(service) == 3  # Every record once; the other cards are objectives.
     client.close()
+
+
+def test_the_run_manifest_keeps_every_kanban_count_for_verification() -> None:
+    # Live run: calendar sources were read back but never stored, so readback was incomplete.
+    from operations.sample.population import workflow
+    from operations.sample.population.board_kanban import KANBAN_KEYS
+
+    assert set(KANBAN_KEYS) <= set(workflow._CONTENT_KEYS)
