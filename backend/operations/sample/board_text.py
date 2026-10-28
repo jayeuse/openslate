@@ -23,7 +23,34 @@ def post_text(
     *,
     organization: OrganizationPack | None = None,
 ) -> tuple[str, str]:
-    return (organization or default_pack()).content.data.post_text(board, index, parent_total, paid)
+    pack = organization or default_pack()
+    if index < pack.content.data.posts_per_board:
+        return pack.content.data.post_text(board, index, parent_total, paid)
+    return _later_post(pack, board, index)
+
+
+_LATER_TITLES = ("Update: {}", "This week: {}", "Done: {}", "Reminder: {}", "Help needed: {}")
+_LATER_BODIES = (
+    "Quick update on {}. We are on track; reply here if something blocks you.",
+    "Please add your notes on {} before Friday so we can close it out.",
+    "{} is finished. Thanks to everyone who helped.",
+    "A reminder that {} is due soon. Check the board for your part.",
+    "We need one more person on {}. Comment here if you can take it.",
+)
+
+
+def _later_post(pack: OrganizationPack, board: Mapping[str, Any], index: int) -> tuple[str, str]:
+    """A later post on a Board, written from the department's own work (spec R9)."""
+    from importlib import import_module
+
+    objectives = import_module(
+        f"operations.sample.packs.{pack.identity.key}.realism"
+    ).BOARD_OBJECTIVES
+    department = board.get("department_key")
+    pool = objectives.get(department) or [item for items in objectives.values() for item in items]
+    topic = pool[index % len(pool)]
+    style = (index // len(pool) + index) % len(_LATER_TITLES)
+    return _LATER_TITLES[style].format(topic)[:100], _LATER_BODIES[style].format(topic)[:2000]
 
 
 def revised_post(

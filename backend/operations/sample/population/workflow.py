@@ -247,6 +247,7 @@ def run_population(
             groups=people_result.groups,
             anchor_date=dataset.anchor_date,
             organization=dataset.organization,
+            profile=dataset.profile,
         )
         sessions = plan_sessions(dataset)
         board_queue.pace(len(sessions))
