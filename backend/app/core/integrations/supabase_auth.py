@@ -22,6 +22,12 @@ if TYPE_CHECKING:
     from app.core.integrations.supabase_email_changes import EmailChangeConfirmation
 
 
+# Auth can run on another clock than the API (the Docker VM on a macOS workstation, or a
+# hosted Auth beside an on-premises API). A token minted a moment "ahead" of this host is
+# not refused for it; RFC 7519 4.1.5 allows a small leeway for clock skew. Expiry has none.
+_ISSUED_AT_ALLOWANCE_SECONDS = 5
+
+
 class SupabaseAuthUnavailable(Exception):
     """The provider could not establish an authoritative answer."""
 
@@ -297,12 +303,20 @@ class SupabaseAuthClient:
                 audience=self._audience,
                 options={
                     "require": ["sub", "session_id", "iss", "aud", "iat", "exp", "aal"],
+                    # Checked below with the clock allowance; expiry keeps zero leeway.
+                    "verify_iat": False,
+                    "verify_nbf": False,
                 },
                 leeway=0,
             )
             if claims.get("aud") != self._audience:
                 raise InvalidProviderToken("Invalid access token")
             issued = _numeric_date(claims, "iat")
+            latest = datetime.now(UTC).timestamp() + _ISSUED_AT_ALLOWANCE_SECONDS
+            if issued.timestamp() > latest or (
+                "nbf" in claims and _numeric_date(claims, "nbf").timestamp() > latest
+            ):
+                raise jwt.ImmatureSignatureError("The token is not yet valid")
             expiry = _numeric_date(claims, "exp")
             if expiry <= issued:
                 raise InvalidProviderToken("Invalid access token")
