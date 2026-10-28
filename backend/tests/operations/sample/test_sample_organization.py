@@ -120,3 +120,17 @@ def test_organization_usage_excludes_the_operator_and_the_pack_administrator() -
         "pack_administrator": "administrator@harbor-ops.example",
     }
     assert "u.email <> %(pack_administrator)s" in statement
+
+
+def test_every_pack_slug_is_a_valid_organization_slug() -> None:
+    # A pack key is a Python package name (local_government); a slug allows only hyphens.
+    import re
+
+    from operations.sample.organization import sample_slug
+    from operations.sample.packs.registry import pack_keys
+
+    for key in pack_keys():
+        for partner in (False, True):
+            assert re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", sample_slug(key, partner=partner))
+    assert sample_slug("harbor") == "sample-harbor"
+    assert sample_slug("local_government") == "sample-local-government"

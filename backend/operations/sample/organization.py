@@ -41,7 +41,8 @@ def sample_slug(pack_key: str, *, partner: bool = False) -> str:
 
     The partner organization is the second one the account control joins and switches to.
     """
-    return f"sample-{pack_key}-partner" if partner else f"sample-{pack_key}"
+    base = f"sample-{pack_key.replace('_', '-')}"  # A slug allows hyphens, not underscores.
+    return f"{base}-partner" if partner else base
 
 
 def sample_organization_name(pack: OrganizationPack, *, partner: bool = False) -> str:
