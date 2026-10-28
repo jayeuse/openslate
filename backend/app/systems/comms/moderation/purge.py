@@ -187,7 +187,8 @@ def delete_files(
         export_service.retire(db, export_ids, now=utc_now())
         db.commit()  # Persist source-bound artifact revocation before external cleanup.
         for export_id in export_ids:
-            if not export_service.cleanup_artifact(db, export_id, storage):
+            # The purge route holds this request's file slot (hold_file_worker).
+            if not export_service.cleanup_artifact(db, export_id, storage, slot_held=True):
                 raise error("comms_unavailable", "Export artifact cleanup is not confirmed", 503)
     while file_id := db.scalar(
         select(File.id)

@@ -394,6 +394,29 @@ def verify_request_evidence(
         issues.append("A sample control admin-step declaration is invalid")
         return
     admin_steps = tuple(admin_steps_value)
+    # Comms controls also act as their planned members and record planned refusals.
+    comms = action.kind == "comms_controls"
+    listed = action.values.get("member_keys")
+    comms_actors = (
+        {
+            key
+            for key in (
+                action.values.get("member_key"),
+                action.values.get("recipient_key"),
+                *(listed if isinstance(listed, list) else []),
+            )
+            if isinstance(key, str) and key
+        }
+        if comms
+        else set()
+    )
+    refusal_value = action.values.get("refusal_steps", []) if comms else []
+    if not isinstance(refusal_value, list) or any(
+        not isinstance(step, str) or not step for step in refusal_value
+    ):
+        issues.append("A sample control refusal-step declaration is invalid")
+        return
+    refusal_steps = frozenset(refusal_value)
     steps: dict[str, Mapping[str, Any]] = {}
     for item in evidence_rows:
         if not isinstance(item, Mapping):
@@ -438,9 +461,12 @@ def verify_request_evidence(
                 "A sample control request route is unknown or outside its allowed methods"
             )
             valid = False
+        planned_refusal = step in refusal_steps
         if (
             type(expected_status) is not int
-            or not 200 <= expected_status < 300
+            or not (
+                400 <= expected_status < 500 if planned_refusal else 200 <= expected_status < 300
+            )
             or type(status_code) is not int
             or status_code != expected_status
         ):
@@ -461,6 +487,8 @@ def verify_request_evidence(
             expected_actor_key = (
                 manage_steps[step][0]
                 if action.kind in {"manage_controls", "backup_controls"}
+                else str(item["actor_key"])
+                if item.get("actor_key") in comms_actors
                 else "admin"
                 if step in admin_steps
                 else action.actor_key

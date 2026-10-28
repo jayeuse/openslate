@@ -48,8 +48,8 @@ Retain Harbor Operations Group with six departments and 24 modules. Use the exis
 | People | 36 invited internal identities: 30 active, four pending, two disabled; eight guests: six active, one pending, one disabled, with valid sponsors and expiry |
 | Groups and access | Nine groups with overlapping membership and department/module read, write, and manage rows, including a read-only Internal Audit group; roles are only admin, member, and guest |
 | Boards | Built-in Company Board, six department Boards, and five project Boards; project access uses groups, department access follows its department |
-| Board content | 96 posts, 144 events, genuine post revisions, and 24 event reminder configurations using supported timings |
-| OpenView | 36 shared module Views across supported layouts, six department Dashboards with four widgets each, and 12 shared Reports; configure only outputs available through current controls |
+| Board content | 96 posts, 144 events, genuine post revisions, 24 event reminder configurations using supported timings, and one demo Kanban (5 stages, 3 labels, 12 cards, 7 checklist items) on one department Board |
+| OpenView | 18 shared module Views (Table, Grid and Gallery), six department Dashboards with four widgets each on the 4 × 5 grid, and 12 shared Reports; configure only outputs available through current controls |
 | Files | Board post and event attachments from the pack's named entries, uploaded through the Board attachment controls with generated dummy files |
 | History | Genuine user-attributed mutations and supported publication, scheduling, notification, and report-run history |
 
@@ -94,7 +94,7 @@ Use current boundaries:
 | Board post editor | `POST /api/boards/{id}/posts`; `PATCH .../posts/{id}`: title/body/links/expiry/pin | Board write, manage for pin; current `board_revision` and `post_revision`; saved draft and real audit |
 | Post Publish / Schedule / Archive | `POST .../posts/{id}/publish`, `/schedule`, `/archive` | Current revisions; publication uses body `publication_key`; scheduling uses future UTC `publish_at`; genuine immutable revisions |
 | Board event editor | `POST /api/boards/{id}/events`; `PATCH .../events/{id}` | Board write; current Board/event revisions; date or timed event, timezone, recurrence and supported reminder timing |
-| Board widgets | `POST /api/boards/{id}/widgets`; revisioned update/order actions | Board manage; editor-supported widget type/config/position; saved configuration references real content |
+| Board Kanban | `POST /api/boards/{id}/stages`, `/labels`, `/cards`; revisioned card moves and checklist items | Board manage for stages and labels, Board write for cards; objective cards or record cards; due and start dates |
 | Board record links | `POST /api/boards/{id}/posts/{id}/record-links` or `/events/{id}/record-links` | Parent content write and record visibility; existing live record, parent revisions; real cross-page link |
 | OpenView Save View | `POST /api/views`; revisioned `PATCH /api/views/{id}` | Module manage; name/query/selected fields/layout settings; shared saved view |
 | OpenView Dashboard editor | `POST /api/dashboards`; revisioned `PATCH /api/dashboards/{id}` | Department manage; name, position, refresh cadence and supported widget queries; department-scoped saved Dashboard |
@@ -106,7 +106,7 @@ The frontend request builders under `systems/boards/adapters` and `systems/openv
 - Sandbox document/checkpoint/Test/publication operations under `/api/sandbox`; preserve preview digest, password confirmation, revision, and idempotency requirements.
 - Invitations and account actions through the Access UI's endpoints. Complete selected invitations using matching messages in the owned Mailpit instance and the normal invitation-completion endpoint.
 - Groups through `/api/access/groups`; use the dedicated member and access replacement operations with `If-Match`. Administrators set access; eligible department managers may change membership within the existing policy.
-- Boards through their existing scope, project-group, post, event, widget, and lifecycle controls. Use record-link controls after live records exist through the admitted workflow.
+- Boards through their existing scope, project-group, post, event, Kanban, calendar-source and lifecycle controls. Use record-link controls after live records exist through the admitted workflow.
 - Shared Views/Charts, department Dashboards and module Reports use their existing editors; record and relationship actions use the live inspector.
 - Manage Organization and Audit use their real APIs; Backup includes supported policy/history/export controls. Security policy lives in Access. Do not reinterpret the bundled mark as an uploaded logo or claim update/licensing activation from unavailable controls.
 - Platform uses authorized reads, real import/export and department files; record editing routes to OpenView. Preserve connected notifications, authentication/session flows, legitimate device appearance settings and OpenComms' example-only boundary.
@@ -127,7 +127,7 @@ Rebuild the retired sample tool under `backend/operations/`: `plan` performs rea
 2. Author and publish the Sandbox design with normal controls' preconditions. Resolve server-issued IDs through authorized reads.
 3. Invite people, complete only the selected invitations, configure groups and access, and exercise allowed and denied users through separate sessions.
 4. Create operational records through the new editor's API contract under the six designated sample actors, then resolve and create relationship edges. Exercise genuine updates and record triggers with independently specified expected outcomes. (Current behavior. The proposed simulated activity runs below replace this step with interleaved episodes.)
-5. Configure Boards, posts, events, reminder settings, widgets and the admitted attachment actions through their APIs; never insert attachment rows directly. Preserve author archiving. Reminders use start, 15 minutes, or one day, with delivery permitted up to 15 minutes late.
+5. Configure Boards, posts, events, reminder settings, the demo Kanban and the admitted attachment actions through their APIs; never insert attachment rows directly. Preserve author archiving. Reminders use start, 15 minutes, or one day, with delivery permitted up to 15 minutes late.
 6. Configure shared Views, Dashboards, and Reports. Record empty results honestly. Keep scheduled triggers/reports disabled at completion unless a bounded real scheduling scenario explicitly requires otherwise.
 7. Verify every admitted count and result. Report any incomplete operation separately.
 
@@ -181,7 +181,7 @@ Audit timestamps show the real run window. Business dates inside records keep th
 
 ### Proposed design
 
-**Actor plan.** Each generated record carries a creator key and an assignee key, chosen by seed from the department's active users who have write access to that module. Assignees spread across department members in proportions that look like normal workload differences. The verifier matches each create, update and relationship audit row to the planned actor of that write, using a map of all acting users. Automation updates are excluded from this check: their audit rows have no user (`performed_by` is empty) and an actor label that starts with `Trigger:`. Admin performs only admin work: Sandbox, invitations, groups, workspace, Board setup (project Boards, their access and widgets), and Company Board posts and events.
+**Actor plan.** Each generated record carries a creator key and an assignee key, chosen by seed from the department's active users who have write access to that module. Assignees spread across department members in proportions that look like normal workload differences. The verifier matches each create, update and relationship audit row to the planned actor of that write, using a map of all acting users. Automation updates are excluded from this check: their audit rows have no user (`performed_by` is empty) and an actor label that starts with `Trigger:`. Admin performs only admin work: Sandbox, invitations, groups, workspace, Board setup (project Boards and their access), and Company Board posts and events.
 
 **Group access.** Members of Inventory, Purchasing and Finance get write access to all modules in their department, so every department has several writers. The Harbor Operations group, which holds the six department leads, gets manage access to every department, so leads build their department's shared views, Dashboards and Reports. Project Board grants give each project's department team write access. Each staff group also reads the modules in other departments that its records link to (for example, Finance reads Customers and Sales Orders). Denial examples come from guests, from members outside a department (404), and from a new small group, Internal Audit. It gives two Sales members read access to Finance and Purchasing, so their create attempts there return 403.
 

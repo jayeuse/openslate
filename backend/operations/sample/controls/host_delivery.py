@@ -367,7 +367,7 @@ class _Delivery:
         if self.substep is not None:
             self.substep(step)
         response = (client or self.context.clients[actor]).request(
-            method, path, json_body=body, headers=headers, params=params, refresh_first=False
+            method, path, json_body=body, headers=headers, params=params
         )
         return self.observed(actor, step, method, path, response, expected)
 

@@ -156,6 +156,7 @@ class _Journey:
         body: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
         params: Mapping[str, Any] | None = None,
+        refresh_first: bool = True,
     ) -> httpx.Response:
         if self.on_substep is not None:
             self.on_substep(step)
@@ -165,7 +166,7 @@ class _Journey:
             json_body=body,
             headers=headers,
             params=params,
-            refresh_first=False,
+            refresh_first=refresh_first,
         )
         return self.observed(key, step, method, path, response, expected)
 
@@ -235,7 +236,18 @@ class _Journey:
         return factor
 
     def ended(self, key: str, prefix: str, client: SampleClient, *, refresh: bool = True) -> None:
-        body = self.read(key, f"{prefix}_ended", "/api/auth/session", client)
+        # A revoked session refuses refresh, so only this probe reads without one first.
+        body = _read_json(
+            self.request(
+                key,
+                f"{prefix}_ended",
+                "GET",
+                "/api/auth/session",
+                client=client,
+                refresh_first=False,
+            ),
+            step=f"{prefix}_ended",
+        )
         _require(body.get("authenticated") is False, f"{prefix}_ended")
         if refresh:
             if self.on_substep is not None:

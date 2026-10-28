@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.systems.access.users.models import Membership
 from app.systems.comms.conversations.models import CommsConversation
 from app.systems.comms.jobs.models import CommsExport
-from app.systems.platform.files.providers import ProviderUnavailable
+from app.systems.platform.files.providers import ProviderUnavailable, transfer_slot
 from app.systems.platform.files.storage import get_storage
 from tests.comms.routes.message_support import _ok, _payload
 
@@ -200,3 +200,39 @@ def test_concurrent_confirmed_artifact_cleanup_is_idempotent(job_routes, monkeyp
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(clean) for _ in range(2)]
         assert [future.result(timeout=30) for future in futures] == [True, True]
+
+
+def test_purge_cleans_its_exports_while_another_transfer_holds_the_other_slot(job_routes):
+    # The purge holds one of the two file slots; its export cleanup took a second one,
+    # so any concurrent transfer refused the purge with 503 files_busy (F13).
+    from app.systems.comms.jobs.export_worker import run_export_job
+
+    case, org = job_routes, job_routes.world.first
+    api = case.client(org.author, org.id)
+    path = f"/api/comms/conversations/{org.conversation}"
+    _ok(api.post(path + "/messages", json=_payload("Purged with its export")), 201)
+    job = _ok(
+        api.post(ROOT, json={"conversation_ids": [str(org.conversation)], "format": "csv"}), 201
+    )
+    identity, storage = UUID(job["id"]), get_storage()
+    run_export_job(case.world.runtime, org.id, identity, storage=storage)
+    with case.world.session(org) as db:
+        key = db.scalar(select(CommsExport.artifact_key).where(CommsExport.id == identity))
+    assert key is not None and storage.download(key) is not None
+    current = api.get(path)
+    assert (
+        api.post(path + "/archive", headers={"If-Match": current.headers["etag"]}).status_code
+        == 200
+    )
+    preview = _ok(api.post(path + "/purge/preview"))
+    confirmation = {
+        "token": preview["token"],
+        "confirmation_name": preview["confirmation_name"],
+        "password": "owned-test-password",
+    }
+
+    with transfer_slot():
+        response = api.post(path + "/purge", json=confirmation)
+
+    assert response.status_code == 200, response.text
+    assert storage.download(key) is None

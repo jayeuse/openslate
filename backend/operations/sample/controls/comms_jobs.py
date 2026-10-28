@@ -43,6 +43,7 @@ def plan_comms_job_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
                 "operation": "jobs_roundtrip" if org == "primary" else "partner_jobs_roundtrip",
                 "organization": org,
                 "member_key": member,
+                "refusal_steps": ["member_export_denied"],
             },
             expected_status=200,
             expected_detail=None,
@@ -210,7 +211,8 @@ def execute_comms_job_control(
         )
     exports = "/api/comms/exports"
     selection = {"conversation_ids": [room["id"]], "format": "csv", "reason": "Owned sample"}
-    call("POST", exports, "private_proof_required", 403, json_body=selection)
+    # A channel is never a private source (D44), so its export needs no fresh password;
+    # tests/comms/jobs/test_comms_exports.py owns the private-source proof.
     call("POST", exports, "member_export_denied", 403, actor=member, json_body=selection)
     for format in ("csv", "xlsx"):
         job = call(
