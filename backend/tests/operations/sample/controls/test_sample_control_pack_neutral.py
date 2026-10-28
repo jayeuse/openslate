@@ -13,7 +13,7 @@ import pytest
 import operations as operations_package
 from app.systems.sandbox.designs.schemas import SandboxBindingResponse
 from operations.sample.controls.actions import plan_controls
-from operations.sample.packs.registry import get_pack
+from operations.sample.packs.registry import get_pack, pack_keys
 from operations.sample.phases.expectations import read_phase_plan
 from operations.sample.scenario import build_dataset
 
@@ -142,13 +142,15 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
 
 
 def test_generic_control_planners_contain_no_fixed_pack_module_or_department_keys() -> None:
-    packs = [get_pack(key) for key in REFERENCE_PACKS]
+    packs = [get_pack(key) for key in pack_keys()]  # Every registered pack, new ones too.
     forbidden = set(REFERENCE_PACKS)
     forbidden.update(module.key for pack in packs for module in pack.catalog.modules)
     forbidden.update(key for pack in packs for key, _ in pack.catalog.departments)
     # Required API binding kinds may coincide with catalog keys; only the
     # actual backend schema defines this wire-vocabulary exception.
     forbidden.difference_update(get_args(SandboxBindingResponse.model_fields["kind"].annotation))
+    # The host runner's own folder of acceptance claims, not the Clinic module.
+    forbidden.discard("claims")
     engine = Path(operations_package.__file__).resolve().parent / "sample"
     paths = sorted(path for path in engine.rglob("*.py") if "packs" not in path.parts)
     assert len(paths) > 50, "the generic sample engine was not found"

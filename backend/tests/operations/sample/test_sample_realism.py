@@ -155,3 +155,12 @@ def test_dirty_values_blank_quick_entries_and_copy_notes_but_keep_required_text(
 
     assert quick == "" and kept == "Checked the seals."
     assert "Same as the last batch." in notes and notes & set(FILLER_NOTES)
+
+
+def test_north_american_numbers_never_get_a_trunk_zero() -> None:
+    rng = _rng("phone-us")
+    variants = {phone_variant(rng, "3125550147", "1") for _ in range(200)}
+
+    assert len(variants) == 5 and not any(value.lstrip("(").startswith("0") for value in variants)
+    assert all("".join(ch for ch in value if ch.isdigit()).endswith("3125550147")
+               for value in variants)  # fmt: skip

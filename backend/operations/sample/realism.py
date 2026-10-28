@@ -274,17 +274,29 @@ def filler_note(rng: random.Random) -> str:
 
 
 def phone_variant(rng: random.Random, digits: str, country_code: str) -> str:
-    """The same national number written the way different people type it."""
+    """The same national number written the way different people type it.
+
+    North American numbers (country code 1) have no trunk 0; others are dialled with one.
+    """
     local = digits[-10:].rjust(10, "0")
-    return rng.choice(
-        (
-            f"+{country_code} {local[:3]} {local[3:6]} {local[6:]}",
-            f"0{local[:3]}-{local[3:6]}-{local[6:]}",
-            f"(0{local[:3]}) {local[3:6]} {local[6:]}",
+    area, exchange, line = local[:3], local[3:6], local[6:]
+    if country_code == "1":
+        formats = (
+            f"({area}) {exchange}-{line}",
+            f"{area}-{exchange}-{line}",
+            f"{area}.{exchange}.{line}",
+            f"+1 {area} {exchange} {line}",
+            local,
+        )
+    else:
+        formats = (
+            f"+{country_code} {area} {exchange} {line}",
+            f"0{area}-{exchange}-{line}",
+            f"(0{area}) {exchange} {line}",
             f"0{local}",
             f"+{country_code}{local}",
         )
-    )
+    return rng.choice(formats)  # fmt: skip
 
 
 def email_variant(rng: random.Random, email: str) -> str:
@@ -292,7 +304,7 @@ def email_variant(rng: random.Random, email: str) -> str:
     local, _, domain = email.partition("@")
     if rng.random() < 0.5:
         return f"{local.capitalize()}@{domain}"
-    return f"{local}+{rng.choice(('work', 'orders', 'billing'))}@{domain}"
+    return f"{local}+{rng.choice(('work', 'team', 'billing'))}@{domain}"
 
 
 def url_variant(rng: random.Random, url: str) -> str:
