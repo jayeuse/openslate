@@ -396,13 +396,13 @@ def test_plan_summary_reports_exact_profile_counts_and_fixed_supporting_catalogu
         "events": 144,
         "reminders": 24,
         "attachments": 11,
-        "kanban_stages": 5,
-        "kanban_labels": 3,
-        "kanban_cards": 12,
+        "kanban_stages": 28,
+        "kanban_labels": 18,
+        "kanban_cards": 72,
         "kanban_checklist_items": 7,
         "views": 18,
         "dashboards": 6,
-        "dashboard_widgets": 24,
+        "dashboard_widgets": 42,
         "reports": 12,
     }
 

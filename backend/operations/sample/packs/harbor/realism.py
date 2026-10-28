@@ -108,3 +108,34 @@ def date_cluster(module_key: str, anchor: date, earliest: int, latest: int) -> D
             go_live_share=GO_LIVE_SHARE,
         )
     )
+
+# R9. Every department board has a Kanban whose stages fit the department's work.
+BOARD_STAGES: dict[str, tuple[str, ...]] = {
+    "sales": ("Leads", "Qualifying", "Quoted", "Negotiating", "Won"),
+    "service": ("New", "Triage", "Scheduled", "Waiting on parts", "Done"),
+    "field": ("Backlog", "This week", "On site", "Review", "Closed"),
+    "inventory": ("To count", "Counting", "Variance check", "Reconciled"),
+    "purchasing": ("Request", "RFQ sent", "PO issued", "In transit", "Received"),
+    "finance": ("To do", "In review", "Waiting on approval", "Posted"),
+}
+BOARD_OBJECTIVES: dict[str, tuple[str, ...]] = {
+    "sales": ("Plan the trade show stand", "Refresh the price list", "Call lapsed accounts",
+              "Prepare the quarterly pipeline review", "Update the reefer brochure",
+              "Visit the Batangas port buyers", "Clean up duplicate contacts",
+              "Draft the fisheries co-op offer"),
+    "service": ("Train new dispatchers", "Review overdue requests", "Stock the van kits",
+                "Update the escalation contacts", "Check warranty claims",
+                "Plan the rainy-season standby roster", "Audit customer-visible notes"),
+    "field": ("Calibrate the thermal cameras", "Renew the crane certificates",
+              "Plan the Davao site visits", "Replace worn PPE", "Review inspection photos",
+              "Update the compressor checklist", "Book the forklift refresher"),
+    "inventory": ("Cycle count aisle C", "Relabel the freezer bays", "Check slow movers",
+                  "Review reorder points", "Clear the returns cage",
+                  "Reconcile the Cebu transfer", "Plan the year-end count"),
+    "purchasing": ("Compare compressor suppliers", "Renew the packaging contract",
+                   "Chase late deliveries", "Review supplier risk scores",
+                   "Consolidate small orders", "Negotiate freight rates"),
+    "finance": ("Close the month", "Chase overdue invoices", "Review expense claims",
+                "Reconcile card payments", "Prepare the VAT return", "Update the credit limits",
+                "Archive last year's receipts"),
+}  # fmt: skip

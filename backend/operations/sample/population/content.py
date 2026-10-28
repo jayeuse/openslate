@@ -274,6 +274,7 @@ def verify_content(
         "kanban_labels",
         "kanban_cards",
         "kanban_checklist_items",
+        "calendar_sources",
         "views",
         "dashboards",
         "dashboard_widgets",

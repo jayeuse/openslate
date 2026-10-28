@@ -112,3 +112,35 @@ def england_holidays(year: int) -> set[date]:
 @lru_cache(maxsize=8)
 def holidays(anchor: date) -> frozenset[date]:
     return frozenset().union(*(england_holidays(anchor.year + offset) for offset in (-1, 0, 1)))
+
+# R9. Every department board has a Kanban whose stages fit the department's work.
+BOARD_STAGES: dict[str, tuple[str, ...]] = {
+    "admissions": ("Inquiry", "Tour booked", "Assessment", "Offer", "Enrolled"),
+    "academic": ("Planning", "In progress", "Marking", "Moderation", "Published"),
+    "student_affairs": ("Raised", "Following up", "Meeting set", "Resolved"),
+    "health": ("To review", "Waiting on parents", "Plan in place", "Closed"),
+    "finance": ("To invoice", "Chasing", "Payment plan", "Settled"),
+    "facilities": ("Reported", "Assigned", "In progress", "Signed off"),
+    "hr": ("Draft", "Approval", "Scheduled", "Done"),
+}
+BOARD_OBJECTIVES: dict[str, tuple[str, ...]] = {
+    "admissions": ("Plan the open morning", "Update the prospectus", "Call waiting-list families",
+                   "Book the entrance assessment rooms", "Send offer letters",
+                   "Review sibling priority"),
+    "academic": ("Write the Year 9 options booklet", "Moderate the mock papers",
+                 "Plan the reading week", "Review the homework policy",
+                 "Book the science technician cover", "Update the scheme of work"),
+    "student_affairs": ("Plan the anti-bullying week", "Review the behaviour log",
+                        "Book the guidance workshops", "Update the house points",
+                        "Organise the school council election"),
+    "health": ("Renew the first-aid certificates", "Update the allergy list",
+               "Check the defibrillator pads", "Send the flu consent forms",
+               "Restock the medical room"),
+    "finance": ("Send the term fee reminders", "Reconcile the trip payments",
+                "Review bursary applications", "Close the summer term accounts",
+                "Update the fee schedule"),
+    "facilities": ("Service the boilers", "Repaint the sports hall lines", "Check the fire doors",
+                   "Clear the gutters before winter", "Replace the library lights"),
+    "hr": ("Run the DBS renewals", "Plan the INSET day", "Update the staff handbook",
+           "Book the safeguarding training", "Review supply cover costs"),
+}  # fmt: skip
