@@ -38,7 +38,7 @@ BOARD_FILES = tuple(
         ("department:programs", "event", 1, "Round 2 distribution lists.xlsx"),
         ("department:meal", "post", 0, "PDM results summary.pptx"),
         ("department:finance", "post", 0, "Advances over 30 days.xlsx"),
-        ("department:procurement", "post", 0, "Shelter kit specifications.pdf"),
+        ("department:procurement", "post", 0, "Shelter kit sample photo.jpeg"),
         ("department:volunteer_engagement", "event", 2, "Repacking floor plan.png"),
         ("department:executive_office", "post", 3, "Safeguarding policy draft.docx"),
         ("project:programs:typhoon-response-readiness", "post", 1, "Standby agreements.pdf"),

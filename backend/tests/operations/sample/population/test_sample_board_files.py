@@ -12,7 +12,7 @@ import pytest
 
 from operations.sample.client import SampleClient
 from operations.sample.dummy_files import MEDIA_TYPES, dummy_file, extension_of
-from operations.sample.packs.registry import get_pack
+from operations.sample.packs.registry import get_pack, pack_keys
 from operations.sample.population.board_files import (
     attach_seeded_file,
     readback_files,
@@ -42,7 +42,7 @@ def _boards(pack_key: str) -> list[BoardMeta]:
     return boards
 
 
-@pytest.mark.parametrize("pack_key", ("harbor", "school"))
+@pytest.mark.parametrize("pack_key", pack_keys())
 def test_seeded_files_attach_before_the_post_life_cycle_and_avoid_the_anchor(
     pack_key: str,
 ) -> None:
