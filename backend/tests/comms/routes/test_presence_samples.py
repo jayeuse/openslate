@@ -62,7 +62,7 @@ def test_presence_sample_exercises_all_three_real_http_calls(presence_case, tmp_
         assert client.login("fixture@example.test", "fixture-only").status_code == 200
         context = PhaseExecutionContext(
             clients={"admin": client if namespace == "primary" else primary},
-            user_ids={"admin": str(org.author)},
+            user_ids={"admin": str(org.author), "operator": str(org.author)},
             group_ids={},
             department_ids={},
             module_ids={},
@@ -71,7 +71,7 @@ def test_presence_sample_exercises_all_three_real_http_calls(presence_case, tmp_
                 "comms_conversations": {f"{namespace}:comms:messages": str(org.conversation)}
             },
             admin_password="fixture-only",
-            private_values={"partner_admin": lambda: client},
+            private_values={"partner_admin": lambda: client, "operator_password": "fixture-only"},
         )
         result = execute_phase_action(action, dataset, context)
     assert result["presence_verified"] is True and result["typing_verified"] is True

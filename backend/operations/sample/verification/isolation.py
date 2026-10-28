@@ -96,7 +96,6 @@ def verify_isolation(
         others = sorted(
             {str(row.get("org_id")) for row in memberships if row["slug"] in slugs} - {own}
         )
-        observed["isolation_organizations"] = len(others)
         if not others:
             return observed, []
 
@@ -126,8 +125,9 @@ def verify_isolation(
                 row = probe["items"][0]
                 record_id, module_id = str(UUID(str(row["id"]))), str(UUID(str(row["module_id"])))
             except (TypeError, KeyError, IndexError, ValueError):
-                issues.append("isolation: another sample organization has no readable record")
+                # A pack populating beside this one may have no record yet; nothing to probe.
                 continue
+            observed["isolation_organizations"] += 1
             # The member names the other organization itself; membership must refuse it.
             intruder = signed_in(other, member_login)
             if intruder is None:

@@ -130,3 +130,25 @@ def test_every_pack_slug_is_a_valid_organization_slug() -> None:
             assert re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", sample_slug(key, partner=partner))
     assert sample_slug("harbor") == "sample-harbor"
     assert sample_slug("local_government") == "sample-local-government"
+
+
+def test_people_are_unique_across_every_pack_in_one_installation() -> None:
+    # Live seven-pack run: Nonprofit shared two usernames with other packs, so its
+    # invitation was refused (409) once the packs populated one installation together.
+    from collections import Counter
+    from datetime import date
+
+    from operations.sample.packs.registry import pack_keys
+    from operations.sample.scenario import build_dataset
+
+    usernames: Counter[str] = Counter()
+    emails: Counter[str] = Counter()
+    for key in pack_keys():
+        pack = get_pack(key)
+        people = build_dataset("large", 83, date(2026, 10, 2), organization=pack).organization
+        usernames.update(person.username.lower() for person in people.actors.people)
+        emails.update(person.email.lower() for person in people.actors.people)
+        emails[pack_administrator_email(pack)] += 1
+
+    assert [name for name, count in usernames.items() if count > 1] == []
+    assert [email for email, count in emails.items() if count > 1] == []

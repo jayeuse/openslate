@@ -28,9 +28,15 @@ class _Wire:
     """Two organizations; the operator runs both, the pack administrator only Harbor."""
 
     def __init__(
-        self, *, leaky: bool = False, school: bool = True, operator_login: bool = True
+        self,
+        *,
+        leaky: bool = False,
+        school: bool = True,
+        operator_login: bool = True,
+        school_records: bool = True,
     ) -> None:
         self.leaky = leaky
+        self.school_records = school_records
         self.operator_login = operator_login
         # The operator also runs the pack's partner organization, which is not probed.
         operator = {HARBOR, PARTNER, SCHOOL} if school else {HARBOR, PARTNER}
@@ -64,7 +70,7 @@ class _Wire:
         visible = self.leaky or org == SCHOOL
         if path == "/api/records":
             module = request.url.params.get("module_id")
-            listed = visible and module in {None, SCHOOL_MODULE}
+            listed = visible and self.school_records and module in {None, SCHOOL_MODULE}
             rows = [{"id": SCHOOL_RECORD, "module_id": SCHOOL_MODULE}] if listed else []
             return httpx.Response(200, json={"items": rows})
         if path in {f"/api/records/{SCHOOL_RECORD}", f"/api/modules/{SCHOOL_MODULE}"}:
@@ -122,6 +128,16 @@ def test_a_cross_organization_read_is_reported(
 
     assert issues == ["isolation: another sample organization's data was readable"]
     assert observed["isolation_refusals"] == 1  # Membership still refused the named organization.
+
+
+def test_a_peer_organization_without_records_is_skipped_not_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Live seven-pack run: a pack that stopped before its records made every other pack's
+    # verification incomplete, though no data crossed organizations.
+    observed, issues = _verify(tmp_path, monkeypatch, _Wire(school_records=False))
+
+    assert (observed, issues) == ({"isolation_organizations": 0, "isolation_refusals": 0}, [])
 
 
 def test_a_single_sample_organization_needs_no_member_sign_in(

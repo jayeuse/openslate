@@ -68,7 +68,7 @@ def test_search_sample_observes_real_hits_then_excludes_its_tombstone(
         assert client.login("fixture@example.test", "fixture-only").status_code == 200
         context = PhaseExecutionContext(
             clients={"admin": client if organization == "primary" else primary},
-            user_ids={"admin": str(org.author)},
+            user_ids={"admin": str(org.author), "operator": str(org.author)},
             group_ids={},
             department_ids={},
             module_ids={},
@@ -77,7 +77,7 @@ def test_search_sample_observes_real_hits_then_excludes_its_tombstone(
                 "comms_conversations": {f"{organization}:comms:messages": str(org.conversation)}
             },
             admin_password="fixture-only",
-            private_values={"partner_admin": lambda: client},
+            private_values={"partner_admin": lambda: client, "operator_password": "fixture-only"},
         )
         result = execute_phase_action(action, dataset, context)
         assert result["organization_id"] == str(org.id) and result["search_verified"] is True

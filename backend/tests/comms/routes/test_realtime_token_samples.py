@@ -70,7 +70,7 @@ def test_token_sample_uses_the_bound_api_and_never_journals_the_channel_token(
         assert client.login("fixture@example.test", "fixture-only").status_code == 200
         context = PhaseExecutionContext(
             clients={"admin": client if namespace == "primary" else primary},
-            user_ids={"admin": str(org.author)},
+            user_ids={"admin": str(org.author), "operator": str(org.author)},
             group_ids={},
             department_ids={},
             module_ids={},
@@ -79,7 +79,7 @@ def test_token_sample_uses_the_bound_api_and_never_journals_the_channel_token(
                 "comms_conversations": {f"{namespace}:comms:messages": str(org.conversation)}
             },
             admin_password="fixture-only",
-            private_values={"partner_admin": lambda: client},
+            private_values={"partner_admin": lambda: client, "operator_password": "fixture-only"},
         )
         result = execute_phase_action(action, dataset, context)
     assert result["token_verified"] is True and result["organization_id"] == str(org.id)

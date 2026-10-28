@@ -31,11 +31,11 @@ TEAM_GROUPS = {
 
 TEAM_ROSTER: dict[str, tuple[str, ...]] = {
     "resource_mobilization": ("Teresa Villanueva", "Paolo Magbanua", "Kristine Lacson",
-                              "Ramon Dizon"),  # fmt: skip
+                              "Ramon Dimaculangan"),  # fmt: skip
     "grants_partnerships": ("Angela Soriano", "Miguel Tolentino", "Liza Manalastas",
                             "Joel Panganiban"),  # fmt: skip
     "programs": ("Rosario Dimaano", "Carlo Bautista", "Jenny Cabrera", "Arnel Sison"),
-    "meal": ("Felicity Ramos", "Dennis Ocampo", "Grace Alcantara"),
+    "meal": ("Felicity Ramos", "Dennis Ocampo", "Grace Alvarado"),
     "finance": ("Victoria Mercado", "Ronaldo Pascual", "Mae Fernandez", "Eduardo Lim"),
     "procurement": ("Benjamin Castillo", "Shiela Navarro", "Rodel Aquino"),
     "volunteer_engagement": ("Patricia Gonzaga", "Kevin Santiago"),

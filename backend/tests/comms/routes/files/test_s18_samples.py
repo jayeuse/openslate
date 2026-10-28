@@ -86,14 +86,14 @@ def test_content_sample_uses_owned_bindings_and_real_files_without_cross_org_cat
         assert client.login("fixture@example.test", "fixture-only").status_code == 200
         context = PhaseExecutionContext(
             clients={"admin": client if organization == "primary" else primary},
-            user_ids={"admin": str(org.author)},
+            user_ids={"admin": str(org.author), "operator": str(org.author)},
             group_ids={},
             department_ids={},
             module_ids={},
             field_ids={},
             mappings=mappings,
             admin_password="fixture-only",
-            private_values={"partner_admin": lambda: client},
+            private_values={"partner_admin": lambda: client, "operator_password": "fixture-only"},
         )
         result = execute_phase_action(action, dataset, context)
         assert result["organization_id"] == str(org.id) and result["content_verified"] is True

@@ -188,6 +188,7 @@ def test_populate_uses_one_generated_seed_for_plan_and_population(
         *,
         organization: object,
         host_acceptance: bool = False,
+        installation_controls: bool = True,
     ) -> object:
         planned.append(seed)
         return SimpleNamespace(seed=seed)
