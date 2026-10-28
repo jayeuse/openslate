@@ -1,0 +1,192 @@
+"""Resource Mobilization and Grants and Partnerships modules."""
+
+from __future__ import annotations
+
+from operations.sample.packs.nonprofit.catalog_fields import (
+    ACKNOWLEDGEMENTS,
+    CAMPAIGN_TYPES,
+    COST_CATEGORIES,
+    GIFT_TYPES,
+    GRANT_STAGES,
+    ORG_ROLES,
+    ORG_TYPES,
+    PAYMENT_METHODS,
+    REPORT_TYPES,
+    RESTRICTIONS,
+    _check,
+    _choice,
+    _field,
+    _flag,
+    _module,
+    _peso,
+)
+
+RESOURCE_MOBILIZATION = (
+    _module(
+        "donors",
+        "Donor",
+        "resource_mobilization",
+        "DNR",
+        "Last contact",
+        ("Prospect", "First-time", "Active", "Lapsed", "Reactivated", "Do not contact",
+         "Deceased"),  # fmt: skip
+        640,
+        (
+            _field("donor_id", "Donor ID", "Text", "reference", required=True),
+            _field("last_contact", "Last contact", "Date", "date"),
+            _choice("donor_type", "Donor type", ("Individual", "Household", "Staff or board",
+                                                 "Anonymous"), required=True),  # fmt: skip
+            _field("email", "Email", "Email", "email"),
+            _field("mobile", "Mobile", "Text", "phone"),
+            _choice("monthly_giving", "Monthly giving",
+                    ("None", "Active", "Paused", "Lapsed", "Closed")),  # fmt: skip
+            _choice("contact_preference", "Contact preference",
+                    ("Email", "SMS", "Post", "No solicitation")),  # fmt: skip
+            _field("donor_since", "Donor since (year)", "Integer", "year", minimum=1990,
+                   maximum=2099),  # fmt: skip
+            _field("city", "City", "Text", "city"),
+        ),
+    ),
+    _module(
+        "campaigns",
+        "Campaign",
+        "resource_mobilization",
+        "CMP",
+        "Starts on",
+        ("Planned", "Active", "Closed", "Cancelled"),
+        12,
+        (
+            _field("code", "Campaign code", "Text", "reference", required=True),
+            _field("starts_on", "Starts on", "Date", "date", required=True),
+            _field("ends_on", "Ends on", "Date", "date"),
+            _choice("campaign_type", "Type", CAMPAIGN_TYPES, required=True),
+            _field("goal", "Goal ₱", "Number", "goal", minimum=0),
+            _field("raised", "Raised to date ₱", "Number", "raised", minimum=0),
+        ),
+    ),
+    _module(
+        "donations",
+        "Donation",
+        "resource_mobilization",
+        "GFT",
+        "Gift date",
+        ("Pending", "Received", "Posted", "Failed", "Refunded", "Cancelled"),
+        1_500,
+        (
+            _field("gift_id", "Gift ID", "Text", "reference", required=True),
+            _field("gift_date", "Gift date", "Date", "date", required=True),
+            _peso("amount", "Amount ₱", "amount", required=True),
+            _choice("payment_method", "Payment method", PAYMENT_METHODS, required=True),
+            _choice("gift_type", "Gift type", GIFT_TYPES, required=True),
+            _choice("restriction", "Restriction", RESTRICTIONS, required=True),
+            _choice("acknowledgement", "Acknowledgement", ACKNOWLEDGEMENTS, required=True),
+            _field("acknowledged_on", "Acknowledged on", "Date", "date"),
+            _field("receipt_no", "Acknowledgement receipt no.", "Text", "receipt_no"),
+            _flag("major_gift_call", "Thank-you call by the Executive Director"),
+        ),
+    ),
+    _module(
+        "pledges",
+        "Pledge",
+        "resource_mobilization",
+        "PLG",
+        "Pledge date",
+        ("Pending", "In progress", "Completed", "Overdue", "Cancelled", "Written off"),
+        60,
+        (
+            _field("pledge_id", "Pledge ID", "Text", "reference", required=True),
+            _field("pledge_date", "Pledge date", "Date", "date", required=True),
+            _peso("total_amount", "Total pledged ₱", "amount", required=True),
+            _field("installments", "Installments", "Integer", "installments", required=True,
+                   minimum=1, maximum=12),  # fmt: skip
+            _choice("frequency", "Frequency", ("Quarterly", "Monthly", "Semiannual", "Annual"),
+                    required=True),  # fmt: skip
+            _field("first_due", "First payment due", "Date", "date", required=True),
+            _peso("amount_paid", "Amount paid ₱", "amount"),
+            _peso("balance_due", "Balance due ₱", "amount", required=True),
+            _field("solicitor", "Solicitor", "User", "team_user"),
+            _flag("thank_you_due", "Thank-you letter due"),
+        ),
+    ),
+)
+
+GRANTS = (
+    _module(
+        "organizations",
+        "Organization",
+        "grants_partnerships",
+        "ORG",
+        "Last reviewed",
+        ("Active", "Prospect", "Inactive"),
+        80,
+        (
+            _choice("org_type", "Organization type", ORG_TYPES, required=True),
+            _choice("role", "Role", ORG_ROLES, required=True),
+            _field("last_reviewed", "Last reviewed", "Date", "date"),
+            _field("contact_person", "Contact person", "Text", "contact_person"),
+            _field("contact_email", "Contact email", "Email", "email"),
+            _field("website", "Website", "URL", "url"),
+            _choice("due_diligence", "Due diligence",
+                    ("Cleared", "Not started", "In review", "Expired", "Rejected")),  # fmt: skip
+            _field("mou_ends", "MOU ends (month/year)", "Text", "month_year"),
+        ),
+    ),
+    _module(
+        "grant_awards",
+        "Grant",
+        "grants_partnerships",
+        "GRT",
+        "Start date",
+        GRANT_STAGES,
+        20,
+        (
+            _field("grant_code", "Grant code", "Text", "reference", required=True),
+            _field("start_on", "Start date", "Date", "date"),
+            _field("next_report_due", "Next report due", "Date", "date"),
+            _field("ends", "Ends (month/year)", "Text", "month_year"),
+            _peso("amount_requested", "Amount requested ₱", "amount"),
+            _peso("amount_awarded", "Amount awarded ₱", "amount"),
+            _field("indirect_rate", "Indirect rate %", "Number", "rate", minimum=0, maximum=30),
+            _check("cost_share", "Cost share required"),
+            _field("grant_manager", "Grant manager", "User", "team_user", required=True),
+            _field("special_conditions", "Special conditions", "Long text", "conditions"),
+            _flag("fund_setup", "Fund setup needed"),
+        ),
+    ),
+    _module(
+        "budget_lines",
+        "Budget Line",
+        "grants_partnerships",
+        "BL",
+        "",
+        ("Open", "Closed", "Frozen"),
+        140,
+        (
+            _field("line_code", "Line code", "Text", "line_code", required=True),
+            _choice("cost_category", "Cost category", COST_CATEGORIES, required=True),
+            _peso("approved", "Approved budget ₱", "amount", required=True),
+            _peso("actual_to_date", "Actual to date ₱", "amount"),
+            _peso("committed", "Committed ₱", "amount"),
+            _field("burn_rate", "Burn rate %", "Number", "rate", minimum=0, maximum=150),
+            _flag("overspend_alert", "Overspend alert"),
+        ),
+    ),
+    _module(
+        "grant_reports",
+        "Grant Report",
+        "grants_partnerships",
+        "GRP",
+        "Due on",
+        ("Not started", "In preparation", "Internal review", "Submitted", "Accepted",
+         "Revision requested", "Overdue"),  # fmt: skip
+        44,
+        (
+            _choice("report_type", "Report type", REPORT_TYPES, required=True),
+            _field("due_on", "Due on", "Date", "date", required=True),
+            _field("period_end", "Period end", "Date", "date"),
+            _field("submitted_on", "Submitted on", "Date", "date"),
+            _field("preparer", "Preparer", "User", "team_user"),
+            _field("reviewer", "Reviewer", "User", "team_user"),
+        ),
+    ),
+)

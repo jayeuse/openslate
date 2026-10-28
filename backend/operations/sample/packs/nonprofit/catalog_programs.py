@@ -1,0 +1,198 @@
+"""Programs, MEAL and Executive Office modules."""
+
+from __future__ import annotations
+
+from operations.sample.packs.nonprofit.catalog_fields import (
+    ACTIVITY_TYPES,
+    ASSISTANCE_TYPES,
+    CHANNELS,
+    FEEDBACK_CATEGORIES,
+    HAZARDS,
+    PRIORITIES,
+    PROGRAM_AREAS,
+    SENSITIVITIES,
+    SITE_TYPES,
+    VULNERABILITIES,
+    _check,
+    _choice,
+    _field,
+    _flag,
+    _module,
+)
+
+PROGRAMS = (
+    _module(
+        "projects",
+        "Project",
+        "programs",
+        "PRJ",
+        "Last review",
+        ("Pipeline", "Implementation", "Finalisation", "Closed", "Suspended", "Cancelled"),
+        8,
+        (
+            _field("code", "Project code", "Text", "reference", required=True),
+            _choice("program_area", "Program area", PROGRAM_AREAS, required=True),
+            _field("last_review", "Last review", "Date", "date"),
+            _field("period", "Period", "Text", "period"),
+            _field("target_households", "Target households", "Integer", "count", minimum=0),
+            _field("budget", "Budget ₱", "Number", "budget", minimum=0),
+            _field("manager", "Project manager", "User", "team_user", required=True),
+            _field("summary", "Summary", "Long text", "summary"),
+        ),
+    ),
+    _module(
+        "sites",
+        "Site",
+        "programs",
+        "SITE",
+        "Assessed on",
+        ("Active", "Assessed", "Inactive"),
+        16,
+        (
+            _field("site_code", "Site code", "Text", "reference", required=True),
+            _field("assessed_on", "Assessed on", "Date", "date"),
+            _field("province", "Province", "Text", "province"),
+            _field("municipality", "Municipality", "Text", "municipality"),
+            _choice("site_type", "Site type", SITE_TYPES),
+            _choice("hazard", "Main hazard", HAZARDS),
+            _field("households", "Estimated households", "Integer", "count", minimum=0),
+            _field("access_notes", "Access notes", "Long text", "access_notes"),
+        ),
+    ),
+    _module(
+        "activities",
+        "Activity",
+        "programs",
+        "ACT",
+        "Planned date",
+        ("Planned", "Scheduled", "Ongoing", "Completed", "Postponed", "Cancelled"),
+        300,
+        (
+            _field("code", "Activity code", "Text", "reference", required=True),
+            _field("planned_on", "Planned date", "Date", "date", required=True),
+            _field("actual_on", "Actual date", "Date", "date"),
+            _choice("activity_type", "Type", ACTIVITY_TYPES, required=True),
+            _field("facilitator", "Facilitator", "User", "team_user"),
+            _field("female", "Female participants", "Integer", "count", minimum=0),
+            _field("male", "Male participants", "Integer", "count", minimum=0),
+        ),
+    ),
+    _module(
+        "beneficiaries",
+        "Beneficiary",
+        "programs",
+        "BEN",
+        "Registered on",
+        ("Pre-registered", "Verified", "Active", "Exited", "Pending consent", "Ineligible",
+         "Duplicate", "Consent withdrawn"),  # fmt: skip
+        900,
+        (
+            _field("beneficiary_id", "Beneficiary ID", "Text", "reference", required=True),
+            _field("registered_on", "Registered on", "Date", "date", required=True),
+            _choice("sex", "Sex", ("Female", "Male", "Prefer not to say"), required=True),
+            _field("birth_date", "Date of birth", "Date", "birth_date"),
+            _field("household_size", "Household size", "Integer", "count", minimum=1,
+                   maximum=20),  # fmt: skip
+            _check("head_of_household", "Head of household"),
+            _choice("vulnerability", "Vulnerability", VULNERABILITIES),
+            _field("contact_no", "Contact no.", "Text", "phone"),
+            _check("consent_recorded", "Consent recorded"),
+            _field("registered_by", "Registered by", "User", "team_user"),
+            _flag("consent_followup", "Consent follow-up needed"),
+        ),
+    ),
+    _module(
+        "assistance",
+        "Assistance Delivered",
+        "programs",
+        "AST",
+        "Delivered on",
+        ("Planned", "Validated", "Delivered", "Verified", "Not delivered", "Disputed",
+         "Reversed"),  # fmt: skip
+        700,
+        (
+            _choice("assistance_type", "Assistance", ASSISTANCE_TYPES, required=True),
+            _field("delivered_on", "Delivered on", "Date", "date", required=True),
+            _field("round", "Round", "Integer", "count", minimum=1, maximum=12),
+            _field("quantity", "Quantity", "Integer", "count", required=True, minimum=1,
+                   maximum=50),  # fmt: skip
+            _field("unit_value", "Unit value ₱", "Number", "unit_value", minimum=0),
+            _check("received_by_proxy", "Received by proxy"),
+            _field("delivered_by", "Delivered by", "User", "team_user"),
+            _flag("feedback_required", "Feedback case needed"),
+        ),
+    ),
+)
+
+MEAL = (
+    _module(
+        "indicators",
+        "Indicator",
+        "meal",
+        "IND",
+        "Last reviewed",
+        ("Draft", "Approved", "Active", "Retired"),
+        56,
+        (
+            _field("code", "Indicator code", "Text", "reference", required=True),
+            _field("last_reviewed", "Last reviewed", "Date", "date"),
+            _field("statement", "Statement", "Long text", "statement", required=True),
+            _choice("level", "Level", ("Output", "Outcome", "Impact"), required=True),
+            _choice("unit", "Unit", ("Number", "Percentage", "Average"), required=True),
+            _field("baseline", "Baseline", "Number", "measure", minimum=0),
+            _field("lop_target", "Life-of-project target", "Number", "measure", required=True,
+                   minimum=0),  # fmt: skip
+            _choice("frequency", "Frequency",
+                    ("Quarterly", "Monthly", "Semiannual", "Annual", "Endline")),  # fmt: skip
+            _choice("disaggregation", "Disaggregation", ("Sex", "Sex and age", "None")),
+            _field("verification", "Means of verification", "Long text", "verification"),
+        ),
+    ),
+    _module(
+        "indicator_results",
+        "Indicator Result",
+        "meal",
+        "IRS",
+        "Submitted on",
+        ("Draft", "Submitted", "Verified", "Reported", "Returned for correction"),
+        200,
+        (
+            _field("period", "Period", "Text", "period", required=True),
+            _field("submitted_on", "Submitted on", "Date", "date"),
+            _field("period_end", "Period end", "Date", "date", required=True),
+            _field("actual", "Actual", "Number", "measure", required=True, minimum=0),
+            _field("female", "Female", "Number", "measure", minimum=0),
+            _field("male", "Male", "Number", "measure", minimum=0),
+            _field("period_target", "Period target", "Number", "measure", minimum=0),
+            _field("pct_of_target", "% of target", "Number", "rate", minimum=0, maximum=500),
+            _choice("data_source", "Data source",
+                    ("Distribution lists", "Attendance sheets", "KoBo survey", "Partner report",
+                     "School records")),  # fmt: skip
+            _field("verified_by", "Verified by", "User", "team_user"),
+            _flag("off_track", "Off track"),
+        ),
+    ),
+)
+
+EXECUTIVE = (
+    _module(
+        "feedback_cases",
+        "Feedback Case",
+        "executive_office",
+        "FBK",
+        "Received on",
+        ("Received", "Acknowledged", "Under review", "Resolved", "Closed", "Escalated"),
+        70,
+        (
+            _field("case_no", "Case no.", "Text", "reference", required=True),
+            _field("received_on", "Received on", "Date", "date", required=True),
+            _choice("channel", "Channel", CHANNELS, required=True),
+            _choice("category", "Category", FEEDBACK_CATEGORIES, required=True),
+            _choice("sensitivity", "Sensitivity", SENSITIVITIES, required=True),
+            _choice("priority", "Priority", PRIORITIES),
+            _field("description", "Description", "Long text", "description"),
+            _field("response", "Response", "Long text", "response"),
+            _flag("restricted_handling", "Safeguarding referral"),
+        ),
+    ),
+)

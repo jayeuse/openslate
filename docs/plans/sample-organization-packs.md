@@ -169,6 +169,18 @@ The counts below are the proposed Standard counts. The Small profile is about on
   - A funder guest edits an Indicator Result and gets 403.
   - A program manager changes a Budget Line amount and gets 403.
 - **Trade phrases:** pre-assessment, post-assessment, pilot test, sample survey, test run of the early warning system.
+- **Implementation decisions (2026-10-28).** The pack data files in `backend/operations/sample/packs/nonprofit/` are the source of truth.
+  - Country: Philippines. Regular holidays and the common special non-working days (Black Saturday, All Souls' Day, Christmas Eve, the last day of the year), PHP and ₱, `Asia/Manila`, reserved `.example` domains, Philippine mobile numbers (`09XX XXX XXXX`, written with +63 by some people). The foundation is "Fairhaven Community Development Foundation"; all people, donors, funders, places and suppliers are invented.
+  - Feedback Case sits in the Executive Office, not MEAL. The plan's 24 modules leave the Executive Office empty, and every department needs a dated module for its OpenView sources. The Executive Director, the accountability and safeguarding officer and the board secretary are the only readers of safeguarding cases (rule 8); MEAL reports complaint totals only.
+  - The Grant module key is `grant_awards`, because `grants` is a word in the generic Comms code that the pack-neutral key scan forbids.
+  - Dates outside the Sandbox window (one year back, 90 days ahead) are text or a year: grant end and MOU end and fund expiry are month/year text, and "Donor since" and "Volunteer since" are years. A Project has a period text and a last-review date.
+  - Status mixes are reshaped where the research's split fails the realism rule (the top status holds 50% or more and twice the next): Pledges Completed 56 / In progress 22, Donors Active 56 / Lapsed 20, Volunteers Active 60 / Inactive 22, Grants Active 52, Projects Implementation 56. The research marks these figures as judgment.
+  - Named scenario: Pledge 1 (₱120,000 in four quarterly installments) settled in part by Donation 1 (₱30,000), balance ₱90,000. Second named scenario: Cash Advance 1 (₱25,000) liquidated in part by Expense Lines 1 to 3 (₱9,500, ₱6,000 and ₱3,250), unliquidated ₱6,250.
+  - Every pledge payment is a Donation linked to its pledge, so a pledge's balance is its total less its linked gifts; every released advance has one release voucher, and every paid order one supplier payment voucher.
+  - Peso thresholds: a gift of ₱50,000 or more flags a thank-you call by the Executive Director; a purchase request of ₱50,000 or more flags three quotes; requests under ₱50,000 are micro-purchases and ₱1,000,000 or more go to open tender.
+  - Automations become checkbox flags on the same module: thank-you call (major gift), consent follow-up (registration without consent), safeguarding referral, off track (result below 70% of target), three quotes, fund setup (grant awarded), overspend alert (burn rate 90% or more), feedback case needed (disputed distribution), ready to close (advance balance 0), and a disabled Friday payment run. Planned follow-ups: Fund 1 after Grant 3 is awarded, and Feedback Case 1 after the dispute on Assistance 5.
+  - Guests: an external auditor reads Finance and Procurement; a funder's grant officer reads Indicators and Indicator Results. No guest reads a beneficiary, donor or safeguarding module.
+  - Refusals as the plan lists them. The procurement assistant opens a Disbursement (404), because a record the user cannot read cannot be edited first.
 
 ### Local government (`local-government`)
 

@@ -5,9 +5,12 @@ from __future__ import annotations
 from operations.sample.packs.clinic import PACK as _CLINIC_PACK
 from operations.sample.packs.harbor import PACK as _FIRST_PACK
 from operations.sample.packs.interface import OrganizationPack
+from operations.sample.packs.nonprofit import PACK as _NONPROFIT_PACK
 from operations.sample.packs.school import PACK as _SCHOOL_PACK
 
-_PACKS: tuple[OrganizationPack, ...] = (_FIRST_PACK, _SCHOOL_PACK, _CLINIC_PACK)
+_PACKS: tuple[OrganizationPack, ...] = (
+    _FIRST_PACK, _SCHOOL_PACK, _CLINIC_PACK, _NONPROFIT_PACK,
+)  # fmt: skip
 
 
 def default_pack() -> OrganizationPack:
