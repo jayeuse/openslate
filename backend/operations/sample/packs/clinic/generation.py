@@ -51,8 +51,10 @@ NAMED_SCENARIOS = (
 _PROVIDERS = ("internal_clinical_lead", "internal_clinical_02")
 _VALIDATORS = {"laboratory": ("internal_laboratory_lead", "internal_laboratory_02"),
                "pharmacy": ("internal_pharmacy_lead", "internal_pharmacy_02")}  # fmt: skip
+# Clinicians and pharmacy staff raise purchase requests (research §11); the server
+# accepts only a person who can read the module in a User field.
 _REQUESTERS = ("internal_clinical_03", "internal_clinical_04", "internal_pharmacy_03",
-               "internal_laboratory_lead", "internal_pharmacy_lead")  # fmt: skip
+               "internal_clinical_lead", "internal_pharmacy_lead")  # fmt: skip
 
 
 def _user(key: str) -> str:

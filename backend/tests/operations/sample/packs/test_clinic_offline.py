@@ -6,7 +6,10 @@ import re
 from dataclasses import asdict
 from datetime import date
 
+import pytest
+
 from app.systems.sandbox.designs.schemas import SandboxDocument
+from operations.sample.actors import planned_access_level
 from operations.sample.board_text import post_text
 from operations.sample.controls.actions import plan_controls
 from operations.sample.packs.clinic import PACK
@@ -106,3 +109,22 @@ def test_revenue_board_announces_the_named_claim_part_payment() -> None:
     }  # fmt: skip
     assert all(len(posts) == content.posts_per_board for posts in content.posts.values())
     assert set(content.event_details) == set(content.event_titles)
+
+
+@pytest.mark.parametrize("profile", ["small", "standard"])
+def test_every_assigned_person_can_read_the_record_they_are_named_on(profile: str) -> None:
+    # Live run: POST /api/records 422 "User must be an active reader of this module" for a
+    # Purchase Request whose requester was the lab lead (mutation_validation.py).
+    dataset = build_dataset(profile, 42, ANCHOR, organization=PACK)
+    modules = {module.key: module for module in PACK.catalog.modules}
+    failures = set()
+    for record in dataset.records:
+        module = modules[record.module_key]
+        for field in module.fields:
+            value = record.data.get(dataset.field_ids[module.key][field.key])
+            if field.type != "User" or not isinstance(value, str):
+                continue
+            person = value.removeprefix("@user:")
+            if planned_access_level(PACK, person, module.department, module.key) < 1:
+                failures.add((module.key, field.key, person))
+    assert failures == set()
