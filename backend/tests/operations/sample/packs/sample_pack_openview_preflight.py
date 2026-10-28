@@ -13,6 +13,7 @@ from app.systems.access.policy.schemas import GroupAccessReplace, GroupMembersRe
 from app.systems.access.users.schemas import UserUpdate
 from app.systems.access.users.sessions_schemas import AdminSessionListRequest
 from app.systems.boards.schemas import BoardCreate, BoardRevisionRequest
+from app.systems.openview.dashboards.placement import Placement, layout_issues, widget_kind
 from app.systems.openview.dashboards.router import archive_dashboard
 from app.systems.openview.dashboards.schemas import DashboardCreate, DashboardRestore
 from app.systems.openview.reports.router import archive_report
@@ -74,6 +75,7 @@ def _api_structures(
                         "name": field.name,
                         "type": str(_field_type(field)),
                         "position": position,
+                        "config": dict(field.config or {}),
                     }
                 )
         fields[module_key] = field_rows
@@ -99,15 +101,29 @@ def validate_openview_payloads(dataset: SampleDataset, document: SandboxDocument
                     "presentation": _view_presentation(layout, selected_fields),
                 }
             )
-        DashboardCreate.model_validate(
+        dashboard = DashboardCreate.model_validate(
             {
                 "department_id": department["id"],
                 "name": dashboard_name(str(department["name"]), organization=pack),
                 "position": 0,
                 "refresh_cadence": "manual",
-                "widgets": _dashboard_widgets(module, selected_fields),
+                "widgets": _dashboard_widgets(sources, dataset.anchor_date),
             }
         )
+        # The server's grid rules: no overlap, inside the 4 x 5 grid, sizes per type.
+        issues = layout_issues(
+            [
+                (
+                    widget_kind(widget.widget_type, getattr(widget.config, "chart_type", None)),
+                    Placement(
+                        widget.grid_column, widget.grid_row, widget.column_span, widget.row_span
+                    ),
+                )
+                for widget in dashboard.widgets
+            ]
+        )
+        if issues or not 6 <= len(dashboard.widgets) <= 10:
+            raise ValueError(f"{department_key} dashboard layout is invalid: {issues}")
         for index, (report_module_key, report_module, report_fields) in enumerate(sources):
             cadence = "daily" if index == 0 else "weekly"
             group_field = next((field for field in report_fields if _kind(field) == "select"), None)

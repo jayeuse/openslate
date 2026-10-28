@@ -118,48 +118,143 @@ def _view_presentation(
     return result
 
 
-def _dashboard_widgets(
-    module: Mapping[str, Any], fields: Sequence[Mapping[str, Any]]
-) -> list[dict[str, Any]]:
-    module_id = _id(module)
-    definition = _definition(fields)
-    dimension = next((_reference(field) for field in fields if _kind(field) == "select"), None)
-    if dimension is None:
-        dimension = _reference(fields[0])
-    query = {
-        "mode": "groups",
-        "module_id": module_id,
-        "definition": definition,
-        "aggregation": "count",
-        "measure": None,
-        "dimension": dimension,
-    }
-    # The 4 x 5 grid places these as the grid migration places four size-M widgets.
+# Labels that close a record's work; everything else is still open.
+_CLOSED = ("complete", "completed", "closed", "resolved", "paid", "posted", "reconciled",
+           "cancelled", "rejected", "declined", "withdrawn", "retired", "discontinued",
+           "expired", "received", "accepted", "passed", "done", "released", "settled",
+           "applied", "reimbursed", "enrolled", "graduated", "verified", "unfounded",
+           "written off", "voided", "dissolved", "archived", "duplicate", "hr recorded",
+           "registrar posted", "returned")  # fmt: skip
+_MONEY = ("total", "amount", "price", "cost", "fee", "balance", "due", "value", "limit")
+
+
+def _named(
+    fields: Sequence[Mapping[str, Any]], kinds: set[str], words: Sequence[str] = ()
+) -> Mapping[str, Any] | None:
+    return next(
+        (
+            field
+            for field in fields
+            if _kind(field) in kinds
+            and (not words or any(word in str(field.get("name", "")).lower() for word in words))
+        ),
+        None,
+    )
+
+
+def _status(fields: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    return _named(fields, {"select"}, ("status",)) or _named(fields, {"select"})
+
+
+def _open_option_ids(status: Mapping[str, Any]) -> list[str]:
+    options = status.get("config", {}).get("options", [])
     return [
-        {
+        str(option["id"])
+        for option in options
+        if isinstance(option, Mapping) and str(option.get("label", "")).lower() not in _CLOSED
+    ]
+
+
+def _dashboard_widgets(
+    plans: Sequence[tuple[str, Mapping[str, Any], Sequence[Mapping[str, Any]]]],
+    anchor: date,
+) -> list[dict[str, Any]]:
+    """The Overview preset (spec R8): four numbers, a trend, workload and open work.
+
+    The 2 x 2 at the start of rows 4-5 stays free for the department's own charts.
+    """
+    _, module, fields = plans[0]
+    _, other_module, other_fields = plans[-1]
+    module_id, definition = _id(module), _definition(fields)
+    status = _status(fields) or next(f for f in fields if _kind(f) != "user")
+    money = _named(fields, _NUMBER_TYPES, _MONEY) or _named(fields, _NUMBER_TYPES)
+    when = _named(fields, {"date"}) or _named(fields, _DATE_TYPES)
+    owner = _named(fields, {"user"})
+
+    def grouped(
+        aggregation: str = "count",
+        measure: dict[str, str] | None = None,
+        target: Mapping[str, Any] = module,
+        columns: Sequence[Mapping[str, Any]] = fields,
+    ) -> dict[str, Any]:
+        source = _status(columns) or columns[0]
+        return {
+            "mode": "groups",
+            "module_id": _id(target),
+            "definition": _definition(columns),
+            "aggregation": aggregation,
+            "measure": measure,
+            "dimension": _reference(source),
+        }
+
+    def number(column: int, query: dict[str, Any]) -> dict[str, Any]:
+        return {
             "widget_type": "summary",
-            **_cells(0, 0, 2, 1),
+            **_cells(column, 0, 1, 1),
             "config": {"version": 1, "query": query},
-        },
+        }
+
+    widgets = [number(0, grouped())]
+    if money is not None:
+        widgets += [
+            number(1, grouped("sum", _reference(money))),
+            number(2, grouped("average", _reference(money))),
+        ]
+    else:
+        widgets += [number(1, grouped(target=other_module, columns=other_fields))]
+    widgets.append(number(len(widgets), grouped(target=other_module, columns=other_fields)))
+    if when is not None:
+        start = date(anchor.year - 1, anchor.month, 1)
+        trend = {
+            "mode": "date_series",
+            "module_id": module_id,
+            "definition": definition,
+            "aggregation": "sum" if money is not None else "count",
+            "measure": _reference(money) if money is not None else None,
+            "date_field": _reference(when),
+            "from_date": start.isoformat(),
+            "to_date": anchor.isoformat(),
+            "bucket": "month",
+        }
+        widgets.append(
+            {
+                "widget_type": "chart",
+                **_cells(0, 1, 2, 2),
+                "config": {"version": 1, "chart_type": "line", "query": trend},
+            }
+        )
+    else:
+        widgets.append(
+            {
+                "widget_type": "chart",
+                **_cells(0, 1, 2, 2),
+                "config": {"version": 1, "chart_type": "bar", "query": grouped()},
+            }
+        )
+    workload = {**grouped(), "dimension": _reference(owner or status)}
+    widgets.append(
         {
             "widget_type": "workload",
-            **_cells(2, 0, 2, 2),
-            "config": {"version": 1, "query": query},
-        },
+            **_cells(2, 1, 2, 2),
+            "config": {"version": 1, "query": workload},
+        }
+    )
+    open_ids = _open_option_ids(status) if _kind(status) == "select" else []
+    open_work = {
+        **definition,
+        "filters": [{**_reference(status), "operator": "in", "value": open_ids}]
+        if open_ids
+        else [],
+        "sort": [{**_reference(when), "direction": "asc"}] if when is not None else [],
+    }
+    widgets.append(
         {
             "widget_type": "records",
-            **_cells(0, 1, 2, 2),
-            "config": {
-                "version": 1,
-                "query": {"module_id": module_id, "definition": definition},
-            },
-        },
-        {
-            "widget_type": "chart",
-            **_cells(2, 2, 2, 2),
-            "config": {"version": 1, "chart_type": "bar", "query": query},
-        },
-    ]
+            **_cells(2, 3, 2, 2),
+            "config": {"version": 1, "query": {"module_id": module_id, "definition": open_work}},
+        }
+    )
+    return widgets
 
 
 def _cells(column: int, row: int, columns: int, rows: int) -> dict[str, int]:
@@ -237,7 +332,7 @@ def populate_openview(
     organization: OrganizationPack | None = None,
 ) -> Mapping[str, int]:
     """Each department's shared views, Dashboard and Reports, built by its writer (lead)."""
-    del anchor_date, seed
+    del seed
     pack = organization or default_pack()
     plans = _source_plans(departments, modules, fields, organization=pack)
     counts = {
@@ -276,7 +371,7 @@ def populate_openview(
             module_writer.record_mapping("views", logical_id, _id(saved))
             counts["views"] += 1
 
-        widgets = _dashboard_widgets(selected_module, selected_fields)
+        widgets = _dashboard_widgets(plans[department_key], anchor_date)
         dashboard = _json(
             writer,
             "POST",
@@ -294,8 +389,8 @@ def populate_openview(
         )
         dashboard_id = _id(dashboard)
         saved_widgets = dashboard.get("widgets")
-        if not isinstance(saved_widgets, list) or len(saved_widgets) != 4:
-            raise SampleContentError("Dashboard response did not contain its four saved widgets")
+        if not isinstance(saved_widgets, list) or len(saved_widgets) != len(widgets):
+            raise SampleContentError("Dashboard response did not contain its saved widgets")
         writer.record_mapping("dashboards", f"department:{department_key}:dashboard", dashboard_id)
         for index, widget in enumerate(saved_widgets):
             if not isinstance(widget, dict):

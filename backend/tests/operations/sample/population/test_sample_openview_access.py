@@ -82,7 +82,8 @@ def test_reports_use_module_managers_and_dashboards_use_department_leads(tmp_pat
                 )
                 assert person == expected_manager
             if request.url.path == "/api/dashboards":
-                result["widgets"] = [{"id": str(uuid4())} for _ in range(4)]
+                widgets = json.loads(request.content)["widgets"]
+                result["widgets"] = [{"id": str(uuid4())} for _ in widgets]
             if request.url.path.endswith("/runs"):
                 result.update(report_id=request.url.path.split("/")[-2], row_count=2)
             if request.url.path.endswith("/schedule"):
