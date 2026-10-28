@@ -10,7 +10,7 @@ from operations.sample.blueprint import _option_id
 from operations.sample.packs.registry import get_pack, pack_keys
 from operations.sample.realism import DateCluster, DateShape, weighted_label
 from operations.sample.scenario import build_dataset
-from operations.sample.verification.realism import is_round, realism_report
+from operations.sample.verification.realism import is_round, pack_realism, realism_report
 
 ANCHOR = date(2026, 9, 30)
 
@@ -28,35 +28,47 @@ def test_round_numbers_are_the_ones_people_type(value: float, expected: bool) ->
     assert is_round(value) is expected
 
 
-@pytest.mark.parametrize("pack", pack_keys())
+# Packs that already apply rules R1-R5 (P2). The others are strict xfails until they do.
+REALISTIC = {"harbor"}
+
+
 @pytest.mark.parametrize(
-    "criterion",
+    "pack,criterion",
     [
-        pytest.param(c, marks=pytest.mark.xfail(strict=True, reason=f"P2 applies rule C{c}"))
-        for c in (1, 2, 3, 5)
+        pytest.param(
+            pack,
+            criterion,
+            marks=()
+            if pack in REALISTIC or criterion == 4
+            else pytest.mark.xfail(strict=True, reason=f"P2 applies rule C{criterion}"),
+        )
+        for pack in pack_keys()
+        for criterion in (1, 2, 3, 4, 5)
     ],
 )
-def test_pack_plan_has_a_real_organizations_shape(pack: str, criterion: int) -> None:
-    # Strict: once P2 applies the rule, this passes and the marker must come out.
-    assert realism_report(_dataset(pack)).failed(criterion) == []
-
-
-@pytest.mark.parametrize("pack", pack_keys())
-def test_pack_workload_already_centers_on_a_few_writers(pack: str) -> None:
-    assert realism_report(_dataset(pack)).failed(4) == []
+@pytest.mark.parametrize("profile", ["standard", "large"])
+def test_pack_plan_has_a_real_organizations_shape(pack: str, criterion: int, profile: str) -> None:
+    dataset = build_dataset(profile, 42, ANCHOR, organization=get_pack(pack))
+    assert realism_report(dataset, **pack_realism(dataset)).failed(criterion) == []
 
 
 def test_status_and_date_checks_accept_values_drawn_by_the_rules() -> None:
-    dataset = _dataset("harbor")
-    module = next(m for m in dataset.organization.catalog.modules if m.key == "quotes")
+    # School still has the old flat values, so its first big module shows both issues.
+    dataset = _dataset("school")
+    module = next(
+        m for m in dataset.organization.catalog.modules
+        if len(m.statuses) >= 4 and dataset.module_counts[m.key] >= 30
+        and any(f.type == "Date" for f in m.fields)
+        and any(f.value_kind == "status" for f in m.fields)
+    )  # fmt: skip
     status = next(f for f in module.fields if f.value_kind == "status")
     day_field = next(f for f in module.fields if f.type == "Date")
-    ids = dataset.field_ids["quotes"]
-    weights = dict(zip(module.statuses, (55, 20, 12, 8, 4, 1), strict=False))
+    ids = dataset.field_ids[module.key]
+    weights = {label: 100 / (rank + 1) ** 2 for rank, label in enumerate(module.statuses)}
     cluster = DateCluster(DateShape(date(2025, 10, 1), ANCHOR))
     rng = random.Random("42:report")
     label_id = {
-        label: _option_id(dataset.seed, "quotes", status.key, label, dataset.organization)
+        label: _option_id(dataset.seed, module.key, status.key, label, dataset.organization)
         for label in module.statuses
     }
     records = tuple(
@@ -64,19 +76,29 @@ def test_status_and_date_checks_accept_values_drawn_by_the_rules() -> None:
             **record.data,
             ids[status.key]: label_id[weighted_label(rng, weights)],
             ids[day_field.key]: cluster.pick(rng).isoformat(),
-        }) if record.module_key == "quotes" else record
+        }) if record.module_key == module.key else record
         for record in dataset.records
     )  # fmt: skip
+    prefixes = (f"C1 {module.key}:", f"C3 {module.key}:")
     before = realism_report(dataset).issues
     after = realism_report(replace(dataset, records=records)).issues
 
-    assert any(issue.startswith(("C1 quotes", "C3 quotes")) for issue in before)
-    assert not any(issue.startswith(("C1 quotes", "C3 quotes")) for issue in after)
+    assert any(issue.startswith(prefixes) for issue in before)
+    assert not any(issue.startswith(prefixes) for issue in after)
 
 
-def test_holiday_records_are_reported_only_for_the_pack_holidays() -> None:
-    dataset = _dataset("harbor")
-    report = realism_report(dataset, holidays=frozenset({date(2026, 6, 12), date(2025, 12, 25)}))
+def test_holiday_records_are_reported_only_for_the_given_holidays() -> None:
+    # A holiday list that covers every day School's records use must be reported;
+    # Harbor's own holidays hold no records.
+    school = _dataset("school")
+    christmas = frozenset(
+        date.fromisoformat(value[:10])
+        for record in school.records
+        for value in record.data.values()
+        if isinstance(value, str) and len(value) == 10 and value[:2] == "20"
+    )
 
-    assert any(issue.startswith("C3 ") and "holidays" in issue for issue in report.issues)
-    assert not any("holidays" in issue for issue in realism_report(dataset).issues)
+    assert any("holidays" in issue for issue in realism_report(school, holidays=christmas).issues)
+    assert not any("holidays" in issue for issue in realism_report(school).issues)
+    harbor = _dataset("harbor")
+    assert not realism_report(harbor, **pack_realism(harbor)).failed(3)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from operations.sample.realism import skewed_parent
+
 
 def receipt_order_index(receipt_index: int) -> int:
     """Skip cancelled PO 3; the final receipt completes the first PO."""
@@ -51,8 +53,17 @@ def parent_indices(key: str, target: int, counts: Mapping[str, int]) -> tuple[in
     if key == "work_order_products":
         products = counts["products"]
         return ((target * 3) % products, (target * 3 + 13) % products)
+    if key in _UNEVEN:
+        return (skewed_parent(key, target, counts[_PARENTS[key]]),)
     return (target % counts[_PARENTS[key]],)
 
+
+# Links where a few parents get many children and some get none (spec R5). The other
+# links are structural (order lines, receipts, movements) or name one record each.
+_UNEVEN = frozenset({
+    "customer_contacts", "customer_quotes", "customer_orders", "site_requests",
+    "request_updates", "product_counts", "supplier_orders",
+})  # fmt: skip
 
 _PARENTS = {
     "customer_contacts": "customers",

@@ -18,6 +18,14 @@ from operations.sample.packs.harbor.links import (
 from operations.sample.packs.harbor.links import (
     receipt_order_index as _receipt_order_index,
 )
+from operations.sample.packs.harbor.realism import (
+    AMOUNT_SHAPES,
+    DEFAULT_AMOUNT,
+    INVOICE_TOTAL,
+    INVOICED_ORDER_WEIGHTS,
+    PRODUCT_PRICE,
+    STATUS_WEIGHTS,
+)
 from operations.sample.packs.harbor.text import (
     email_value,
     note_text,
@@ -30,10 +38,14 @@ from operations.sample.packs.harbor.text import (
 from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.types import OMIT as _OMIT
 from operations.sample.packs.types import FieldSpec, JsonValue, ModuleSpec
+from operations.sample.realism import long_tail_amount, ordered_skew, weighted_label
+
+# Records below this index carry named business cases; the realism rules leave them alone.
+PINNED = 10
 
 
 def _product_price(index: int) -> int:
-    return 40 + (index * 17) % 160
+    return int(long_tail_amount(random.Random(f"harbor:product_price:{index}"), PRODUCT_PRICE))
 
 
 def _ordered_quantities(order_index: int) -> tuple[int, int]:
@@ -77,14 +89,21 @@ def _purchase_total(order_index: int, product_count: int) -> int:
 
 
 def _invoice_total(index: int) -> int:
-    return 12_000 if index == 0 else 1_000 + (index * 137) % 10_000
+    if index == 0:
+        return 12_000
+    if index < PINNED:  # Named invoice cases and the threshold trigger use these totals.
+        return 1_000 + (index * 137) % 10_000
+    return int(long_tail_amount(random.Random(f"harbor:invoice_total:{index}"), INVOICE_TOTAL))
 
 
 def _payment_amount(payment_index: int, counts: dict[str, int]) -> int:
     invoice_total = _invoice_total(_payment_invoice_index(payment_index))
     if payment_index == 0:
         return 4_500
-    return invoice_total if payment_index % 4 == 1 else max(1, invoice_total // 2)
+    if payment_index < PINNED:  # Named payment cases (for example invoice 8 overdue).
+        return invoice_total if payment_index % 4 == 1 else max(1, invoice_total // 2)
+    # Most customers pay in full; every fifth payment covers half the invoice.
+    return invoice_total if payment_index % 5 else max(1, invoice_total // 2)
 
 
 def _invoice_due_date(index: int, seed: int, anchor: date, counts: dict[str, int]) -> date:
@@ -118,8 +137,7 @@ def _status_label(
             return "Cancelled"
         if index == 0:
             return "Partially fulfilled"
-        active_statuses = tuple(status for status in module.statuses if status != "Cancelled")
-        return active_statuses[(index + seed) % len(active_statuses)]
+        return weighted_label(_status_rng(module, index, seed), INVOICED_ORDER_WEIGHTS)
     special = SPECIAL_STATUSES.get(module.key, {}).get(index)
     if special is not None:
         return special
@@ -141,12 +159,21 @@ def _status_label(
             index
         ):
             return "Paid"
+        if payment_index is not None and index >= PINNED:
+            return "Partially paid"
         if _invoice_due_date(index, seed, anchor, counts) < anchor:
             return "Overdue"
         if payment_index is not None:
             return "Partially paid"
         return "Disputed" if index == 601 else "Issued"
-    return module.statuses[(index + seed) % len(module.statuses)]
+    weights = STATUS_WEIGHTS.get(module.key)
+    if weights is None:
+        return module.statuses[(index + seed) % len(module.statuses)]
+    return weighted_label(_status_rng(module, index, seed), weights)
+
+
+def _status_rng(module: ModuleSpec, index: int, seed: int) -> random.Random:
+    return random.Random(f"{seed}:{module.key}:{index}:status")
 
 
 def _field_value(
@@ -176,7 +203,7 @@ def _field_value(
             seed,
             module.key,
             field.key,
-            field.options[(index + seed) % len(field.options)],
+            weighted_label(rng, ordered_skew(field.options)),
             organization,
         )
     if field.value_kind == "owner":
@@ -223,15 +250,14 @@ def _field_value(
             )
         if field.key == "credit_limit" and index % 13 == 0:
             return 0
-        if field.key == "annual_value":
-            return 1_200 + rng.randrange(0, 30_000, 100)
         if field.key == "score" or field.key == "risk_score":
             return 65 + (index * 7) % 36
         if field.key == "latitude":
             return 14.5 + (index % 100) / 100
         if field.key == "labor_hours":
             return 0 if index % 23 == 0 else 1 + (index % 24)
-        return 500 + rng.randrange(0, 9_000, 25)
+        shape = AMOUNT_SHAPES.get((module.key, field.key), DEFAULT_AMOUNT)
+        return long_tail_amount(rng, shape)
     if field.value_kind in {"integer", "variance"}:
         if field.key == "quantity":
             return (

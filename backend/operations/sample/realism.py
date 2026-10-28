@@ -13,6 +13,7 @@ from bisect import bisect_left
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, time, timedelta
+from functools import lru_cache
 from itertools import accumulate
 
 # R1. Statuses and choices are skewed.
@@ -22,6 +23,11 @@ def weighted_label(rng: random.Random, weights: Mapping[str, float]) -> str:
     """One label, drawn by the pack's weight for each label."""
     labels = list(weights)
     return rng.choices(labels, weights=[weights[label] for label in labels])[0]
+
+
+def ordered_skew(labels: Sequence[str], alpha: float = 1.1) -> dict[str, float]:
+    """Default weights for a choice list: the first option is the usual one."""
+    return {label: (position + 1) ** -alpha for position, label in enumerate(labels)}
 
 
 # R2. Amounts have a long tail.
@@ -139,6 +145,39 @@ def _last_working_days(days: Sequence[date], holidays: Collection[date]) -> set[
     return {day for month in by_month.values() for day in month[-3:]}
 
 
+def easter_sunday(year: int) -> date:
+    """Western Easter (anonymous Gregorian algorithm), for movable public holidays."""
+    a, b, c = year % 19, year // 100, year % 100
+    d, e = divmod(b, 4)
+    g = (8 * b + 13) // 25
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    m = (32 + 2 * e + 2 * i - h - k) % 7
+    n = (a + 11 * h + 22 * m) // 451
+    month, day = divmod(h + m - 7 * n + 114, 31)
+    return date(year, month, day + 1)
+
+
+def nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    """The n-th weekday of a month (0 = Monday); n = -1 is the last one."""
+    if n > 0:
+        first = date(year, month, 1)
+        return first + timedelta(days=(weekday - first.weekday()) % 7 + 7 * (n - 1))
+    last = (date(year + month // 12, month % 12 + 1, 1)) - timedelta(days=1)
+    return last - timedelta(days=(last.weekday() - weekday) % 7)
+
+
+def working_day(day: date, holidays: Collection[date], low: date, high: date) -> date:
+    """Move a derived date to a working day, forward first, inside ``low``..``high``."""
+    for step in (1, -1):
+        moved = day
+        while low <= moved <= high:
+            if moved.weekday() < 5 and moved not in holidays:
+                return moved
+            moved += timedelta(days=step)
+    return day
+
+
 def entry_time(rng: random.Random) -> time:
     """Most entries at 9-11 and 14-16, the rest in working hours, a few after 21:00."""
     band = rng.random()
@@ -162,6 +201,35 @@ def pareto_weights(rng: random.Random, team: Sequence[str], alpha: float = 1.2) 
     rng.shuffle(ranking)
     rank = {key: position for position, key in enumerate(ranking, start=1)}
     return [rank[key] ** -alpha for key in team]
+
+
+# R5. Links are uneven.
+
+
+@lru_cache(maxsize=256)
+def _parent_table(key: str, parents: int, pinned: int, dormant_share: float) -> tuple[
+    tuple[int, ...], tuple[float, ...]
+]:
+    rng = random.Random(f"links:{key}:{parents}")
+    eligible = [
+        index for index in range(parents) if index < pinned or rng.random() >= dormant_share
+    ]
+    weights = pareto_weights(rng, [str(index) for index in eligible], alpha=0.8)
+    return tuple(eligible), tuple(accumulate(weights))
+
+
+def skewed_parent(
+    key: str, child: int, parents: int, *, pinned: int = 10, dormant_share: float = 0.08
+) -> int:
+    """The parent a child links to: a few parents get many children and some get none.
+
+    Children below ``pinned`` keep parent ``child`` so named business cases stay put.
+    """
+    if child < min(pinned, parents):
+        return child
+    eligible, cumulative = _parent_table(key, parents, pinned, dormant_share)
+    point = random.Random(f"links:{key}:{child}").random() * cumulative[-1]
+    return eligible[bisect_left(cumulative, point)]
 
 
 # R6. Text has dirt that the server accepts.

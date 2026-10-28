@@ -2,6 +2,8 @@
 
 They read only the dataset, so they run with no database. A module or department
 with fewer than ``MIN_RECORDS`` records is too small to have a shape and is skipped.
+Each pack's ``realism`` module may name its holidays, its computed amounts (sums and
+products of other fields) and its structural links (one child per parent slot).
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from collections import Counter, defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import date
+from importlib import import_module
 
 from operations.sample.blueprint import SampleDataset, SampleRecord, _option_id
 from operations.sample.packs.types import FieldSpec, JsonValue, ModuleSpec
@@ -50,8 +53,26 @@ def _day(value: object) -> date | None:
         return None
 
 
+def pack_realism(dataset: SampleDataset) -> dict[str, Collection[object]]:
+    """The pack's own realism declarations, or none for a pack without them."""
+    try:
+        key = dataset.organization.identity.key
+        module = import_module(f"operations.sample.packs.{key}.realism")
+    except ModuleNotFoundError:
+        return {}
+    return {
+        "holidays": module.holidays(dataset.anchor_date),
+        "computed": getattr(module, "COMPUTED_AMOUNTS", frozenset()),
+        "structural": getattr(module, "STRUCTURAL_LINKS", frozenset()),
+    }
+
+
 def realism_report(
-    dataset: SampleDataset, *, holidays: Collection[date] = frozenset()
+    dataset: SampleDataset,
+    *,
+    holidays: Collection[date] = frozenset(),
+    computed: Collection[str] = frozenset(),
+    structural: Collection[str] = frozenset(),
 ) -> RealismReport:
     report = RealismReport()
     pack = dataset.organization
@@ -70,14 +91,15 @@ def realism_report(
                 _statuses(report, dataset, module, spec, values)
             elif spec.type == "Number" and any(m in spec.value_kind or m in spec.key
                                                for m in MONEY_MARKERS):  # fmt: skip
-                _amounts(report, f"{module.key}.{spec.key}", values)
+                name = f"{module.key}.{spec.key}"
+                _amounts(report, name, values, typed=name not in computed)
         date_field = next((spec for spec in module.fields if spec.type == "Date"), None)
         if date_field is not None:
             days = [_day(row.data.get(ids[date_field.key])) for row in rows]
             _dates(report, module.key, [day for day in days if day is not None], holidays)
 
     _workload(report, dataset)
-    _links(report, dataset, records_by_module)
+    _links(report, dataset, records_by_module, structural)
     return report
 
 
@@ -99,16 +121,18 @@ def _statuses(
     counts.pop(None, None)
     if not counts:
         return
-    top = max(counts.values()) / sum(counts.values())
+    ordered = [count for _, count in counts.most_common()]
+    top = ordered[0] / sum(ordered)
     report.measures[f"C1 {module.key} top status share"] = top
     if top < 0.5:
         report.issues.append(f"C1 {module.key}: the most common status holds {top:.0%}, below 50%")
-    tied = [n for n, seen in Counter(counts.values()).items() if seen > 1]
-    if tied:
-        report.issues.append(f"C1 {module.key}: statuses share the same count {sorted(tied)}")
+    if len(ordered) > 1 and ordered[0] < 2 * ordered[1]:
+        report.issues.append(f"C1 {module.key}: the top status is not twice the second (flat)")
 
 
-def _amounts(report: RealismReport, name: str, values: list[JsonValue | None]) -> None:
+def _amounts(
+    report: RealismReport, name: str, values: list[JsonValue | None], *, typed: bool
+) -> None:
     amounts = [float(v) for v in values if isinstance(v, int | float) and not isinstance(v, bool)]
     positive = [v for v in amounts if v > 0]
     if len(positive) < MIN_RECORDS:
@@ -119,7 +143,7 @@ def _amounts(report: RealismReport, name: str, values: list[JsonValue | None]) -
     report.measures[f"C2 {name} round share"] = rounded
     if spread < 5:
         report.issues.append(f"C2 {name}: p99/p50 is {spread:.1f}, below 5")
-    if rounded < 0.05:
+    if typed and rounded < 0.05:  # A computed total is rarely a round number.
         report.issues.append(f"C2 {name}: {rounded:.0%} round numbers, below 5%")
 
 
@@ -157,12 +181,13 @@ def _links(
     report: RealismReport,
     dataset: SampleDataset,
     records_by_module: dict[str, list[SampleRecord]],
+    structural: Collection[str],
 ) -> None:
     children: dict[str, set[str]] = defaultdict(set)
     for edge in dataset.edges:
         children[edge.relationship_id].update((edge.source_record_id, edge.target_record_id))
     for relationship in dataset.organization.catalog.relationships:
-        if relationship.cardinality != "one-to-many":
+        if relationship.cardinality != "one-to-many" or relationship.key in structural:
             continue
         parent = relationship.source if relationship.child == "target" else relationship.target
         parents = [row.logical_id for row in records_by_module[parent]]
