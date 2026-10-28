@@ -100,9 +100,10 @@ def revoke_admin_sessions(
         raise SamplePhaseActionError(
             "Bulk session revocation did not keep exactly the shared accounts", step=action.key
         )
-    # A revoked session cannot refresh, so each probe reads without refreshing first.
+    # A revoked session cannot refresh, so its probe reads without refreshing first; a kept
+    # session refreshes first, since its access token may have expired since its last use.
     for key, credential in credentials.items():
-        probe = read("/api/auth/session", actor=key, refresh_first=False)
+        probe = read("/api/auth/session", actor=key, refresh_first=key in shared)
         authenticated = probe.get("authenticated") is True
         if authenticated != (key in shared) or (
             authenticated and probe.get("user_id") != credential.user_id
@@ -110,7 +111,7 @@ def revoke_admin_sessions(
             raise SamplePhaseActionError(
                 "A primary session differs from its shared or revoked plan", step=action.key
             )
-    probe = read("/api/auth/session", actor=OPERATOR, refresh_first=False)
+    probe = read("/api/auth/session", actor=OPERATOR, refresh_first=True)
     if probe.get("authenticated") is not True or probe.get("user_id") != operator_id:
         raise SamplePhaseActionError(
             "The operator's session ended in a pack administrator revocation", step=action.key
