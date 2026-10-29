@@ -51,6 +51,10 @@ from operations.sample.realism import (
 PINNED = 10
 
 
+# The service request that exercises the "Start urgent requests" rule (Open and Urgent).
+URGENT_REQUEST = 2
+
+
 def _product_price(index: int) -> int:
     return int(long_tail_amount(random.Random(f"harbor:product_price:{index}"), PRODUCT_PRICE))
 
@@ -148,6 +152,8 @@ def _status_label(
     special = SPECIAL_STATUSES.get(module.key, {}).get(index)
     if special is not None:
         return special
+    if (module.key, index) == ("service_requests", URGENT_REQUEST):
+        return "Open"
     if module.key == "purchase_orders":
         return _purchase_order_status(index)
     if module.key == "purchase_lines":
@@ -206,13 +212,11 @@ def _clean_field_value(
             return _OMIT
         return _option_id(seed, module.key, field.key, label, organization)
     if field.value_kind == "choice":
-        return _option_id(
-            seed,
-            module.key,
-            field.key,
-            weighted_label(rng, ordered_skew(field.options)),
-            organization,
-        )
+        label = weighted_label(rng, ordered_skew(field.options))
+        if (module.key, field.key, index) == ("service_requests", "priority", URGENT_REQUEST):
+            # The "Start urgent requests" rule needs one Open, Urgent request in every seed.
+            label = "Urgent"
+        return _option_id(seed, module.key, field.key, label, organization)
     if field.value_kind == "owner":
         return f"@user:{assignee_key(module.key, module.department, index, seed, organization)}"
     if field.value_kind == "notes":
