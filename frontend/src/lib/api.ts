@@ -274,6 +274,56 @@ let refreshInFlight: {
   activity: ActivityRenewal | undefined;
 } | null = null;
 
+/** Whether the session refresh is waiting for Auth to answer again. */
+export type SessionConnection = "connected" | "reconnecting";
+let sessionConnection: SessionConnection = "connected";
+const sessionConnectionListeners = new Set<() => void>();
+// Waits between refresh attempts while Auth is unavailable; the last repeats.
+const REFRESH_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 10000];
+
+function setSessionConnection(next: SessionConnection): void {
+  if (next === sessionConnection) return;
+  sessionConnection = next;
+  for (const listener of sessionConnectionListeners) listener();
+}
+
+export function getSessionConnection(): SessionConnection {
+  return sessionConnection;
+}
+
+export function subscribeSessionConnection(listener: () => void): () => void {
+  sessionConnectionListeners.add(listener);
+  return () => {
+    sessionConnectionListeners.delete(listener);
+  };
+}
+
+function waitBeforeRetry(delay: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+/**
+ * Refresh until the server either issues a session or refuses it. An unavailable
+ * answer (Auth briefly unreachable, 503) keeps the session on the server, so a
+ * refresh after a refused request retries quietly instead of signing the person
+ * out. An activity renewal runs before access expires and keeps its own recovery
+ * (the session gate), so it is not retried here.
+ */
+async function refreshUntilSettled(
+  activity?: ActivityRenewal,
+): Promise<RefreshResult> {
+  let result = await refreshAfterSessionRecheck(activity);
+  if (activity) return result;
+  for (let attempt = 0; result === "unavailable"; attempt += 1) {
+    setSessionConnection("reconnecting");
+    const delays = REFRESH_RETRY_DELAYS_MS;
+    await waitBeforeRetry(delays[Math.min(attempt, delays.length - 1)]);
+    result = await refreshAfterSessionRecheck();
+  }
+  setSessionConnection("connected");
+  return result;
+}
+
 function isErrorDetail(
   value: unknown,
 ): value is { code?: unknown; message?: unknown; blockers?: unknown } {
@@ -455,9 +505,9 @@ export async function refreshBrowserSession(
   const locks = browserLocks();
   const refresh = locks
     ? locks.request("openslate-auth-refresh", { mode: "exclusive" }, () =>
-        refreshAfterSessionRecheck(activity),
+        refreshUntilSettled(activity),
       )
-    : refreshAfterSessionRecheck(activity);
+    : refreshUntilSettled(activity);
   const current = { promise: refresh, activity };
   refreshInFlight = current;
   try {

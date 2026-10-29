@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
+import { SessionConnectionStatus } from "@/components/session-connection-status";
 import { AppQueryProvider } from "@/components/query-provider";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
@@ -1008,6 +1009,7 @@ export function AppPage({ children }: AppPageProps) {
               </AppShell>
             )}
           </AppQueryProvider>
+          <SessionConnectionStatus />
           {unavailable && !checking && (
             <div
               className="bg-destructive text-destructive-foreground fixed right-4 bottom-4 z-[80] flex max-w-sm items-center gap-3 rounded-md px-4 py-3 text-sm shadow-lg"
