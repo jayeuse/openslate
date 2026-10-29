@@ -14,6 +14,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
+from app.core.observability import failure_cause, log_event
 from app.systems.access.identity import rate_limits
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import User, UserStatus
@@ -82,6 +83,7 @@ class ProviderPasswordGrantClient:
             raise LifecycleInvalidCredentials("The supplied password is invalid") from error
         except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
             self._db.rollback()
+            _log_unavailable(error)
             raise LifecyclePasswordServiceUnavailable("Password service unavailable") from error
         try:
             provider_user = self._client.get_user(tokens.access_token)
@@ -112,12 +114,23 @@ class ProviderPasswordGrantClient:
             record_failure()
             raise
         except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
+            _log_unavailable(error)
             raise LifecyclePasswordServiceUnavailable("Password service unavailable") from error
         finally:
             try:
                 self._client.sign_out(tokens.access_token, scope="local")
             except (InvalidProviderCredentials, SupabaseAuthUnavailable):
                 pass
+
+
+def _log_unavailable(error: Exception) -> None:
+    # Live seven-pack run: a restore confirmation failed with 503 and no logged cause.
+    log_event(
+        "upstream_failure",
+        reason_code="lifecycle_password_unavailable",
+        upstream="postgresql" if isinstance(error, SQLAlchemyError) else "supabase-auth",
+        cause=failure_cause(error),
+    )
 
 
 __all__ = ["PasswordGrantClient", "ProviderPasswordGrantClient"]

@@ -405,3 +405,21 @@ def test_runtime_limit_environment_values_must_preserve_their_bounds(
         Settings.model_validate(dict(os.environ))
 
     assert expected_field in str(error.value)
+
+
+def test_a_provider_failure_names_what_failed_without_its_message() -> None:
+    # Live seven-pack run: an export failed as exports:ProviderUnavailable and a restore
+    # confirmation as 503 with no cause; the provider errors now carry a bounded kind.
+    import httpx
+
+    from app.core.integrations.supabase_auth import SupabaseAuthUnavailable, _json_response
+    from app.systems.platform.files.providers import ProviderUnavailable
+    from app.systems.platform.files.supabase_storage import SupabaseStorage
+
+    with pytest.raises(SupabaseAuthUnavailable) as auth:
+        _json_response(httpx.Response(429, text="private detail"))
+    assert failure_cause(auth.value) == "SupabaseAuthUnavailable_http_429"
+    with pytest.raises(ProviderUnavailable) as storage:
+        SupabaseStorage._require_success(503)
+    assert failure_cause(storage.value) == "ProviderUnavailable_http_503"
+    assert failure_cause(ProviderUnavailable("x", kind="bad kind; drop")) == "ProviderUnavailable"

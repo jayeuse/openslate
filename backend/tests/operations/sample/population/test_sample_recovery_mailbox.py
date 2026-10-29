@@ -89,7 +89,8 @@ def test_a_full_inbox_that_changes_while_it_is_read_is_read_again(monkeypatch) -
     # between pages of one read. The reader reads again instead of stopping. One page holds
     # 500 messages, so this inbox needs two.
     real_client = httpx.Client
-    old = [{"ID": f"old-{index}", "To": [{"Address": "other@example.test"}]} for index in range(560)]
+    other = [{"Address": "other@example.test"}]
+    old = [{"ID": f"old-{index}", "To": other} for index in range(560)]
     new = {"ID": "new", "To": [{"Address": RECIPIENT}]}
     state = {"listings": 0, "arrived": False, "changed_at": 2}
 

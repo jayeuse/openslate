@@ -97,7 +97,11 @@ class SupabaseStorage:
                         chunks.append(chunk)
                     return response.status_code, b"".join(chunks)
         except httpx.RequestError as exc:
-            raise ProviderUnavailable("Storage API is unavailable") from exc
+            kind = (
+                "timeout" if isinstance(exc, httpx.TimeoutException)
+                else "connect" if isinstance(exc, httpx.ConnectError) else "transport"
+            )
+            raise ProviderUnavailable("Storage API is unavailable", kind=kind) from exc
 
     @staticmethod
     def _is_missing(status: int, body: bytes) -> bool:
@@ -127,7 +131,7 @@ class SupabaseStorage:
     @staticmethod
     def _require_success(status: int) -> None:
         if not 200 <= status < 300:
-            raise ProviderUnavailable("Storage API request failed")
+            raise ProviderUnavailable("Storage API request failed", kind=f"http_{status}")
 
     def upload(self, key: str, content: bytes, media_type: str) -> None:
         self._validate_key(key)

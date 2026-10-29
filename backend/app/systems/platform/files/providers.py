@@ -10,7 +10,10 @@ from fastapi import HTTPException, Request
 
 
 class ProviderUnavailable(RuntimeError):
-    pass
+    def __init__(self, message: str = "", *, kind: str | None = None) -> None:
+        super().__init__(message)
+        # What failed (timeout, connect, http_<status>) for operational logs.
+        self.kind = kind
 
 
 class StorageCleanupUncertain(ProviderUnavailable):

@@ -31,6 +31,11 @@ _ISSUED_AT_ALLOWANCE_SECONDS = 5
 class SupabaseAuthUnavailable(Exception):
     """The provider could not establish an authoritative answer."""
 
+    def __init__(self, message: str, *, kind: str | None = None) -> None:
+        super().__init__(message)
+        # What failed (timeout, connect, http_<status>) for operational logs.
+        self.kind = kind
+
 
 class InvalidProviderCredentials(Exception):
     """The provider explicitly denied a credential exchange."""
@@ -127,7 +132,9 @@ class SupabaseAuthClient:
                     params=params,
                 )
         except httpx.RequestError as error:
-            raise SupabaseAuthUnavailable("Supabase Auth is unavailable") from error
+            raise SupabaseAuthUnavailable(
+                "Supabase Auth is unavailable", kind=_transport_kind(error)
+            ) from error
 
     def _exchange(self, payload: dict[str, str], grant_type: str) -> ProviderTokens:
         response = self._request("POST", "token", json=payload, params={"grant_type": grant_type})
@@ -401,9 +408,17 @@ def _secret(value: SecretStr | str) -> str:
     return value.get_secret_value() if isinstance(value, SecretStr) else str(value)
 
 
+def _transport_kind(error: httpx.RequestError) -> str:
+    if isinstance(error, httpx.TimeoutException):
+        return "timeout"
+    return "connect" if isinstance(error, httpx.ConnectError) else "transport"
+
+
 def _json_response(response: httpx.Response) -> dict[str, Any]:
     if response.status_code != 200:
-        raise SupabaseAuthUnavailable("Supabase Auth is unavailable")
+        raise SupabaseAuthUnavailable(
+            "Supabase Auth is unavailable", kind=f"http_{response.status_code}"
+        )
     try:
         data = response.json()
     except ValueError as error:

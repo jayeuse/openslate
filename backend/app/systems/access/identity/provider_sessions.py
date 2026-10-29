@@ -17,7 +17,6 @@ from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.core.config import get_settings
-from app.core.observability import log_event
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
     InvalidProviderToken,
@@ -27,6 +26,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthClient,
     SupabaseAuthUnavailable,
 )
+from app.core.observability import log_event
 from app.systems.access.identity.contracts import InvalidCredentials, IssuedSession
 from app.systems.access.identity.mfa import MFARequired, requires_mfa
 from app.systems.access.identity.mfa_observations import (

@@ -121,7 +121,10 @@ def _set_int(record: dict[str, object], name: str, value: int | None) -> None:
 
 
 def failure_cause(error: BaseException) -> str:
-    """Name a caught failure with bounded codes only: never its message or arguments."""
+    """Name a caught failure with bounded codes only: never its message or arguments.
+
+    A provider error with a ``kind`` (timeout, connect, http_<status>) adds it.
+    """
 
     code = getattr(error, "cause_code", None)
     if isinstance(code, str) and _CAUSE_LIST.fullmatch(code):
@@ -141,4 +144,8 @@ def failure_cause(error: BaseException) -> str:
     if getattr(error, "orig", None) is not None:
         return "database_operation_failed"
     name = type(error).__name__
-    return name if _CLASS_NAME.fullmatch(name) else "unexpected_error"
+    if not _CLASS_NAME.fullmatch(name):
+        return "unexpected_error"
+    # Provider errors name what failed (timeout, connect, http_503) in a bounded kind.
+    kind = getattr(error, "kind", None)
+    return f"{name}_{kind}" if isinstance(kind, str) and _CLASS_NAME.fullmatch(kind) else name

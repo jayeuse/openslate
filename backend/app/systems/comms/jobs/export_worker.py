@@ -12,7 +12,7 @@ from uuid6 import uuid7
 from app.core.base_model import utc_now
 from app.core.database.organization_scope import bound_organization_column, scope_session
 from app.core.database.session import AuditSession
-from app.core.observability import log_event
+from app.core.observability import failure_cause, log_event
 from app.systems.access.users.models import User
 from app.systems.comms.jobs import export_service as service
 from app.systems.comms.jobs.encoding import MIME, ExportTooLarge, encode
@@ -180,7 +180,13 @@ def _failed(
         )
         work.lease_token = work.lease_expires_at = None
         db.commit()
-    log_event("operational_attention", reason_code="comms_export_failed", upstream="comms-jobs")
+    log_event(
+        "operational_attention",
+        reason_code="comms_export_failed",
+        upstream="comms-jobs",
+        org_id=org,
+        cause=failure_cause(failure),
+    )
 
 
 def run_export_job(
