@@ -3,13 +3,21 @@
 Each budget is the count after removing repeated work (School Standard profile,
 2026-10). A change that adds a statement to one of these routes fails here; if a
 statement was removed on purpose, lower the budget in the same change.
+
+Profile 4.2 (Harbor Standard, 2026-10-29) added a person field, a choice field and
+a one-to-many link, and each record write now assigns a reader. With them, before
+-> after reading the module's readers and fields once per request and checking a
+new link's duplicate and cardinality in one read: POST records 21 -> 16, PATCH
+22 -> 17, POST link 14 -> 13; GET 7 and PUT 15 are unchanged.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -25,6 +33,7 @@ pytestmark = [
     ),
 ]
 pytest_plugins = ("tests.relationships_integration.relationship_http_support",)
+OPEN, DONE = "open", "done"
 
 # A member whose group writes the department, so every access-policy lookup runs.
 # Counts cover the route and its locks, audit and outbox rows; authentication is
@@ -32,9 +41,9 @@ pytest_plugins = ("tests.relationships_integration.relationship_http_support",)
 # Before the 2026-10 clean-up: GET 4, POST records 18, PATCH 15, POST link 19, PUT 24.
 # The membership read belongs to authentication (cached for the request), not the route.
 BUDGETS = {
-    "GET /api/records/{record_id}": 4,
-    "POST /api/records": 13,
-    "PATCH /api/records/{record_id}": 14,
+    "GET /api/records/{record_id}": 7,
+    "POST /api/records": 16,
+    "PATCH /api/records/{record_id}": 17,
     "POST /api/relationships": 13,
     "PUT /api/relationships/fields/{field_id}/sources/{source_record_id}": 15,
 }
@@ -56,11 +65,19 @@ def _statements(engine: Any) -> Iterator[list[str]]:
         event.remove(engine, "before_cursor_execute", record)
 
 
-def _add_fields(fixture: Any) -> tuple[UUID, UUID]:
-    """A text field to edit and a many-to-many link field, like the sample packs use."""
+@dataclass(frozen=True)
+class _Fields:
+    text: UUID
+    owner: UUID
+    status: UUID
+    link: UUID
+
+
+def _add_fields(fixture: Any) -> _Fields:
+    """Fields like the sample packs use: text, a person, a choice and a one-to-many link."""
 
     graph = fixture.graph
-    text_field, link_field = uuid7(), uuid7()
+    added = _Fields(uuid7(), uuid7(), uuid7(), uuid7())
     with fixture.owner_engine.begin() as connection:
         connection.execute(
             text(
@@ -71,35 +88,56 @@ def _add_fields(fixture: Any) -> tuple[UUID, UUID]:
                 "(:text_id, :org_id, :source, :text_name, 'text', false, 3, "
                 '\'{"kind": "text", "defaultValue": ""}\'::jsonb, NULL, NULL, NULL, false), '
                 "(:link_id, :org_id, :source, :link_name, 'relationship', false, 4, '{}'::jsonb, "
-                ":target, true, true, false)"
+                ":target, true, false, false), "
+                "(:owner_id, :org_id, :source, :owner_name, 'user', false, 5, '{}'::jsonb, "
+                "NULL, NULL, NULL, false), "
+                "(:status_id, :org_id, :source, :status_name, 'select', false, 6, "
+                "CAST(:status_config AS jsonb), NULL, NULL, NULL, false)"
             ),
             {
-                "text_id": text_field,
+                "text_id": added.text,
                 "org_id": fixture.org_id,
-                "link_id": link_field,
+                "link_id": added.link,
+                "owner_id": added.owner,
+                "status_id": added.status,
                 "source": graph.source_module_id,
                 "target": graph.target_module_id,
-                "text_name": f"Notes {text_field.hex[:12]}",
-                "link_name": f"Many {link_field.hex[:12]}",
+                "text_name": f"Notes {added.text.hex[:12]}",
+                "link_name": f"Many {added.link.hex[:12]}",
+                "owner_name": f"Owner {added.owner.hex[:12]}",
+                "status_name": f"Status {added.status.hex[:12]}",
+                "status_config": json.dumps(
+                    {"options": [{"id": OPEN, "label": "Open"}, {"id": DONE, "label": "Done"}]}
+                ),
             },
         )
-    fixture._all_ids.update({text_field, link_field})
-    return text_field, link_field
+    fixture._all_ids.update({added.text, added.owner, added.status, added.link})
+    return added
 
 
 def _measure(fixture: Any) -> dict[str, list[str]]:
     graph = fixture.graph
-    text_field, link_field = _add_fields(fixture)
+    fields = _add_fields(fixture)
+    text_field, owner, status, link_field = (
+        str(fields.text),
+        str(fields.owner),
+        str(fields.status),
+        fields.link,
+    )
     engine = fixture.runtime_engine
     measured: dict[str, list[str]] = {}
     with fixture.client(fixture.writer) as client:
         with _statements(engine) as executed:
             created = client.post(
                 "/api/records",
-                json={"module_id": str(graph.source_module_id), "data": {str(text_field): "a"}},
+                json={
+                    "module_id": str(graph.source_module_id),
+                    "data": {text_field: "a", owner: str(fixture.writer_id), status: OPEN},
+                },
             )
         assert created.status_code == 201, created.text
         record = created.json()
+        assert record["display_values"] == {owner: fixture.writer.username, status: "Open"}
         fixture._all_ids.add(UUID(record["id"]))
         measured["POST /api/records"] = executed
 
@@ -109,12 +147,14 @@ def _measure(fixture: Any) -> dict[str, list[str]]:
         measured["GET /api/records/{record_id}"] = executed
 
         with _statements(engine) as executed:
+            # The edit hands the record to another reader, who is notified.
             edited = client.patch(
                 f"/api/records/{record['id']}",
-                json={"data": {str(text_field): "b"}},
+                json={"data": {text_field: "b", owner: str(fixture.guest_id), status: DONE}},
                 headers={"If-Match": f'"{read.json()["updated_at"]}"'},
             )
         assert edited.status_code == 200, edited.text
+        assert edited.json()["display_values"] == {owner: fixture.guest.username, status: "Done"}
         measured["PATCH /api/records/{record_id}"] = executed
 
         with _statements(engine) as executed:
@@ -145,9 +185,13 @@ def test_record_and_link_routes_stay_within_their_statement_budgets(
     try:
         measured = _measure(relationship_http_fixture)
     finally:
-        # The fixture removes edges of its own fields only; remove the added field's edges
-        # and the outbox events the record writes queued.
+        # The fixture removes edges of its own fields only; remove the added field's edges,
+        # the outbox events the record writes queued and the assignment notifications.
         with relationship_http_fixture.owner_engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM public.in_app_notifications WHERE org_id = :org_id"),
+                {"org_id": relationship_http_fixture.org_id},
+            )
             connection.execute(
                 text(
                     "DELETE FROM public.record_trigger_events WHERE module_id IN (:source, :target)"
@@ -170,6 +214,10 @@ def test_record_and_link_routes_stay_within_their_statement_budgets(
         for route, statements in measured.items()
     )
     print(report)
-    assert not [statement for statements in measured.values() for statement in statements
-                if "FROM memberships" in statement], report
+    assert not [
+        statement
+        for statements in measured.values()
+        for statement in statements
+        if "FROM memberships" in statement
+    ], report
     assert {route: len(statements) for route, statements in measured.items()} == BUDGETS, report

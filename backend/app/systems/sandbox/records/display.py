@@ -18,14 +18,38 @@ UNAVAILABLE_OPTION = "Unavailable option"
 UNAVAILABLE_USER = "Unavailable user"
 
 
-class FieldDisplayResolver:
-    """Resolve a bounded result set without a user lookup for each record."""
+def label_readers(db: Session, module_id: UUID, fields: Iterable[Field]) -> frozenset[UUID] | None:
+    """The module's readers when one of its fields holds a person, else ``None``.
 
-    def __init__(self, db: Session, module_id: UUID, fields: Iterable[Field]) -> None:
-        self.fields = {str(field.id): field for field in fields}
+    A record write reads them once and passes them to validation, assignment
+    notifications and :class:`FieldDisplayResolver`.
+    """
+
+    if any(FieldType(field.type) is FieldType.USER for field in fields):
+        return module_reader_ids(db, module_id)
+    return None
+
+
+class FieldDisplayResolver:
+    """Resolve a bounded result set without a user lookup for each record.
+
+    It keeps each field's type, so it labels values after a commit expires the
+    fields. ``readers`` are the module's readers when the caller already read them.
+    """
+
+    def __init__(
+        self,
+        db: Session,
+        module_id: UUID,
+        fields: Iterable[Field],
+        *,
+        readers: frozenset[UUID] | None = None,
+    ) -> None:
+        by_id = {str(field.id): field for field in fields}
+        self.types = {field_id: FieldType(field.type) for field_id, field in by_id.items()}
         self.options: dict[str, dict[str, str]] = {}
-        for field_id, field in self.fields.items():
-            if FieldType(field.type) is FieldType.SELECT:
+        for field_id, field in by_id.items():
+            if self.types[field_id] is FieldType.SELECT:
                 options = field.config.get("options", [])
                 self.options[field_id] = {
                     option["id"]: option["label"]
@@ -35,8 +59,9 @@ class FieldDisplayResolver:
                     and isinstance(option.get("label"), str)
                 }
         self.users: dict[str, str] = {}
-        if any(FieldType(field.type) is FieldType.USER for field in self.fields.values()):
-            readers = module_reader_ids(db, module_id)
+        if FieldType.USER in self.types.values():
+            if readers is None:
+                readers = module_reader_ids(db, module_id)
             if readers:
                 self.users = {
                     str(user_id): display_name or username
@@ -48,18 +73,20 @@ class FieldDisplayResolver:
                 }
 
     def label(self, field: Field, value: Any) -> str:
-        if FieldType(field.type) is FieldType.SELECT:
-            return self.options.get(str(field.id), {}).get(str(value), UNAVAILABLE_OPTION)
-        if FieldType(field.type) is FieldType.USER:
+        return self._label(str(field.id), FieldType(field.type), value)
+
+    def _label(self, field_id: str, field_type: FieldType, value: Any) -> str:
+        if field_type is FieldType.SELECT:
+            return self.options.get(field_id, {}).get(str(value), UNAVAILABLE_OPTION)
+        if field_type is FieldType.USER:
             return self.users.get(str(value), UNAVAILABLE_USER)
         return str(value)
 
     def display_values(self, data: dict[str, Any]) -> dict[str, str]:
         return {
-            field_id: self.label(field, value)
+            field_id: self._label(field_id, field_type, value)
             for field_id, value in data.items()
-            if (field := self.fields.get(field_id)) is not None
-            and FieldType(field.type) in {FieldType.SELECT, FieldType.USER}
+            if (field_type := self.types.get(field_id)) in {FieldType.SELECT, FieldType.USER}
             and value is not None
         }
 

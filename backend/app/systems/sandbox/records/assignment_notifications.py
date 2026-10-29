@@ -34,18 +34,29 @@ def notify_record_assignments(
     *,
     previous: Mapping[str, object] | None,
     fields: Iterable[Field],
+    readers: frozenset[UUID] | None = None,
 ) -> None:
+    """Notify each net-new assignee who can read the module.
+
+    ``readers`` are the module's readers when the caller already read them in this
+    transaction; otherwise one query selects the eligible assignees.
+    """
+
     active_fields = tuple(fields)
     newly_assigned = _assignees(record.data, active_fields) - _assignees(
         previous or {}, active_fields
     )
     if not newly_assigned:
         return
-    module = select(Module.id).where(Module.id == record.module_id)
-    recipients = (
-        module_reader_statement(module).where(User.id.in_(newly_assigned)).order_by(User.id)
-    )
-    for recipient_id in db.scalars(recipients):
+    recipients: Iterable[UUID]
+    if readers is not None:
+        recipients = sorted(newly_assigned & readers)
+    else:
+        module = select(Module.id).where(Module.id == record.module_id)
+        recipients = db.scalars(
+            module_reader_statement(module).where(User.id.in_(newly_assigned)).order_by(User.id)
+        )
+    for recipient_id in recipients:
         db.add(
             InAppNotification(
                 org_id=record.org_id,

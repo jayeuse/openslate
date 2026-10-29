@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
@@ -89,6 +89,41 @@ def _find_active_edge(
         ) from error
 
 
+def _create_conflict(db: Session, field: Field, source_id: UUID, target_id: UUID) -> str | None:
+    """One locked read answers the duplicate check and both cardinality checks.
+
+    It locks the active edges each check reads, and reports the first failing
+    check in the same order as separate reads: duplicate, source, then target.
+    """
+
+    single_target = field.relationship_multiple_targets is False
+    single_source = field.relationship_multiple_sources is False
+    duplicate = and_(
+        RelationshipEdge.source_record_id == source_id,
+        RelationshipEdge.target_record_id == target_id,
+    )
+    conditions = [duplicate]
+    if single_target:
+        conditions.append(RelationshipEdge.source_record_id == source_id)
+    if single_source:
+        conditions.append(RelationshipEdge.target_record_id == target_id)
+    try:
+        wait_briefly_for_locks(db)
+        edges = list(db.scalars(_active_edge_statement(field.id).where(or_(*conditions))))
+    except OperationalError as error:
+        db.rollback()
+        raise RelationshipUnavailable(
+            "Relationship operation is temporarily unavailable"
+        ) from error
+    if any(e.source_record_id == source_id and e.target_record_id == target_id for e in edges):
+        return "Relationship already exists"
+    if single_target and any(edge.source_record_id == source_id for edge in edges):
+        return "Source already has a relationship target"
+    if single_source and any(edge.target_record_id == target_id for edge in edges):
+        return "Target already has a relationship source"
+    return None
+
+
 def _commit(db: Session, message: str) -> None:
     try:
         db.commit()
@@ -148,26 +183,9 @@ def create_relationship(
         db, field_id, source_record_id, target_record_id
     )
     _validate_dependencies(field, source, target)
-
-    duplicate = _find_active_edge(
-        db,
-        field.id,
-        source_record_id=source.id,
-        target_record_id=target.id,
-    )
-    if duplicate is not None:
-        raise RelationshipConflict("Relationship already exists")
-
-    if (
-        field.relationship_multiple_targets is False
-        and _find_active_edge(db, field.id, source_record_id=source.id) is not None
-    ):
-        raise RelationshipConflict("Source already has a relationship target")
-    if (
-        field.relationship_multiple_sources is False
-        and _find_active_edge(db, field.id, target_record_id=target.id) is not None
-    ):
-        raise RelationshipConflict("Target already has a relationship source")
+    conflict = _create_conflict(db, field, source.id, target.id)
+    if conflict is not None:
+        raise RelationshipConflict(conflict)
 
     edge = RelationshipEdge(
         org_id=source.org_id,
