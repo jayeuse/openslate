@@ -17,6 +17,7 @@ from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.core.config import get_settings
+from app.core.observability import log_event
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
     InvalidProviderToken,
@@ -409,11 +410,19 @@ def refresh_provider_session(
         _revoke_locked_session(db, session, timestamp)
         raise InvalidCredentials(reason="provider_refused") from error
     except InvalidProviderToken as error:
-        # Auth issued the pair but its fresh access token failed local validation.
-        _revoke_locked_session(db, session, timestamp)
-        raise InvalidCredentials(reason=f"fresh_token_{error.kind or 'invalid'}") from error
+        # Auth issued the pair but its fresh access token failed local validation. Keep
+        # the session: Auth accepts the same refresh token again for its reuse interval,
+        # so the browser's next refresh can succeed. Store nothing that was not verified.
+        db.rollback()
+        log_event(
+            "upstream_failure",
+            reason_code=f"refresh_fresh_token_{error.kind or 'invalid'}",
+            upstream="supabase-auth",
+        )
+        raise SupabaseAuthUnavailable("Fresh provider token failed validation") from error
     except SupabaseAuthUnavailable:
-        _revoke_locked_session(db, session, timestamp)
+        # A timeout or outage is not a refusal: keep the session for the next refresh.
+        db.rollback()
         raise
     resolved = None
     if tokens.user_id == session.provider_user_id and claims.user_id == session.provider_user_id:

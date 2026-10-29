@@ -37,7 +37,8 @@ def test_message_and_revision_content_stays_redacted_without_disabling_audit_or_
     message_id, revision_id = uuid7(), uuid7()
     calls = []
     monkeypatch.setattr(
-        "app.systems.manage.audit.listeners.publish_invalidations", calls.append,
+        "app.systems.manage.audit.listeners.publish_invalidations",
+        lambda events, **_kwargs: calls.append(events),
     )
     with comms_world.session(org) as db:
         message = CommsMessage(

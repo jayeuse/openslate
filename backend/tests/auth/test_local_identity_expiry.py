@@ -261,3 +261,59 @@ def test_failed_provider_refresh_never_extends_workspace_expiry(monkeypatch):
 
     assert session.refreshed_at == now - timedelta(minutes=5)
     assert session.expires_at == now + timedelta(minutes=1)
+
+
+@pytest.mark.parametrize("outage", ["auth_unavailable", "fresh_token_refused"])
+def test_a_short_auth_outage_keeps_the_session_for_the_next_refresh(monkeypatch, outage):
+    # Live seven-pack run: an Auth timeout or a fresh token that failed a local check
+    # revoked the session, so a short Auth outage signed users out. Auth accepts the
+    # same refresh token again for 10 s, so the next refresh can succeed.
+    from app.core.integrations.supabase_auth import InvalidProviderToken, SupabaseAuthUnavailable
+
+    now, user, membership, session, claims, client = _subject(monkeypatch, expired=False)
+    monkeypatch.setattr(
+        provider_sessions, "load_platform_policy", lambda _db: PlatformSettings(
+            session_timeout_minutes=30
+        )
+    )
+    session.refreshed_at = now - timedelta(minutes=5)
+    session.expires_at = now + timedelta(minutes=1)
+    db = _identity_database(user, membership, now, session=session)
+    tokens = client.password_grant.return_value
+    if outage == "auth_unavailable":
+        client.verify_access_token.side_effect = [InvalidProviderToken("expired"),
+                                                  InvalidProviderToken("expired"), claims]
+        client.refresh.side_effect = [SupabaseAuthUnavailable("timeout"), tokens]
+    else:
+        client.verify_access_token.side_effect = [
+            InvalidProviderToken("expired"),
+            InvalidProviderToken("immature", kind="ImmatureSignatureError"),
+            InvalidProviderToken("expired"),
+            claims,
+        ]
+        client.refresh.return_value = tokens
+
+    with pytest.raises(SupabaseAuthUnavailable):
+        provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+    assert session.revoked_at is None
+
+    issued = provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+    assert issued.session_id == session.id and session.revoked_at is None
+
+
+def test_a_definite_auth_refusal_still_revokes_the_session(monkeypatch):
+    from app.core.integrations.supabase_auth import (
+        InvalidProviderCredentials,
+        InvalidProviderToken,
+    )
+
+    now, user, membership, session, _claims, client = _subject(monkeypatch, expired=False)
+    session.expires_at = now + timedelta(minutes=1)
+    db = _identity_database(user, membership, now, session=session)
+    client.verify_access_token.side_effect = InvalidProviderToken("expired")
+    client.refresh.side_effect = InvalidProviderCredentials("refused")
+
+    with pytest.raises(InvalidCredentials) as refused:
+        provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+    assert refused.value.reason == "provider_refused"
+    assert session.revoked_at == now

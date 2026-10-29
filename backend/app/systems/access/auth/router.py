@@ -173,7 +173,12 @@ def refresh(
         return _cleared_auth_error()
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
         db.rollback()
-        raise HTTPException(status_code=503, detail="Authentication service unavailable") from error
+        # The session is kept; the browser retries the refresh after this delay.
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service unavailable",
+            headers={"Retry-After": "1"},
+        ) from error
     _set_browser_session(response, issued.access_token, issued.refresh_token, issued.csrf_token)
     return {"authenticated": True, "setup_required": issued.setup_only}
 
