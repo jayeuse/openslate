@@ -8,6 +8,10 @@ account), and is the administrator of the run's partner organization.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from operations.sample.blueprint import SampleDataset
 
 OPERATOR = "operator"
 OPERATOR_ACTIONS = frozenset(
@@ -26,6 +30,27 @@ OPERATOR_ACTIONS = frozenset(
 
 def partner_action(values: Mapping[str, object]) -> bool:
     return values.get("organization") == "partner"
+
+
+def shared_member_keys(dataset: SampleDataset) -> frozenset[str]:
+    """Members the controls add to the partner organization before the phases run.
+
+    The account control's actor accepts a partner invitation and the Comms partner pair is
+    invited there. A pack administrator then changes only such a person's membership, never
+    the account (owner decision 2026-10-16): a disable keeps the sessions and an ended
+    session is refused. Phases that act on the account must pick someone else.
+    """
+    if dataset.organization.phases is None:
+        return frozenset()
+    from operations.sample.controls.account import plan_account_controls
+    from operations.sample.controls.comms_structure import plan_structure_controls
+    from operations.sample.controls.comms_structure_common import member_keys
+
+    keys = {plan_account_controls(dataset)[0].actor_key}
+    for action in plan_structure_controls(dataset):
+        if partner_action(action.values):
+            keys.update(member_keys(action))
+    return frozenset(keys)
 
 
 def planned_actor_id(

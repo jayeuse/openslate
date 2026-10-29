@@ -75,12 +75,17 @@ def plan_phases(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         raise ValueError("No safe active member fits the pack's non-expanding group move")
     moved = rng.choice(move_candidates)
 
+    # The controls run first and add these members to the partner organization; the pack
+    # administrator can then neither disable their account nor end their sessions.
+    from operations.sample.controls.planned_actors import shared_member_keys
+
+    shared = shared_member_keys(dataset)
     status_candidates = [
         person
         for person in pack.actors.people
         if person.status == "active"
         and person.role == "member"
-        and person.key not in {promoted.key, moved.key}
+        and person.key not in {promoted.key, moved.key, *shared}
     ]
     if not status_candidates:
         raise ValueError(
@@ -93,7 +98,7 @@ def plan_phases(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         for person in pack.actors.people
         if person.status == "active"
         and person.role == "member"
-        and person.key not in {promoted.key, moved.key, leaver.key}
+        and person.key not in {promoted.key, moved.key, leaver.key, *shared}
     ]
     if not session_candidates:
         raise ValueError("A phase plan requires a separate active user session target")

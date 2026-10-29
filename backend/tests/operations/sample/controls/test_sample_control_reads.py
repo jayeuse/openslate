@@ -83,10 +83,10 @@ def test_read_control_target_follows_a_changed_dataset_not_the_last_answer() -> 
     from dataclasses import replace
 
     dataset = _dataset("harbor")
-    assert plan_read_controls(dataset)[0].target_key == "internal_field_02"
+    assert plan_read_controls(dataset)[0].target_key == "internal_field_03"
     actors = dataset.organization.actors
     people = tuple(
-        replace(person, status="disabled") if person.key == "internal_field_02" else person
+        replace(person, status="disabled") if person.key == "internal_field_03" else person
         for person in actors.people
     )
     changed = replace(
@@ -95,8 +95,8 @@ def test_read_control_target_follows_a_changed_dataset_not_the_last_answer() -> 
     )
 
     # The first target is no longer an active member, so the next sorted candidate is.
-    assert plan_read_controls(changed)[0].target_key == "internal_field_03"
-    assert plan_read_controls(dataset)[0].target_key == "internal_field_02"
+    assert plan_read_controls(changed)[0].target_key == "internal_field_05"
+    assert plan_read_controls(dataset)[0].target_key == "internal_field_03"
 
 
 def _client(tmp_path: Path, handler) -> SampleClient:
