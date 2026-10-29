@@ -84,7 +84,8 @@ def test_avatar_download_holds_no_user_file_quota_or_session_locks_during_io(ava
 
     def independent_locks():
         with Session(world.owner) as db:
-            lock_quota(db)
+            # Avatar capacity belongs to the account, so its admission lock is the account's.
+            lock_quota(db, account=world.actor_id)
             db.scalar(select(User).where(User.id == world.actor_id).with_for_update(nowait=True))
             db.scalar(select(File).where(File.id == file_id).with_for_update(nowait=True))
             db.scalar(

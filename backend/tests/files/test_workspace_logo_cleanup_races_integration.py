@@ -27,6 +27,7 @@ pytestmark = pytest.mark.integration
 
 
 def test_cleanup_provider_io_has_no_workspace_file_or_quota_transaction_locks(logo_world):
+    from app.core.database.organization_scope import scope_session
     from app.systems.platform.files.quota import lock_quota
 
     world = logo_world
@@ -36,6 +37,8 @@ def test_cleanup_provider_io_has_no_workspace_file_or_quota_transaction_locks(lo
 
     def independent_locks():
         with Session(world.owner) as db:
+            # The logo is charged to its organization, so the lock is that organization's.
+            scope_session(db, world.logo_org_id)
             lock_quota(db)
             db.scalar(select(WorkspaceProfile).where(
                 WorkspaceProfile.id == world.logo_org_id
