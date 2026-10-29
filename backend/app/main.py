@@ -94,6 +94,7 @@ from app.systems.platform.events.hub import (
     PostgresInvalidationListener,
     subscriber_capacity,
 )
+from app.systems.platform.events.publisher import InvalidationPublisher
 from app.systems.platform.events.router import router as events_router
 from app.systems.platform.files.board_router import router as board_files_router
 from app.systems.platform.files.lifecycle_router import router as file_lifecycle_router
@@ -183,6 +184,9 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             expected_user="openslate_runtime",
         )
     app.state.events_listener.start()
+    invalidation_publisher = getattr(app.state, "invalidation_publisher", None)
+    if invalidation_publisher is not None:
+        invalidation_publisher.start()
     app.state.trigger_worker.start()
     app.state.comms_publisher.start()
     report_worker = getattr(app.state, "report_scheduling_worker", None)
@@ -198,6 +202,8 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         report_stopped = report_worker.stop() if report_worker is not None else True
         comms_stopped = app.state.comms_publisher.stop() if report_stopped else False
         trigger_stopped = app.state.trigger_worker.stop()
+        if invalidation_publisher is not None:
+            invalidation_publisher.stop()
         app.state.events_listener.stop()
         if trigger_stopped and report_stopped and signout_stopped and comms_stopped:
             dispose_readiness_resources()
@@ -242,6 +248,7 @@ def create_app() -> FastAPI:
     events_hub = EventHub(max_subscribers=subscriber_capacity(settings.server_max_concurrency))
     app.state.events_hub = events_hub
     app.state.events_listener = PostgresInvalidationListener(events_hub)
+    app.state.invalidation_publisher = InvalidationPublisher()
     app.state.trigger_worker = TriggerWorker(settings)
     app.state.provider_signout_worker = ProviderSignoutWorker(settings)
     relaxed_development = is_relaxed_development(settings)

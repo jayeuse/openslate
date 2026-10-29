@@ -515,9 +515,12 @@ function createSet(context: CommsContext) {
       }
       if (leader) return;
       if (message.type === "state") {
-        if (message.to === tab && message.request === hello)
+        if (message.to === tab && message.request === hello) {
+          // A new leader's stream is new to this tab even when it is already
+          // live: the next live state must resync what the handoff missed.
+          if (message.epoch !== remoteEpoch) localSse = { state: "connecting" };
           remoteEpoch = message.epoch;
-        else if (message.to || message.epoch !== remoteEpoch || !remoteEpoch)
+        } else if (message.to || message.epoch !== remoteEpoch || !remoteEpoch)
           return;
         const value = stateSchema.safeParse(message.payload);
         if (value.success) states(value.data);

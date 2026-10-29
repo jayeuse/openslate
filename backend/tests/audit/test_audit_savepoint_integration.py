@@ -21,7 +21,8 @@ def test_savepoint_release_waits_for_outer_commit_and_rollback_keeps_prior_succe
     db.commit()
     published: list[InvalidationEvent] = []
     monkeypatch.setattr(
-        "app.systems.manage.audit.listeners.publish_invalidations", published.extend
+        "app.systems.manage.audit.listeners.publish_invalidations",
+        lambda events, **_target: published.extend(events),
     )
     first = Department(org_id=org.id, department_name=f"First {uuid7()}")
     db.add(first)
@@ -63,7 +64,8 @@ def test_outer_rollback_after_successful_savepoints_publishes_nothing(
     db.commit()
     published: list[InvalidationEvent] = []
     monkeypatch.setattr(
-        "app.systems.manage.audit.listeners.publish_invalidations", published.extend
+        "app.systems.manage.audit.listeners.publish_invalidations",
+        lambda events, **_target: published.extend(events),
     )
     with db.begin_nested():
         db.add(Department(org_id=org.id, department_name=f"Outer rollback {uuid7()}"))
