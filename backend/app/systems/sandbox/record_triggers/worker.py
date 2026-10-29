@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import threading
+import time
 
+from app.core.base_model import utc_now
 from app.core.config import Settings
 from app.core.database.organization_scope import worker_organization
 from app.core.database.session import AuditSession, get_engine
@@ -18,6 +20,10 @@ from app.systems.sandbox.record_triggers.execution import (
 from app.systems.sandbox.record_triggers.outbox import enqueue_due_schedules
 from app.systems.sandbox.record_triggers.runner import execute_claim
 
+# Every interval with work, log how many events ran, their mean run time and the longest
+# wait from the record change to the run (the automation delay users see).
+_METRICS_SECONDS = 10.0
+
 
 class TriggerWorker:
     """Poll, claim, and execute durable events without sharing sessions."""
@@ -28,6 +34,10 @@ class TriggerWorker:
         self._thread: threading.Thread | None = None
         self._running = False
         self._claim_retry_seconds = 1
+        self._metrics_started = time.monotonic()
+        self._metrics_count = 0
+        self._metrics_run_ms = 0
+        self._metrics_max_wait_ms = 0
 
     @property
     def running(self) -> bool:
@@ -88,6 +98,7 @@ class TriggerWorker:
         try:
             while not self._stop.is_set():
                 processed = self.run_once()
+                self._report_metrics()
                 if processed == 0:
                     self._stop.wait(self._claim_retry_seconds)
         finally:
@@ -126,7 +137,32 @@ class TriggerWorker:
                 upstream="sandbox-triggers",
             )
 
+    def _report_metrics(self) -> None:
+        if time.monotonic() - self._metrics_started < _METRICS_SECONDS:
+            return
+        if self._metrics_count:
+            log_event(
+                "worker_metrics",
+                upstream="sandbox-triggers",
+                count=self._metrics_count,
+                duration_ms=self._metrics_run_ms // self._metrics_count,
+                age_ms=self._metrics_max_wait_ms,
+            )
+        self._metrics_started = time.monotonic()
+        self._metrics_count = self._metrics_run_ms = self._metrics_max_wait_ms = 0
+
     def _execute(self, claim: ClaimedTriggerEvent) -> None:
+        if claim.queued_at is not None:
+            waited = (utc_now() - claim.queued_at).total_seconds() * 1000
+            self._metrics_max_wait_ms = max(self._metrics_max_wait_ms, int(waited))
+        started = time.perf_counter()
+        try:
+            self._run_claim(claim)
+        finally:
+            self._metrics_count += 1
+            self._metrics_run_ms += int((time.perf_counter() - started) * 1000)
+
+    def _run_claim(self, claim: ClaimedTriggerEvent) -> None:
         try:
             with AuditSession(bind=get_engine()) as db:
                 if execute_claim(db, claim):

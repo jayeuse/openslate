@@ -275,3 +275,27 @@ def test_request_logs_use_complete_registered_route_templates() -> None:
         assert LOG_CANARY not in json.dumps(records)
     finally:
         logger.removeHandler(handler)
+
+
+def test_failure_fields_and_worker_metrics_are_bounded_and_metrics_stay_info() -> None:
+    logger = logging.getLogger(observability.LOGGER_NAME)
+    handler = CaptureHandler()
+    logger.addHandler(handler)
+    try:
+        observability.log_event(
+            "operational_attention", reason_code="comms_job_failed", upstream="comms-exports",
+            org_id="org-id", cause="database_deadlock",
+        )
+        observability.log_event(
+            "worker_metrics", upstream="sandbox-triggers", count=3, duration_ms=40, age_ms=2100,
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    failure, metrics = (json.loads(record.getMessage()) for record in handler.records)
+    assert (failure["severity"], failure["org_id"], failure["cause"]) == (
+        "WARNING", "org-id", "database_deadlock",
+    )
+    assert (metrics["severity"], metrics["count"], metrics["duration_ms"], metrics["age_ms"]) == (
+        "INFO", 3, 40, 2100,
+    )

@@ -192,3 +192,27 @@ def test_lifespan_keeps_database_pool_when_trigger_worker_is_alive(monkeypatch) 
 
     dispose_database.assert_not_called()
     dispose_readiness.assert_not_called()
+
+
+def test_the_worker_reports_events_run_their_mean_time_and_the_longest_wait(monkeypatch) -> None:
+    # Live seven-pack run: automations waited 16-21 s, and the worker logged no wait or run time.
+    from datetime import timedelta
+
+    from app.core.base_model import utc_now
+    from app.systems.sandbox.record_triggers import worker as trigger_worker
+
+    worker = TriggerWorker(SimpleNamespace(environment="development"))
+    events = []
+    monkeypatch.setattr(trigger_worker, "log_event", lambda *a, **k: events.append((a, k)))
+    monkeypatch.setattr(worker, "_run_claim", lambda _claim: None)
+    worker._execute(ClaimedTriggerEvent(uuid7(), uuid7(), utc_now() - timedelta(seconds=3)))
+    worker._execute(ClaimedTriggerEvent(uuid7(), uuid7(), utc_now()))
+    worker._metrics_started -= trigger_worker._METRICS_SECONDS
+
+    worker._report_metrics()
+    worker._report_metrics()
+
+    ((name,), fields), = events
+    assert name == "worker_metrics"
+    assert fields["upstream"] == "sandbox-triggers" and fields["count"] == 2
+    assert 3000 <= fields["age_ms"] < 10000

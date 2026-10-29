@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
@@ -28,6 +28,8 @@ LEASE_SECONDS = 120
 class ClaimedTriggerEvent:
     id: UUID
     lease_token: UUID
+    # When the record change queued the event; the worker reports how long events wait.
+    queued_at: datetime | None = None
 
 
 def claim_due_events(db: Session, *, limit: int = MAX_CLAIM_BATCH) -> list[ClaimedTriggerEvent]:
@@ -70,7 +72,7 @@ def claim_due_events(db: Session, *, limit: int = MAX_CLAIM_BATCH) -> list[Claim
         event.attempt_count += 1
         event.lease_token = token
         event.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
-        claims.append(ClaimedTriggerEvent(event.id, token))
+        claims.append(ClaimedTriggerEvent(event.id, token, event.created_at))
     return claims
 
 

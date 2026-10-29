@@ -8,15 +8,21 @@ from uuid import UUID
 import psycopg
 
 from app.core.config import get_settings
-from app.core.observability import log_event
+from app.core.observability import failure_cause, log_event
 from app.systems.platform.events.hub import CHANNEL, _psycopg_url
 from app.systems.platform.events.models import InvalidationEvent, resync_event
 
 MAX_INVALIDATIONS_PER_COMMIT = 64
 
 
-def publish_invalidations(events: Iterable[InvalidationEvent]) -> bool:
-    """Publish one committed transaction's deduplicated invalidations on one connection."""
+def publish_invalidations(
+    events: Iterable[InvalidationEvent], *, database_url: str | None = None
+) -> bool:
+    """Publish one committed transaction's deduplicated invalidations on one connection.
+
+    ``database_url`` is the database the transaction committed to; a session bound to
+    another database than the configured one must not notify the configured one.
+    """
 
     unique_events = tuple(dict.fromkeys(events))
     public_events = tuple(event for event in unique_events if event.recipient_id is None)
@@ -33,9 +39,8 @@ def publish_invalidations(events: Iterable[InvalidationEvent]) -> bool:
 
     try:
         settings = get_settings()
-        database_url = _psycopg_url(settings.database_url)
         with psycopg.connect(
-            database_url,
+            _psycopg_url(database_url or settings.database_url),
             autocommit=True,
             connect_timeout=settings.database_connect_timeout_seconds,
             options=f"-c statement_timeout={settings.database_statement_timeout_ms}",
@@ -66,12 +71,13 @@ def publish_invalidations(events: Iterable[InvalidationEvent]) -> bool:
                     connection.execute(
                         "SELECT pg_notify(%s, %s)", (CHANNEL, invalidation.to_transport_json()),
                     )
-    except psycopg.Error:
+    except psycopg.Error as error:
         log_event(
             "realtime_invalidation_failure",
             level=logging.WARNING,
             reason_code="publish_failed",
             upstream="postgresql",
+            cause=failure_cause(error),
         )
         return False
     return True

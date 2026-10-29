@@ -36,7 +36,7 @@ from app.core.middleware.request_context import (
     reset_request_context,
 )
 from app.core.middleware.trusted_hosts import ExactTrustedHostMiddleware
-from app.core.observability import configure_observability_logging, log_event
+from app.core.observability import configure_observability_logging, failure_cause, log_event
 from app.core.readiness import (
     dispose_readiness_resources,
     get_readiness_snapshot,
@@ -131,20 +131,6 @@ def _request_headers(context: RequestContext) -> dict[str, str]:
 
 
 # A fixed vocabulary by SQLSTATE, so the log names the failure without exception data.
-_DATABASE_REASONS = {
-    "40P01": "database_deadlock",
-    "40001": "database_serialization_failure",
-    "55P03": "database_lock_unavailable",
-    "57014": "database_statement_timeout",
-}
-
-
-def _database_reason(error: Exception) -> str:
-    if isinstance(error, SQLAlchemyTimeoutError):
-        return "database_pool_timeout"
-    sqlstate = getattr(getattr(error, "orig", None), "sqlstate", None)
-    return _DATABASE_REASONS.get(str(sqlstate), "database_operation_failed")
-
 
 def _database_unavailable_response(
     request: Request, context: RequestContext, error: Exception
@@ -155,7 +141,7 @@ def _database_unavailable_response(
         method=request.method,
         route=_request_route(request),
         status=503,
-        reason_code=_database_reason(error),
+        reason_code=failure_cause(error),
     )
     return JSONResponse(
         status_code=503,

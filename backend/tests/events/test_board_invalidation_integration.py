@@ -72,7 +72,8 @@ def test_new_board_scope_and_deleted_parent_chain_survive_flushes_and_commit_ded
     }
     published: list[InvalidationEvent] = []
     monkeypatch.setattr(
-        "app.systems.manage.audit.listeners.publish_invalidations", published.extend
+        "app.systems.manage.audit.listeners.publish_invalidations",
+        lambda events, **_kwargs: published.extend(events),
     )
     assert published == []
     db.commit()

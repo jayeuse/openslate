@@ -4,7 +4,7 @@ from secrets import token_urlsafe
 from unittest.mock import Mock
 
 import pytest
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import Engine
@@ -13,7 +13,8 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from app.core.config import Settings
 from app.core.database import session as database_session
-from app.main import _database_reason, _read_bounded_body, create_app
+from app.core.observability import failure_cause
+from app.main import _read_bounded_body, create_app
 from tests.config_support import settings_values
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
@@ -91,14 +92,19 @@ class _DriverError(Exception):
         (OperationalError("SELECT 1", {}, _DriverError("40001")), "database_serialization_failure"),
         (OperationalError("SELECT 1", {}, _DriverError("55P03")), "database_lock_unavailable"),
         (OperationalError("SELECT 1", {}, _DriverError("57014")), "database_statement_timeout"),
+        (OperationalError("SELECT 1", {}, _DriverError("08006")), "database_08006"),
+        (OperationalError("SELECT 1", {}, _DriverError("bad; code")), "database_operation_failed"),
         (OperationalError("SELECT 1", {}, _DriverError(None)), "database_operation_failed"),
         (SQLAlchemyTimeoutError("checkout timed out"), "database_pool_timeout"),
+        (_DriverError("53300"), "database_53300"),
+        (HTTPException(409, detail="private detail"), "http_409"),
+        (RuntimeError("private detail"), "RuntimeError"),
     ],
 )
 def test_a_database_failure_logs_its_kind_without_exception_detail(error, reason) -> None:
     # Live seven-pack run: a 503 logged only database_operation_failed, so a lock conflict
     # could not be told from an outage.
-    assert _database_reason(error) == reason
+    assert failure_cause(error) == reason
 
 
 def test_non_file_timeout_is_not_mislabeled_as_a_file_transfer_timeout() -> None:
