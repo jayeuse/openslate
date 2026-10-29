@@ -88,6 +88,30 @@ class CaddyGatewayTests(unittest.TestCase):
         self.assertIn("compression off", export)
         self.assertIn("response_header_timeout 330s", export)
 
+    def test_fastapi_upstreams_drop_idle_connections_before_uvicorn_closes_them(self) -> None:
+        # Four-pack run on 2026-10-29: a request reused a keep-alive connection the API had
+        # just closed and failed with no response. Caddy keeps idle upstream connections for
+        # 2 minutes by default and replays only idempotent requests on a closed one.
+        import re
+
+        rendered = self.render()
+        server = int(
+            re.search(
+                r"^SERVER_KEEP_ALIVE_SECONDS=(\d+)$",
+                (ROOT / ".env.example").read_text(encoding="utf-8"),
+                re.MULTILINE,
+            ).group(1)
+        )
+        public = rendered[: rendered.index("http://127.0.0.1:")]
+        blocks = public.split("reverse_proxy 127.0.0.1:")[1:]
+        self.assertEqual(len(blocks), 4)
+        for block in blocks:
+            start = block.index("transport http {")
+            transport = block[start : block.index("}", start)]
+            idle = re.search(r"keepalive (\d+)s", transport)
+            self.assertIsNotNone(idle, transport)
+            self.assertLess(int(idle.group(1)), server)
+
     def test_container_gateway_uses_the_explicit_host_upstream(self) -> None:
         rendered = self.render(upstream_host="host.docker.internal")
 

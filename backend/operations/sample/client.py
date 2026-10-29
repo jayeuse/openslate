@@ -47,6 +47,10 @@ _PUBLICATION_PATH = "/api/sandbox/publications"
 _PUBLICATION_TIMEOUT_SECONDS = 120.0
 
 
+# Below the API's keep-alive, so the client never reuses a connection the API closed.
+KEEPALIVE_EXPIRY_SECONDS = 2.0
+
+
 class SampleClientError(RuntimeError):
     """A safe operator-facing sample API client failure."""
 
@@ -164,6 +168,9 @@ class SampleClient:
             headers={"Accept": "application/json", "Origin": self._origin, **organization},
             timeout=timeout,
             follow_redirects=False,
+            # The API closes an idle connection after SERVER_KEEP_ALIVE_SECONDS (5 s); httpx
+            # keeps one for 5 s too, so a request could go out on a connection just closed.
+            limits=httpx.Limits(keepalive_expiry=KEEPALIVE_EXPIRY_SECONDS),
             transport=transport,
         )
 

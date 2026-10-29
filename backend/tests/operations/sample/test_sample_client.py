@@ -637,3 +637,27 @@ def test_journal_tags_each_request_with_a_hashed_account_and_never_the_email(
     tag = hashlib.sha256(EMAIL.strip().lower().encode()).hexdigest()[:12]
     assert [row.get("account") for row in started] == [tag, tag]
     assert EMAIL not in journal
+
+
+def test_idle_connections_expire_before_the_api_closes_them(monkeypatch, tmp_path) -> None:
+    # Four-pack run on 2026-10-29: a GET went out on a keep-alive connection the API had
+    # closed at its 5 s SERVER_KEEP_ALIVE_SECONDS and failed with no response.
+    import httpx as real_httpx
+
+    import operations.sample.client as sample_client
+
+    seen: dict[str, object] = {}
+    original = real_httpx.Client
+
+    def recording(*args, **kwargs):
+        seen.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sample_client.httpx, "Client", recording)
+    with sample_client.SampleClient(
+        "https://api.example.test", "https://workspace.example.test", tmp_path / "j.jsonl"
+    ):
+        pass
+    limits = seen["limits"]
+    assert isinstance(limits, real_httpx.Limits)
+    assert limits.keepalive_expiry is not None and limits.keepalive_expiry < 5
