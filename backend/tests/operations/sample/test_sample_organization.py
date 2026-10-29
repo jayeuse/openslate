@@ -152,3 +152,39 @@ def test_people_are_unique_across_every_pack_in_one_installation() -> None:
 
     assert [name for name, count in usernames.items() if count > 1] == []
     assert [email for email, count in emails.items() if count > 1] == []
+
+
+def test_pack_organization_writes_publish_to_the_database_they_commit_to(monkeypatch) -> None:
+    # Sample populate runs logged realtime_invalidation_failure (publish_failed,
+    # OperationalError) on every in-process commit: the owner engine had an empty URL, so
+    # the audit listener's post-commit publish connected to no database at all.
+    import operations.create_organization as provisioning
+    import operations.reset.planning as planning
+    from app.core.database import session as database_session
+    from operations.sample import organization as sample_organization
+
+    owner = "postgresql://openslate_owner:owner-secret@127.0.0.1:55432/postgres"
+    monkeypatch.setattr(planning, "required_environment", lambda values: (owner, None))
+    monkeypatch.setattr(planning, "_validated_database_url", lambda value, target: value)
+    seen: list[str] = []
+
+    class Recording:
+        def __init__(self, engine) -> None:
+            seen.append(engine.url.set(drivername="postgresql").render_as_string(False))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc) -> None:
+            return None
+
+    monkeypatch.setattr(database_session, "AuditSession", Recording)
+    created = UUID("00000000-0000-4000-8000-0000000000ab")
+    monkeypatch.setattr(
+        provisioning, "provision", lambda db, **kwargs: type("Org", (), {"id": created})()
+    )
+    result = sample_organization.create_sample_organization(
+        {}, object(), get_pack("harbor"), UUID("00000000-0000-4000-8000-0000000000ac")
+    )
+    assert result == created
+    assert seen == [owner]

@@ -147,7 +147,7 @@ def create_sample_organization(
 ) -> UUID:
     """Create the pack organization, owned by the administrator, on the verified owner target."""
     from psycopg import connect
-    from sqlalchemy import create_engine
+    from sqlalchemy import create_engine, make_url
     from sqlalchemy.pool import NullPool
 
     from app.core.config.instance import assert_psycopg_target
@@ -163,7 +163,13 @@ def create_sample_organization(
         connection.rollback()
         return connection
 
-    engine = create_engine("postgresql+psycopg://", creator=owner_connection, poolclass=NullPool)
+    # The URL names the database the commits reach, so the audit listener's post-commit
+    # invalidation publish targets it too; the verified creator still opens each connection.
+    engine = create_engine(
+        make_url(database_url).set(drivername="postgresql+psycopg"),
+        creator=owner_connection,
+        poolclass=NullPool,
+    )
     try:
         with AuditSession(engine) as db:
             organization = provision(

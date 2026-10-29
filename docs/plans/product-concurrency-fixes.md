@@ -44,6 +44,7 @@ Tooling defects, not product defects:
 | T1 | The smoke runner commits in its own process with the development `DATABASE_URL`, so its invalidation publish fails (the `publish_failed` lines at the start of each run). | Run those commits with the disposable stack settings. |
 | T3 | Harbor's readback of security events raced the other packs: the operator's sign-ins in other organizations grew the list between pages. | Read the closed window up to the end of population (`occurred_before`). |
 | T4 | The Chart control's final check failed when the reorganization phase, picked at random by seed, archived and restored the same department Dashboard after the control had certified it (Local government, FMCG distributor, School). | The check allows only that planned archive and restore: every field must still match, and the revision may only move forward. |
+| T5 | Sample populate runs logged `realtime_invalidation_failure` (`publish_failed`, `OperationalError`) on every commit the seeder makes in its own process. Its owner engine had an empty URL (`operations/sample/organization.py`), so the audit listener's post-commit publish (the T1 rule) connected to no database. | The engine carries the owner database URL; the verified creator still opens each connection. Test: `test_pack_organization_writes_publish_to_the_database_they_commit_to`. |
 
 Fixes on this branch that stay: F6, F13, the per-organization quota lock (`e161ef14`), the clock allowance (`59b44076`), and the reason-code logging.
 
