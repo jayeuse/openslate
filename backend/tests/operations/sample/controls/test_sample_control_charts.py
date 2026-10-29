@@ -466,3 +466,34 @@ def test_run_count_boundary_credits_only_native_certified_dashboard(
     assert report.status == ("complete" if fault is None else "incomplete")
     assert seen == [{"dashboards": 1 if fault == "uncertified" else 2, "dashboard_widgets": 0}]
     assert manifest == before
+
+
+@pytest.mark.parametrize("case", ["planned_relist", "unplanned_move", "planned_content_change"])
+def test_chart_verifier_allows_only_a_planned_archive_and_restore_of_its_source(chart_setup, case):
+    # Live runs on 2026-10-29 (Local government, FMCG distributor, School): the
+    # reorganization phase archived and restored the Chart control's source Dashboard
+    # later in the run, two revisions after the control certified it.
+    from operations.sample.controls.charts_verification import verify_chart_controls
+
+    dataset, action, context, wire, _ = chart_setup
+    result = execute_openview_control(action, dataset, context)
+    manifest = _manifest(context, result)
+    if case != "unplanned_move":
+        manifest["phase_plan"] = [
+            {
+                "key": "reorganization:openview_restore_dashboard",
+                "target_key": action.values["source_dashboard_key"],
+            }
+        ]
+    source = wire.dashboards[wire.source_dashboard_id]
+    source["revision"] += 2
+    source["updated_at"] = "2026-10-29T14:14:12.263792Z"
+    if case == "planned_content_change":
+        source["name"] = "Renamed later"
+    observed, issues = verify_chart_controls(
+        context.clients["admin"], dataset, manifest, context.user_ids["admin"]
+    )
+    if case == "planned_relist":
+        assert issues == [] and observed["chart_sources_preserved"] == 1
+    else:
+        assert issues == ["Chart final source/owned state could not be certified"]
