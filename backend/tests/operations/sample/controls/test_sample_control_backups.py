@@ -475,6 +475,8 @@ def test_host_callback_and_public_receipts_reconcile_through_common_verifier(
         "actor_ids": context.user_ids,
         "mappings": {"user": context.user_ids, "group": context.group_ids},
         "operator_id": OWNER_ID,
+        # A finished run records when population ended; readbacks stop there.
+        "finished_at": "2026-10-30T08:00:00+00:00",
     }
     _patch_plan_and_final_verifiers(monkeypatch, action)
     # Only the host action is under this harness; the legacy queued control has

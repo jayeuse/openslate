@@ -20,6 +20,7 @@ from tests.operations.sample.controls.test_sample_control_host_environment impor
     topology_runtime as topology_runtime,
 )
 from tests.operations.sample.controls.test_sample_control_mfa import (
+    FINISHED_AT,
     ORIGIN,
     OWNER_ID,
     PASSWORD,
@@ -514,10 +515,9 @@ def test_final_host_readback_cannot_accept_forged_delivery_or_lost_restoration(h
         "control_results": [result],
         "actor_ids": context.user_ids,
         "mappings": {"user": context.user_ids, "group": context.group_ids},
+        "finished_at": FINISHED_AT,
     }
-    counts, issues = verify_host_controls(
-        context.clients["operator"], dataset, manifest, OWNER_ID
-    )
+    counts, issues = verify_host_controls(context.clients["operator"], dataset, manifest, OWNER_ID)
     if fault is None:
         assert issues == [] and counts["host_control_actions"] == 1
         assert counts["host_control_security_events"] == 1

@@ -12,7 +12,7 @@ from operations.sample.controls.mfa_verification import _factor_inventory, _grou
 from operations.sample.controls.planned_actors import OPERATOR
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import _read_json
-from operations.sample.verification.core import list_all_rows
+from operations.sample.verification.core import list_all_rows, list_security_events
 
 
 def host_request_contract(
@@ -168,7 +168,7 @@ def verify_host_controls(
         )
         events = [
             SecurityEventResponse.model_validate(row)
-            for row in list_all_rows(admin, "/api/security-events")
+            for row in list_security_events(admin, manifest)
             if row.get("id") == result["native_attempt_event_id"]
         ]
         require(len(events) == 1, "host_result")
@@ -222,9 +222,7 @@ def verify_host_evidence(
         host_steps = [row["step"] for row in evidence_rows]
         if (
             action not in plan_host_controls(dataset)
-            or any(
-                result.get(key) is not value for key, value in action.expected_end_state.items()
-            )
+            or any(result.get(key) is not value for key, value in action.expected_end_state.items())
             or len(set(host_steps)) != len(host_steps)
             or not set(contract) - optional <= set(host_steps) <= set(contract)
         ):
@@ -259,9 +257,7 @@ def verify_host_evidence(
                 raise ValueError
             identifiers.add(identifier)
     except (KeyError, TypeError, ValueError):
-        issues.append(
-            "Host control evidence differs from its route or request identity contract"
-        )
+        issues.append("Host control evidence differs from its route or request identity contract")
         return
     seen_request_ids.update(identifiers)
     observed["control_requests_verified"] += len(identifiers)

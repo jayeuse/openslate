@@ -433,3 +433,17 @@ def list_all_rows(
     if len(output) != expected_total:
         raise SampleVerificationError(f"GET {path} did not return its reported total")
     return output
+
+
+def list_security_events(
+    client: SampleClient, manifest: Mapping[str, Any]
+) -> list[Mapping[str, Any]]:
+    """Read every security event up to the end of population, a closed window.
+
+    The operator belongs to every pack organization and keeps signing in to other packs; its
+    account events are visible here, so an open-ended list grows while its pages are read.
+    """
+    finished = manifest.get("finished_at")
+    if not isinstance(finished, str) or not finished:
+        raise SampleVerificationError("Security event readback window is missing")
+    return list_all_rows(client, "/api/security-events", params={"occurred_before": finished})
