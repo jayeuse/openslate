@@ -164,14 +164,21 @@ export async function saveProfile(
   userId: string,
   patch: ProfilePatch,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ) {
+  const body = JSON.stringify(patchSchema.parse(patch));
+  // Binding a new photo waits for file capacity; a files_busy refusal changed nothing.
   return requireOwner(
-    await apiFetch("/auth/me/profile", profileSchema, {
-      method: "PATCH",
-      body: JSON.stringify(patchSchema.parse(patch)),
-      signal,
-      refreshOnUnauthorized: false,
-    }),
+    await retryFilesBusy(
+      () =>
+        apiFetch("/auth/me/profile", profileSchema, {
+          method: "PATCH",
+          body,
+          signal,
+          refreshOnUnauthorized: false,
+        }),
+      { signal, onWaiting },
+    ),
     userId,
   );
 }

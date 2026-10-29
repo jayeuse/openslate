@@ -1076,7 +1076,11 @@ function ManageContent() {
         capturedOldLogo = workspace.logo_file_id;
         // A logo response is a detached acknowledgement of this admitted write.
         // Only a fresh authorized read may become the current form/brand/theme.
-        const receipt = await updateManageWorkspace(patch, controller.signal);
+        const receipt = await updateManageWorkspace(
+          patch,
+          controller.signal,
+          (waiting) => setLogoWaiting(waiting && ownsCommand()),
+        );
         if (!ownsCommand()) return;
         knownCommitted = true;
         acknowledgedRevision.current = receipt.revision;
@@ -1123,6 +1127,12 @@ function ManageContent() {
           setWorkspaceStale(true);
           setError("");
         }
+        return;
+      }
+      if (isFilesBusy(caught)) {
+        // Refused before any write: the draft and logo stay for the next Save.
+        workspaceNeedsReadback.current = false;
+        setLogoError(FILES_BUSY_MESSAGE);
         return;
       }
       const partial = isWorkspaceLogoCleanupPartial(caught);

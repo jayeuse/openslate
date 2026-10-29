@@ -307,3 +307,31 @@ for (const row of appearanceFaults)
       mock.restore();
     }
   });
+
+test("an organization logo bind that meets busy file capacity waits and sends the same patch again", async () => {
+  const logo = "44444444-4444-4444-8444-444444444444";
+  let calls = 0;
+  const mock = installFetch(() => {
+    calls += 1;
+    return calls === 1
+      ? Response.json(
+          { detail: { code: "files_busy", message: "File capacity is busy" } },
+          { status: 503, headers: { "Retry-After": "1" } },
+        )
+      : Response.json({ ...full, logo_file_id: logo, revision: 5 });
+  });
+  const waiting: boolean[] = [];
+  try {
+    const saved = await updateManageWorkspace(
+      { revision: 4, logo_file_id: logo },
+      undefined,
+      (value) => waiting.push(value),
+    );
+    expect(saved).toMatchObject({ revision: 5, logo_file_id: logo });
+    expect(mock.requests).toHaveLength(2);
+    expect(mock.requests[1]?.init?.body).toBe(mock.requests[0]?.init?.body);
+    expect(waiting).toEqual([true, false]);
+  } finally {
+    mock.restore();
+  }
+});

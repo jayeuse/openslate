@@ -252,7 +252,9 @@ export function useIdentityEditor() {
       if (!patch || !current()) return;
       let partial = false;
       try {
-        await saveProfile(userId, patch, controller.signal);
+        await saveProfile(userId, patch, controller.signal, (waiting) => {
+          if (current()) setPhotoWaiting(waiting);
+        });
       } catch (failure) {
         if (!profileCleanupPartial(failure)) throw failure;
         partial = true;
@@ -282,7 +284,8 @@ export function useIdentityEditor() {
       void client.invalidateQueries({ queryKey: authMeOptions().queryKey });
     } catch (failure) {
       if (!current()) return;
-      if (uploadRefused) setPhotoError(FILES_BUSY_MESSAGE);
+      if (uploadRefused || isFilesBusy(failure))
+        setPhotoError(FILES_BUSY_MESSAGE);
       else if (photoCommand) {
         setPhotoError(PHOTO_UNCERTAIN);
         setPhotoLocked(true);
