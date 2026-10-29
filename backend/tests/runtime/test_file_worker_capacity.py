@@ -26,7 +26,7 @@ BODY = b"x" * 512
 def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
     monkeypatch, blocking_stage, completion
 ):
-    import app.main as main
+    import app.request_middleware as request_middleware
 
     started = [Event(), Event()]
     unblock = [Event(), Event()]
@@ -54,7 +54,9 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
 
     monkeypatch.setattr(service, "upload", upload)
     monkeypatch.setattr(
-        main, "file_transfer_policy", lambda path, method: FileTransferPolicy(1024, 0.15)
+        request_middleware,
+        "file_transfer_policy",
+        lambda path, method: FileTransferPolicy(1024, 0.15),
     )
     # Two 512-byte bodies fill the budget, so a third request shows what is still held.
     pool = FileCapacity(2 * len(BODY), 4)
@@ -69,7 +71,7 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
         deadlines.append(timeout)
         return timeout
 
-    monkeypatch.setattr(main.asyncio, "timeout", timeout_after_admission)
+    monkeypatch.setattr(asyncio, "timeout", timeout_after_admission)
     app = create_app()
     app.dependency_overrides[get_db] = lambda: object()
     app.dependency_overrides[files_router.get_upload_user] = scoped_override(actor)

@@ -129,10 +129,12 @@ def test_provider_session_admission_requires_explicit_subject_mapping(
         supabase_session_encryption_key=SecretStr(key), auth_refresh_token_days=7
     )
     monkeypatch.setattr(
-        "app.systems.access.identity.provider_sessions.get_settings", lambda: settings
+        "app.systems.access.identity.session_credentials.get_settings", lambda: settings
     )
     user_id, provider_user_id, provider_session_id = uuid4(), uuid4(), uuid4()
-    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
+    user, membership = create_member(
+        None,
+        WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_user_id,
         email="person@example.test",
@@ -200,7 +202,9 @@ def test_valid_provider_jwt_still_requires_live_local_and_provider_sessions() ->
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
+    user, membership = create_member(
+        None,
+        WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_user_id,
         email="person@example.test",
@@ -248,11 +252,13 @@ def test_concurrent_refresh_reuses_current_provider_token_and_stable_handle(
     now = datetime.now(UTC)
     key = Fernet.generate_key().decode("ascii")
     monkeypatch.setattr(
-        "app.systems.access.identity.provider_sessions.get_settings",
+        "app.systems.access.identity.session_credentials.get_settings",
         lambda: SimpleNamespace(supabase_session_encryption_key=SecretStr(key)),
     )
     user_id, provider_user_id, provider_session_id = uuid4(), uuid4(), uuid4()
-    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
+    user, membership = create_member(
+        None,
+        WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_user_id,
         email="person@example.test",
@@ -308,7 +314,9 @@ def test_api_dependency_requires_bound_provider_and_rejects_mixed_credentials(
     access = signed_access(key, user_id=str(provider_id), session_id=str(provider_session_id))
     client = client_for_key(key, user_id=provider_id)
     monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: client)
-    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
+    user, membership = create_member(
+        None,
+        WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_id,
         email="person@example.test",
@@ -367,11 +375,13 @@ def test_ambiguous_refresh_persistence_failure_revokes_the_local_session(
     now = datetime.now(UTC)
     key = Fernet.generate_key().decode("ascii")
     monkeypatch.setattr(
-        "app.systems.access.identity.provider_sessions.get_settings",
+        "app.systems.access.identity.session_credentials.get_settings",
         lambda: SimpleNamespace(supabase_session_encryption_key=SecretStr(key)),
     )
     user_id, provider_user_id, provider_session_id = uuid4(), uuid4(), uuid4()
-    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
+    user, membership = create_member(
+        None,
+        WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_user_id,
         email="person@example.test",

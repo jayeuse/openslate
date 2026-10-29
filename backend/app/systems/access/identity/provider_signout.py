@@ -18,7 +18,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
 )
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.identity.provider_sessions import _provider_session_exists
+from app.systems.access.identity.session_credentials import _provider_session_exists
 
 MAX_SIGNOUT_ATTEMPTS = 5
 SIGNOUT_BATCH_SIZE = 10

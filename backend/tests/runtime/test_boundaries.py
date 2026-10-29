@@ -13,8 +13,9 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from app.core.config import Settings
 from app.core.database import session as database_session
+from app.core.middleware.file_transfers import read_bounded_body as _read_bounded_body
 from app.core.observability import failure_cause
-from app.main import _read_bounded_body, create_app
+from app.main import create_app
 from tests.config_support import settings_values
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
@@ -121,11 +122,11 @@ def test_non_file_timeout_is_not_mislabeled_as_a_file_transfer_timeout() -> None
 
 
 def test_expired_file_transfer_deadline_uses_file_timeout_response(monkeypatch) -> None:
-    import app.main as main
+    import app.request_middleware as request_middleware
     from app.core.middleware.file_transfers import FileTransferPolicy
 
     monkeypatch.setattr(
-        main,
+        request_middleware,
         "file_transfer_policy",
         lambda path, method: (
             FileTransferPolicy(1024, 0) if path == "/api/test-file-timeout" else None

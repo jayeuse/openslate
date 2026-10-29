@@ -22,8 +22,9 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity.mfa import MFARequired, requires_mfa
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.identity.provider_sessions import resolve_provider_session, validate_csrf
+from app.systems.access.identity.provider_sessions import resolve_provider_session
 from app.systems.access.identity.provider_user_cache import recent_provider_user
+from app.systems.access.identity.session_credentials import validate_csrf
 from app.systems.access.users.eligibility import is_active_account, is_active_membership
 from app.systems.access.users.membership import (
     bound_organization,
@@ -79,11 +80,14 @@ def get_current_identity(
     request: Request,
     bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db: Annotated[Session, Depends(get_db)],
-    raw_org: Annotated[str | None, Header(
-        alias="X-Org",
-        description="Organization this request acts in (UUID). Without it, the session's "
-        "active organization applies.",
-    )] = None,
+    raw_org: Annotated[
+        str | None,
+        Header(
+            alias="X-Org",
+            description="Organization this request acts in (UUID). Without it, the session's "
+            "active organization applies.",
+        ),
+    ] = None,
 ) -> CurrentIdentity:
     identity = get_account_identity(request, bearer, db)
     # Direct callers (delivery rechecks) pass no header value; read it from the request.
@@ -95,15 +99,23 @@ def get_current_identity(
 
 
 def parse_organization_id(
-    raw_org: str | None, *, location: tuple[str, str] = ("header", "x-org"),
+    raw_org: str | None,
+    *,
+    location: tuple[str, str] = ("header", "x-org"),
 ) -> UUID | None:
     try:
         return UUID(raw_org) if raw_org is not None else None
     except ValueError as error:
-        raise RequestValidationError([{
-            "type": "uuid_parsing", "loc": location,
-            "msg": "Input should be a valid UUID", "input": raw_org,
-        }]) from error
+        raise RequestValidationError(
+            [
+                {
+                    "type": "uuid_parsing",
+                    "loc": location,
+                    "msg": "Input should be a valid UUID",
+                    "input": raw_org,
+                }
+            ]
+        ) from error
 
 
 def get_account_identity(
@@ -218,14 +230,22 @@ def get_account_user(identity: Annotated[CurrentIdentity, Depends(get_account_id
 
 
 def resolve_membership(
-    request: Request, db: Session, identity: CurrentIdentity, org_id: UUID,
+    request: Request,
+    db: Session,
+    identity: CurrentIdentity,
+    org_id: UUID,
 ) -> Membership:
     org = db.get(WorkspaceProfile, org_id, populate_existing=True)
     if org is None or org.is_deleted:
         raise HTTPException(404, detail="Organization not found")
-    membership = db.scalar(select(Membership).where(
-        Membership.org_id == org_id, Membership.user_id == identity.user.id,
-    ).execution_options(populate_existing=True))
+    membership = db.scalar(
+        select(Membership)
+        .where(
+            Membership.org_id == org_id,
+            Membership.user_id == identity.user.id,
+        )
+        .execution_options(populate_existing=True)
+    )
     if membership is None or not is_active_membership(identity.user, membership):
         raise organization_required()
     provider_id = identity.user.supabase_user_id
@@ -238,14 +258,19 @@ def resolve_membership(
         except InvalidProviderCredentials as error:
             raise _unauthorized() from error
     if requires_mfa(org, membership, provider_user) and (
-        identity.assurance_level != "aal2" or not any(
+        identity.assurance_level != "aal2"
+        or not any(
             factor.factor_type == "totp" and factor.status == "verified"
             for factor in provider_user.factors
         )
     ):
-        raise HTTPException(403, detail={
-            "code": "mfa_required", "message": "Complete multi-factor authentication to continue",
-        })
+        raise HTTPException(
+            403,
+            detail={
+                "code": "mfa_required",
+                "message": "Complete multi-factor authentication to continue",
+            },
+        )
     require_allowed_source(request, db, org, person_id=identity.user.id)
     scope_session(db, org_id)
     remember_membership(db, membership)
@@ -279,8 +304,15 @@ def get_account_organization(
         return AccountOrganization(get_optional_membership(request, identity, db, x_org))
     except HTTPException as error:
         code = error.detail.get("code") if isinstance(error.detail, dict) else None
-        if x_org is None and error.status_code == 403 and code in (
-            "organization_required", "mfa_required", "ip_not_allowed",
+        if (
+            x_org is None
+            and error.status_code == 403
+            and code
+            in (
+                "organization_required",
+                "mfa_required",
+                "ip_not_allowed",
+            )
         ):
             return AccountOrganization(None, cast(DefaultOrganizationBlocked, code))
         raise
@@ -305,9 +337,7 @@ def _forbidden(db: Session) -> HTTPException:
     return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 
-def lock_administrator_changes(
-    db: Session, *, exclusive: bool, org_id: UUID | None = None
-) -> None:
+def lock_administrator_changes(db: Session, *, exclusive: bool, org_id: UUID | None = None) -> None:
     """Take the transaction-scoped administrator lock of one organization.
 
     Organizations change administrators independently; the lock and the
@@ -316,10 +346,14 @@ def lock_administrator_changes(
 
     organization = org_id or bound_organization(db)
     lock = func.pg_advisory_xact_lock if exclusive else func.pg_advisory_xact_lock_shared
-    db.execute(select(lock(
-        sql_cast(literal(ADMINISTRATOR_CHANGE_LOCK), Integer),
-        func.hashtext(str(organization)),
-    )))
+    db.execute(
+        select(
+            lock(
+                sql_cast(literal(ADMINISTRATOR_CHANGE_LOCK), Integer),
+                func.hashtext(str(organization)),
+            )
+        )
+    )
 
 
 def require_fresh_exact_admin(
@@ -358,10 +392,13 @@ def require_platform_operator(db: Session, user_id: UUID) -> None:
 
     if not is_platform_operator(db, user_id):
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
-            "code": "operator_required",
-            "message": "Only the installation owner can change this setting",
-        })
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "operator_required",
+                "message": "Only the installation owner can change this setting",
+            },
+        )
 
 
 def require_organization_owner(db: Session, user_id: UUID) -> None:
@@ -373,10 +410,13 @@ def require_organization_owner(db: Session, user_id: UUID) -> None:
     if is_platform_operator(db, user_id):
         return
     db.rollback()
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
-        "code": "owner_required",
-        "message": "Only the organization owner can change this setting",
-    })
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "owner_required",
+            "message": "Only the organization owner can change this setting",
+        },
+    )
 
 
 def require_admin(

@@ -4,19 +4,16 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
-from hmac import compare_digest
 from secrets import token_urlsafe
 from uuid import UUID
 
-from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import Uuid, column, select, table
+from cryptography.fernet import InvalidToken
+from sqlalchemy import select
 from sqlalchemy.exc import InvalidRequestError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
-from app.core.config import get_settings
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
     InvalidProviderToken,
@@ -42,6 +39,11 @@ from app.systems.access.identity.provider_user_cache import (
     remember_provider_user,
     reusable_provider_user,
 )
+from app.systems.access.identity.session_credentials import (
+    _digest,
+    _fernet,
+    _provider_session_exists,
+)
 from app.systems.access.identity.session_revocation import reconcile_session_cap, revoke_session
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.membership import eligible_memberships
@@ -53,38 +55,6 @@ from app.systems.manage.workspace.security_policy import (
     load_workspace_policy,
     renewed_session_expiry,
 )
-
-_AUTH_SESSIONS = table("sessions", column("id", Uuid()), column("user_id", Uuid()), schema="auth")
-
-
-def _digest(value: str) -> str:
-    return sha256(value.encode("utf-8")).hexdigest()
-
-
-def validate_csrf(session: IdentitySession, csrf_token: str) -> bool:
-    return bool(csrf_token) and compare_digest(session.csrf_token_digest, _digest(csrf_token))
-
-
-def _fernet() -> Fernet:
-    secret = get_settings().supabase_session_encryption_key.get_secret_value()
-    return Fernet(secret.encode("ascii"))
-
-
-def _provider_session_exists(db: Session, user_id: UUID, session_id: UUID) -> bool:
-    # This is a read-only exception to the application's public-schema ownership.
-    # The runtime role receives only SELECT(id, user_id) on auth.sessions.
-    result = db.execute(
-        select(
-            select(1)
-            .select_from(_AUTH_SESSIONS)
-            .where(
-                _AUTH_SESSIONS.c.id == session_id,
-                _AUTH_SESSIONS.c.user_id == user_id,
-            )
-            .exists()
-        )
-    )
-    return result.scalar_one() is True
 
 
 def _eligible_user(db: Session, user: User | None, provider_user_id: UUID, now: datetime) -> bool:
