@@ -11,8 +11,9 @@ from PIL import Image, PngImagePlugin
 from pydantic import ValidationError
 
 from app.systems.access.users.models import UserRole
+from app.systems.platform.files import providers
 from app.systems.platform.files.access import authorize
-from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files.providers import transfer_admission
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.validation import validate_content
 from tests.users.user_support import local_user
@@ -71,13 +72,14 @@ def test_office_rejects_dangerous_containers_as_controlled_error(name, payload):
     assert caught.value.status_code == 422
 
 
-def test_third_buffer_operation_is_rejected_and_capacity_recovers():
-    with transfer_slot(), transfer_slot():
+def test_a_buffer_past_the_memory_budget_is_rejected_and_capacity_recovers(monkeypatch):
+    monkeypatch.setattr(providers, "_pool", providers.FileCapacity(10 * 1024 * 1024, 4))
+    with transfer_admission(6 * 1024 * 1024), transfer_admission(4 * 1024 * 1024):
         with pytest.raises(HTTPException) as caught:
-            with transfer_slot():
-                pytest.fail("Third transfer admitted")
+            with transfer_admission(1):
+                pytest.fail("A buffer past the budget was admitted")
         assert caught.value.status_code == 503
-    with transfer_slot():
+    with transfer_admission(10 * 1024 * 1024):
         pass
 
 

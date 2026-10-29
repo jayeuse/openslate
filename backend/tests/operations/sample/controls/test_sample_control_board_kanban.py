@@ -29,7 +29,7 @@ from app.systems.boards.record_link_router import router as record_link_router
 from app.systems.boards.router import router as boards_router
 from app.systems.platform.files import board_router as board_files
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files.providers import transfer_admission
 from app.systems.platform.files.storage import get_storage
 from operations.sample.client import SampleClient
 from operations.sample.controls.board_kanban import KANBAN_ROUTES
@@ -64,7 +64,7 @@ def _api(db: Session, actor: User, store: Store) -> TestClient:
 
     @app.middleware("http")
     async def admitted(request, call_next):
-        with transfer_slot() as lease:
+        with transfer_admission() as lease:
             request.state.file_transfer_lease = lease
             response = await call_next(request)
         response.headers["X-Request-ID"] = str(uuid4())

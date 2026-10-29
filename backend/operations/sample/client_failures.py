@@ -1,5 +1,6 @@
 """Bounded, non-private failure classification for the sample HTTP transport."""
 
+import math
 import re
 from uuid import UUID
 
@@ -7,6 +8,19 @@ import httpx
 
 _ROLLED_BACK_DETAIL = "Relationship operation is temporarily unavailable"
 _API_ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_MAX_RETRY_AFTER_SECONDS = 2.0
+
+
+def retry_after(response: httpx.Response) -> float | None:
+    """The response's bounded ``Retry-After`` delay in seconds, or None when absent or unsafe."""
+    value = response.headers.get("Retry-After")
+    try:
+        delay = float(value) if value is not None else math.nan
+    except ValueError:
+        return None
+    if not math.isfinite(delay) or delay < 0 or delay > _MAX_RETRY_AFTER_SECONDS:
+        return None
+    return delay
 
 
 def _error_detail(response: httpx.Response) -> object:

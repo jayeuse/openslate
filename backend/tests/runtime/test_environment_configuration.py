@@ -158,6 +158,15 @@ def test_settings_reserve_capacity_for_connection_admission_sse_and_http(
     assert "server_max_concurrency" in str(error.value)
 
 
+@pytest.mark.parametrize("lanes", [0, 17])
+def test_settings_bound_the_automation_worker_threads(lanes: int) -> None:
+    # Zero threads would never run an automation; many would drain the API pool.
+    with pytest.raises(ValidationError) as error:
+        Settings(**settings_values(trigger_workers=lanes), _env_file=None)
+
+    assert "trigger_workers" in str(error.value)
+
+
 def test_settings_accepts_the_minimum_sse_safe_concurrency() -> None:
     settings = Settings(**settings_values(server_max_concurrency=3), _env_file=None)
 

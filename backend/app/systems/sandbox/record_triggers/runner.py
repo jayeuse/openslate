@@ -113,7 +113,7 @@ def _definitions(db: Session, event: RecordTriggerEvent) -> list[RecordTrigger]:
             RecordTrigger.created_at,
             RecordTrigger.id,
         )
-        .with_for_update()
+        .with_for_update(read=True)
     )
     if event.event_kind == "schedule":
         statement = statement.where(
@@ -131,6 +131,11 @@ def _definitions(db: Session, event: RecordTriggerEvent) -> list[RecordTrigger]:
 def _share_module(db: Session, module_id: UUID) -> None:
     """Take the module row before its fields and records, as record and link writes do.
 
+    The run only reads the module's fields and trigger definitions, so it holds them FOR
+    SHARE: a publication's FOR UPDATE still waits for the run, while runs for other
+    records of the same module proceed at the same time. A record's own events never
+    overlap (the claim orders them), and its record row stays FOR UPDATE.
+
     Updating the event row a second time, or adding a child event, rechecks the event's
     foreign keys and takes FOR KEY SHARE on the module row. Taken late, after the fields
     and record, it closed a deadlock with a link write that held the module FOR UPDATE
@@ -146,7 +151,10 @@ def _share_module(db: Session, module_id: UUID) -> None:
 def _lock_module_fields(db: Session, module_id: UUID) -> dict[UUID, Field]:
     fields = list(
         db.scalars(
-            select(Field).where(Field.module_id == module_id).order_by(Field.id).with_for_update()
+            select(Field)
+            .where(Field.module_id == module_id)
+            .order_by(Field.id)
+            .with_for_update(read=True)
         )
     )
     return {field.id: field for field in fields}
@@ -215,7 +223,7 @@ def _conditions(db: Session, definition_id: UUID) -> list[RecordTriggerCondition
                 RecordTriggerCondition.is_deleted.is_(False),
             )
             .order_by(RecordTriggerCondition.position, RecordTriggerCondition.id)
-            .with_for_update()
+            .with_for_update(read=True)
         )
     )
 
@@ -229,7 +237,7 @@ def _actions(db: Session, definition_id: UUID) -> list[RecordTriggerAction]:
                 RecordTriggerAction.is_deleted.is_(False),
             )
             .order_by(RecordTriggerAction.position, RecordTriggerAction.id)
-            .with_for_update()
+            .with_for_update(read=True)
         )
     )
 

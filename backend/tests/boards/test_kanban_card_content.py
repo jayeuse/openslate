@@ -25,7 +25,7 @@ from app.systems.boards.models import Board
 from app.systems.boards.record_link_models import BoardRecordLink
 from app.systems.boards.record_link_router import router as record_link_router
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files.providers import transfer_admission
 from app.systems.platform.files.storage import get_storage
 from tests.boards.kanban_support import add_objective, add_record_card, add_stage, record_source
 from tests.boards.support import grant, guest, member, project_board
@@ -46,7 +46,7 @@ def _api(db: Session, actor: User, store: Store) -> TestClient:
 
     @app.middleware("http")
     async def admitted(request, call_next):
-        with transfer_slot() as lease:
+        with transfer_admission() as lease:
             request.state.file_transfer_lease = lease
             return await call_next(request)
 

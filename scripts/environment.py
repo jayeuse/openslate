@@ -115,6 +115,11 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "WEB_ASSETS_ROOT",
         "BACKUP_EXPORT_ROOT",
         "OPENSLATE_BACKUP_EXPORT_ROOT",
+        # Optional: automation worker threads (default 4).
+        "TRIGGER_WORKERS",
+        # Optional: file transfer memory budget (MiB, default 256) and processing slots (4).
+        "FILE_MEMORY_BUDGET_MIB",
+        "FILE_PROCESSING_SLOTS",
         "SUPABASE_DB_PORT",
         "SUPABASE_API_PORT",
         "SUPABASE_REALTIME_PUBLISH_PORT",
@@ -748,7 +753,13 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
     from app.core.config import Settings
 
     inputs: dict[str, object] = {name.lower(): values[name] for name in SETTINGS_KEYS}
-    for name in ("WEB_ASSETS_ROOT", "BACKUP_EXPORT_ROOT"):
+    for name in (
+        "WEB_ASSETS_ROOT",
+        "BACKUP_EXPORT_ROOT",
+        "TRIGGER_WORKERS",
+        "FILE_MEMORY_BUDGET_MIB",
+        "FILE_PROCESSING_SLOTS",
+    ):
         if name in values:
             inputs[name.lower()] = values[name]
     try:

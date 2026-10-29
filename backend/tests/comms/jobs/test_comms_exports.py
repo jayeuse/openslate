@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.systems.access.users.models import Membership
 from app.systems.comms.conversations.models import CommsConversation
 from app.systems.comms.jobs.models import CommsExport
-from app.systems.platform.files.providers import ProviderUnavailable, transfer_slot
+from app.systems.platform.files.providers import ProviderUnavailable, file_processing
 from app.systems.platform.files.storage import get_storage
 from tests.comms.routes.message_support import _ok, _payload
 
@@ -231,7 +231,7 @@ def test_purge_cleans_its_exports_while_another_transfer_holds_the_other_slot(jo
         "password": "owned-test-password",
     }
 
-    with transfer_slot():
+    with file_processing(wait_seconds=0):
         response = api.post(path + "/purge", json=confirmation)
 
     assert response.status_code == 200, response.text

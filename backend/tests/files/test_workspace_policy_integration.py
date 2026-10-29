@@ -15,7 +15,7 @@ from app.systems.access.policy.models import AccessLevel, GroupAccess
 from app.systems.access.users.models import User, UserRole
 from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files.providers import transfer_admission
 from app.systems.platform.files.router import get_create_user, get_upload_user, router
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.storage import get_storage
@@ -94,7 +94,7 @@ def _client(db, actor: User, storage: _Store) -> TestClient:
 
     @app.middleware("http")
     async def file_capacity(request, call_next):
-        with transfer_slot() as lease:
+        with transfer_admission() as lease:
             request.state.file_transfer_lease = lease
             return await call_next(request)
 

@@ -4,10 +4,12 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+from starlette.datastructures import Headers
 from starlette.responses import JSONResponse, Response
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.systems.platform.files import providers
 from app.systems.platform.files.providers import TransferLease
 
 
@@ -56,6 +58,55 @@ def file_transfer_policy(path: str, method: str) -> FileTransferPolicy | None:
     return None
 
 
+def admit_request(headers: Headers, limit: int) -> TransferLease:
+    """Reserve the declared body size before reading it; a chunked body reserves the limit.
+
+    With neither header HTTP/1.1 has no body; one that arrives anyway exceeds the
+    zero reservation and is refused with 413.
+    """
+    declared = headers.get("content-length")
+    if declared is None:
+        size = limit if "transfer-encoding" in headers else 0
+    else:
+        try:
+            size = int(declared)
+        except ValueError:
+            size = limit
+    return TransferLease(min(max(size, 0), limit))
+
+
+async def read_bounded_body(request: Request, limit: int) -> bool:
+    """Cache only an in-limit body so the downstream request can read it once."""
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            return False
+        chunks.append(chunk)
+    request._body = b"".join(chunks)  # noqa: SLF001 - Starlette middleware cache contract.
+    lease = getattr(request.state, "file_transfer_lease", None)
+    if isinstance(lease, TransferLease):
+        lease.shrink_body(total)
+    return True
+
+
+async def wait_for_processing_slot(request: Request) -> None:
+    """After the body is counted, queue for a slot before any dependency or route runs."""
+    lease = getattr(request.state, "file_transfer_lease", None)
+    if isinstance(lease, TransferLease):
+        await lease.wait_for_slot(providers.SLOT_WAIT_SECONDS)
+
+
+def release_request_body(request: Request) -> None:
+    """The route has returned: drop the cached body and its reservation before sending."""
+    lease = getattr(request.state, "file_transfer_lease", None)
+    if isinstance(lease, TransferLease):
+        request._body = b""  # noqa: SLF001 - Starlette middleware cache contract.
+        lease.release_middleware()
+
+
 class CapacityResponse(Response):
     """Own admission through response start, body delivery, and disconnects."""
 
@@ -90,8 +141,15 @@ class FileDispatchMiddleware:
                 scope, receive, send
             )
             return
+
+        async def send_and_release(message: Message) -> None:
+            # The route has returned once its response starts; a slow reader holds nothing.
+            if message["type"] == "http.response.start":
+                dispatch.release()
+            await send(message)
+
         with dispatch:
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, send_and_release)
 
 
 def backup_export_body_limit(path: str, method: str) -> int | None:

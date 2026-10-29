@@ -409,6 +409,51 @@ def test_only_confirmed_prewrite_record_503_gets_bounded_retry(
     assert {entry["failure_code"] for entry in entries if entry.get("status_code") == 503} == {code}
 
 
+FILES_BUSY = {"code": "files_busy", "message": "File capacity is busy"}
+
+
+@pytest.mark.parametrize("method", ["GET", "PUT"])
+@pytest.mark.parametrize(
+    ("busy", "detail", "statuses", "sleeps"),
+    [
+        (2, FILES_BUSY, [503, 503, 200], [1.0, 1.0]),
+        (99, FILES_BUSY, [503] * 61, [1.0] * 60),
+        (1, {"code": "file_integrity_error", "message": "unavailable"}, [503], []),
+    ],
+    ids=["retried-until-free", "bounded-total-wait", "other-503-not-retried"],
+)
+def test_a_refused_file_transfer_is_retried_after_retry_after_within_a_bounded_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method, busy, detail, statuses, sleeps
+) -> None:
+    # The API refuses files_busy before any work, so any method can be resent (C3).
+    seen: list[int] = []
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return _login_response()
+        status = 503 if len(seen) < busy else 200
+        seen.append(status)
+        if status == 503:
+            return httpx.Response(503, json={"detail": detail}, headers={"Retry-After": "1"})
+        return httpx.Response(200, json={"id": "file"})
+
+    path = f"/api/files/{REQUEST_ID}/content"
+    with _client(tmp_path, httpx.MockTransport(handler)) as client:
+        client.login(EMAIL, PASSWORD)
+        if method == "PUT" and statuses[-1] == 503:
+            with pytest.raises(SampleWriteOutcomeUnknown) as unknown:
+                client.request(method, path, content=b"bytes")
+            assert unknown.value.failure_code == detail["code"]
+        else:
+            response = client.request(method, path, content=b"bytes" if method == "PUT" else None)
+            assert response.status_code == statuses[-1]
+
+    assert seen == statuses
+    assert slept == sleeps
+
+
 def test_write_rate_limit_is_reported_without_replay(tmp_path: Path) -> None:
     seen: list[str] = []
 

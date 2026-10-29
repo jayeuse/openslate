@@ -155,6 +155,15 @@ class Settings(EnvironmentSettings):
     server_max_concurrency: int = Field(ge=3, validation_alias="SERVER_MAX_CONCURRENCY")
     server_keep_alive_seconds: int = Field(gt=0, validation_alias="SERVER_KEEP_ALIVE_SECONDS")
 
+    # File transfer capacity per API process (C3): bytes in memory, and validation/Storage slots.
+    file_memory_budget_mib: int = Field(
+        default=256, gt=0, validation_alias="FILE_MEMORY_BUDGET_MIB"
+    )
+    file_processing_slots: int = Field(default=4, gt=0, validation_alias="FILE_PROCESSING_SLOTS")
+
+    # Automation (record trigger) threads; each holds one pooled connection while it works.
+    trigger_workers: int = Field(default=4, ge=1, le=16, validation_alias="TRIGGER_WORKERS")
+
     @field_validator("open_slate_app_private_subnet", mode="before")
     @classmethod
     def validate_private_proxy_subnet(cls, value: object) -> IPv4Network | IPv6Network | None:

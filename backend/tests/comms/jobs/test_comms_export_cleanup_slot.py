@@ -1,4 +1,4 @@
-"""A purge that already holds its request's file slot cleans export artifacts in it (F13)."""
+"""A purge that already holds its request's processing slot cleans export artifacts in it (F13)."""
 
 import hashlib
 from contextlib import ExitStack
@@ -11,7 +11,8 @@ import pytest
 from fastapi import HTTPException
 
 from app.systems.comms.jobs import export_service
-from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files import providers
+from app.systems.platform.files.providers import FileCapacity, file_processing
 
 CONTENT = b"export artifact"
 
@@ -29,6 +30,7 @@ class Storage:
 
 @pytest.fixture
 def pending_cleanup(monkeypatch: pytest.MonkeyPatch) -> Storage:
+    monkeypatch.setattr(providers, "_pool", FileCapacity(256 * 1024 * 1024, 2))
     job = SimpleNamespace(
         cleanup_pending=True,
         cleanup_after=None,
@@ -51,21 +53,24 @@ def _db() -> MagicMock:
 def test_cleanup_in_the_callers_slot_finishes_while_every_other_slot_is_busy(
     pending_cleanup: Storage,
 ) -> None:
-    # The purge request holds one of the two slots; a background export held the other,
-    # so a second slot for the artifact cleanup was refused with 503 files_busy.
+    # The purge request holds one slot and background work holds the rest; waiting for a
+    # second slot here would wait on the purge itself.
     with ExitStack() as busy:
-        busy.enter_context(transfer_slot())
-        busy.enter_context(transfer_slot())
+        busy.enter_context(file_processing(wait_seconds=0))
+        busy.enter_context(file_processing(wait_seconds=0))
         assert export_service.cleanup_artifact(
             _db(), uuid4(), pending_cleanup, now=datetime.now(UTC), slot_held=True
         )
     assert pending_cleanup.objects == {}
 
 
-def test_cleanup_without_a_held_slot_still_takes_its_own(pending_cleanup: Storage) -> None:
+def test_cleanup_without_a_held_slot_still_takes_its_own(
+    pending_cleanup: Storage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(providers, "PROCESSING_WAIT_SECONDS", 0.05)
     with ExitStack() as busy:
-        busy.enter_context(transfer_slot())
-        busy.enter_context(transfer_slot())
+        busy.enter_context(file_processing(wait_seconds=0))
+        busy.enter_context(file_processing(wait_seconds=0))
         with pytest.raises(HTTPException) as refused:
             export_service.cleanup_artifact(_db(), uuid4(), pending_cleanup)
     assert refused.value.status_code == 503

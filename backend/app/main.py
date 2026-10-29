@@ -27,9 +27,13 @@ from app.core.database.session import dispose_database_resources, get_engine
 from app.core.middleware.file_transfers import (
     CapacityResponse,
     FileDispatchMiddleware,
+    admit_request,
     backup_export_body_limit,
     file_transfer_policy,
+    release_request_body,
+    wait_for_processing_slot,
 )
+from app.core.middleware.file_transfers import read_bounded_body as _read_bounded_body
 from app.core.middleware.request_context import (
     RequestContext,
     bind_request_context,
@@ -93,7 +97,6 @@ from app.systems.platform.events.hub import (
 from app.systems.platform.events.router import router as events_router
 from app.systems.platform.files.board_router import router as board_files_router
 from app.systems.platform.files.lifecycle_router import router as file_lifecycle_router
-from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as files_router
 from app.systems.platform.realtime.router import router as realtime_router
 from app.systems.platform.scheduling.notification_router import router as notifications_router
@@ -131,7 +134,6 @@ def _request_headers(context: RequestContext) -> dict[str, str]:
 
 
 # A fixed vocabulary by SQLSTATE, so the log names the failure without exception data.
-
 def _database_unavailable_response(
     request: Request, context: RequestContext, error: Exception
 ) -> JSONResponse:
@@ -290,7 +292,12 @@ def create_app() -> FastAPI:
         deadline = None
         try:
             if transfer is not None:
-                request.state.file_transfer_lease = capacity.enter_context(transfer_slot())
+                # No wait: when the budget is full the client retries after Retry-After.
+                lease = admit_request(request.headers, transfer.request_bytes)
+                capacity.callback(lease.close_response)
+                capacity.callback(lease.release_middleware)
+                request.state.file_transfer_lease = lease
+                body_limit = lease.body_bytes
             declared_size = request.headers.get("content-length")
             response: Response
             if (
@@ -315,7 +322,9 @@ def create_app() -> FastAPI:
                             content={"detail": body_refusal},
                         )
                     else:
+                        await wait_for_processing_slot(request)
                         response = await call_next(request)
+                        release_request_body(request)
         except HTTPException as error:
             response = JSONResponse(
                 status_code=error.status_code,
@@ -504,17 +513,3 @@ def _sandbox_document_body_limit(path: str, method: str) -> int | None:
     }:
         return 5 * 1024 * 1024
     return None
-
-
-async def _read_bounded_body(request: Request, limit: int) -> bool:
-    """Cache only an in-limit body so the downstream request can read it once."""
-
-    chunks: list[bytes] = []
-    total = 0
-    async for chunk in request.stream():
-        total += len(chunk)
-        if total > limit:
-            return False
-        chunks.append(chunk)
-    request._body = b"".join(chunks)  # noqa: SLF001 - Starlette middleware cache contract.
-    return True

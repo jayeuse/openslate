@@ -35,6 +35,7 @@ from app.systems.platform.files.providers import (
     ProviderUnavailable,
     ProviderWriteRejected,
     StorageBackend,
+    reserve_download,
 )
 from app.systems.platform.files.quota import (
     RESERVATION_TTL,
@@ -395,6 +396,7 @@ def reconcile(
     if file.state == "uploading":
         key, digest, size, token = file.object_key, file.digest, file.actual_size, file.operation_id
         db.commit()
+        reserve_download(size or 0)
         try:
             content = storage.download(key)
         except ProviderUnavailable as exc:

@@ -19,6 +19,7 @@ import httpx
 
 from operations.sample.client_events import check_event_stream
 from operations.sample.client_failures import failure_code as _failure_code
+from operations.sample.client_failures import retry_after
 from operations.sample.journal import append_event
 from operations.sample.verification.route_coverage import route_template
 
@@ -34,7 +35,8 @@ _RECOVERY_PATH = "/api/auth/recovery/complete"
 _EMAIL_CHANGE_PATH = "/api/auth/email/complete"
 _ACTION_PATHS = frozenset({_INVITATION_PATH, _RECOVERY_PATH, _EMAIL_CHANGE_PATH})
 _MAX_GET_RATE_LIMIT_RETRIES = 1
-_MAX_RETRY_AFTER_SECONDS = 2.0
+# A refused file transfer did no work; retry it for up to this long, as the browser does.
+_FILES_BUSY_WAIT_SECONDS = 60.0
 _ROLLED_BACK_RECORD_RETRY_DELAYS = (0.1, 0.3)
 _SAFE_MAPPING_VALUE = re.compile(r"[A-Za-z0-9_:-]{1,160}\Z")
 # The API rotates an access token only when it has 30 seconds or less left, so
@@ -304,6 +306,7 @@ class SampleClient:
 
         retries = 0
         rollback_retries = 0
+        busy_waited = 0.0
         while True:
             attempt_id = str(uuid4())
             self._append_event(
@@ -372,8 +375,13 @@ class SampleClient:
                     request_id=request_id,
                     status_code=401,
                 )
+            delay = retry_after(response) if failure_code == "files_busy" else None
+            if delay is not None and busy_waited < _FILES_BUSY_WAIT_SECONDS:
+                busy_waited += max(delay, 1.0)
+                time.sleep(delay)
+                continue
             if response.status_code == 429:
-                delay = self._get_retry_delay(response) if normalized_method == "GET" else None
+                delay = retry_after(response) if normalized_method == "GET" else None
                 if delay is not None and retries < _MAX_GET_RATE_LIMIT_RETRIES:
                     retries += 1
                     time.sleep(delay)
@@ -436,17 +444,6 @@ class SampleClient:
             raise SampleAuthenticationError(
                 "Authenticated write refused because CSRF is ambiguous"
             ) from None
-
-    @staticmethod
-    def _get_retry_delay(response: httpx.Response) -> float | None:
-        value = response.headers.get("Retry-After")
-        try:
-            delay = float(value) if value is not None else math.nan
-        except ValueError:
-            return None
-        if not math.isfinite(delay) or delay < 0 or delay > _MAX_RETRY_AFTER_SECONDS:
-            return None
-        return delay
 
     def _finish_without_response(self, attempt_id: str, method: str, is_write: bool) -> None:
         try:

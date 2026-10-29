@@ -258,21 +258,24 @@ def test_file_content_limit_is_scoped_to_real_uuid_transfer_paths() -> None:
     assert ordinary.status_code == 413
 
 
-def test_file_capacity_is_acquired_before_buffering_and_released_on_denial() -> None:
-    from app.systems.platform.files.providers import transfer_slot
+def test_file_capacity_is_acquired_before_buffering_and_released_on_denial(monkeypatch) -> None:
+    from app.systems.platform.files import providers
 
+    monkeypatch.setattr(providers, "_pool", providers.FileCapacity(1, 4))
     client = TestClient(create_app())
     url = "/api/files/019c0000-0000-7000-8000-000000000001/content"
-    with transfer_slot(), transfer_slot():
-        busy = client.get(url)
+    with providers.transfer_admission(1):
+        busy = client.put(url, content=b"x")
         assert busy.status_code == 503
         assert busy.json()["detail"]["code"] == "files_busy"
+        assert busy.headers["Retry-After"] == "1"
         assert client.get("/api/health").status_code == 200
-        # Metadata routes reach authentication while binary slots are busy.
+        # Metadata routes reach authentication while the file budget is full.
         assert client.post(url.replace("/content", "/archive")).status_code == 401
-    assert client.get(url).status_code == 401
-    assert client.get(url).status_code == 401
-    assert client.get(url).status_code == 401
+    # Each denied upload returns its one-byte reservation, so the next one is admitted.
+    assert client.put(url, content=b"x").status_code == 401
+    assert client.put(url, content=b"x").status_code == 401
+    assert client.put(url, content=b"x").status_code == 401
 
 
 def test_readiness_returns_generic_status_and_disables_caching(monkeypatch) -> None:

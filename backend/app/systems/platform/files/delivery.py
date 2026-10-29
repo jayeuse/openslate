@@ -13,7 +13,11 @@ from app.systems.manage.audit.service import (
 )
 from app.systems.platform.files.access import authorize, error, fresh_user, load
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import ProviderUnavailable, StorageBackend
+from app.systems.platform.files.providers import (
+    ProviderUnavailable,
+    StorageBackend,
+    reserve_download,
+)
 
 
 def read_content(db: Session, file: File, storage: StorageBackend) -> tuple[bytes, str, str]:
@@ -23,6 +27,7 @@ def read_content(db: Session, file: File, storage: StorageBackend) -> tuple[byte
     key, digest, size = file.object_key, file.digest, file.actual_size
     filename, media_type = file.filename, file.media_type or "application/octet-stream"
     db.commit()
+    reserve_download(size or 0)
     try:
         content = storage.download(key)
     except ProviderUnavailable as exc:

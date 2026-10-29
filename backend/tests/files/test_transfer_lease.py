@@ -5,13 +5,26 @@ from threading import Event, Thread
 import pytest
 from fastapi import HTTPException
 
-from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files import providers
+from app.systems.platform.files.providers import (
+    FileCapacity,
+    file_processing,
+    transfer_admission,
+)
 
 
-def test_response_timeout_keeps_capacity_until_worker_exits():
+@pytest.fixture
+def pool(monkeypatch: pytest.MonkeyPatch) -> FileCapacity:
+    capacity = FileCapacity(10, 2)
+    monkeypatch.setattr(providers, "_pool", capacity)
+    monkeypatch.setattr(providers, "_storage_cleanup_uncertain", False)
+    return capacity
+
+
+def test_response_timeout_keeps_the_body_reservation_until_the_worker_exits(pool):
     entered, finish = Event(), Event()
     errors = []
-    with transfer_slot() as first, transfer_slot():
+    with transfer_admission(6) as first:
 
         def worker():
             try:
@@ -29,20 +42,22 @@ def test_response_timeout_keeps_capacity_until_worker_exits():
             assert not errors
             first.release_middleware()
             first.release_middleware()
+            first.close_response()
             with pytest.raises(HTTPException) as caught:
-                with transfer_slot():
-                    pytest.fail("Timed-out worker lost its physical slot")
+                with transfer_admission(6):
+                    pytest.fail("Timed-out worker lost its body reservation")
             assert caught.value.status_code == 503
         finally:
             finish.set()
             thread.join(5)
         assert not thread.is_alive() and not errors
-        with transfer_slot():
+        assert pool.reserved == 0
+        with transfer_admission(10):
             pass
 
 
-def test_worker_starting_after_middleware_timeout_is_not_admitted():
-    with transfer_slot() as lease:
+def test_worker_starting_after_middleware_timeout_is_not_admitted(pool):
+    with transfer_admission() as lease:
         lease.release_middleware()
         with pytest.raises(HTTPException) as caught:
             with lease.retain_worker():
@@ -50,7 +65,7 @@ def test_worker_starting_after_middleware_timeout_is_not_admitted():
         assert caught.value.detail["code"] == "files_busy"
 
 
-def test_missing_request_admission_fails_closed():
+def test_missing_request_admission_fails_closed(pool):
     from fastapi import Request
 
     from app.systems.platform.files.providers import hold_file_worker
@@ -62,58 +77,52 @@ def test_missing_request_admission_fails_closed():
     assert caught.value.status_code == 503
 
 
-def test_worker_release_is_idempotent_without_releasing_other_request():
-    with transfer_slot() as lease, transfer_slot():
+def test_worker_release_is_idempotent_without_releasing_other_request(pool):
+    with transfer_admission(5) as lease, transfer_admission(5):
         worker = lease.retain_worker()
         worker.release()
         worker.release()
+        lease.release_middleware()
+        assert pool.reserved == 5
         with pytest.raises(HTTPException):
-            with transfer_slot():
-                pytest.fail("Duplicate release freed a live middleware slot")
+            with transfer_admission(6):
+                pytest.fail("Duplicate release freed a live request's reservation")
 
 
-def test_storage_cleanup_fence_denies_capacity_without_losing_slots(monkeypatch):
-    from app.systems.platform.files import providers
-
-    monkeypatch.setattr(providers, "_storage_cleanup_uncertain", True, raising=False)
+def test_storage_cleanup_fence_denies_capacity_without_losing_it(pool, monkeypatch):
+    monkeypatch.setattr(providers, "_storage_cleanup_uncertain", True)
     with pytest.raises(HTTPException):
-        with transfer_slot():
+        with transfer_admission(1):
             pytest.fail("Uncertain physical storage work admitted another transfer")
-    monkeypatch.setattr(providers, "_storage_cleanup_uncertain", False)
-    with transfer_slot(), transfer_slot():
-        pass
-
-
-def test_fence_set_during_acquire_returns_newly_acquired_slot(monkeypatch):
-    from app.systems.platform.files import providers
-
-    original = providers._slots
-
-    class FenceOnAcquire:
-        def acquire(self, **kwargs):
-            acquired = original.acquire(**kwargs)
-            providers._storage_cleanup_uncertain = True
-            return acquired
-
-        def release(self):
-            original.release()
-
-    monkeypatch.setattr(providers, "_storage_cleanup_uncertain", False)
-    monkeypatch.setattr(providers, "_slots", FenceOnAcquire())
     with pytest.raises(HTTPException):
-        with transfer_slot():
-            pytest.fail("Fence raced past admission")
-    monkeypatch.setattr(providers, "_slots", original)
+        with file_processing(wait_seconds=0):
+            pytest.fail("Uncertain physical storage work admitted processing")
     monkeypatch.setattr(providers, "_storage_cleanup_uncertain", False)
-    with transfer_slot(), transfer_slot():
-        pass
+    assert (pool.reserved, pool.busy_slots) == (0, 0)
+    with transfer_admission(10), file_processing(wait_seconds=0):
+        assert (pool.reserved, pool.busy_slots) == (10, 2)
 
 
-def test_a_waiting_lease_is_refused_after_its_bound_while_both_slots_stay_busy():
-    with transfer_slot(), transfer_slot():
+def test_fence_set_during_admission_returns_the_newly_admitted_capacity(pool, monkeypatch):
+    class FenceOnFit(FileCapacity):
+        def _fits(self, size: int, slot: bool) -> bool:
+            providers._storage_cleanup_uncertain = True
+            return super()._fits(size, slot)
+
+    raced = FenceOnFit(10, 2)
+    monkeypatch.setattr(providers, "_pool", raced)
+    with pytest.raises(HTTPException):
+        with file_processing(4, wait_seconds=0):
+            pytest.fail("Fence raced past admission")
+    assert (raced.reserved, raced.busy_slots) == (0, 0)
+
+
+def test_a_waiting_caller_is_refused_after_its_bound_while_every_slot_stays_busy(pool):
+    with file_processing(wait_seconds=0), file_processing(wait_seconds=0):
         with pytest.raises(HTTPException) as caught:
-            with transfer_slot(wait_seconds=0.05):
-                pytest.fail("A waiting transfer was admitted past the two-slot bound")
+            with file_processing(wait_seconds=0.05):
+                pytest.fail("A waiting caller was admitted past the slot bound")
         assert caught.value.detail["code"] == "files_busy"
-    with transfer_slot(wait_seconds=0.05):
-        pass
+        assert caught.value.headers == {"Retry-After": "1"}
+    with file_processing(wait_seconds=0.05):
+        assert pool.busy_slots == 1

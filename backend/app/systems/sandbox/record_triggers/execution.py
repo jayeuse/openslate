@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, exists, or_, select
+from sqlalchemy.orm import Session, aliased
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
@@ -33,7 +33,16 @@ class ClaimedTriggerEvent:
 
 
 def claim_due_events(db: Session, *, limit: int = MAX_CLAIM_BATCH) -> list[ClaimedTriggerEvent]:
-    """Claim a bounded batch without waiting on another worker's row locks."""
+    """Claim a bounded batch without waiting on another worker's row locks.
+
+    One record's events run one at a time, in creation order: an event waits while an
+    earlier event of its record is pending or running. Every writer that queues a
+    record's event holds that record FOR UPDATE, so a record's event ids (UUIDv7) are
+    created in commit order, and succeeded or failed never turns back into pending.
+    A concurrent claimer therefore sees the earlier event as pending or running (and
+    skips the later one) or as finished; no claimer can take two events of one record
+    at once. Schedule events have no record and keep the plain due order.
+    """
 
     if not 1 <= limit <= MAX_CLAIM_BATCH:
         raise ValueError("Trigger claim limit is out of range")
@@ -41,11 +50,21 @@ def claim_due_events(db: Session, *, limit: int = MAX_CLAIM_BATCH) -> list[Claim
         request_id=uuid7(), request_method="TRIGGER", request_path="/internal/sandbox/claims"
     )
     now = utc_now()
+    earlier = aliased(RecordTriggerEvent)
     rows = list(
         db.scalars(
             select(RecordTriggerEvent)
             .where(
                 RecordTriggerEvent.is_deleted.is_(False),
+                or_(
+                    RecordTriggerEvent.record_id.is_(None),
+                    ~exists().where(
+                        earlier.record_id == RecordTriggerEvent.record_id,
+                        earlier.id < RecordTriggerEvent.id,
+                        earlier.is_deleted.is_(False),
+                        earlier.state.in_((TriggerEventState.PENDING, TriggerEventState.RUNNING)),
+                    ),
+                ),
                 or_(
                     and_(
                         RecordTriggerEvent.state == TriggerEventState.PENDING,

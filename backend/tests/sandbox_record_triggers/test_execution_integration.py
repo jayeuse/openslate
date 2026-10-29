@@ -74,9 +74,15 @@ def test_record_mutations_enqueue_once_and_execute_with_audit_and_dedupe(
     )
     assert event_count(integration_owner_db) == 2
 
-    claims = claim_due_events(integration_owner_db)
-    integration_owner_db.commit()
-    assert len(claims) == 2
+    # One record's events run one at a time: its edit is claimed after its creation ran.
+    claims = []
+    for _event in range(2):
+        claimed = claim_due_events(integration_owner_db)
+        integration_owner_db.commit()
+        assert len(claimed) == 1
+        claims.extend(claimed)
+        execute_claim(integration_owner_db, claimed[0])
+        integration_owner_db.commit()
     claimed_events = list(
         integration_owner_db.scalars(
             select(RecordTriggerEvent).where(
@@ -85,9 +91,6 @@ def test_record_mutations_enqueue_once_and_execute_with_audit_and_dedupe(
         )
     )
     assert claimed_events and all(event.performed_by is None for event in claimed_events)
-    for claim in claims:
-        execute_claim(integration_owner_db, claim)
-        integration_owner_db.commit()
 
     record_row = integration_owner_db.get(Record, record.id)
     assert record_row is not None

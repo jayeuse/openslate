@@ -40,6 +40,7 @@ from app.systems.platform.files.providers import (
     ProviderUnavailable,
     StorageBackend,
     hold_file_worker,
+    reserve_download,
 )
 from app.systems.platform.files.storage import get_storage
 from app.systems.platform.scheduling.models import ScheduledWork, WorkKind, WorkState
@@ -208,6 +209,7 @@ def download(
     db.rollback()
     try:
         with hold_file_worker(request):
+            reserve_download(size)
             content = storage.download(key)
     except ProviderUnavailable as exc:
         raise error("comms_unavailable", "Export storage is unavailable", 503) from exc
