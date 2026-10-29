@@ -40,6 +40,7 @@ from app.systems.access.identity.provider_user_cache import (
     forget_provider_user,
     recent_provider_user,
     remember_provider_user,
+    reusable_provider_user,
 )
 from app.systems.access.identity.session_revocation import reconcile_session_cap, revoke_session
 from app.systems.access.users.eligibility import is_active_account
@@ -287,7 +288,9 @@ def _resolved_provider_session(
     if not _provider_session_exists(db, claims.user_id, claims.session_id):
         return _refused("provider_session_missing")
     started_at = observation_started_at()
-    provider_user = recent_provider_user(claims.user_id) if reuse_recent_provider else None
+    provider_user = (
+        reusable_provider_user(db, user.id, claims.user_id) if reuse_recent_provider else None
+    )
     if provider_user is None:
         provider_user = _live_provider_user(client, claims.user_id, timestamp)
         if provider_user is None:
