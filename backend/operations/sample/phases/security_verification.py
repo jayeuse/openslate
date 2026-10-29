@@ -22,15 +22,24 @@ def _verify_session_security_event(
     seen: set[str],
     counts: dict[str, int],
     issues: list[str],
+    occurred_before: object,
 ) -> None:
     request_id = _uuid(evidence.get("request_id"))
     actor_id, subject_id = _uuid(admin_id), _uuid(rule.security_subject_id)
     if request_id is None or actor_id is None or subject_id is None:
         issues.append("planned session security event attribution is missing")
         return
+    if not isinstance(occurred_before, str) or not occurred_before:
+        issues.append("phase session security readback window is missing")
+        return
     try:
         # This endpoint has no request-ID filter; correlate locally after full pagination.
-        rows = list_all_rows(client, "/api/security-events")
+        # Read the closed window up to the end of population: a shared account (the
+        # operator) keeps signing in to other organizations, and its account events are
+        # visible here, so an open-ended list grows while its pages are read.
+        rows = list_all_rows(
+            client, "/api/security-events", params={"occurred_before": occurred_before}
+        )
     except (SampleVerificationError, SampleClientError):
         issues.append("phase session security event readback failed")
         return

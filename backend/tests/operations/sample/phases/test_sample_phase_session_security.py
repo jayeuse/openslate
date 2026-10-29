@@ -47,6 +47,7 @@ from tests.operations.sample.sample_datasets import sample_dataset
         "pagination",
         "page_read_error",
         "changed_total",
+        "later_events",
         "still_active",
         "session_mapping",
     ),
@@ -62,6 +63,9 @@ def test_real_session_revocation_security_evidence_is_required_and_bound(
     emitted: dict[str, Any] = {}
     requests: list[tuple[str, str]] = []
     verifying = False
+    # Population ended here; events after it (other packs' sign-ins of a shared
+    # account) must not move the readback's total.
+    finished_at = "2026-10-29T08:00:00+00:00"
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -128,8 +132,12 @@ def test_real_session_revocation_security_evidence_is_required_and_bound(
             )
             return httpx.Response(200, json=_list_payload(request, audit_rows))
         if path == "/api/security-events":
-            assert set(request.url.params) == {"limit", "offset"}
+            assert set(request.url.params) == {"limit", "offset", "occurred_before"}
+            assert request.url.params["occurred_before"] == finished_at
             assert "request_id" not in request.url.params
+            if fault == "later_events" and request.url.params["offset"] == "0":
+                later = {"id": str(uuid4()), "request_id": str(uuid4()), "_later": True}
+                rows.append(emitted | later)
             if fault == "http_error" or (
                 fault == "page_read_error" and request.url.params["offset"] == "100"
             ):
@@ -138,7 +146,7 @@ def test_real_session_revocation_security_evidence_is_required_and_bound(
                 raise httpx.ConnectError("private transport detail", request=request)
             if fault == "invalid_json":
                 return httpx.Response(200, content=b"invalid")
-            page = _list_payload(request, rows)
+            page = _list_payload(request, [row for row in rows if not row.get("_later")])
             if fault == "pagination":
                 page["pagination"]["count"] = 0  # type: ignore[index]
             if fault == "changed_total" and request.url.params["offset"] == "100":
@@ -178,12 +186,13 @@ def test_real_session_revocation_security_evidence_is_required_and_bound(
             "phase_results": [result],
             "actor_ids": user_ids,
             "mappings": context.runtime_mappings,
+            "finished_at": finished_at,
         }
         verifying = True
         observed, issues = verify_phases(
             client, dataset=dataset, manifest=manifest, admin_id=admin_id
         )
-    if fault is None:
+    if fault in {None, "later_events"}:
         assert issues == []
         assert observed["phase_security_events"] == 1
         assert observed["phase_primary_audits"] == 0
