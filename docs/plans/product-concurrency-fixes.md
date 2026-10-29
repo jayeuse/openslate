@@ -100,6 +100,17 @@ Done in Phase 3: 3.1 (`22143a1b`, `593910d4`), 3.2 (`22143a1b`), 3.3.
 
 Exit: recorded numbers. Production uses the measured best worker count for 8 cores and 16 GB, set in the production Compose file. Record the memory and database connections per worker.
 
+Result 4.1 (2026-10-29): `API_WORKERS` (default 1, range 1 to 8) is read by `app/__main__.py` and passed to Uvicorn; the smoke runner passes it through. Audit: every background claim takes a row lock (`SKIP LOCKED` or `FOR UPDATE` with a state recheck), an advisory lock or a unique key, and SSE `LISTEN` and the invalidation publisher are per-process broadcast, so they stay correct with several processes; they multiply connections, threads and memory. One item was wrong with several processes: the provider-account cache is per process, so a factor verified in one process stayed hidden in the others for up to 10 s. Fixed: a cached account without a verified factor is not reused when the person's committed MFA observation records one (`test_a_factor_verified_in_another_api_process_requires_aal2_on_the_next_request`). Measured with `tests.smoke_runner --seed-only --parallel --packs harbor,school`, defaults otherwise (4 automation threads per process), all packs passed:
+
+| Workers | Seeding s | Requests | Requests/s | p50 / p99 ms (Harbor, School) | Peak API RSS | Peak `openslate_runtime` conn. | Peak client conn. |
+|---|---|---|---|---|---|---|---|
+| 1 | 690 | 18,225 | 26.4 | 27/240, 27/213 | 309 MB | 11 | 22 |
+| 1 (repeat) | 804 | 18,203 | 22.6 | 30/245, 28/251 | 286 MB | 11 | 20 |
+| 2 | 939 | 18,254 | 19.4 | 46/339, 43/288 | 590 MB | 17 | 27 |
+| 3 | 827 | 18,199 | 22.0 | 38/324, 37/291 | 740 MB | 25 | 35 |
+
+Per worker: about 250–300 MB, and at most `DATABASE_POOL_SIZE` + `DATABASE_MAX_OVERFLOW` + 3 connections (13 with 5 + 5; 13, 26, 39 for 1, 2, 3 workers) against `max_connections` 100 (3 reserved), with the provider services at about 10–13 more. The machine has 4 performance cores (10 in all) and runs PostgreSQL, Auth, Storage, Caddy and both seeding clients beside the API, so the result cannot separate contention from core starvation. Two packs offer only a few requests at a time, and one process was not saturated (p50 27–30 ms): extra workers added only overhead (4 automation threads and the pollers per process). Production keeps `API_WORKERS=1` in `compose.production.yaml`. The evidence does not support more on the 8-core target; measure again with a load that saturates one process before raising it.
+
 ### Phase 5: check the branch
 
 1. Run the focused batches for each changed area once, one lane at a time.

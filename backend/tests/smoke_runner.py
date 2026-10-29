@@ -334,6 +334,8 @@ def main(argv: Sequence[str] = ()) -> int:
         # Automations and scheduled work run here as they do in production; the seeder
         # waits for record-created automation results.
         api_env["E2E_BACKGROUND_WORKERS"] = "true"
+        # Measure API worker processes (C8): the caller's API_WORKERS, else one process.
+        api_env["API_WORKERS"] = os.environ.get("API_WORKERS", "1")
         run([sys.executable, "operations/provision_storage.py", "--confirm"], BACKEND, api_env)
         admin = seed(owner_url, run_id, migration_env, roles=("admin",))["admin"]
         register_installation_operator(owner_url, admin["id"])
@@ -349,7 +351,8 @@ def main(argv: Sequence[str] = ()) -> int:
                 subprocess.Popen(
                     [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
                      "--port", RUNNER_API_PORT, "--no-access-log",
-                     "--limit-concurrency", str(RUNNER_CONCURRENCY_LIMIT)],
+                     "--limit-concurrency", str(RUNNER_CONCURRENCY_LIMIT),
+                     "--workers", environment["API_WORKERS"]],
                     cwd=BACKEND, env=environment, stdout=log, stderr=log, text=True,
                     start_new_session=True,
                 )

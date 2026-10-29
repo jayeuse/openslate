@@ -129,10 +129,12 @@ def test_settings_rejects_an_undersized_publication_signing_key() -> None:
 @pytest.mark.parametrize(
     "mutation",
     [
-        pytest.param(lambda jwk: {key: value for key, value in jwk.items() if key != "d"},
-                     id="public-only"),
-        pytest.param(lambda jwk: {key: value for key, value in jwk.items() if key != "kid"},
-                     id="no-key-id"),
+        pytest.param(
+            lambda jwk: {key: value for key, value in jwk.items() if key != "d"}, id="public-only"
+        ),
+        pytest.param(
+            lambda jwk: {key: value for key, value in jwk.items() if key != "kid"}, id="no-key-id"
+        ),
         pytest.param(lambda jwk: {**jwk, "crv": "P-384"}, id="wrong-curve"),
         pytest.param(lambda jwk: {"kty": "oct", "k": "c2VjcmV0", "kid": "x"}, id="symmetric"),
     ],
@@ -165,6 +167,15 @@ def test_settings_bound_the_automation_worker_threads(lanes: int) -> None:
         Settings(**settings_values(trigger_workers=lanes), _env_file=None)
 
     assert "trigger_workers" in str(error.value)
+
+
+@pytest.mark.parametrize("workers", [0, 9])
+def test_settings_bound_the_api_worker_processes(workers: int) -> None:
+    # Zero would serve nothing; each process adds a full database pool and its threads.
+    with pytest.raises(ValidationError) as error:
+        Settings(**settings_values(api_workers=workers), _env_file=None)
+
+    assert "api_workers" in str(error.value)
 
 
 def test_settings_accepts_the_minimum_sse_safe_concurrency() -> None:
@@ -207,14 +218,12 @@ def test_migration_requires_its_owner_url_without_runtime_fallback(
     assert "private" not in str(error.value)
 
 
-
-
 def test_module_entrypoint_passes_each_server_option_explicitly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app import __main__ as entrypoint
 
-    settings = Settings(**settings_values(), _env_file=None)
+    settings = Settings(**settings_values(api_workers=3), _env_file=None)
     run = Mock()
     monkeypatch.setattr(entrypoint, "get_settings", lambda: settings)
     monkeypatch.setattr(entrypoint.uvicorn, "run", run)
@@ -225,6 +234,7 @@ def test_module_entrypoint_passes_each_server_option_explicitly(
         "app.main:app",
         host="127.0.0.1",
         port=8000,
+        workers=3,
         limit_concurrency=32,
         timeout_keep_alive=5,
         reload=False,

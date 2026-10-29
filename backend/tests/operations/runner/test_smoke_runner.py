@@ -92,6 +92,7 @@ def smoke_boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         build_env=None,
         base_env=None,
         api_env=None,
+        api_command=None,
         log=None,
         cleanup_state=None,
         commands=[],
@@ -164,6 +165,7 @@ def smoke_boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             assert state.build.returncode == 0, "API started with a failed build"
             assert state.provisioned.is_set(), "API started before provisioning completed"
             state.api_env = dict(kwargs["env"])
+            state.api_command = list(command)
             raise _ReachedAPI("both prerequisites reached the API boundary")
         state.commands.append(command)
         assert command in [
@@ -287,6 +289,27 @@ def test_smoke_overlaps_build_with_startup_and_waits_for_both_prerequisites(
     assert sum(report["stage_seconds"].values()) == 7.0, (
         "serial stage accounting double-counted overlap or included teardown"
     )
+
+
+@pytest.mark.parametrize(("configured", "workers"), [(None, "1"), ("3", "3")])
+def test_smoke_starts_the_api_with_the_configured_worker_processes(
+    smoke_boundary, monkeypatch: pytest.MonkeyPatch, configured: str | None, workers: str
+) -> None:
+    # The runner builds the API environment from scratch, so API_WORKERS must pass through.
+    if configured is None:
+        monkeypatch.delenv("API_WORKERS", raising=False)
+    else:
+        monkeypatch.setenv("API_WORKERS", configured)
+    state = smoke_boundary
+    state.launch()
+    state.release_startup.set()
+    state.build.finish(0)
+    report = _joined(state)
+
+    assert report["failure_type"] == "_ReachedAPI"
+    command = state.api_command
+    assert command[command.index("--workers") + 1] == workers
+    assert state.api_env["API_WORKERS"] == workers
 
 
 @pytest.mark.parametrize("cleanup_fails", [False, True])

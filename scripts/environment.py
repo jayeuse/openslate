@@ -115,6 +115,8 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "WEB_ASSETS_ROOT",
         "BACKUP_EXPORT_ROOT",
         "OPENSLATE_BACKUP_EXPORT_ROOT",
+        # Optional: API worker processes (default 1).
+        "API_WORKERS",
         # Optional: automation worker threads (default 4).
         "TRIGGER_WORKERS",
         # Optional: file transfer memory budget (MiB, default 256) and processing slots (4).
@@ -756,6 +758,7 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
     for name in (
         "WEB_ASSETS_ROOT",
         "BACKUP_EXPORT_ROOT",
+        "API_WORKERS",
         "TRIGGER_WORKERS",
         "FILE_MEMORY_BUDGET_MIB",
         "FILE_PROCESSING_SLOTS",
