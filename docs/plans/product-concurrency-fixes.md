@@ -2,7 +2,7 @@
 
 Status: Phases 1 and 2 implemented (2026-10-29), not pushed. Phase 3 designs approved. Branch: `sample-pack-realism-p1`, one pull request.
 
-Done means all seven Small packs pass and are populated in the development database. Only the four pack blockers (C3, C4, C6, C10) are in the way; C7 and Phase 4 wait until the seven packs are done.
+Done means every phase below is complete in order, and the seven Small packs pass and are populated in the development database in Phase 5. Pack runs use two organizations at a time.
 
 Target: a mid-size installation, one server with 8 cores and 16 GB, up to about 300 people active at the same time across all organizations. Every capacity default and every load test uses this target.
 
@@ -101,7 +101,7 @@ Exit: recorded numbers. Production uses the measured best worker count for 8 cor
 ### Phase 5: check the branch
 
 1. Run the focused batches for each changed area once, one lane at a time.
-2. Run the seven Small packs once as a regression check, with no fix sized to the run.
+2. Guarded reset of development data, then populate the seven Small packs into the development database, two at a time, with no fix sized to the run. A real defect a pack exposes gets the same treatment as C1: cause, failing-first test, fix.
 3. Run a hands-on pass for the changed user flows: purge confirmation, session refresh, file upload and download.
 4. Run the pre-push gate (`prepush.py --serial`) on a freed machine when you decide to push.
 
