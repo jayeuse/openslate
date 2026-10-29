@@ -1,6 +1,8 @@
 # Product concurrency fixes
 
-Status: draft for approval (2026-10-29). Branch: `sample-pack-realism-p1`; all phases land on this branch as one pull request. Nothing in this plan is implemented.
+Status: Phases 1 and 2 implemented (2026-10-29), not pushed. Phase 3 designs approved. Branch: `sample-pack-realism-p1`, one pull request.
+
+Done means all seven Small packs pass and are populated in the development database. Only the four pack blockers (C3, C4, C6, C10) are in the way; C7 and Phase 4 wait until the seven packs are done.
 
 Target: a mid-size installation, one server with 8 cores and 16 GB, up to about 300 people active at the same time across all organizations. Every capacity default and every load test uses this target.
 
@@ -68,22 +70,24 @@ Result (2026-10-29, 18.8 min): 3 of 7 packs passed (Clinic, Harbor, Nonprofit). 
 |---|---|---|---|
 | 2.1 | C1 | Serialize the confirmation attempt counter with a per-administrator transaction advisory lock, and check that the actor exists with a plain read. The user row is then never upgraded. Check every caller of `_lock_actor` and `begin_verification` for lock order first. Why not take the exclusive row lock first: photo reads lock the same row `FOR SHARE NOWAIT` (PD67) and would start to fail during every confirmation. | PostgreSQL: two confirmations by one administrator at the same time. Before the fix, one fails with SQLSTATE 40P01. After the fix, both succeed in turn. Keep the existing rate-limit tests green. |
 | 2.2 | C2 | On `SupabaseAuthUnavailable`, keep the session and answer 503 with `Retry-After`. On a fresh token that fails local checks, keep the session and answer 503; the next refresh inside the 10 s reuse window gets a new pair. Revoke only on a definite refusal (`provider_refused`, identity mismatch, missing or unreadable tokens). Check the frontend: if the auth adapter treats any failed refresh as signed out, the server fix changes nothing for the user. Make it retry a 503 after `Retry-After`. Show nothing for the first 5 s; after that, show a small "Reconnecting…" banner until the refresh works. | Unit: Auth unavailable, then available: the session survives and the second refresh succeeds. Unit: a definite refusal still revokes. Frontend test: a 503 refresh retries and keeps the user signed in. |
-| 2.3 | C5 | Treat a lost source (404, 409, 422 from capture) as final and cancel the work as `source_unavailable`. The run shows "Canceled: source removed" in the Report's history, and the Report's owner gets one notification. Retry only database and infrastructure errors. Fix the Phase 1 cause if it is a different one. | PostgreSQL: archive the module while a scheduled run is claimed; the work is canceled once, not retried; the history row and one owner notification exist. |
-| 2.4 | C6, C10 | Log the Storage failure kind (HTTP status class or timeout) in `supabase_storage.py` and the password-check failure kind in the lifecycle password client. Then fix the cause they show, with a test for it. | Unit tests for the new fields; then a test for the cause. |
-| 2.5 | C9 | The operator acts like an organization administrator: "end all sessions" skips accounts that belong to other organizations and reports the count. | Integration: the operator ends sessions in one organization; a shared account keeps its session. |
-| 2.6 | Operator review | List every place where the operator differs from an organization administrator (for example account restore and organization listing), with the file and the reason. Bring the list to you. Change nothing else until you decide each one. | None until decided. |
+| 2.3 | C5 | Done: a lost source (capture 404 or 409) cancels the work once as `source_unavailable`; other failures still retry and log their cause. Decided: no history row and no notice, because in the probe the owner had archived the source themselves. | PostgreSQL: a lost source cancels once, with no retry and no notice; unit: 404/409 cancel, 503 retries with `http_503`. |
+| 2.4 | C6, C10 | Logging done (`9b4fd929`); the cause fix waits for the diagnostic run. Log the Storage failure kind (HTTP status class or timeout) in `supabase_storage.py` and the password-check failure kind in the lifecycle password client. Then fix the cause they show, with a test for it. | Unit tests for the new fields; then a test for the cause. |
+| 2.5 | C9 | The operator acts like an organization administrator: "end all sessions" skips accounts that belong to other organizations and reports the count. | Done. Integration: the operator ends sessions in one organization; a shared account keeps its session. |
+| 2.6 | Operator review | Dropped: not a pack blocker. | None. |
+
+Done in Phase 2: 2.1 (`0083e006`), 2.2 (`d8546496`, `abf6ee6f`), 2.3 (`14f37c21`), 2.4 logging (`9b4fd929`), 2.5 (`be4ac8b8`).
 
 Security (SEC-R6): 2.1 keeps the confirmation attempt limits, their keys and their windows. 2.2 keeps every check on a refresh, and changes only when a session is revoked. Each commit states this.
 
 ### Phase 3: capacity
 
-Design first. Each design comes back for approval before code.
+Proposed designs with their defaults. Approving this plan approves them; no second approval stop.
 
 | Step | Item | Design | Test (real trigger) |
 |---|---|---|---|
-| 3.1 | C3 | Two limits instead of one. (a) A memory budget in bytes for request bodies and download bodies in memory, reserved from `Content-Length` or the file size before the bytes are read. (b) Processing slots only for file validation and Storage I/O, taken after the body is in memory and released before a slow client receives the response. Remove the F15 wait. If `Content-Length` is absent (chunked body), reserve the route maximum; if the body grows past the declared size, refuse it with 413. The upload and download UI retries a 503 `files_busy` after `Retry-After`. While it retries, the file row shows "Waiting for the server…"; after about 30 s it shows an error. The budget and the slot counts are settings; the defaults need your approval. | ASGI tests with a client that sends 10 MiB at a slow rate: a slow sender holds only its budget, and other transfers proceed. Budget full: 503 `files_busy` with `Retry-After`. Memory never goes above the budget. A missing or false `Content-Length` cannot exceed the budget. Frontend test: an upload that gets 503 retries. |
-| 3.2 | C4 | Target: an automation runs within 2 s of the record change at the mid-size target. Use the Phase 1 numbers to size the work. Option: several trigger threads that claim with the existing `FOR UPDATE SKIP LOCKED`, while events for one record stay in order. Option: lower the cost per event (fewer locks when no trigger matches). Pick from the measurements. | PostgreSQL: several organizations enqueue events at once; the oldest event age stays under 2 s; events for one record stay in order. |
-| 3.3 | C7 | Publish through a small bounded connection pool instead of one new connection per commit. Trace what the browser does when an update is lost (resync on reconnect, or none) and close the gap if there is one. | Unit: no new connection for each commit. A failed publish is logged with its SQLSTATE. Browser test if the resync gap is real. |
+| 3.1 | C3 | Defaults: memory budget 256 MiB per API process (25 uploads of 10 MiB at once), 4 processing slots, `Retry-After: 1`. Settings `FILE_MEMORY_BUDGET_MIB` and `FILE_PROCESSING_SLOTS`. The logo and avatar saves use the same budget and slots, so the FMCG logo failure goes away with the cause. Two limits instead of one. (a) A memory budget in bytes for request bodies and download bodies in memory, reserved from `Content-Length` or the file size before the bytes are read. (b) Processing slots only for file validation and Storage I/O, taken after the body is in memory and released before a slow client receives the response. Remove the F15 wait. If `Content-Length` is absent (chunked body), reserve the route maximum; if the body grows past the declared size, refuse it with 413. The upload and download UI retries a 503 `files_busy` after `Retry-After`. While it retries, the file row shows "Waiting for the server…"; after about 30 s it shows an error. The budget and the slot counts are settings; the defaults need your approval. | ASGI tests with a client that sends 10 MiB at a slow rate: a slow sender holds only its budget, and other transfers proceed. Budget full: 503 `files_busy` with `Retry-After`. Memory never goes above the budget. A missing or false `Content-Length` cannot exceed the budget. Frontend test: an upload that gets 503 retries. |
+| 3.2 | C4 | Measured: one thread, 35 ms per event, about 22 events a second, organizations served one after another (`record_triggers/worker.py:73-94`). A client server usually holds one organization, so spreading organizations over threads alone does not help one organization's burst. Design: (a) 4 trigger threads (setting `TRIGGER_WORKERS`, default 4), each claiming from the shared queue with the existing `FOR UPDATE SKIP LOCKED`. (b) Order per record: the claim skips an event when an earlier pending or running event of the same `record_id` exists (`NOT EXISTS` on `record_trigger_events`), so one record's events never run in parallel or out of order. (c) Before code, profile the 35 ms; if most of it is locks or reads when no trigger matches, skip enqueue for modules with no enabled trigger. Estimate: about 90 events a second (4 × 22, no database contention assumed); the failing-first test measures the real number against the 2 s target. | PostgreSQL: several organizations enqueue events at once; the oldest event age stays under 2 s; events for one record stay in order. |
+| 3.3 | C7 | Design: one publisher thread per API process with a bounded queue (1,024 events). Each queue item carries the `database_url` its transaction committed to (the T1 fix), and the publisher keeps one long-lived autocommit connection per distinct URL; production has one. A commit puts its invalidations on the queue and returns; it opens no connection. This makes the publish asynchronous: tests that expect a NOTIFY right after a request get a drain hook. If the queue is full or a publish fails, the publisher reconnects and sends one `resync` invalidation, so open browsers refetch instead of losing the update. No new dependency (`psycopg_pool` is not installed). Then trace the browser's handling of `resync` and of an SSE reconnect, and close the gap if there is one. | Unit: 200 commits open no connection each. A failed publish is logged with its SQLSTATE and is followed by one `resync`. PostgreSQL: a subscriber receives every invalidation of 200 concurrent commits, or a `resync`. Browser test if the gap is real. |
 
 ### Phase 4: throughput
 
@@ -108,14 +112,11 @@ Exit: recorded numbers. Production uses the measured best worker count for 8 cor
 | Target | Mid-size: 8 cores, 16 GB, about 300 people active at once. |
 | Delivery | All phases on `sample-pack-realism-p1`, one pull request. |
 | C2 | Users stay signed in through a short Auth outage. Quiet for 5 s, then a "Reconnecting…" banner. |
-| C3 | When the budget is full, the file row shows "Waiting for the server…", then an error after about 30 s. Budget and slot defaults come with the design for approval. |
-| C4 | An automation runs within 2 s at the target. |
-| C5 | A lost source shows "Canceled: source removed" in history, and the owner gets one notification. |
+| C3 | When the budget is full, the file row shows "Waiting for the server…", then an error after about 30 s. Defaults in step 3.1. |
+| C4 | An automation runs within 2 s at the target. Design in step 3.2. |
+| C5 | Cancel only; no history row and no notice. |
 | C8 | Production runs the measured best number of API workers. |
 | C9 | The operator acts like an organization administrator when it ends sessions. |
-| Operator | List every other operator exception for your decision (step 2.6). |
-
-Still open: the C3 defaults and the C4 design, after measurement.
 
 ## Out of scope
 
