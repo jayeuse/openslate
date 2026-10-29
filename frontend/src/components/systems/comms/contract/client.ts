@@ -296,7 +296,7 @@ export interface CommsClient {
   downloadAttachment(
     conversationId: string,
     fileId: string,
-    options?: C.RequestOptions,
+    options?: C.DownloadOptions,
   ): Promise<C.BinaryDownload>;
   getRecordReference(
     conversationId: string,
@@ -475,7 +475,7 @@ export interface CommsClient {
   getExport(id: string, options?: C.RequestOptions): Promise<C.ExportJob>;
   downloadExport(
     id: string,
-    options?: C.RequestOptions,
+    options?: C.DownloadOptions,
   ): Promise<C.BinaryDownload>;
   listTemplates(
     request?: C.TimeListRequest,

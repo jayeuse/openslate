@@ -110,12 +110,13 @@ export function IdentitySection({
             </Button>
           ) : null}
           {/* The button already shows "Uploading…", so that word is heard,
-              not shown twice; the result is shown. */}
+              not shown twice; a wait for the server and the result are
+              shown. */}
           <span
             role="status"
             className="text-muted-foreground text-[0.8125rem]"
           >
-            {editor.uploading ? (
+            {editor.uploading && !editor.photoWaiting ? (
               <span className="sr-only">{editor.photoStatus}</span>
             ) : (
               editor.photoStatus

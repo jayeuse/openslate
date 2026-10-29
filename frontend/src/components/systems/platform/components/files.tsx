@@ -44,6 +44,7 @@ import { openViewLevel } from "../../openview/domain/manage-access";
 import {
   fileErrorMessage,
   formatFileSize,
+  isFilesBusy,
   MAX_FILE_BYTES,
 } from "../../shared/adapters/files-api";
 import { FileList } from "../../shared/components/file-list";
@@ -345,6 +346,8 @@ function LibraryContents({
   const [activeOperation, setActiveOperation] = useState<Operation | null>(
     null,
   );
+  // The active upload or download waits for file capacity on the server.
+  const [transferWaiting, setTransferWaiting] = useState(false);
   const operation = useRef<Operation | null>(null);
   const mounted = useRef(true);
   const currentScope = useRef(scope);
@@ -419,6 +422,7 @@ function LibraryContents({
       };
       operation.current = owned;
       setActiveOperation(owned);
+      setTransferWaiting(false);
       return owned;
     },
     [client, department.id],
@@ -526,6 +530,10 @@ function LibraryContents({
       : 0);
   const hasMore = more?.hasMore ?? files.data?.pagination.hasMore ?? false;
   const busy = activeOperation !== null;
+  const waitingFor = (owned: Operation) => (waiting: boolean) => {
+    if (mounted.current)
+      setTransferWaiting(waiting && operation.current === owned);
+  };
 
   async function upload(file: File) {
     if (!canUpload || denied || waiting || !hasFirstPage || operation.current)
@@ -584,11 +592,16 @@ function LibraryContents({
         check.id,
         file,
         owned.controller.signal,
+        waitingFor(owned),
       );
       await applyUploadStatus(check, uploaded, owned);
     } catch (caught) {
       if (!live(owned)) return;
-      if (check) await readUploadStatus(check, owned);
+      // The server refused the bytes before reading them: the same file can retry.
+      if (check && isFilesBusy(caught)) {
+        setCheckedState("awaiting_upload");
+        setError(fileErrorMessage(caught, "upload the file"));
+      } else if (check) await readUploadStatus(check, owned);
       else setError(fileErrorMessage(caught, "upload the file"));
     } finally {
       finish(owned);
@@ -644,7 +657,7 @@ function LibraryContents({
     if (!owned) return;
     try {
       const blob = await trackLibraryRead(client, department.id, () =>
-        downloadLibraryFile(file, owned.controller.signal),
+        downloadLibraryFile(file, owned.controller.signal, waitingFor(owned)),
       );
       if (!live(owned)) return;
       const url = URL.createObjectURL(blob);
@@ -833,17 +846,19 @@ function LibraryContents({
           ) : null}
           {activeOperation ? (
             <p role="status" className="text-muted-foreground text-sm">
-              {activeOperation.kind === "upload"
-                ? "Uploading file…"
-                : activeOperation.kind === "check"
-                  ? "Checking upload status…"
-                  : activeOperation.kind === "archive"
-                    ? "Archiving file…"
-                    : activeOperation.kind === "reopen"
-                      ? "Reopening file…"
-                      : activeOperation.kind === "download"
-                        ? "Downloading file…"
-                        : "Loading more files…"}
+              {transferWaiting
+                ? "Waiting for the server…"
+                : activeOperation.kind === "upload"
+                  ? "Uploading file…"
+                  : activeOperation.kind === "check"
+                    ? "Checking upload status…"
+                    : activeOperation.kind === "archive"
+                      ? "Archiving file…"
+                      : activeOperation.kind === "reopen"
+                        ? "Reopening file…"
+                        : activeOperation.kind === "download"
+                          ? "Downloading file…"
+                          : "Loading more files…"}
             </p>
           ) : null}
           {error ? (
@@ -851,7 +866,7 @@ function LibraryContents({
               {error}
             </Alert>
           ) : null}
-          {pending && hasFirstPage ? (
+          {pending && hasFirstPage && activeOperation?.kind !== "upload" ? (
             <div className="flex flex-wrap items-center gap-3">
               <div className="min-w-0 text-sm wrap-anywhere">
                 <p>{pending.filename}</p>

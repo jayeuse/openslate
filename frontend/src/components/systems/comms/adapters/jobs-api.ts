@@ -6,6 +6,10 @@ import {
   apiFetchWithMetadata,
   apiRequest,
 } from "@/lib/api";
+import {
+  retryAfterSeconds,
+  retryFilesBusy,
+} from "../../shared/adapters/files-api";
 import * as S from "../contract/schemas";
 import type * as C from "../contract/types";
 import {
@@ -369,21 +373,28 @@ async function downloadError(
     "Export could not be downloaded.",
     undefined,
     code,
+    retryAfterSeconds(response),
   );
 }
 
 export async function downloadExport(
   context: C.CommsContext,
   id: string,
-  options: C.RequestOptions = {},
+  options: C.DownloadOptions = {},
 ): Promise<C.BinaryDownload> {
   const bound = S.commsContextSchema.parse(context);
-  const response = await apiRequest(`${exportPath(id)}/content`, {
-    ...requestOptions(bound, options),
-    method: "GET",
-    redirect: "error",
-  });
-  if (!response.ok) return downloadError(response, options.signal);
+  const response = await retryFilesBusy(
+    async () => {
+      const response = await apiRequest(`${exportPath(id)}/content`, {
+        ...requestOptions(bound, options),
+        method: "GET",
+        redirect: "error",
+      });
+      if (!response.ok) return downloadError(response, options.signal);
+      return response;
+    },
+    { signal: options.signal, onWaiting: options.on_waiting },
+  );
   let filename: string, media_type: string, length: number | null;
   try {
     requirePrivateNoStore(response.headers);

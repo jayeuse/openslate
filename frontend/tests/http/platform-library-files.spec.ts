@@ -186,6 +186,8 @@ async function installLibrary(
       | "deleting"
       | "archived",
     uploadHold: null as HeldTransfer | null,
+    // Upload answers refused for file capacity before the upload is accepted.
+    uploadBusyAnswers: 0,
     archiveHold: null as ReturnType<typeof heldResponse> | null,
     downloadHold: null as HeldTransfer | null,
     listHold: new Map<string, ReturnType<typeof heldResponse>>(),
@@ -456,6 +458,16 @@ async function installLibrary(
         : failure(route, state.readbackStatus);
     }
     if (method === "PUT") {
+      if (state.uploadBusyAnswers > 0) {
+        state.uploadBusyAnswers -= 1;
+        return route.fulfill({
+          status: 503,
+          headers: { "Retry-After": "1" },
+          json: {
+            detail: { code: "files_busy", message: "File capacity is busy" },
+          },
+        });
+      }
       const hold = state.uploadHold;
       hold?.enter();
       await hold?.released;
@@ -734,6 +746,49 @@ test("Library files: writer uploads once and manage-only lifecycle actions use c
   await reopen.click();
   await expect(reopen).toHaveCount(0);
   expect(fixture.calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+});
+
+test("Library files: an upload waits out busy file capacity and then shows the file", async ({
+  page,
+}, testInfo) => {
+  const fixture = await installLibrary(page);
+  fixture.uploadBusyAnswers = 2;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.clock.install();
+  await openLibrary(page);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await chooseLibraryFile(page);
+  const waiting = page
+    .getByRole("status")
+    .filter({ hasText: "Waiting for the server…" });
+  await expect(waiting).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("library-upload-waiting-1440.png"),
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(waiting).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("library-upload-waiting-390.png"),
+  });
+  await page.clock.runFor(1000);
+  await expect
+    .poll(() => fixture.calls.filter((call) => call.method === "PUT").length)
+    .toBe(2);
+  await expect(waiting).toBeVisible();
+  await page.clock.runFor(1000);
+  await expect(
+    page.getByRole("button", {
+      name: "Download Upload guide.pdf",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(waiting).toHaveCount(0);
+  const sent = fixture.calls.filter((call) => call.method === "PUT");
+  expect(sent.map((call) => call.body)).toEqual([
+    libraryPdf.toString(),
+    libraryPdf.toString(),
+    libraryPdf.toString(),
+  ]);
 });
 
 test("Library files: uncertain committed upload reads the exact reservation without resending", async ({

@@ -7,6 +7,7 @@ import {
 import {
   fileWireSchema,
   reserveFile,
+  retryFilesBusy,
   uploadFileContent,
   throwFileRequestError,
 } from "@/components/systems/shared/adapters/files-api";
@@ -243,6 +244,7 @@ export async function uploadAvatar(
   fileId: string,
   file: File,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ) {
   const id = uuid.parse(fileId);
   if (!validAvatarSelection(file)) throw new ApiContractError();
@@ -266,6 +268,7 @@ export async function uploadAvatar(
       return response;
     },
     signal,
+    onWaiting,
   );
 }
 
@@ -310,13 +313,21 @@ export async function readPersonAvatar(
 }
 
 async function readAvatarBytes(userId: string, signal?: AbortSignal) {
-  const response = await apiRequest(`/users/${uuid.parse(userId)}/avatar`, {
-    signal,
-    redirect: "error",
-    cache: "no-store",
-    refreshOnUnauthorized: false,
-  });
-  if (!response.ok) return throwFileRequestError(response, "Photo unavailable");
+  const path = `/users/${uuid.parse(userId)}/avatar`;
+  const response = await retryFilesBusy(
+    async () => {
+      const response = await apiRequest(path, {
+        signal,
+        redirect: "error",
+        cache: "no-store",
+        refreshOnUnauthorized: false,
+      });
+      if (!response.ok)
+        return throwFileRequestError(response, "Photo unavailable");
+      return response;
+    },
+    { signal },
+  );
   const type = response.headers
     .get("Content-Type")
     ?.split(";")[0]

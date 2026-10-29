@@ -183,7 +183,11 @@ export type BinaryDownload = {
   filename: string;
   media_type: string;
 };
-export type UploadOptions = RequestOptions & {
+/** `on_waiting` reports a wait for file capacity (503 files_busy) and its end. */
+export type DownloadOptions = RequestOptions & {
+  on_waiting?: (waiting: boolean) => void;
+};
+export type UploadOptions = DownloadOptions & {
   on_progress?: (progress: {
     loaded_bytes: number;
     total_bytes: number;

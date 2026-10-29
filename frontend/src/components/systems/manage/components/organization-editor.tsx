@@ -219,6 +219,11 @@ export function OrganizationEditor({
                   Save settings to remove the logo and use the mark.
                 </p>
               ) : null}
+              {logo.waiting ? (
+                <p role="status" className="text-muted-foreground text-sm">
+                  Waiting for the server…
+                </p>
+              ) : null}
               <RowError id="organization-logo-error-file">
                 {logo.error}
               </RowError>

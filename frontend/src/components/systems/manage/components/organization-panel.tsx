@@ -25,6 +25,8 @@ export type OrganizationLogoProps = {
   selection: { kind: "none" | "removed" } | { kind: "selected"; name: string };
   error: string;
   notice: string;
+  /** The logo upload waits for file capacity on the server. */
+  waiting?: boolean;
   /** Settings saved, but the replaced logo file is not removed yet. */
   cleanupPending: boolean;
   onSelect: (file: File) => void;

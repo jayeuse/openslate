@@ -450,7 +450,7 @@ export const commsFailureSchema = z.union([
   failure(429, ["comms_rate_limited", "comms_slow_mode"]).extend({
     retry_after_seconds: z.number().int().nonnegative(),
   }),
-  failure(503, ["comms_unavailable", "file_quota_busy"]),
+  failure(503, ["comms_unavailable", "file_quota_busy", "files_busy"]),
 ]);
 
 export function historyPageSchemaFor(

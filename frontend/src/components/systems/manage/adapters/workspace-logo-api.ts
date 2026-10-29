@@ -3,6 +3,8 @@ import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
 import {
   fileWireSchema,
   reserveFile,
+  retryAfterSeconds,
+  retryFilesBusy,
   uploadFileContent,
 } from "../../shared/adapters/files-api";
 import { getWorkspaceBrand } from "./workspace-api";
@@ -71,13 +73,27 @@ async function requireSuccess(response: Response): Promise<Response> {
           typeof detail.message === "string"
         ? detail.message
         : "The logo request could not be completed.";
-  throw new ApiError(response.status, message, detail);
+  const code =
+    typeof detail === "object" &&
+    detail !== null &&
+    "code" in detail &&
+    typeof detail.code === "string"
+      ? detail.code
+      : undefined;
+  throw new ApiError(
+    response.status,
+    message,
+    detail,
+    code,
+    retryAfterSeconds(response),
+  );
 }
 
 export function uploadWorkspaceLogo(
   fileId: string,
   file: File,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ): Promise<WorkspaceLogoFile> {
   const id = uuid.parse(fileId);
   if (!validLogoSelection(file)) throw new ApiContractError();
@@ -95,6 +111,7 @@ export function uploadWorkspaceLogo(
         }),
       ),
     signal,
+    onWaiting,
   );
 }
 
@@ -192,8 +209,12 @@ export async function getWorkspaceLogo(
   signal?: AbortSignal,
 ): Promise<Blob> {
   const expected = uuid.parse(expectedFileId);
-  const response = await requireSuccess(
-    await apiRequest("/workspace/logo", { cache: "no-store", signal }),
+  const response = await retryFilesBusy(
+    async () =>
+      requireSuccess(
+        await apiRequest("/workspace/logo", { cache: "no-store", signal }),
+      ),
+    { signal },
   );
   const type = response.headers
     .get("Content-Type")

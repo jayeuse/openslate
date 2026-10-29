@@ -8,6 +8,10 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import {
+  FILES_BUSY_MESSAGE,
+  isFilesBusy,
+} from "../../shared/adapters/files-api";
 import type { CommsViewClient as CommsClient } from "../contract/client";
 import { composerFailure, sendRefusal } from "../domain/composer-input";
 import { useCommsClient } from "./client-context";
@@ -107,6 +111,7 @@ export function messageFromCommsError(
   )
     return "The workspace changed before this operation finished. Try again.";
   if (isCommsConflict(error)) return conflict;
+  if (isFilesBusy(error)) return FILES_BUSY_MESSAGE;
   // D44 A8: the server refuses a channel its category cannot hold.
   const failure = composerFailure(error);
   if (

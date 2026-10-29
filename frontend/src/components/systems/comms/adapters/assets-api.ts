@@ -6,6 +6,8 @@ import {
   apiRequest,
 } from "@/lib/api";
 import {
+  retryAfterSeconds,
+  retryFilesBusy,
   throwFileRequestError,
   uploadFileContent,
 } from "../../shared/adapters/files-api";
@@ -48,6 +50,7 @@ async function fileError(response: Response): Promise<never> {
       "File request could not be completed",
       undefined,
       parsed.data.detail.code,
+      retryAfterSeconds(response),
     );
   return throwFileRequestError(response);
 }
@@ -135,6 +138,7 @@ export async function uploadAttachment(
       return response;
     },
     options.signal,
+    options.on_waiting,
   );
   progress(bytes.size);
   return data;
@@ -144,15 +148,21 @@ export async function downloadAttachment(
   context: C.CommsContext,
   conversationId: string,
   fileId: string,
-  options: C.RequestOptions = {},
+  options: C.DownloadOptions = {},
 ): Promise<C.BinaryDownload> {
   const bound = S.commsContextSchema.parse(context);
-  const response = await apiRequest(contentPath(conversationId, fileId), {
-    ...requestOptions(bound, options),
-    method: "GET",
-    redirect: "error",
-  });
-  if (!response.ok) return fileError(response);
+  const response = await retryFilesBusy(
+    async () => {
+      const response = await apiRequest(contentPath(conversationId, fileId), {
+        ...requestOptions(bound, options),
+        method: "GET",
+        redirect: "error",
+      });
+      if (!response.ok) return fileError(response);
+      return response;
+    },
+    { signal: options.signal, onWaiting: options.on_waiting },
+  );
   const encoded = response.headers
     .get("Content-Disposition")
     ?.match(/^attachment;\s*filename\*=UTF-8''([^;\r\n]+)$/i)?.[1];

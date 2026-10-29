@@ -130,6 +130,7 @@ export async function uploadRecordFile(
   rawFileId: string,
   content: Blob,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ): Promise<RecordFile> {
   const recordId = uuidSchema.parse(rawRecordId);
   const fileId = uuidSchema.parse(rawFileId);
@@ -149,6 +150,7 @@ export async function uploadRecordFile(
       return response;
     },
     signal,
+    onWaiting,
   );
 }
 
@@ -171,7 +173,11 @@ export async function archiveRecordFile(
   return file;
 }
 
-export function downloadRecordFile(file: RecordFile, signal?: AbortSignal) {
+export function downloadRecordFile(
+  file: RecordFile,
+  signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
+) {
   if (file.state !== "ready" || file.isDeleted) throw new ApiContractError();
   const fileId = uuidSchema.parse(file.id);
   return trackOpenViewRead(() =>
@@ -179,6 +185,8 @@ export function downloadRecordFile(file: RecordFile, signal?: AbortSignal) {
       `/files/${fileId}/content`,
       file.actualSize ?? file.expectedSize,
       signal,
+      undefined,
+      onWaiting,
     ),
   );
 }
