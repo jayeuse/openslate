@@ -7,14 +7,18 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
+from threading import Event, Thread
 from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import event, func, select
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.common.dependencies.auth import require_fresh_exact_admin
+from app.core.database.organization_scope import scope_session
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleActorBlocked,
     LifecycleActorMismatch,
@@ -41,11 +45,14 @@ from app.systems.sandbox.lifecycle.service import (
     verify_challenge,
 )
 from tests.api_integration_support import create_owned_admin, delete_owned_admin
+from tests.organization_scope_support import in_context
+from tests.race_support import WAIT, backend_pid, wait_until_waiting
 
 pytestmark = pytest.mark.integration
 pytest_plugins = ("tests.lifecycle_integration.test_lifecycle_api_integration",)
 NOW = datetime(2026, 9, 10, tzinfo=UTC)
-_USER_LOCK = re.compile(r"\bFROM users\b.*\bFOR UPDATE\b", re.DOTALL)
+# The per-actor confirmation lock (challenge_store._lock_actor); the admin lock is *_shared.
+_ACTOR_LOCK = re.compile(r"\bpg_advisory_xact_lock\(")
 
 
 def _issue(db, actor_id, *, now=NOW):
@@ -89,7 +96,7 @@ def _count(db, model, actor_id):
 
 @contextmanager
 def _commit_before_actor_lock(engine: Engine, change: Callable[[], None]) -> Iterator[list[bool]]:
-    """Run ``change`` once, just before the first ``FOR UPDATE`` read of a user row.
+    """Run ``change`` once, just before the first per-actor confirmation lock.
 
     ``change`` commits on its own connection before the lock is sent, so nothing is
     locked yet and, under READ COMMITTED, the locking read sees the commit. The list
@@ -99,7 +106,7 @@ def _commit_before_actor_lock(engine: Engine, change: Callable[[], None]) -> Ite
     fired: list[bool] = []
 
     def before_cursor_execute(_connection, _cursor, statement, *_args):
-        if fired or not _USER_LOCK.search(statement):
+        if fired or not _ACTOR_LOCK.search(statement):
             return
         fired.append(True)
         change()
@@ -517,3 +524,41 @@ def test_unsupported_confirmation_operation_writes_nothing(lifecycle_api_client)
         with pytest.raises(LifecycleUnsupportedOperation):
             issue_challenge(db, client.actor.id, "reopen", "module", uuid7(), "impact", now=NOW)
         assert _count(db, Challenge, client.actor.id) == 0
+
+
+def test_two_confirmations_by_one_administrator_never_deadlock(lifecycle_api_client):
+    # Live seven-pack run: two purge previews by one administrator deadlocked (40P01, 503).
+    # Each held the administrator's user row FOR SHARE from the admin check and then
+    # upgraded it to FOR UPDATE for the attempt counter, so each waited for the other.
+    client = lifecycle_api_client()
+    first_checked, release_first = Event(), Event()
+    second_pids: list[int] = []
+    outcomes: dict[str, str | None] = {}
+
+    def confirm(name: str, *, hold: bool) -> None:
+        with Session(client.engine) as db:
+            scope_session(db, client.org_id)
+            try:
+                require_fresh_exact_admin(db, client.actor.id)
+                if hold:
+                    first_checked.set()
+                    assert release_first.wait(WAIT)
+                else:
+                    second_pids.append(backend_pid(db))
+                _issue(db, client.actor.id)
+                outcomes[name] = "issued"
+            except OperationalError as error:
+                outcomes[name] = getattr(error.orig, "sqlstate", None)
+
+    first = Thread(target=in_context(lambda: confirm("first", hold=True)))
+    first.start()
+    assert first_checked.wait(WAIT)
+    second = Thread(target=in_context(lambda: confirm("second", hold=False)))
+    second.start()
+    # The second confirmation either finishes or waits on the first; it must not deadlock
+    # with it once the first continues.
+    wait_until_waiting(client.engine, second_pids, while_running=second)
+    release_first.set()
+    first.join(WAIT)
+    second.join(WAIT)
+    assert outcomes == {"first": "issued", "second": "issued"}

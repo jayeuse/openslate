@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import Integer, and_, func, literal, select
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.orm import Session
 
 from app.systems.access.users.membership import bound_organization
@@ -48,6 +49,9 @@ _TERMINAL_CHALLENGE_STATUSES = (
     LifecycleChallengeStatus.EXHAUSTED,
 )
 
+
+# Advisory-lock namespace for one actor's confirmation attempts ("OSLC").
+LIFECYCLE_ACTOR_LOCK = 0x4F53_4C43
 
 @dataclass(frozen=True)
 class IssuedLifecycleChallenge:
@@ -182,12 +186,19 @@ def issue_challenge(
 
 
 def _lock_actor(db: Session, actor_id: UUID) -> None:
-    """Acquire the actor lock used by every rate-limit mutation."""
+    """Acquire the actor lock used by every rate-limit mutation.
+
+    A transaction advisory lock, not a lock on the actor's user row: the administrator
+    check before a confirmation already holds that row FOR SHARE, and upgrading it to
+    FOR UPDATE deadlocked two confirmations by one administrator (live seven-pack run).
+    """
 
     from app.systems.access.users.models import User
 
-    actor = db.scalar(select(User).where(User.id == actor_id).with_for_update())
-    if actor is None:
+    db.execute(select(func.pg_advisory_xact_lock(
+        sql_cast(literal(LIFECYCLE_ACTOR_LOCK), Integer), func.hashtext(str(actor_id)),
+    )))
+    if db.scalar(select(User.id).where(User.id == actor_id)) is None:
         raise LifecycleUnavailable("Lifecycle actor is no longer available")
 
 
