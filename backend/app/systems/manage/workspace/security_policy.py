@@ -171,15 +171,32 @@ def session_expiry_expression(profile: PlatformSettings) -> ColumnElement[dateti
     return func.least(*deadlines)
 
 
+def lock_live_sessions(db: Session) -> None:
+    """Lock every unrevoked session in ID order, waiting for current holders.
+
+    The settings save takes these before the organization row (see its router).
+    """
+    db.scalars(
+        select(IdentitySession.id)
+        .where(IdentitySession.revoked_at.is_(None))
+        .order_by(IdentitySession.id)
+        .with_for_update(of=IdentitySession)
+    ).all()
+
+
 def clamp_session_deadlines(
     db: Session, old: SessionDeadlines, candidate: PlatformSettings
 ) -> None:
+    """Never extend a live session: keep the earlier of its old and new deadlines.
+
+    The caller holds these rows from ``lock_live_sessions``.
+    """
     for session in db.scalars(
         select(IdentitySession)
         .where(IdentitySession.revoked_at.is_(None))
         .order_by(IdentitySession.id)
         .execution_options(populate_existing=True)
-        .with_for_update(of=IdentitySession, nowait=True)
+        .with_for_update(of=IdentitySession)
     ):
         session.expires_at = min(
             effective_session_expiry(session, old), effective_session_expiry(session, candidate)
