@@ -293,7 +293,9 @@ def revoke_admin_session_collection(
             .execution_options(populate_existing=True)
             .with_for_update(of=IdentitySession)
         ).all()
-        shared = set() if is_platform_operator(db, actor_id) else set(db.scalars(
+        # The operator acts like this organization's administrator here (decision C9):
+        # a person who also belongs to another organization keeps their sessions.
+        shared = set(db.scalars(
             select(Membership.user_id).where(
                 Membership.user_id.in_({item.user_id for item in sessions}),
                 Membership.org_id != bound_organization(db), Membership.is_deleted.is_(False),
