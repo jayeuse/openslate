@@ -67,6 +67,16 @@ async function seedComposer(
   return { runtime, server, noah: noah.user_id };
 }
 
+// A chosen mention places the caret on the next frame. A person types after
+// it; a fill in the same frame would see its select-all collapsed to the end.
+async function chooseMention(page: Page, name: string) {
+  await page.getByRole("option", { name, exact: true }).click();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+  );
+}
+
 test("composer mentions only current members and keeps the draft above the mention limit", async ({
   page,
 }) => {
@@ -85,9 +95,9 @@ test("composer mentions only current members and keeps the draft above the menti
     page.getByRole("listbox", { name: "Mention members", exact: true }),
   ).toBeHidden();
   await input.fill("Hello @Noah");
-  await page.getByRole("option", { name: "Noah Tan", exact: true }).click();
+  await chooseMention(page, "Noah Tan");
   await input.fill("Hello @Noah Tan @Mara");
-  await page.getByRole("option", { name: "Mara Santos", exact: true }).click();
+  await chooseMention(page, "Mara Santos");
   await expect(
     page.getByText("This conversation allows 1 mention per message.", {
       exact: true,
@@ -107,7 +117,7 @@ test("composer mentions only current members and keeps the draft above the menti
     .poll(() => mentionsFor("Hello @Noah Tan"))
     .toEqual([fixture.noah]);
   await input.fill("@Noah");
-  await page.getByRole("option", { name: "Noah Tan", exact: true }).click();
+  await chooseMention(page, "Noah Tan");
   await input.fill("@Noah Tancredi");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(input).toHaveValue("");

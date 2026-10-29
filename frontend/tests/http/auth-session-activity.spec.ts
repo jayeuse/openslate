@@ -360,16 +360,23 @@ test("a queued activity renewal is cancelled when the account changes behind the
     });
   });
   await advance(6);
+  // A draft typed as account A is gone once the workspace remounts for B.
+  await search.fill("Account A search");
   await search.press("ArrowRight");
   state.userId = userB;
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  // Account B's workspace starts its own renewal interval now, at minute 6;
+  // the clock must not move before it is mounted.
+  await expect(search).toHaveValue("");
   await expect(
     page.getByRole("dialog", { name: "Session verification" }),
   ).toBeHidden();
-  await page.evaluate(() => {
+  // The renewal queued for account A runs once the lock is free and must not
+  // refresh; the lock queue is in order, so a later request waits for it.
+  await page.evaluate(async () => {
     (window as unknown as { releaseRefresh: () => void }).releaseRefresh();
+    await navigator.locks.request("openslate-auth-refresh", async () => {});
   });
-  await expect(search).toHaveValue("");
   expect(state.renewedUsers).toEqual([]);
   await advance(6);
   await Promise.all([
