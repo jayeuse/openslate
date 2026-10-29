@@ -36,8 +36,10 @@ services:
       BACKEND_BIND_HOST: 0.0.0.0
       BACKEND_PORT: "8000"
       # API worker processes (C8, measured 2026-10-29): 2 and 3 workers raised request
-      # latency against 1 under the two-pack load. Raise it only with a new measurement
-      # and keep API_WORKERS x (pool + overflow + 3) below PostgreSQL max_connections.
+      # latency against 1 under the two-pack load. A Compose project variable: set it in
+      # the provider installation environment; this entry overrides the app env file.
+      # Raise it only with a new measurement and keep API_WORKERS x (pool + overflow + 3)
+      # below PostgreSQL max_connections.
       API_WORKERS: ${API_WORKERS:-1}
       OPENSLATE_APP_PRIVATE_SUBNET: &app-private-subnet ${OPENSLATE_APP_PRIVATE_SUBNET:-172.31.248.0/28}
       SUPABASE_URL: http://api-gw:8000
