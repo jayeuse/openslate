@@ -104,9 +104,18 @@ def test_every_department_board_gets_a_kanban_and_calendar_sources(
     realism = import_module(f"operations.sample.packs.{pack_key}.realism")
     spec = pack.content.data.kanban
     stages = len(spec.stages) + len(realism.BOARD_STAGES[other])
+    labels = len(spec.labels) + len(DEFAULT_LABELS)
     assert counts == {
-        "kanban_stages": stages, "kanban_labels": len(spec.labels) + len(DEFAULT_LABELS),
+        "kanban_stages": stages, "kanban_labels": labels,
         "kanban_cards": 24, "kanban_checklist_items": 7, "calendar_sources": 1,
+    }  # fmt: skip
+    # The administrator manages the Boards; the writer adds every card, as people do.
+    assert Counter((who, method, path.rsplit("/", 1)[1]) for who, method, path, _ in calls
+                   if path.endswith(("/stages", "/labels", "/calendar-sources", "/cards"))) == {
+        ("admin", "POST", "stages"): stages,
+        ("admin", "POST", "labels"): labels,
+        ("admin", "POST", "calendar-sources"): 1,
+        ("writer", "POST", "cards"): 24,
     }  # fmt: skip
 
     def board_cards(key: str) -> list[dict[str, Any]]:
@@ -119,12 +128,18 @@ def test_every_department_board_gets_a_kanban_and_calendar_sources(
     assert {b["record_id"] for b in cards[board] if b["kind"] == "record"} == {
         _uuid(logical) for logical in records
     }
+    # The pack's named demo cards are all still ahead of the run's anchor date.
+    due = sorted(date.fromisoformat(b["due_on"]) for b in cards[board] if "due_on" in b)
+    assert len(due) >= 6 and all(ANCHOR < day for day in due)
     dated = [b for rows in cards.values() for b in rows if "due_on" in b]
     assert len(dated) >= 18
     assert all(date.fromisoformat(b["start_on"]) <= date.fromisoformat(b["due_on"]) for b in dated)
     assert all(b["title"] for rows in cards.values() for b in rows if b["kind"] == "objective")
     sources = [b for who, _, path, b in calls if path.endswith("/calendar-sources")]
     assert sources == [{"module_id": module["id"], "date_field_id": date_field["id"]}]
+    assert _journal(tmp_path, "admin") == {
+        "kanban_stages": stages, "kanban_labels": labels, "calendar_sources": 1,
+    }  # fmt: skip
     assert _journal(tmp_path, "writer") == {"kanban_cards": 24}
     admin.close()
     writer.close()
@@ -186,8 +201,10 @@ def test_a_board_never_gets_the_same_record_card_twice(tmp_path: Path) -> None:
     client = _client(tmp_path, "admin", respond)
     # Few records and many cards: without care, the draw repeats a record.
     records = {f"service_requests:{n:06d}": {"id": _uuid("record", n)} for n in range(1, 4)}
-    records |= {key: {"id": _uuid(key)} for key in
-                ("customers:000001", "customers:000003", "quotes:000001", "quotes:000002")}
+    records |= {
+        key: {"id": _uuid(key)}
+        for key in ("customers:000001", "customers:000003", "quotes:000001", "quotes:000002")
+    }
     boards = {
         name: {"id": _uuid("board", name), "logical_id": name, "scope": "department",
                "department_key": name.split(":")[1], "authors": ("admin",), "board": {}}

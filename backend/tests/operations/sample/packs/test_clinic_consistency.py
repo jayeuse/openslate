@@ -26,6 +26,12 @@ def _value(dataset: SampleDataset, records: dict, logical_id: str, field: str) -
     return record.data.get(dataset.field_ids[record.module_key][field])
 
 
+def _number(dataset: SampleDataset, records: dict, logical_id: str, field: str) -> float:
+    value = _value(dataset, records, logical_id, field)
+    assert isinstance(value, int | float), (logical_id, field)
+    return float(value)
+
+
 def _edges(dataset: SampleDataset, key: str) -> list[tuple[str, str]]:
     relationship = dataset.relationship_ids[key]
     return [(e.source_record_id, e.target_record_id) for e in dataset.edges
@@ -38,13 +44,13 @@ def test_claim_balances_are_the_charge_less_the_payer_remittances(profile: str) 
     records = {record.logical_id: record for record in dataset.records}
     paid: defaultdict[str, float] = defaultdict(float)
     for claim, payment in _edges(dataset, "claim_payments"):
-        paid[claim] += float(_value(dataset, records, payment, "amount"))  # type: ignore[arg-type]
+        paid[claim] += _number(dataset, records, payment, "amount")
     failures = []
     for record in dataset.records:
         if record.module_key != "claims":
             continue
-        charge = float(_value(dataset, records, record.logical_id, "charge_total"))  # type: ignore[arg-type]
-        balance = float(_value(dataset, records, record.logical_id, "balance"))  # type: ignore[arg-type]
+        charge = _number(dataset, records, record.logical_id, "charge_total")
+        balance = _number(dataset, records, record.logical_id, "balance")
         label = status_label(dataset, "claims", record.data)
         if abs(charge - paid.get(record.logical_id, 0.0) - balance) > 0.011:
             failures.append((record.logical_id, "balance"))

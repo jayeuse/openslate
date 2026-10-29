@@ -90,6 +90,9 @@ async function workspaceWithAuthOutage(page: Page, baseURL?: string) {
   return state;
 }
 
+// The page's clock is paused so the retry waits (1, 2 and 4 seconds) and the
+// 5 second quiet time pass on demand. Each step waits until the browser has the
+// refresh answer, so its next wait starts at a known time.
 for (const viewport of [
   { width: 1440, height: 900 },
   { width: 390, height: 844 },
@@ -99,16 +102,34 @@ for (const viewport of [
     baseURL,
   }, testInfo) => {
     await page.setViewportSize(viewport);
+    await page.clock.install();
     const state = await workspaceWithAuthOutage(page, baseURL);
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000));
     const reconnecting = page.getByText("Reconnecting…");
+    const refreshAnswer = () => page.waitForResponse("**/api/auth/refresh");
     state.expired = true;
-    await page
-      .getByRole("searchbox", { name: "Search workspace" })
-      .fill("Outage search");
 
-    // Quiet first: the three unavailable answers take 1 + 2 + 4 seconds.
+    // The first unavailable answer starts the outage at time zero.
+    let answer = refreshAnswer();
+    const search = page.getByRole("searchbox", { name: "Search workspace" });
+    await search.fill("Outage search");
+    await expect(search).toHaveValue("Outage search");
+    await page.clock.runFor(250); // The search waits 250 ms for typing to settle.
+    expect((await answer).status()).toBe(503);
     await expect(reconnecting).toBeHidden();
-    await expect(reconnecting).toBeVisible({ timeout: 6_500 });
+
+    // Quiet first: the second and third answers come at 1 and 3 seconds.
+    for (const wait of [1_000, 2_000]) {
+      answer = refreshAnswer();
+      await page.clock.runFor(wait);
+      expect((await answer).status()).toBe(503);
+      await expect(reconnecting).toBeHidden();
+    }
+    await page.clock.runFor(1_999);
+    await expect(reconnecting).toBeHidden();
+
+    // At 5 seconds the page says so, as a status.
+    await page.clock.runFor(1);
     await expect(
       page.getByRole("status").filter({ hasText: "Reconnecting…" }),
     ).toBeVisible();
@@ -116,9 +137,12 @@ for (const viewport of [
       path: testInfo.outputPath(`reconnecting-${viewport.width}.png`),
     });
 
-    await expect(page.getByText("Outage search result")).toBeVisible({
-      timeout: 6_000,
-    });
+    // The fourth refresh, 4 seconds after the third, succeeds; the search runs.
+    answer = refreshAnswer();
+    await page.clock.runFor(2_001);
+    expect((await answer).status()).toBe(200);
+    await page.clock.resume();
+    await expect(page.getByText("Outage search result")).toBeVisible();
     await expect(reconnecting).toBeHidden();
     expect(new URL(page.url()).pathname).toBe("/platform");
     expect(state.refreshes).toBe(4);

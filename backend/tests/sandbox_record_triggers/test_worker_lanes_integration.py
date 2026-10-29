@@ -8,7 +8,6 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -17,6 +16,7 @@ from sqlalchemy import Engine, create_engine, delete, func, select, update
 from sqlalchemy.exc import OperationalError
 from uuid6 import uuid7
 
+from app.core.config import Settings
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.boards.models import Board
@@ -37,6 +37,7 @@ from app.systems.sandbox.record_triggers.models import (
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
 from app.systems.sandbox.record_triggers.runner import execute_claim
 from app.systems.sandbox.records.models import Record
+from tests.config_support import settings_values
 from tests.postgres_runtime import assert_runner_database_url
 from tests.race_support import WAIT, StatementPause
 from tests.sandbox_record_triggers.support import (
@@ -69,10 +70,9 @@ class _Organization:
 def engines() -> Iterator[tuple[Engine, Engine]]:
     """The owner builds and removes committed rows; lanes use the RLS-bound runtime role."""
 
-    owner_url = os.getenv("MIGRATION_DATABASE_URL")
-    runtime_url = os.getenv("TEST_DATABASE_URL")
-    if owner_url is None or runtime_url is None:
-        pytest.skip("requires the disposable PostgreSQL integration database")
+    # The runner always provides both; a missing one fails here instead of skipping.
+    owner_url = os.environ["MIGRATION_DATABASE_URL"]
+    runtime_url = os.environ["TEST_DATABASE_URL"]
     assert_runner_database_url(owner_url, allowed_roles=frozenset({"openslate_owner"}))
     assert_runner_database_url(runtime_url, allowed_roles=frozenset({"openslate_runtime"}))
     owner = create_engine(owner_url, pool_size=2, max_overflow=0)
@@ -127,9 +127,7 @@ def _publish(owner: Engine, created: list[_Organization]) -> _Organization:
     return organization
 
 
-def _queue(
-    owner: Engine, organization: _Organization, count: int, *, edits: int = 0
-) -> list[UUID]:
+def _queue(owner: Engine, organization: _Organization, count: int, *, edits: int = 0) -> list[UUID]:
     """Create ``count`` records in one transaction, as an import does, and their events.
 
     ``edits`` more field changes of the first record follow its creation event.
@@ -144,8 +142,11 @@ def _queue(
             request_path="/api/records/import",
         )
         records = [
-            Record(org_id=organization.org_id, module_id=organization.module_id,
-                   data=dict(organization.data))
+            Record(
+                org_id=organization.org_id,
+                module_id=organization.module_id,
+                data=dict(organization.data),
+            )
             for _record in range(count)
         ]
         db.add_all(records)
@@ -168,9 +169,10 @@ def _lanes(
 ) -> Iterator[worker_module.TriggerWorker]:
     monkeypatch.setattr(worker_module, "get_engine", lambda: runtime)
     monkeypatch.setattr(worker_module, "active_organization_ids", lambda _engine: list(org_ids))
-    worker = worker_module.TriggerWorker(
-        SimpleNamespace(environment="development", trigger_workers=lanes)  # type: ignore[arg-type]
+    settings = Settings(
+        **settings_values(e2e_background_workers=True, trigger_workers=lanes), _env_file=None
     )
+    worker = worker_module.TriggerWorker(settings)
     try:
         yield worker
     finally:
@@ -179,14 +181,17 @@ def _lanes(
 
 def _unfinished(owner: Engine, org_ids: list[UUID]) -> int:
     with owner.connect() as connection:
-        return connection.scalar(
-            select(func.count())
-            .select_from(RecordTriggerEvent)
-            .where(
-                RecordTriggerEvent.org_id.in_(org_ids),
-                RecordTriggerEvent.state.in_(_UNFINISHED),
+        return (
+            connection.scalar(
+                select(func.count())
+                .select_from(RecordTriggerEvent)
+                .where(
+                    RecordTriggerEvent.org_id.in_(org_ids),
+                    RecordTriggerEvent.state.in_(_UNFINISHED),
+                )
             )
-        ) or 0
+            or 0
+        )
 
 
 def _wait_until_drained(owner: Engine, org_ids: list[UUID], *, guard: float = 120.0) -> None:
@@ -278,8 +283,9 @@ def test_lanes_share_a_burst_of_record_changes(
     for organization in organizations:
         with owner.connect() as connection:
             statuses = connection.scalars(
-                select(Record.data[str(organization.fields["status"].id)].astext)
-                .where(Record.module_id == organization.module_id)
+                select(Record.data[str(organization.fields["status"].id)].astext).where(
+                    Record.module_id == organization.module_id
+                )
             ).all()
         assert set(statuses) == {option_id(organization.fields["status"], "In progress")}
 
@@ -337,7 +343,9 @@ def test_a_second_claimer_skips_a_record_whose_earlier_event_is_being_claimed(
         ).all()
     # Creation, the edit, then the change the creation's trigger made.
     assert [(event.event_kind, event.depth) for event in events] == [
-        ("record-created", 0), ("field-changed", 0), ("field-changed", 1)
+        ("record-created", 0),
+        ("field-changed", 0),
+        ("field-changed", 1),
     ]
     assert held[0].id == events[0].id
     assert [claimed.id for claimed in later] == [events[1].id]
@@ -471,9 +479,7 @@ def test_two_runs_in_one_module_overlap_and_a_publication_still_waits_for_them(
     assert held == [True]
     with owner.connect() as connection:
         states = connection.scalars(
-            select(RecordTriggerEvent.state).where(
-                RecordTriggerEvent.id.in_([first.id, second.id])
-            )
+            select(RecordTriggerEvent.state).where(RecordTriggerEvent.id.in_([first.id, second.id]))
         ).all()
     assert states == [TriggerEventState.SUCCEEDED] * 2
 
@@ -505,13 +511,23 @@ def _remove(owner: Engine, organization: _Organization) -> None:
         definition_id=organization.definition_id,
     )
     with owner.begin() as connection:
-        assert connection.scalar(
-            select(func.count()).select_from(Board).where(Board.org_id == organization.org_id)
-        ) == 0
-        assert connection.scalar(
-            select(func.count()).select_from(RecordTrigger)
-            .where(RecordTrigger.org_id == organization.org_id)
-        ) == 0
-        assert connection.scalar(
-            select(func.count()).select_from(Module).where(Module.org_id == organization.org_id)
-        ) == 0
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(Board).where(Board.org_id == organization.org_id)
+            )
+            == 0
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(RecordTrigger)
+                .where(RecordTrigger.org_id == organization.org_id)
+            )
+            == 0
+        )
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(Module).where(Module.org_id == organization.org_id)
+            )
+            == 0
+        )

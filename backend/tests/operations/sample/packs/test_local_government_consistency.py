@@ -32,6 +32,12 @@ def _value(dataset: SampleDataset, record: SampleRecord, field: str) -> object:
     return record.data.get(dataset.field_ids[record.module_key][field])
 
 
+def _number(dataset: SampleDataset, record: SampleRecord, field: str) -> float:
+    value = _value(dataset, record, field)
+    assert isinstance(value, int | float), (record.logical_id, field)
+    return float(value)
+
+
 def _label(dataset: SampleDataset, record: SampleRecord) -> str:
     return status_label(dataset, record.module_key, record.data)
 
@@ -48,16 +54,17 @@ def test_order_balances_are_the_amount_due_less_the_receipts_that_pay_it(profile
     records = _records(dataset)
     paid: defaultdict[str, float] = defaultdict(float)
     for order, receipt in _edges(dataset, "order_receipts"):
-        paid[order] += float(_value(dataset, records[receipt], "amount"))  # type: ignore[arg-type]
+        paid[order] += _number(dataset, records[receipt], "amount")
     failures = []
     for record in dataset.records:
         if record.module_key != "payment_orders":
             continue
         label = _label(dataset, record)
-        due = float(_value(dataset, record, "amount_due")) + float(  # type: ignore[arg-type]
-            _value(dataset, record, "surcharge") or 0  # type: ignore[arg-type]
+        surcharge = _value(dataset, record, "surcharge")
+        due = _number(dataset, record, "amount_due") + (
+            0.0 if surcharge is None else _number(dataset, record, "surcharge")
         )
-        balance = float(_value(dataset, record, "balance"))  # type: ignore[arg-type]
+        balance = _number(dataset, record, "balance")
         expected = (
             0.0 if label in {"Reassessed", "Cancelled"} else due - paid.get(record.logical_id, 0)
         )
@@ -134,13 +141,14 @@ def test_purchase_orders_go_to_the_winning_bidder_within_the_approved_budget() -
     }
     failures: list[object] = []
     for project, po in _edges(dataset, "project_purchase_orders"):
-        ranked = sorted(bids_of[project], key=lambda bid: float(
-            _value(dataset, records[bid], "bid_amount")))  # type: ignore[arg-type]  # fmt: skip
+        ranked = sorted(
+            bids_of[project], key=lambda bid: _number(dataset, records[bid], "bid_amount")
+        )
         if supplier_of_order[po] != supplier_of_bid[ranked[0]]:
             failures.append((po, "supplier"))
     for project, bid in _edges(dataset, "project_bids"):
-        budget = float(_value(dataset, records[project], "abc_total"))  # type: ignore[arg-type]
-        if float(_value(dataset, records[bid], "bid_amount")) > budget:  # type: ignore[arg-type]
+        budget = _number(dataset, records[project], "abc_total")
+        if _number(dataset, records[bid], "bid_amount") > budget:
             failures.append((bid, "over the ABC"))
     # Each supplier bids once per project.
     pairs = [(project, supplier_of_bid[bid]) for project, bid in _edges(dataset, "project_bids")]
@@ -157,7 +165,7 @@ def test_purchase_request_mode_follows_the_procurement_thresholds() -> None:
         mode_id = _value(dataset, record, "recommended_mode")
         if mode_id is None:
             continue
-        abc = float(_value(dataset, record, "abc_amount"))  # type: ignore[arg-type]
+        abc = _number(dataset, record, "abc_amount")
         labels = {"Competitive bidding": abc >= 2_000_000, "Direct acquisition": abc <= 200_000}
         mode = next(label for label in ("Competitive bidding", "Direct acquisition",
                                         "Small value procurement")

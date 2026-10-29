@@ -25,7 +25,10 @@ def _value(dataset: SampleDataset, record: SampleRecord, field: str) -> object:
 
 def _number(dataset: SampleDataset, record: SampleRecord, field: str) -> float:
     value = _value(dataset, record, field)
-    return 0.0 if value is None else float(value)  # type: ignore[arg-type]
+    if value is None:
+        return 0.0
+    assert isinstance(value, int | float), (record.logical_id, field)
+    return float(value)
 
 
 def _edges(dataset: SampleDataset, key: str) -> list[tuple[str, str]]:
@@ -67,8 +70,14 @@ def test_order_and_invoice_totals_add_up_from_their_lines_and_receipts(profile: 
             if abs(max(0.0, balance) - _number(dataset, record, "balance")) > 0.011:
                 failures.append(rid)
     for receipt, members in statements.items():
-        if len(members) > 1 and abs(_number(dataset, records[receipt], "amount") - sum(
-                _number(dataset, records[item], "amount") for item in members)) > 0.011:
+        if (
+            len(members) > 1
+            and abs(
+                _number(dataset, records[receipt], "amount")
+                - sum(_number(dataset, records[item], "amount") for item in members)
+            )
+            > 0.011
+        ):
             failures.append(receipt)  # fmt: skip
     assert failures == []
     invoice, receipt = records["sales_invoices:000001"], records["collection_receipts:000001"]

@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import stat
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
 
+from operations.sample.client import SampleClient
 from operations.sample.packs import get_pack
 from operations.sample.population import administrator as sample_administrator
 from operations.sample.population.administrator import (
@@ -16,6 +18,7 @@ from operations.sample.population.administrator import (
     create_run_roster,
     invite_pack_administrator,
 )
+from operations.sample.population.people import SampleActorCredential
 from operations.sample.population.run import SamplePopulationError
 from tests.operations.sample.population.test_sample_people import (
     MAILPIT_URL,
@@ -42,9 +45,9 @@ def _invite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, pack_key: str = 
     monkeypatch.setattr(sample_administrator, "SampleClient", acceptance)
     roster = create_run_roster(roster_path, get_pack(pack_key))
 
-    def run() -> object:
+    def run() -> SampleActorCredential:
         return invite_pack_administrator(
-            operator,  # type: ignore[arg-type]
+            cast(SampleClient, operator),
             roster,
             api_url="http://127.0.0.1:8000",
             origin=ORIGIN,
@@ -88,8 +91,8 @@ def test_the_operator_invites_one_pack_administrator_as_a_testing_account(
     assert stat.S_IMODE(roster_path.stat().st_mode) == 0o600
     assert (account["key"], account["state"]) == ("administrator", "active")
     assert account["role"] == "admin"
-    assert credential.user_id == account["user_id"] != OPERATOR_ID  # type: ignore[attr-defined]
-    assert credential.password == account["password"]  # type: ignore[attr-defined]
+    assert credential.user_id == account["user_id"] != OPERATOR_ID
+    assert credential.password == account["password"]
     assert operator.users[account["user_id"]]["status"] == "active"
     # The invitation completes in its own client; its journal sits beside the roster.
     assert len(acceptances) == 1 and acceptances[0][2] == roster_path.parent / (
@@ -109,7 +112,7 @@ def test_an_existing_account_is_not_accepted_as_the_pack_administrator(
             return httpx.Response(201, json={**response.json(), "delivery": "in_app"})
         return response
 
-    operator.request = in_app  # type: ignore[method-assign]
+    monkeypatch.setattr(operator, "request", in_app)
 
     with pytest.raises(SamplePopulationError, match="must be a new account"):
         run()
@@ -120,12 +123,12 @@ def test_a_missing_invitation_email_keeps_the_roster_and_stops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run, _operator, inbox, roster_path, acceptances = _invite(tmp_path, monkeypatch)
-    inbox.add = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    monkeypatch.setattr(inbox, "add", lambda *_args, **_kwargs: None)
 
     def no_mail(_baseline: set[str], _recipient: str) -> str:
         raise sample_administrator.SampleInvitationError("No new matching email action")
 
-    inbox.invitation_token = no_mail  # type: ignore[method-assign]
+    monkeypatch.setattr(inbox, "invitation_token", no_mail)
 
     with pytest.raises(SamplePopulationError, match="No matching invite email"):
         run()
