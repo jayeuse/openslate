@@ -78,7 +78,8 @@ def _server_revocation_event(
             lookup.setattr(sessions_router, "load_user", lambda _db, _user_id: target)
             # Target visibility (F01) is owned by the cross-organization integration tests.
             lookup.setattr(
-                sessions_router, "_session_target",
+                sessions_router,
+                "_session_target",
                 lambda _db, _user_id, _actor_id=None: target,
             )
             response = sessions_router.revoke_user_session(
