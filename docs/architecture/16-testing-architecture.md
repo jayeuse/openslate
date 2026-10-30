@@ -125,7 +125,10 @@ lockfile-pinned Chromium browser. The isolated CI job uses the configured defaul
 of one worker; local Playwright uses up to three workers. UTC, `en-US` and zero
 retries are pinned in the config. Failure contexts/traces and native JSON reports
 have their own artifact paths; the `verify` job preserves one required check
-(`frontend-verify`; the backend workflow has `backend-verify`).
+(`frontend-verify`; the backend workflow has `backend-verify`). The `measure` job
+runs the Comms timeline measurement alone and writes its numbers to the job
+summary; `frontend-verify` does not need it, because a shared runner cannot hold
+the 300 ms limit. The pre-push gate keeps that limit blocking.
 [`package.json`](../../frontend/package.json) declares `check` (formatting, lint,
 types, contrast), `build`, `test`, and `verify` (`check` → `build` → `test`), plus
 the existing section/affected/full selectors for scoped work. Full verification

@@ -216,13 +216,15 @@ class CiWorkflowContractTests(unittest.TestCase):
         source = self.source("frontend.yml")
         verify = source.split("\n  verify:\n", 1)[1]
 
-        self.assertIn("needs: [changes, check, build, isolated, test, measure]", verify)
+        self.assertIn("needs: [changes, check, build, isolated, test]\n", verify)
         self.assertIn("if: ${{ always() }}", verify)
         self.assertIn('test "$CHANGES" = "success"', verify)
-        for result in ("CHECK", "BUILD", "ISOLATED", "TEST", "MEASURE"):
+        for result in ("CHECK", "BUILD", "ISOLATED", "TEST"):
             with self.subTest(result=result):
                 self.assertIn(f'test "${result}" = "success"', verify)
                 self.assertIn(f'test "${result}" = "skipped"', verify)
+        # The wall-clock measurement reports only (docs/plans/ci-stability.md D2).
+        self.assertNotIn("MEASURE", verify.split("\n  measure:\n", 1)[0])
 
     def test_frontend_runs_wall_clock_measurements_alone(self):
         source = self.source("frontend.yml")
@@ -233,6 +235,17 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("name: frontend-export", measure)
         self.assertIn("run: npm test -- --project=measure --no-deps --reporter=line", measure)
         self.assertNotIn("--workers", measure)
+        # The limit is report-only in CI: the step may fail, the summary always runs,
+        # and prepush.py keeps the limit blocking on a free machine.
+        run = measure.split("- name: Run the measurements alone against the static export\n", 1)[1]
+        run = run.split("\n      - name:", 1)[0]
+        self.assertIn("id: measurements", run)
+        self.assertIn("continue-on-error: true", run)
+        self.assertIn(
+            'run: python3 ../scripts/measure_summary.py test-results/playwright "$OUTCOME"',
+            measure,
+        )
+        self.assertIn("if: ${{ steps.measurements.outcome == 'failure' }}", measure)
         self.assertIn('name: "measure"', config)
         self.assertIn("workers: 1", config)
         self.assertIn("testIgnore: measuredSpecs", config)

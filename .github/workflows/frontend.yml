@@ -274,7 +274,7 @@ jobs:
 
   verify:
     name: frontend-verify
-    needs: [changes, check, build, isolated, test, measure]
+    needs: [changes, check, build, isolated, test]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -286,7 +286,6 @@ jobs:
           BUILD: ${{ needs.build.result }}
           ISOLATED: ${{ needs.isolated.result }}
           TEST: ${{ needs.test.result }}
-          MEASURE: ${{ needs.measure.result }}
           REASON: ${{ needs.changes.outputs.reason_frontend }}
         run: |
           test "$CHANGES" = "success"
@@ -295,19 +294,20 @@ jobs:
             test "$BUILD" = "success"
             test "$ISOLATED" = "success"
             test "$TEST" = "success"
-            test "$MEASURE" = "success"
           else
             test "$CHECK" = "skipped"
             test "$BUILD" = "skipped"
             test "$ISOLATED" = "skipped"
             test "$TEST" = "skipped"
-            test "$MEASURE" = "skipped"
             printf 'Frontend check satisfied without execution: %s\n' "$REASON"
           fi
 
   measure:
     # Wall-clock measurements run alone on their own runner, so no other
-    # Playwright worker shares the CPU inside a measured interval.
+    # Playwright worker shares the CPU inside a measured interval. A shared
+    # runner cannot hold the 300 ms limit (docs/plans/ci-stability.md D2), so
+    # this job reports its numbers and frontend-verify does not need it; the
+    # pre-push gate keeps the limit blocking on a free machine.
     needs: [changes, build]
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
@@ -354,10 +354,17 @@ jobs:
       - name: Install pinned Playwright Chromium
         run: npm exec --no -- playwright install --with-deps chromium
       - name: Run the measurements alone against the static export
+        id: measurements
         timeout-minutes: 10
+        continue-on-error: true
         run: npm test -- --project=measure --no-deps --reporter=line
+      - name: Report the measurements
+        if: ${{ always() }}
+        env:
+          OUTCOME: ${{ steps.measurements.outcome }}
+        run: python3 ../scripts/measure_summary.py test-results/playwright "$OUTCOME"
       - name: Keep measurement failure context
-        if: failure()
+        if: ${{ steps.measurements.outcome == 'failure' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-measure-results
