@@ -141,7 +141,7 @@ The CI and local builds are byte-identical (100 chunks, 5,136,294 bytes, same na
 
 The Node version and the CPU are not the cause. Homebrew links Node to the system zlib; the official builds bundle Chromium's zlib, which compresses differently. The `.node-version` pin stays for parity, but it does not remove the difference.
 
-**Next step (owner choice):** use an official Node build locally (for example `fnm`, which reads `.node-version` per directory and leaves other projects on Homebrew Node). Local budget numbers then equal CI. The spec already records `process.versions.zlib` in its report.
+**Owner decision (2026-10-30):** keep Homebrew Node on the development machine. The CI number is the reference for the JS budget; a local run reads about 1,000 bytes lower. The spec records `process.versions.zlib` in its report, so a reader can see which zlib measured it.
 
 ### 4.1 Known causes in the class C backlog
 
