@@ -1223,6 +1223,10 @@ async function visitAccessSecurity(page: Page) {
     await access.click();
   await expect(access).toHaveAttribute("aria-expanded", "true");
   await navigation.getByRole("link", { name: "Security", exact: true }).click();
+  // CI once stayed on Manage › Audit after this click (run 40205657704). The
+  // URL check tells a navigation that never committed from a page that did
+  // not render, if it happens again.
+  await expect(page).toHaveURL(/\/access\?view=security$/);
   await expect(
     page.getByRole("heading", { name: "Security", exact: true }),
   ).toBeVisible();

@@ -1,0 +1,4 @@
+{
+  "$comment": "Tests that may pass only on their CI retry (docs/plans/ci-stability.md D1). Each entry: test ('<file> › <describe…> › <title>' as the CI flaky summary prints it), owner, added and expires (ISO dates, at most 14 days apart), and reason. Fix the cause and remove the entry before it expires.",
+  "tests": []
+}

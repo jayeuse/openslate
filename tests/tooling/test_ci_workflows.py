@@ -216,13 +216,60 @@ class CiWorkflowContractTests(unittest.TestCase):
         source = self.source("frontend.yml")
         verify = source.split("\n  verify:\n", 1)[1]
 
-        self.assertIn("needs: [changes, check, build, isolated, test, measure]", verify)
+        self.assertIn("needs: [changes, check, build, isolated, test]\n", verify)
         self.assertIn("if: ${{ always() }}", verify)
         self.assertIn('test "$CHANGES" = "success"', verify)
-        for result in ("CHECK", "BUILD", "ISOLATED", "TEST", "MEASURE"):
+        for result in ("CHECK", "BUILD", "ISOLATED", "TEST"):
             with self.subTest(result=result):
                 self.assertIn(f'test "${result}" = "success"', verify)
                 self.assertIn(f'test "${result}" = "skipped"', verify)
+        # The wall-clock measurement reports only (docs/plans/ci-stability.md D2).
+        self.assertNotIn("MEASURE", verify.split("\n  measure:\n", 1)[0])
+
+    def test_frontend_checks_retried_tests_against_the_flaky_ledger(self):
+        # docs/plans/ci-stability.md D1: CI allows one retry, and a test that passes
+        # only on it fails the job unless frontend/tests/flaky.json lists it.
+        source = self.source("frontend.yml")
+        isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
+        http = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
+        config = (ROOT / "frontend" / "playwright.config.ts").read_text(encoding="utf-8")
+
+        self.assertIn("  retries: isCI ? 1 : 0,\n", config)
+        measure = config.split('name: "measure"', 1)[1].split("dependencies:", 1)[0]
+        self.assertIn("retries: 0,", measure)
+        for job, report in (
+            (isolated, "test-results/ci/isolated.json"),
+            (http, "test-results/ci/http-${{ strategy.job-index }}.json"),
+        ):
+            with self.subTest(report=report):
+                step = job.split("- name: Check retried tests against the flaky ledger\n", 1)[1]
+                step = step.split("\n      - name:", 1)[0]
+                self.assertIn("if: ${{ always() }}", step)
+                self.assertNotIn("continue-on-error", step)
+                command = (
+                    f"python3 ../scripts/playwright_flaky.py {report} --ledger tests/flaky.json"
+                )
+                self.assertIn(f"run: {command}", step)
+
+    def test_nightly_stress_repeats_recent_specs_with_zero_retries(self):
+        # docs/plans/ci-stability.md S7: a race shows here before it reaches a PR.
+        source = self.source("stress.yml")
+
+        self.assertIn('cron: "41 18 * * *"', source)
+        self.assertIn("workflow_dispatch:", source)
+        self.assertNotIn("pull_request", source)
+        self.assertIn("github.event.repository.default_branch", source)
+        self.assertIn("python3 scripts/stress_selection.py", source)
+        self.assertIn("--budget-seconds 240", source)
+        self.assertIn(
+            'npm test -- --project=http --repeat-each=20 --workers=4 --retries=0 "${specs[@]}"',
+            source,
+        )
+        self.assertIn("timeout-minutes: 30", source)
+        self.assertIn("run: npm run build", source)
+        # Not a required check: no verify job, and frontend-verify never needs it.
+        self.assertEqual(self.jobs(source), ["stress"])
+        self.assertNotIn("stress", self.source("frontend.yml"))
 
     def test_frontend_runs_wall_clock_measurements_alone(self):
         source = self.source("frontend.yml")
@@ -233,6 +280,17 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("name: frontend-export", measure)
         self.assertIn("run: npm test -- --project=measure --no-deps --reporter=line", measure)
         self.assertNotIn("--workers", measure)
+        # The limit is report-only in CI: the step may fail, the summary always runs,
+        # and prepush.py keeps the limit blocking on a free machine.
+        run = measure.split("- name: Run the measurements alone against the static export\n", 1)[1]
+        run = run.split("\n      - name:", 1)[0]
+        self.assertIn("id: measurements", run)
+        self.assertIn("continue-on-error: true", run)
+        self.assertIn(
+            'run: python3 ../scripts/measure_summary.py test-results/playwright "$OUTCOME"',
+            measure,
+        )
+        self.assertIn("if: ${{ steps.measurements.outcome == 'failure' }}", measure)
         self.assertIn('name: "measure"', config)
         self.assertIn("workers: 1", config)
         self.assertIn("testIgnore: measuredSpecs", config)

@@ -108,6 +108,21 @@ class MutationTests(unittest.TestCase):
                 self.assertEqual(state["notes"], diagnostics)
                 self.assertEqual(state["last_success"], expected_success)
 
+    def test_native_runs_leave_time_for_diffs_and_the_job_leaves_time_to_report(self):
+        # A new survivor's diff once found no budget left after the native run
+        # (run 40296613169): native work stops five minutes before the deadline,
+        # and the job limit keeps fifteen minutes for reporting and upload.
+        workflow = (mutation.ROOT / ".github/workflows/mutation.yml").read_text()
+        native = workflow.split("- id: native\n", 1)[1].split("- name: Always retain", 1)[0]
+
+        self.assertIn("    timeout-minutes: 180\n", workflow)
+        self.assertIn("deadline=$((STARTED + 165 * 60))", native)
+        self.assertIn("native_deadline=$((deadline - 5 * 60))", native)
+        run_native = native.split("run_native() {", 1)[1].split("}", 1)[0]
+        self.assertIn("remaining=$((native_deadline - $(date +%s)))", run_native)
+        self.assertIn('[ "$(date +%s)" -lt "$native_deadline" ] || break', native)
+        self.assertIn("remaining=$((deadline - $(date +%s)))", native.split("show", 1)[0])
+
     def test_workflow_gate_rejects_unmapped_notes_even_with_a_successful_checkpoint(self):
         workflow = mutation.ROOT / ".github/workflows/mutation.yml"
         gate = textwrap.dedent(workflow.read_text().rsplit("        run: |\n", 1)[1])

@@ -1,0 +1,99 @@
+name: Stress (nightly)
+
+# Repeats the HTTP specs changed in the last 7 days, 20 times each with zero
+# retries, so a race shows here before it reaches a pull request. Not a required
+# check (docs/plans/ci-stability.md S7).
+on:
+  schedule:
+    - cron: "41 18 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: openslate-stress
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TEST_LAYER: all
+  BASE_URL: http://127.0.0.1:3104
+  PLAYWRIGHT_CONFIGURATION: process
+
+jobs:
+  stress:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: select
+        name: Select recently changed HTTP specs
+        working-directory: .
+        run: |
+          python3 scripts/stress_selection.py \
+            --weights frontend/tests/http/.test-durations.json --budget-seconds 240 \
+            > stress-specs.txt
+          cat stress-specs.txt
+          if [ -s stress-specs.txt ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No HTTP spec changed in the last 7 days." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.select.outputs.run == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - if: steps.select.outputs.run == 'true'
+        name: Install locked frontend dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - if: steps.select.outputs.run == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - if: steps.select.outputs.run == 'true'
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          # Match the development machine (uv 0.12); bump both together.
+          version: "0.12.x"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - if: steps.select.outputs.run == 'true'
+        name: Install the locked backend that serves the static export
+        working-directory: backend
+        run: uv sync --locked
+      - if: steps.select.outputs.run == 'true'
+        name: Build the static export
+        run: npm run build
+      - if: steps.select.outputs.run == 'true'
+        name: Restore the pinned Playwright browser
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      - if: steps.select.outputs.run == 'true'
+        name: Install pinned Playwright Chromium
+        run: npm exec --no -- playwright install --with-deps chromium
+      - if: steps.select.outputs.run == 'true'
+        name: Repeat the selected specs with zero retries
+        timeout-minutes: 30
+        run: |
+          mapfile -t specs < ../stress-specs.txt
+          npm test -- --project=http --repeat-each=20 --workers=4 --retries=0 "${specs[@]}"
+      - name: Keep failure context and traces
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stress-test-results
+          path: frontend/test-results/playwright/
+          retention-days: 14
+          if-no-files-found: ignore

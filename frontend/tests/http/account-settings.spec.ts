@@ -385,8 +385,14 @@ test("Color is one segmented row of Light, Dark and System", async ({
   });
   const radios = group.getByRole("radio");
   await expect(radios).toHaveText(["Light", "Dark", "System"]);
-  const boxes = await Promise.all(
-    [0, 1, 2].map((index) => radios.nth(index).boundingBox()),
+  // Measure the three segments in one frame. Three boundingBox() calls are
+  // three round trips; a scroll to #look or a layout shift between them moved
+  // one segment's viewport top in CI (PR #72, run 40987763554).
+  const boxes = await radios.evaluateAll((elements) =>
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { y: rect.top, height: rect.height };
+    }),
   );
   const tops = boxes.map((box) => Math.round(box?.y ?? -1));
   expect(new Set(tops).size).toBe(1);

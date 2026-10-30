@@ -18,7 +18,9 @@ jobs:
   mutation:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # One module's native run used the whole old 45-minute budget (runs
+    # 39226826782, 40296613169); public-repository minutes are free.
+    timeout-minutes: 180
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -118,15 +120,17 @@ jobs:
           set -euo pipefail
           state="$GITHUB_WORKSPACE/$OUTPUT/state.json"
           baseline="$GITHUB_WORKSPACE/docs/plans/mutation-baseline.json"
-          deadline=$((STARTED + 45 * 60))
+          deadline=$((STARTED + 165 * 60))
+          # Native runs stop five minutes early, so a new survivor's diff always fits.
+          native_deadline=$((deadline - 5 * 60))
           native="$GITHUB_WORKSPACE/backend/.venv/bin/mutmut"
           run_native() {
-            local remaining=$((deadline - $(date +%s)))
+            local remaining=$((native_deadline - $(date +%s)))
             [ "$remaining" -gt 15 ] || return 124
             (cd "$root" && no_proxy='*' timeout --signal=TERM --kill-after=10 "$remaining" "$native" "$@") >> "$log" 2>&1
           }
           while module=$(jq -r '.pending[0] // empty' "$state"); [ -n "$module" ]; do
-            [ "$(date +%s)" -lt "$deadline" ] || break
+            [ "$(date +%s)" -lt "$native_deadline" ] || break
             root=$(python3 "$RUNNER_TEMP/mutation-controller.py" prepare "$module") || {
               rc=$?
               python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure prepare "$rc" "$module"
