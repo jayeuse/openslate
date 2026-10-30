@@ -233,6 +233,26 @@ def gateway_root_certificate(caddy: DisposableCaddy, private: Path) -> Path:
     return target
 
 
+# Passwords travel only in a child process's environment; the private files hold none.
+SEED_PASSWORD_ENV = "OPENSLATE_SMOKE_ADMIN_PASSWORD"
+FIXTURE_PASSWORDS_ENV = "OPENSLATE_SMOKE_PASSWORDS"
+
+
+def split_passwords(
+    identities: dict[str, object],
+) -> tuple[dict[str, object], dict[str, str]]:
+    """Return the roles without their passwords, and the passwords by role."""
+
+    roles: dict[str, object] = {}
+    passwords: dict[str, str] = {}
+    for role, identity in identities.items():
+        if not isinstance(identity, dict) or not isinstance(identity.get("password"), str):
+            raise RuntimeError(f"The {role} identity has no password")
+        passwords[role] = identity["password"]
+        roles[role] = {key: value for key, value in identity.items() if key != "password"}
+    return roles, passwords
+
+
 def _write_private(path: Path, value: object) -> Path:
     path.write_text(json.dumps(value), encoding="utf-8")
     path.chmod(0o600)
@@ -378,7 +398,6 @@ def main(argv: Sequence[str] = ()) -> int:
                     "mailpit_url": postgres.mail_url,
                     "admin_email": admin["email"],
                     "admin_id": admin["id"],
-                    "admin_password": admin["password"],
                     "run_root": str(private / "sample-runs" / pack),
                     "seed": SEED,
                     "anchor_date": ANCHOR_DATE,
@@ -392,8 +411,10 @@ def main(argv: Sequence[str] = ()) -> int:
 
         def seed_pack(pack: str, parameters: Path) -> None:
             seeding_started = time.monotonic()
+            # The password reaches the seeder through its environment, never a file.
+            seed_env = {**env, SEED_PASSWORD_ENV: admin["password"]}
             run_streamed([sys.executable, "-m", "tests.smoke_seed", str(parameters)],
-                         BACKEND, env, log)  # fmt: skip
+                         BACKEND, seed_env, log)  # fmt: skip
             sample_run = next((private / "sample-runs" / pack).iterdir())
             pack_results[pack] = {
                 "status": "complete",
@@ -421,13 +442,14 @@ def main(argv: Sequence[str] = ()) -> int:
         sample_run = next((private / "sample-runs" / options.packs[-1]).iterdir())
         if not options.seed_only:
             credentials = json.loads((sample_run / "credentials.json").read_text(encoding="utf-8"))
+            roles, passwords = split_passwords(smoke_identities(credentials, admin))
             fixture = _write_private(
                 private / "smoke-fixture.json",
                 {
                     "runId": run_id,
                     "baseURL": WEB,
                     "workspaceName": get_pack(ORGANIZATION).identity.workspace_name,
-                    "roles": smoke_identities(credentials, admin),
+                    "roles": roles,
                 },
             )
             stop_process_group(processes.pop())
@@ -447,6 +469,7 @@ def main(argv: Sequence[str] = ()) -> int:
                     "BASE_URL": WEB,
                     "OPENSLATE_FULLSTACK_SUITE": "smoke",
                     "OPENSLATE_FULLSTACK_FIXTURE": str(fixture),
+                    FIXTURE_PASSWORDS_ENV: json.dumps(passwords),
                     "OPENSLATE_FULLSTACK_RUN_ID": run_id,
                     "OPENSLATE_SMOKE_STATE_DIR": str(private / "smoke-state"),
                     "E2E_ALLOW_MUTATIONS": "true",

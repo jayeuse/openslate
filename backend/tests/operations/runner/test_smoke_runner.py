@@ -423,6 +423,7 @@ def test_smoke_seed_populates_the_pack_organization_it_is_given(
         return SimpleNamespace(status="complete", run_directory=tmp_path, issues=())
 
     monkeypatch.setattr(smoke_seed, "populate_sample_data", populate)
+    monkeypatch.setenv("OPENSLATE_SMOKE_ADMIN_PASSWORD", "test")
     parameters = tmp_path / "parameters.json"
     parameters.write_text(
         json.dumps(
@@ -432,7 +433,6 @@ def test_smoke_seed_populates_the_pack_organization_it_is_given(
                 "mailpit_url": "http://127.0.0.1:1",
                 "admin_email": "admin@example.test",
                 "admin_id": "0190a000-0000-7000-8000-000000000001",
-                "admin_password": "test",
                 "run_root": str(tmp_path),
                 "seed": 42,
                 "anchor_date": "2026-09-30",
@@ -470,6 +470,7 @@ def test_smoke_seed_prints_each_verification_issue_as_the_cli_does(
             status="incomplete", run_directory=tmp_path, issues=("boards: count differs",)
         ),
     )
+    monkeypatch.setenv("OPENSLATE_SMOKE_ADMIN_PASSWORD", "test")
     parameters = tmp_path / "parameters.json"
     parameters.write_text(
         json.dumps(
@@ -479,7 +480,6 @@ def test_smoke_seed_prints_each_verification_issue_as_the_cli_does(
                 "mailpit_url": "http://127.0.0.1:1",
                 "admin_email": "admin@example.test",
                 "admin_id": "0190a000-0000-7000-8000-000000000001",
-                "admin_password": "test",
                 "run_root": str(tmp_path),
                 "seed": 42,
                 "anchor_date": "2026-09-30",
@@ -493,3 +493,29 @@ def test_smoke_seed_prints_each_verification_issue_as_the_cli_does(
 
     assert smoke_seed.main([str(parameters)]) == 1
     assert "incomplete: boards: count differs" in capsys.readouterr().out.splitlines()
+
+
+def test_smoke_files_hold_no_password_and_the_seeder_reads_it_from_its_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CodeQL py/clear-text-storage-sensitive-data: the runner wrote passwords into its
+    # private seed-parameter and smoke-fixture files. They now travel only in a child
+    # process's environment.
+    from tests import smoke_runner, smoke_seed
+
+    roles, passwords = smoke_runner.split_passwords(
+        {
+            "admin": {"email": "a@example.test", "password": "secret-a"},
+            "member": {"email": "m@example.test", "password": "secret-m", "name": "M"},
+        }
+    )
+    assert passwords == {"admin": "secret-a", "member": "secret-m"}
+    assert "secret" not in json.dumps(roles)
+    assert roles["member"] == {"email": "m@example.test", "name": "M"}
+    with pytest.raises(RuntimeError):
+        smoke_runner.split_passwords({"guest": {"email": "g@example.test"}})
+    monkeypatch.delenv(smoke_runner.SEED_PASSWORD_ENV, raising=False)
+    with pytest.raises(SystemExit):
+        smoke_seed._admin_password()
+    monkeypatch.setenv(smoke_runner.SEED_PASSWORD_ENV, "from-env")
+    assert smoke_seed._admin_password() == "from-env"

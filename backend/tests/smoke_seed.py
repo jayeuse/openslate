@@ -1,18 +1,27 @@
 """Seed one pack at Small into a disposable smoke stack through the sample-data seeder.
 
 ``tests/smoke_runner.py`` runs this as a subprocess so the gateway's local certificate
-authority (``SSL_CERT_FILE``) applies to every seeder client. Parameters, including the
-administrator password, come from a private JSON file; only the run status and the
-run directory are printed.
+authority (``SSL_CERT_FILE``) applies to every seeder client. Parameters come from a
+private JSON file and the administrator password from ``OPENSLATE_SMOKE_ADMIN_PASSWORD``;
+only the run status and the run directory are printed.
 """
 
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
 
 from operations.sample.packs import get_pack
 from operations.sample.population.run import populate_sample_data
+
+
+def _admin_password() -> str:
+    # The runner passes the password in the environment; the parameters file holds none.
+    password = os.environ.get("OPENSLATE_SMOKE_ADMIN_PASSWORD")
+    if not password:
+        raise SystemExit("OPENSLATE_SMOKE_ADMIN_PASSWORD is required")
+    return password
 
 
 def main(arguments: list[str]) -> int:
@@ -26,7 +35,7 @@ def main(arguments: list[str]) -> int:
         # The installation operator; it invites the pack's own administrator.
         operator_email=parameters["admin_email"],
         expected_operator_id=parameters["admin_id"],
-        operator_password=parameters["admin_password"],
+        operator_password=_admin_password(),
         run_root=Path(parameters["run_root"]),
         profile="small",
         seed=int(parameters["seed"]),

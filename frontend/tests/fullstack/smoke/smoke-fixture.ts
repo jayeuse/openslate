@@ -38,7 +38,25 @@ export function smokeFixture(): SmokeFixture {
   if (typeof parsed !== "object" || parsed === null)
     throw new Error("smoke fixture is malformed");
   const value = parsed as Record<string, unknown>;
-  const roles = value.roles as Record<string, unknown> | undefined;
+  // The runner keeps passwords out of the file; they arrive in this process's environment.
+  const passwords: unknown = JSON.parse(
+    process.env.OPENSLATE_SMOKE_PASSWORDS ?? "{}",
+  );
+  const stored = value.roles as Record<string, unknown> | undefined;
+  const roles =
+    stored && typeof passwords === "object" && passwords !== null
+      ? Object.fromEntries(
+          Object.entries(stored).map(([role, identity]) => [
+            role,
+            typeof identity === "object" && identity !== null
+              ? {
+                  ...identity,
+                  password: (passwords as Record<string, unknown>)[role],
+                }
+              : identity,
+          ]),
+        )
+      : undefined;
   if (
     value.runId !== runId ||
     typeof value.baseURL !== "string" ||
@@ -48,7 +66,7 @@ export function smokeFixture(): SmokeFixture {
     !SMOKE_ROLES.every((role) => isIdentity(roles[role]))
   )
     throw new Error("smoke fixture does not match this run");
-  return parsed as SmokeFixture;
+  return { ...value, roles } as SmokeFixture;
 }
 
 /** The signed-in browser state saved once per role by sign-in.setup.ts. */
