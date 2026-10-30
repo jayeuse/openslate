@@ -251,6 +251,26 @@ class CiWorkflowContractTests(unittest.TestCase):
                 )
                 self.assertIn(f"run: {command}", step)
 
+    def test_nightly_stress_repeats_recent_specs_with_zero_retries(self):
+        # docs/plans/ci-stability.md S7: a race shows here before it reaches a PR.
+        source = self.source("stress.yml")
+
+        self.assertIn('cron: "41 18 * * *"', source)
+        self.assertIn("workflow_dispatch:", source)
+        self.assertNotIn("pull_request", source)
+        self.assertIn("github.event.repository.default_branch", source)
+        self.assertIn("python3 scripts/stress_selection.py", source)
+        self.assertIn("--budget-seconds 240", source)
+        self.assertIn(
+            'npm test -- --project=http --repeat-each=20 --workers=4 --retries=0 "${specs[@]}"',
+            source,
+        )
+        self.assertIn("timeout-minutes: 30", source)
+        self.assertIn("run: npm run build", source)
+        # Not a required check: no verify job, and frontend-verify never needs it.
+        self.assertEqual(self.jobs(source), ["stress"])
+        self.assertNotIn("stress", self.source("frontend.yml"))
+
     def test_frontend_runs_wall_clock_measurements_alone(self):
         source = self.source("frontend.yml")
         measure = source.split("\n  measure:\n", 1)[1]
