@@ -35,6 +35,10 @@ const gzip = {
 // Growth is reported against the last recorded measurement.
 const s04BaselineColdGzipBytes = 546_979;
 const coldTargetGzipBytes = 550_000;
+// docs/plans/ci-stability.md D3: a cold load within this many bytes of the
+// target warns, so the pull request that adds approved shell code records a new
+// target in the same commit instead of after a red run.
+const coldWarningHeadroomBytes = 2_000;
 const baselineColdGzipBytes = 578_709;
 
 function manifestChunks(value: unknown): string[] {
@@ -247,6 +251,12 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
     console.info(
       `Cold JavaScript gzip: raw=${coldRaw.gzip_bytes} bytes; Comms+shell=${cold.gzip_bytes} bytes; other-route-only=${coldRaw.gzip_bytes - cold.gzip_bytes} bytes; growth=${growthBytes} bytes / ${growthPercent}%; target below ${coldTargetGzipBytes} bytes.`,
     );
+    const headroomBytes = coldTargetGzipBytes - cold.gzip_bytes;
+    if (headroomBytes > 0 && headroomBytes <= coldWarningHeadroomBytes) {
+      const warning = `Cold Comms JavaScript is ${headroomBytes} bytes below its ${coldTargetGzipBytes}-byte target; record a new target with the approved feature that adds bytes, or trim.`;
+      testInfo.annotations.push({ type: "warning", description: warning });
+      console.warn(warning);
+    }
     expect(cold.gzip_bytes).toBeLessThan(coldTargetGzipBytes);
   } finally {
     server.close();
