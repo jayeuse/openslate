@@ -94,7 +94,7 @@ With zero retries, about 2,800 × 8 × 10⁻⁵ ≈ 0.22 random failures occur p
 
 **Recommendation:** the CI `measure` job records the numbers in the job summary and does not block `frontend-verify`. The 300 ms limit stays blocking in `prepush.py`, which runs on a free machine (rule zero).
 
-The owner decision of 2026-10-24 kept 300 ms blocking in an isolated CI job. That job then failed 3 times in six days (runs 40149335213, 40186009225, 40526169591), last at 315.8 ms. The same build measures 52-80 ms locally. A shared runner at 4x CPU throttling cannot hold a 5% margin.
+The owner decision of 2026-10-24 kept 300 ms blocking in an isolated CI job. That job then failed 3 times in six days (runs 40149335213, 40186009225, 40526169591), last at 315.8 ms. It failed again at 315.4 ms on the merge of PR #71 (run 40985170908). The same build measures 52-80 ms locally. A shared runner at 4x CPU throttling cannot hold a 5% margin.
 
 **What it removes:** the `MEASURE` requirement in `frontend-verify`. It also changes `test_frontend_runs_wall_clock_measurements_alone` and `test_frontend_verify_preserves_the_required_check`.
 
