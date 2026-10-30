@@ -503,17 +503,26 @@ def test_smoke_files_hold_no_password_and_the_seeder_reads_it_from_its_environme
     # process's environment.
     from tests import smoke_runner, smoke_seed
 
-    roles, passwords = smoke_runner.split_passwords(
+    roles, passwords = smoke_runner.smoke_identities(
         {
-            "admin": {"email": "a@example.test", "password": "secret-a"},
-            "member": {"email": "m@example.test", "password": "secret-m", "name": "M"},
-        }
+            "accounts": [
+                {
+                    "key": key,
+                    "status": "active",
+                    "email": f"{role}@example.test",
+                    "password": f"secret-{role}",
+                    "display_name": role.title(),
+                }
+                for role, key in smoke_runner.SMOKE_ROLES.items()
+            ]
+        },
+        {"email": "a@example.test", "password": "secret-admin"},
     )
-    assert passwords == {"admin": "secret-a", "member": "secret-m"}
+    assert passwords["admin"] == "secret-admin"
+    assert set(passwords) == {"admin", *smoke_runner.SMOKE_ROLES}
     assert "secret" not in json.dumps(roles)
-    assert roles["member"] == {"email": "m@example.test", "name": "M"}
     with pytest.raises(RuntimeError):
-        smoke_runner.split_passwords({"guest": {"email": "g@example.test"}})
+        smoke_runner.smoke_identities({"accounts": []}, {"email": "a", "password": "b"})
     monkeypatch.delenv(smoke_runner.SEED_PASSWORD_ENV, raising=False)
     with pytest.raises(SystemExit):
         smoke_seed._admin_password()

@@ -189,26 +189,31 @@ def create_pack_organizations(owner_url: str, pack_key: str, admin_id: str) -> d
         engine.dispose()
 
 
-def smoke_identities(credentials: dict[str, object], admin: dict[str, str]) -> dict[str, object]:
-    """Pick the signed-in roles from the seeded roster; refuse a missing or inactive one."""
+def smoke_identities(
+    credentials: dict[str, object], admin: dict[str, str]
+) -> tuple[dict[str, dict[str, str]], dict[str, str]]:
+    """Pick the signed-in roles from the seeded roster; refuse a missing or inactive one.
+
+    Returns the roles (email and name) and, apart, the passwords by role: the roles go to
+    the private fixture file, the passwords only into the browser suite's environment.
+    """
 
     accounts = credentials.get("accounts")
     if not isinstance(accounts, list):
         raise RuntimeError("The seeded roster has no accounts")
     by_key = {account.get("key"): account for account in accounts if isinstance(account, dict)}
-    identities: dict[str, object] = {
-        "admin": {"email": admin["email"], "password": admin["password"]}
-    }
+    roles: dict[str, dict[str, str]] = {"admin": {"email": str(admin["email"])}}
+    passwords: dict[str, str] = {"admin": admin["password"]}
     for role, key in SMOKE_ROLES.items():
         account = by_key.get(key)
         if not account or account.get("status") != "active" or not account.get("password"):
             raise RuntimeError(f"The seeded roster lacks an active {role} account")
-        identities[role] = {
-            "email": account["email"],
-            "password": account["password"],
-            "name": account.get("display_name") or account.get("username"),
+        roles[role] = {
+            "email": str(account["email"]),
+            "name": str(account.get("display_name") or account.get("username")),
         }
-    return identities
+        passwords[role] = str(account["password"])
+    return roles, passwords
 
 
 def gateway_root_certificate(caddy: DisposableCaddy, private: Path) -> Path:
@@ -236,21 +241,6 @@ def gateway_root_certificate(caddy: DisposableCaddy, private: Path) -> Path:
 # Passwords travel only in a child process's environment; the private files hold none.
 SEED_PASSWORD_ENV = "OPENSLATE_SMOKE_ADMIN_PASSWORD"
 FIXTURE_PASSWORDS_ENV = "OPENSLATE_SMOKE_PASSWORDS"
-
-
-def split_passwords(
-    identities: dict[str, object],
-) -> tuple[dict[str, object], dict[str, str]]:
-    """Return the roles without their passwords, and the passwords by role."""
-
-    roles: dict[str, object] = {}
-    passwords: dict[str, str] = {}
-    for role, identity in identities.items():
-        if not isinstance(identity, dict) or not isinstance(identity.get("password"), str):
-            raise RuntimeError(f"The {role} identity has no password")
-        passwords[role] = identity["password"]
-        roles[role] = {key: value for key, value in identity.items() if key != "password"}
-    return roles, passwords
 
 
 def _write_private(path: Path, value: object) -> Path:
@@ -442,7 +432,7 @@ def main(argv: Sequence[str] = ()) -> int:
         sample_run = next((private / "sample-runs" / options.packs[-1]).iterdir())
         if not options.seed_only:
             credentials = json.loads((sample_run / "credentials.json").read_text(encoding="utf-8"))
-            roles, passwords = split_passwords(smoke_identities(credentials, admin))
+            roles, passwords = smoke_identities(credentials, admin)
             fixture = _write_private(
                 private / "smoke-fixture.json",
                 {
