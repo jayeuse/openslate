@@ -122,12 +122,12 @@ Each slice is one commit of five files or fewer, in this order. S1 to S3 need th
 | S2 | D3: pin `.node-version` to the exact local version (was `26`, so CI took any 26.x); find the 1 KB difference (see 4.0); add the warning zone | `.node-version`, `comms-js-budget.spec.ts`, ledger | The cause is named and removed, or the budget is measured only in the CI build job |
 | S3a | D1: CI-only retry, guard rule for the exact form | `playwright.config.ts`, `assertion_guard.py`, its test, testing architecture doc | Guard tests refuse `retries: 2` and accept `isCI ? 1 : 0` |
 | S3b | D1: flaky summary step and `flaky.json` check | `frontend.yml`, `test_ci_workflows.py`, `frontend/tests/flaky.json` | A planted flaky test shows in the summary |
-| S4 | Fix each class C spec at its cause, one commit per spec | One spec (and a helper if needed) per commit | 20 of 20 repeats at 4 workers, and the same spec in the Linux image (4.2) |
-| S5a | Add an app ready marker in `src/`: the root client shell sets `data-app-ready` on `<html>` after hydration. No marker exists today. | Root layout client component, one isolated test | The marker appears only after hydration |
-| S5b | Readiness helpers in `tests/http/helpers/test.ts`: wait for `document.fonts.ready` before geometry checks; wait for `data-app-ready` before events | Helper, two specs that use it | The class C specs that depend on layout or listeners pass 20 of 20 |
-| S6 | Refresh the shard weights from the last 14 days of artifacts; compare 1 and 2 workers on the class C specs | `.test-durations.json`, `playwright_shards.py` doc line | Shard times within 20% of each other |
+| S4 | Fix each class C spec at its cause, one commit per spec (result in 4.1) | One spec (and a helper if needed) per commit | 20 of 20 repeats at 4 workers |
+| S5a | (Not built; see 4.1.) Add an app ready marker in `src/`: the root client shell sets `data-app-ready` on `<html>` after hydration. No marker exists today. | Root layout client component, one isolated test | The marker appears only after hydration |
+| S5b | (Not built; see 4.1.) Readiness helpers in `tests/http/helpers/test.ts`: wait for `document.fonts.ready` before geometry checks; wait for `data-app-ready` before events | Helper, two specs that use it | The class C specs that depend on layout or listeners pass 20 of 20 |
+| S6 | Refresh the shard weights from one green run (done: 424-425 s per shard, from 307-517 s). Keep 2 workers: no flake in 4.1 depended on the worker count. | `.test-durations.json`, `playwright_shards.py` doc line | Shard times within 20% of each other |
 | S7 | Nightly stress job: specs changed in the last 7 days, `--repeat-each=20 --workers=4`, zero retries, 30-minute limit, not required. `a79a8923` needed 20 repeats to show its race. | New workflow, `test_ci_workflows.py` | A planted race fails the job |
-| S8 | Mutation job: fix the `NATIVE` step, or remove the schedule | `mutation.yml` or `scripts/mutation.py` | One green manual dispatch |
+| S8 | Mutation job: one module used the whole 45-minute budget, then the diff step failed. The budget is now 165 minutes, with 5 minutes kept for diffs. | `mutation.yml`, `test_mutation.py` | The next scheduled run after merge reaches the diff step |
 
 ### 4.0 S2 finding: the 1 KB budget difference
 
@@ -143,18 +143,29 @@ The Node version and the CPU are not the cause. Homebrew links Node to the syste
 
 **Owner decision (2026-10-30):** keep Homebrew Node on the development machine. The CI number is the reference for the JS budget; a local run reads about 1,000 bytes lower. The spec records `process.versions.zlib` in its report, so a reader can see which zlib measured it.
 
-### 4.1 Known causes in the class C backlog
+### 4.1 S4 result: the class C backlog
 
-- `auth-cross-tab-gate:63`: the spec sends a `focus` event before the gate listener can be attached. Fix: wait for a signal that the listener exists before the event.
-- `boards-calendar-views:438`: the spec measures line wrapping, which depends on font loading and on the Linux scrollbar width. Fix: wait for fonts, and check the wrap with the Linux image.
-- All other class C specs: read the saved traces before the fix. The traces of the last 11 failed runs are saved in `.agent-runtime/ci-traces-2026-10-30/` (ignored by Git), because GitHub keeps them for 7 days only.
+Three read-only triage passes read the saved traces and logs (2026-10-30). Nine of the ten failures ran on code that a later commit already fixed. Each test then passed 20 of 20 runs at 4 workers on `ci-stability`.
+
+| Test | Cause | Fixed by |
+|---|---|---|
+| `auth-cross-tab-gate` MFA gate over an alert dialog | The archive dialog sat outside the sheet; after the gate, the sheet's modal scope hid it | `34deb63f`, `83e82798` |
+| `boards-calendar-views` one-day block wraps to two lines | Text width, not fonts or scrollbars: "Customer account" is 105.6 px in a 105 px box, so Linux wrapped it to three lines | `a0958d9b` (shorter title, 15 px slack) |
+| `boards-live-management` Archive and Restore | An access re-check unmounted Details after focus landed on Archive | `a0958d9b` |
+| `openview-views-api` export journeys, light | Enter reached a disabled Export button while the records query ran | `3bff6e84` |
+| `user-theme-preferences` legacy Appearance | The step checked a radio that the read-only Profile view no longer has | `93044af4` |
+| `comms-attention` quiet hours | The notice arrived before the leader tab took its unread baseline | `22796656` |
+| `comms-connections` two admitted tabs | A gap event arrived while the first history read was still running | `78cf90bd` |
+| `comms-query-loading` two quick thread replies | The call count started while the connection repair still read the thread root | `b39f162b` |
+| `manage-backup-exports` export polls | A loose `/ready/i` matcher passed before the ready read | `c4a0ba50` |
+| `access-security-events` cached feed on revisit | Unknown: the sidebar click did not complete its navigation in 5 s | Not fixed. The helper now checks the URL first, so a repeat names the step. |
+| `account-settings` Color segments (found by S3b) | Three `boundingBox()` round trips crossed a layout change | `d634ea44` |
+
+**S5 is not built.** No failure came from late fonts or from an event sent before hydration, so a ready marker and a fonts helper would protect nothing. Build them when a failure needs them.
 
 ### 4.2 Local parity
 
-Add `npm run test:linux -- <spec>`. It runs one spec in the pinned Playwright image (`mcr.microsoft.com/playwright:v<version>-noble`), the same browser and scrollbars as CI. The image has no `uv`, so the static export server (`tests.static_export_server`) runs on the host. The container reaches it through `host.docker.internal` on macOS, with `BASE_URL` set to that host.
-
-**Pain point:** Docker beside a running test lane breaks rule zero.
-**Solution:** the command refuses to start when `prepush.py` or another heavy lane runs, using the same check as the gate.
+**Not built (2026-10-30).** The only Linux-specific failure was the calendar wrap, and a later commit fixed it. CI and the nightly stress job (S7) already run every HTTP spec on Linux Chromium. A `test:linux` command also needs the static export server on the host and host networking from Docker. That cost is larger than its use today. Build it when a failure reproduces only on Linux.
 
 ## 5. Risks
 
