@@ -48,6 +48,13 @@ def _session_target(dataset: SampleDataset) -> str:
         if key in people
     }
     first_account_actor = plan_account_controls(dataset)[0].actor_key
+    from operations.sample.controls.comms_structure import plan_structure_controls
+
+    # These members join the partner organization; a pack administrator may not end the
+    # sessions of an account that belongs to a second organization.
+    from operations.sample.controls.comms_structure_common import member_keys
+
+    shared = {key for action in plan_structure_controls(dataset) for key in member_keys(action)}
     completed_work = {session.creator_key for session in plan_sessions(dataset)}
     candidates = sorted(
         key
@@ -57,6 +64,7 @@ def _session_target(dataset: SampleDataset) -> str:
         and key in completed_work
         and key != first_account_actor
         and key not in phase_keys
+        and key not in shared
     )
     if not candidates:
         raise ValueError("Read controls require a separate active member with completed work")

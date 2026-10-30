@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
@@ -16,7 +17,7 @@ from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.platform.files import service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.purge import purge_confirmed
-from app.systems.platform.files.quota import QUOTA_LOCK, lock_quota
+from app.systems.platform.files.quota import lock_quota, quota_lock_key
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.validation import ValidatedContent
 from app.systems.sandbox.departments.models import Department
@@ -125,13 +126,30 @@ def test_byte_boundary_uses_declared_bytes_and_logo_canonical_charge(guarded_db,
 
 def test_advisory_lock_rejects_parallel_admission_without_waiting(guarded_db):
     db = guarded_db
+    # A request is always bound to its organization; the lock is that organization's.
+    scope_session(db, organization(db).id)
     lock_quota(db)
     # Same already-guarded disposable engine, independent PostgreSQL session.
     engine = db.get_bind().engine
     with Session(engine) as other:
+        scope_session(other, organization(db).id)
         with pytest.raises(HTTPException) as caught:
             lock_quota(other)
         assert caught.value.detail["code"] == "file_quota_busy"
+
+
+def test_admission_in_another_organization_or_account_never_waits_on_this_one(guarded_db):
+    # Live seven-pack run: one installation-wide lock refused a logo bind in one
+    # organization (503 file_quota_busy) while another organization admitted a file.
+    db = guarded_db
+    scope_session(db, organization(db).id)
+    lock_quota(db)
+    engine = db.get_bind().engine
+    with Session(engine) as other:
+        scope_session(other, uuid4())
+        lock_quota(other)
+        lock_quota(other, account=uuid4())
+        other.rollback()
 
 
 def test_expiration_only_purges_never_admitted_reservations(guarded_db, actor):
@@ -151,7 +169,9 @@ def test_expiration_only_purges_never_admitted_reservations(guarded_db, actor):
     assert db.get(File, rows[2].id).state == "awaiting_upload"
 
 
-def _holds_quota_lock(db) -> bool:
+def _holds_quota_lock(db, org_id) -> bool:
+    # pg_locks shows a bigint advisory key as its unsigned high and low 32 bits.
+    key = quota_lock_key(org_id) & 0xFFFFFFFFFFFFFFFF
     # Read through the session's connection: the audit listener refuses raw ORM SQL.
     return bool(
         db.connection().scalar(
@@ -160,7 +180,7 @@ def _holds_quota_lock(db) -> bool:
                 "AND classid = CAST(:classid AS oid) AND objid = CAST(:objid AS oid) "
                 "AND objsubid = 1 AND pid = pg_backend_pid() AND granted)"
             ),
-            {"classid": QUOTA_LOCK >> 32, "objid": QUOTA_LOCK & 0xFFFFFFFF},
+            {"classid": key >> 32, "objid": key & 0xFFFFFFFF},
         )
     )
 
@@ -204,7 +224,7 @@ def test_reserve_expires_stale_reservations_and_keeps_the_quota_lock(guarded_db,
     require_capacity = service.require_capacity
 
     def checked(db, purpose, expected_size, *, creator_id):
-        checks.append(_holds_quota_lock(db))
+        checks.append(_holds_quota_lock(db, org_id))
         require_capacity(db, purpose, expected_size, creator_id=creator_id)
 
     monkeypatch.setattr(service, "require_capacity", checked)
@@ -212,6 +232,7 @@ def test_reserve_expires_stale_reservations_and_keeps_the_quota_lock(guarded_db,
     try:
         with AuditSession(engine) as db:
             db.info[AUDIT_CONTEXT_KEY] = context
+            scope_session(db, org_id)
             created = service.reserve(
                 db,
                 db.get(User, actor_id),

@@ -10,7 +10,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 
 from app.core.integrations.supabase_auth import ProviderAccessIdentity, ProviderTokens, ProviderUser
-from app.systems.access.identity import provider_actions, provider_sessions
+from app.systems.access.identity import provider_actions, provider_sessions, session_credentials
 from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.identity.provider_login import login_with_provider
@@ -27,7 +27,9 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
     monkeypatch.setattr("app.systems.access.identity.eligibility.utc_now", lambda: now)
     provider_id, provider_session_id = uuid4(), uuid4()
     role = UserRole.MEMBER
-    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
+    user, membership = create_member(
+        None,
+        WorkspaceProfile(id=uuid4()),
         id=uuid4(),
         email="expiry@example.test",
         username="expiry",
@@ -39,8 +41,11 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
         invitation_accepted_at=now if status == UserStatus.ACTIVE.value else None,
         provider_invitation_operation_id=uuid4(),
     )
-    monkeypatch.setattr(provider_sessions, "eligible_memberships",
-                        lambda _db, _user_id: [] if expired else [membership])
+    monkeypatch.setattr(
+        provider_sessions,
+        "eligible_memberships",
+        lambda _db, _user_id: [] if expired else [membership],
+    )
     tokens = ProviderTokens("provider-access", "provider-refresh", provider_id, 600)
     claims = ProviderAccessIdentity(
         provider_id, provider_session_id, now - timedelta(seconds=1), now + timedelta(minutes=10)
@@ -64,7 +69,7 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
     cipher = Fernet(Fernet.generate_key())
     monkeypatch.setattr(provider_sessions, "_fernet", lambda: cipher)
     monkeypatch.setattr(
-        provider_sessions, "get_settings", lambda: SimpleNamespace(auth_refresh_token_days=7)
+        session_credentials, "get_settings", lambda: SimpleNamespace(auth_refresh_token_days=7)
     )
     session = IdentitySession(
         id=uuid4(),
@@ -101,8 +106,10 @@ def _identity_database(user, membership, now, *, session=None):
     db.dirty = set()
     db.scalars.side_effect = lambda query: (
         Mock(all=lambda: [membership])
-        if query.column_descriptions[0]["entity"] is Membership else
-        [session] if query.column_descriptions[0]["entity"] is IdentitySession and session else []
+        if query.column_descriptions[0]["entity"] is Membership
+        else [session]
+        if query.column_descriptions[0]["entity"] is IdentitySession and session
+        else []
     )
     db.scalar.side_effect = lambda query: rows[query.column_descriptions[0]["expr"]]
 
@@ -190,9 +197,7 @@ def test_expired_membership_blocks_invitation_but_not_bound_account_recovery(mon
 def test_admission_uses_workspace_session_timeout(monkeypatch, minutes):
     now, user, membership, _session, _claims, client = _subject(monkeypatch, expired=False)
     policy = PlatformSettings(session_timeout_minutes=minutes)
-    monkeypatch.setattr(
-        provider_sessions, "load_platform_policy", lambda _db: policy
-    )
+    monkeypatch.setattr(provider_sessions, "load_platform_policy", lambda _db: policy)
     db = _identity_database(user, membership, now)
 
     provider_sessions.admit_provider_session(
@@ -208,9 +213,7 @@ def test_admission_uses_workspace_session_timeout(monkeypatch, minutes):
 def test_successful_refresh_renews_workspace_timeout_on_both_paths(monkeypatch, cached):
     now, user, membership, session, claims, client = _subject(monkeypatch, expired=False)
     policy = PlatformSettings(session_timeout_minutes=30)
-    monkeypatch.setattr(
-        provider_sessions, "load_platform_policy", lambda _db: policy
-    )
+    monkeypatch.setattr(provider_sessions, "load_platform_policy", lambda _db: policy)
     session.refreshed_at = now - timedelta(minutes=5)
     session.expires_at = now + timedelta(minutes=1)
     db = _identity_database(user, membership, now, session=session)
@@ -261,3 +264,62 @@ def test_failed_provider_refresh_never_extends_workspace_expiry(monkeypatch):
 
     assert session.refreshed_at == now - timedelta(minutes=5)
     assert session.expires_at == now + timedelta(minutes=1)
+
+
+@pytest.mark.parametrize("outage", ["auth_unavailable", "fresh_token_refused"])
+def test_a_short_auth_outage_keeps_the_session_for_the_next_refresh(monkeypatch, outage):
+    # Live seven-pack run: an Auth timeout or a fresh token that failed a local check
+    # revoked the session, so a short Auth outage signed users out. Auth accepts the
+    # same refresh token again for 10 s, so the next refresh can succeed.
+    from app.core.integrations.supabase_auth import InvalidProviderToken, SupabaseAuthUnavailable
+
+    now, user, membership, session, claims, client = _subject(monkeypatch, expired=False)
+    monkeypatch.setattr(
+        provider_sessions,
+        "load_platform_policy",
+        lambda _db: PlatformSettings(session_timeout_minutes=30),
+    )
+    session.refreshed_at = now - timedelta(minutes=5)
+    session.expires_at = now + timedelta(minutes=1)
+    db = _identity_database(user, membership, now, session=session)
+    tokens = client.password_grant.return_value
+    if outage == "auth_unavailable":
+        client.verify_access_token.side_effect = [
+            InvalidProviderToken("expired"),
+            InvalidProviderToken("expired"),
+            claims,
+        ]
+        client.refresh.side_effect = [SupabaseAuthUnavailable("timeout"), tokens]
+    else:
+        client.verify_access_token.side_effect = [
+            InvalidProviderToken("expired"),
+            InvalidProviderToken("immature", kind="ImmatureSignatureError"),
+            InvalidProviderToken("expired"),
+            claims,
+        ]
+        client.refresh.return_value = tokens
+
+    with pytest.raises(SupabaseAuthUnavailable):
+        provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+    assert session.revoked_at is None
+
+    issued = provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+    assert issued.session_id == session.id and session.revoked_at is None
+
+
+def test_a_definite_auth_refusal_still_revokes_the_session(monkeypatch):
+    from app.core.integrations.supabase_auth import (
+        InvalidProviderCredentials,
+        InvalidProviderToken,
+    )
+
+    now, user, membership, session, _claims, client = _subject(monkeypatch, expired=False)
+    session.expires_at = now + timedelta(minutes=1)
+    db = _identity_database(user, membership, now, session=session)
+    client.verify_access_token.side_effect = InvalidProviderToken("expired")
+    client.refresh.side_effect = InvalidProviderCredentials("refused")
+
+    with pytest.raises(InvalidCredentials) as refused:
+        provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
+    assert refused.value.reason == "provider_refused"
+    assert session.revoked_at == now

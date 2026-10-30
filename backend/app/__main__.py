@@ -28,6 +28,9 @@ def main(argv: list[str] | None = None) -> None:
         "app.main:app",
         host=settings.backend_bind_host,
         port=settings.backend_port,
+        # Each worker process imports app.main and runs its own lifespan; the parent only
+        # supervises. With --reload, Uvicorn ignores workers and runs one process.
+        workers=settings.api_workers,
         limit_concurrency=(
             None if is_relaxed_development(settings) else settings.server_max_concurrency
         ),

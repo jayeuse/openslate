@@ -18,7 +18,7 @@ from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.platform.files.board_router import router as board_file_router
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files.providers import transfer_admission
 from app.systems.platform.files.storage import get_storage
 from tests.boards.support import client as board_client
 from tests.boards.test_permanent_delete import _actor, _enabled
@@ -138,7 +138,7 @@ def test_unlinked_board_file_admin_can_preview_and_confirm_purge(
 
     @app.middleware("http")
     async def admitted(request, call_next):
-        with transfer_slot() as lease:
+        with transfer_admission() as lease:
             request.state.file_transfer_lease = lease
             return await call_next(request)
 

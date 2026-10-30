@@ -6,6 +6,8 @@ import {
   ApiError,
   ApiContractError,
   getApiFieldErrors,
+  getSessionConnection,
+  subscribeSessionConnection,
 } from "../../../src/lib/api";
 
 test("parses a strict response while preserving its ETag metadata", async () => {
@@ -184,6 +186,57 @@ test("keeps the original API failure readable when refresh is rejected", async (
     ]);
     expect(location.href).toBe("/login");
   } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow)
+      Object.defineProperty(globalThis, "window", originalWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("an unavailable refresh retries quietly and keeps the user signed in", async () => {
+  // Live seven-pack run: a short Auth outage answered the refresh with 503, and the
+  // browser treated it as signed out. The server now keeps the session for a retry.
+  const originalFetch = globalThis.fetch;
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const location = { href: "/openview" };
+  const requests: Array<RequestInfo | URL> = [];
+  const states: string[] = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { location },
+  });
+  const stop = subscribeSessionConnection(() =>
+    states.push(getSessionConnection()),
+  );
+  let refreshes = 0;
+  globalThis.fetch = async (input) => {
+    requests.push(input);
+    if (input === "/api/auth/session")
+      return Response.json({ authenticated: false });
+    if (input === "/api/auth/refresh")
+      return ++refreshes === 1
+        ? new Response(null, { status: 503, headers: { "Retry-After": "1" } })
+        : new Response(null, { status: 204 });
+    return requests.length === 1
+      ? new Response(null, { status: 401 })
+      : Response.json({ id: "record-1" });
+  };
+  try {
+    await expect(
+      apiFetch("/records/one", z.object({ id: z.string() })),
+    ).resolves.toEqual({ id: "record-1" });
+    expect(requests).toEqual([
+      "/api/records/one",
+      "/api/auth/session",
+      "/api/auth/refresh",
+      "/api/auth/session",
+      "/api/auth/refresh",
+      "/api/records/one",
+    ]);
+    expect(location.href).toBe("/openview");
+    expect(states).toEqual(["reconnecting", "connected"]);
+  } finally {
+    stop();
     globalThis.fetch = originalFetch;
     if (originalWindow)
       Object.defineProperty(globalThis, "window", originalWindow);

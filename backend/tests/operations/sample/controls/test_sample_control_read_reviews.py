@@ -299,13 +299,20 @@ def test_manage_controls_persist_safe_policy_and_reauthenticate_every_revoked_ac
         assert update[retention[0]] != update[retention[1]]
         assert all(restore[key] == baseline[key] for key in retention)
         assert state["revoked"] is True
-        assert sorted(state["logins"][len(context.clients) :]) == sorted(
-            set(context.clients) - {"admin"}
-        )
+        # The pack administrator ends only pack-only sessions; the operator and the members
+        # who joined the partner organization keep theirs and sign in again only if ended.
+        revoked = set(context.clients) - {"admin"} - state["shared"]
+        assert state["shared"] >= {"operator"} and len(state["shared"]) >= 2
+        assert sorted(state["logins"][len(context.clients) :]) == sorted(revoked)
         for actor, client in context.clients.items():
             assert client.request("GET", "/api/auth/me").json()["id"] == context.user_ids[actor]
         issues, observed, seen_ids = [], {"control_requests_verified": 0}, set()
-        manifest = {"actor_ids": {k: v for k, v in context.user_ids.items() if k != "admin"}}
+        manifest = {
+            "actor_ids": {
+                k: v for k, v in context.user_ids.items() if k not in {"admin", "operator"}
+            },
+            "operator_id": context.user_ids["operator"],
+        }
         for action, result in zip(actions, results, strict=True):
             verify_request_evidence(
                 dataset,
@@ -319,7 +326,7 @@ def test_manage_controls_persist_safe_policy_and_reauthenticate_every_revoked_ac
                 issues,
             )
         assert issues == []
-        assert observed["control_requests_verified"] == 3 + len(context.clients) - 1
+        assert observed["control_requests_verified"] == 3 + len(revoked)
         contents = (tmp_path / "manage.jsonl").read_text()
         assert "Owned-Fixture-Password-123" not in contents
         assert all(c.email not in contents for c in context.private_values["credentials"].values())

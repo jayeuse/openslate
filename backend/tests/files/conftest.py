@@ -43,8 +43,8 @@ def actor(guarded_db):
 def file_request():
     from fastapi import Request
 
-    from app.systems.platform.files.providers import transfer_slot
+    from app.systems.platform.files.providers import transfer_admission
 
-    with transfer_slot() as lease:
+    with transfer_admission() as lease:
         request = Request({"type": "http", "state": {"file_transfer_lease": lease}})
         yield request

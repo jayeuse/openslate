@@ -26,8 +26,10 @@ class _InboxChanged(SampleInvitationError):
     """Mail arrived or was pruned between the pages of one inbox read."""
 
 
-_PAGE_SIZE = 50
-_MAX_PAGES = 20
+# One read holds the whole inbox (Mailpit keeps 500), so mail from a run beside this one
+# cannot change the listing between pages.
+_PAGE_SIZE = 500
+_MAX_PAGES = 2
 _WAIT_SECONDS = 20.0
 _TOKEN_HASH = re.compile(r"[0-9a-f]{56}\Z")
 
@@ -99,7 +101,7 @@ class CredentialRoster:
         for source in accounts:
             row = {key: value for key, value in source.items()}
             row["state"] = "planned"
-            if row["status"] != "pending":
+            if row["status"] != "pending" and not row.get("password"):
                 password = secrets.token_urlsafe(27)
                 while password in passwords:
                     password = secrets.token_urlsafe(27)

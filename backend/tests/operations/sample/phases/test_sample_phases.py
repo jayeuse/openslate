@@ -11,8 +11,12 @@ import pytest
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
 from operations.sample.actors import planned_access_level
+from operations.sample.controls.account import plan_account_controls
+from operations.sample.controls.comms_structure import plan_structure_controls
+from operations.sample.controls.comms_structure_common import member_keys
 from operations.sample.packs import get_pack
 from operations.sample.packs.phase_types import PhaseAction
+from operations.sample.packs.registry import pack_keys
 from operations.sample.phases.plan import (
     phase_action_to_manifest,
     phase_expected_projection,
@@ -316,3 +320,36 @@ def test_phase_version_documents_follow_recorded_design_values_after_pack_drift(
     assert added_field["name"] == edit.values["added_field_name"]
     assert new_module["name"] == edit.values["new_module_name"]
     assert new_module["departmentId"] == edit.values["new_module_department_id"]
+
+
+_ACCOUNT_TARGET_KINDS = frozenset({"disable_user", "restore_disabled_user", "end_session"})
+
+
+def test_clinic_run_seed_does_not_disable_a_member_of_the_partner_organization() -> None:
+    # Clinic, 2026-10-29: the account and Comms partner controls had added the first two
+    # members to the partner organization, so disabling one changed only the membership.
+    dataset = sample_dataset(seed=15950195017892066961, anchor=date(2026, 10, 29), pack="clinic")
+    targets = {
+        action.target_key for action in plan_phases(dataset) if action.kind in _ACCOUNT_TARGET_KINDS
+    }
+    assert not targets & {"internal_patient_access_lead", "internal_patient_access_02"}
+
+
+@pytest.mark.parametrize("seed", (11, 42, 15950195017892066961))
+@pytest.mark.parametrize("pack_key", pack_keys())
+def test_phase_account_targets_are_never_shared_with_the_partner_organization(
+    pack_key: str, seed: int
+) -> None:
+    dataset = sample_dataset(seed=seed, pack=pack_key)
+    # The expected set comes from the control planners, not from the phase planner.
+    shared = {plan_account_controls(dataset)[0].actor_key} | {
+        key
+        for action in plan_structure_controls(dataset)
+        if action.values.get("organization") == "partner"
+        for key in member_keys(action)
+    }
+    targets = {
+        action.target_key for action in plan_phases(dataset) if action.kind in _ACCOUNT_TARGET_KINDS
+    }
+    assert targets
+    assert not targets & shared

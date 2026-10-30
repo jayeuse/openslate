@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
-from hmac import compare_digest
 from secrets import token_urlsafe
 from uuid import UUID
 
-from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import Uuid, column, select, table
+from cryptography.fernet import InvalidToken
+from sqlalchemy import select
 from sqlalchemy.exc import InvalidRequestError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
-from app.core.config import get_settings
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
     InvalidProviderToken,
@@ -25,6 +23,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthClient,
     SupabaseAuthUnavailable,
 )
+from app.core.observability import log_event
 from app.systems.access.identity.contracts import InvalidCredentials, IssuedSession
 from app.systems.access.identity.mfa import MFARequired, requires_mfa
 from app.systems.access.identity.mfa_observations import (
@@ -38,6 +37,12 @@ from app.systems.access.identity.provider_user_cache import (
     forget_provider_user,
     recent_provider_user,
     remember_provider_user,
+    reusable_provider_user,
+)
+from app.systems.access.identity.session_credentials import (
+    _digest,
+    _fernet,
+    _provider_session_exists,
 )
 from app.systems.access.identity.session_revocation import reconcile_session_cap, revoke_session
 from app.systems.access.users.eligibility import is_active_account
@@ -50,38 +55,6 @@ from app.systems.manage.workspace.security_policy import (
     load_workspace_policy,
     renewed_session_expiry,
 )
-
-_AUTH_SESSIONS = table("sessions", column("id", Uuid()), column("user_id", Uuid()), schema="auth")
-
-
-def _digest(value: str) -> str:
-    return sha256(value.encode("utf-8")).hexdigest()
-
-
-def validate_csrf(session: IdentitySession, csrf_token: str) -> bool:
-    return bool(csrf_token) and compare_digest(session.csrf_token_digest, _digest(csrf_token))
-
-
-def _fernet() -> Fernet:
-    secret = get_settings().supabase_session_encryption_key.get_secret_value()
-    return Fernet(secret.encode("ascii"))
-
-
-def _provider_session_exists(db: Session, user_id: UUID, session_id: UUID) -> bool:
-    # This is a read-only exception to the application's public-schema ownership.
-    # The runtime role receives only SELECT(id, user_id) on auth.sessions.
-    result = db.execute(
-        select(
-            select(1)
-            .select_from(_AUTH_SESSIONS)
-            .where(
-                _AUTH_SESSIONS.c.id == session_id,
-                _AUTH_SESSIONS.c.user_id == user_id,
-            )
-            .exists()
-        )
-    )
-    return result.scalar_one() is True
 
 
 def _eligible_user(db: Session, user: User | None, provider_user_id: UUID, now: datetime) -> bool:
@@ -228,6 +201,16 @@ def resolve_provider_session(
     return None if result is None else (result[0], result[1])
 
 
+# Why the last provider-session resolution in this context refused, for refresh logs.
+_resolution_refusal: ContextVar[str | None] = ContextVar("resolution_refusal", default=None)
+
+
+def _refused(reason: str) -> tuple[User, IdentitySession, ProviderUser, datetime] | None:
+    """Record the refusal and give the resolver's refusal value, which is always None."""
+    _resolution_refusal.set(reason)
+    return None
+
+
 def _resolved_provider_session(
     db: Session,
     claims: ProviderAccessIdentity,
@@ -257,48 +240,58 @@ def _resolved_provider_session(
         session is None
         or session.provider_user_id != claims.user_id
         or session.provider_session_id != claims.session_id
-        or session.revoked_at is not None
-        or effective_session_expiry(session, policy) <= timestamp
     ):
-        return None
+        return _refused("session_missing")
+    if session.revoked_at is not None:
+        return _refused("session_revoked")
+    if effective_session_expiry(session, policy) <= timestamp:
+        return _refused("session_expired")
     user = db.scalar(select(User).where(User.id == session.user_id))
     if not _eligible_user(db, user, claims.user_id, timestamp):
-        return None
+        return _refused("account_ineligible")
     assert user is not None
     cutoff = user.tokens_valid_after
     if cutoff is not None:
         cutoff = cutoff if cutoff.tzinfo is not None else cutoff.replace(tzinfo=UTC)
         if claims.issued_at < cutoff:
-            return None
+            return _refused("token_before_cutoff")
     if not _provider_session_exists(db, claims.user_id, claims.session_id):
-        return None
+        return _refused("provider_session_missing")
     started_at = observation_started_at()
-    provider_user = recent_provider_user(claims.user_id) if reuse_recent_provider else None
+    provider_user = (
+        reusable_provider_user(db, user.id, claims.user_id) if reuse_recent_provider else None
+    )
     if provider_user is None:
         provider_user = _live_provider_user(client, claims.user_id, timestamp)
         if provider_user is None:
-            return None
+            return _refused("provider_account_missing")
         remember_provider_user(provider_user)
         # Provider latency must not admit an expired or replaced local authority.
         try:
             db.refresh(user)
             db.refresh(session)
         except InvalidRequestError:
-            return None
+            return _refused("state_unreadable")
         timestamp = now or utc_now()
         policy = load_platform_policy(db)
+    if not _eligible_user(db, user, claims.user_id, timestamp):
+        return _refused("recheck_account_ineligible")
     if (
-        not _eligible_user(db, user, claims.user_id, timestamp)
-        or session.user_id != user.id
+        session.user_id != user.id
         or session.provider_user_id != claims.user_id
         or session.provider_session_id != claims.session_id
-        or session.revoked_at is not None
-        or effective_session_expiry(session, policy) <= timestamp
-        or claims.expires_at <= timestamp
-        or not provider_user.is_eligible(now=timestamp)
-        or (user.tokens_valid_after is not None and claims.issued_at < user.tokens_valid_after)
     ):
-        return None
+        return _refused("recheck_session_changed")
+    if session.revoked_at is not None:
+        return _refused("recheck_session_revoked")
+    if effective_session_expiry(session, policy) <= timestamp:
+        return _refused("recheck_session_expired")
+    if claims.expires_at <= timestamp:
+        return _refused("recheck_token_expired")
+    if not provider_user.is_eligible(now=timestamp):
+        return _refused("recheck_provider_ineligible")
+    if user.tokens_valid_after is not None and claims.issued_at < user.tokens_valid_after:
+        return _refused("recheck_token_before_cutoff")
     if (
         not allow_aal1
         and requires_mfa(None, None, provider_user)
@@ -330,33 +323,33 @@ def refresh_provider_session(
 
     timestamp = now or utc_now()
     policy = load_platform_policy(db)
+    _resolution_refusal.set(None)
     if len(refresh_handle) < 32 or len(refresh_handle) > 256:
-        raise InvalidCredentials("Invalid credentials")
+        raise InvalidCredentials(reason="handle_invalid")
     session = db.scalar(
         select(IdentitySession)
         .where(IdentitySession.refresh_token_digest == _digest(refresh_handle))
         .execution_options(populate_existing=True)
         .with_for_update()
     )
-    if (
-        session is None
-        or session.provider_user_id is None
-        or session.provider_session_id is None
-        or session.revoked_at is not None
-        or effective_session_expiry(session, policy) <= timestamp
-        or (csrf_token is not None and session.csrf_token_digest != _digest(csrf_token))
-    ):
-        raise InvalidCredentials("Invalid credentials")
+    if session is None or session.provider_user_id is None or session.provider_session_id is None:
+        raise InvalidCredentials(reason="session_missing")
+    if session.revoked_at is not None:
+        raise InvalidCredentials(reason="session_revoked")
+    if effective_session_expiry(session, policy) <= timestamp:
+        raise InvalidCredentials(reason="session_expired")
+    if csrf_token is not None and session.csrf_token_digest != _digest(csrf_token):
+        raise InvalidCredentials(reason="csrf_mismatch")
     if not session.provider_access_token_encrypted or not session.provider_refresh_token_encrypted:
         _revoke_locked_session(db, session, timestamp)
-        raise InvalidCredentials("Invalid credentials")
+        raise InvalidCredentials(reason="provider_tokens_missing")
     cipher = _fernet()
     try:
         current_access = cipher.decrypt(session.provider_access_token_encrypted.encode()).decode()
         current_refresh = cipher.decrypt(session.provider_refresh_token_encrypted.encode()).decode()
     except (InvalidToken, UnicodeDecodeError):
         _revoke_locked_session(db, session, timestamp)
-        raise InvalidCredentials("Invalid credentials") from None
+        raise InvalidCredentials(reason="provider_tokens_unreadable") from None
     try:
         current_claims = client.verify_access_token(current_access)
     except InvalidProviderToken:
@@ -370,7 +363,7 @@ def refresh_provider_session(
         resolved = _resolved_provider_session(db, current_claims, client, now=now, allow_aal1=True)
         if resolved is None:
             _revoke_locked_session(db, session, timestamp)
-            raise InvalidCredentials("Invalid credentials")
+            raise InvalidCredentials(reason=f"current_{_resolution_refusal.get()}")
         timestamp = now or utc_now()
         session.expires_at = renewed_session_expiry(session, load_platform_policy(db), timestamp)
         session.refreshed_at = timestamp
@@ -386,11 +379,23 @@ def refresh_provider_session(
     try:
         tokens = client.refresh(current_refresh)
         claims = client.verify_access_token(tokens.access_token)
-    except (InvalidProviderCredentials, InvalidProviderToken) as error:
+    except InvalidProviderCredentials as error:
         _revoke_locked_session(db, session, timestamp)
-        raise InvalidCredentials("Invalid credentials") from error
+        raise InvalidCredentials(reason="provider_refused") from error
+    except InvalidProviderToken as error:
+        # Auth issued the pair but its fresh access token failed local validation. Keep
+        # the session: Auth accepts the same refresh token again for its reuse interval,
+        # so the browser's next refresh can succeed. Store nothing that was not verified.
+        db.rollback()
+        log_event(
+            "upstream_failure",
+            reason_code=f"refresh_fresh_token_{error.kind or 'invalid'}",
+            upstream="supabase-auth",
+        )
+        raise SupabaseAuthUnavailable("Fresh provider token failed validation") from error
     except SupabaseAuthUnavailable:
-        _revoke_locked_session(db, session, timestamp)
+        # A timeout or outage is not a refusal: keep the session for the next refresh.
+        db.rollback()
         raise
     resolved = None
     if tokens.user_id == session.provider_user_id and claims.user_id == session.provider_user_id:
@@ -402,7 +407,8 @@ def refresh_provider_session(
         or resolved is None
     ):
         _revoke_locked_session(db, session, timestamp)
-        raise InvalidCredentials("Invalid credentials")
+        reason = "rotated_identity_mismatch" if resolved is not None else "rotated"
+        raise InvalidCredentials(reason=f"{reason}_{_resolution_refusal.get()}")
     timestamp = now or utc_now()
     session.provider_access_token_encrypted = cipher.encrypt(tokens.access_token.encode()).decode()
     session.provider_refresh_token_encrypted = cipher.encrypt(

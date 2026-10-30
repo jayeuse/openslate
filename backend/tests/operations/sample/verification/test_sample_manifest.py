@@ -16,7 +16,10 @@ from operations.sample.packs.harbor import PACK
 from operations.sample.population.run import populate_sample_data
 from operations.sample.verification.core import SampleVerificationError
 from operations.sample.verification.run import SampleVerificationReport, verify_sample_data
-from tests.operations.sample.verification.test_sample_run_verification import _manifest
+from tests.operations.sample.verification.test_sample_run_verification import (
+    LOGIN_IDS,
+    _manifest,
+)
 
 
 def _recorded_counts() -> dict[str, int]:
@@ -40,9 +43,9 @@ def _verify(directory: Path) -> SampleVerificationReport:
     return verify_sample_data(
         api_url="https://api.example.test",
         origin="https://ui.example.test",
-        admin_email="admin@example.test",
-        expected_admin_id="admin-a",
-        admin_password="fixture-value",
+        operator_email="admin@example.test",
+        expected_operator_id="admin-a",
+        operator_password="fixture-value",
         run_directory=directory,
     )
 
@@ -65,9 +68,9 @@ def test_population_writes_v2_metadata_and_keeps_all_existing_keys(
         api_url="https://api.example.test",
         origin="https://ui.example.test",
         mailpit_url="https://mail.example.test",
-        admin_email="admin@example.test",
-        expected_admin_id="admin-a",
-        admin_password="fixture-value",
+        operator_email="admin@example.test",
+        expected_operator_id="admin-a",
+        operator_password="fixture-value",
         run_root=tmp_path / "runs",
         profile="small",
         seed=42,
@@ -92,6 +95,7 @@ def test_population_writes_v2_metadata_and_keeps_all_existing_keys(
         "seed",
         "anchor_date",
         "admin_id",
+        "operator_id",
         "started_at",
         "finished_at",
         "mappings",
@@ -117,7 +121,7 @@ def test_verification_rebuilds_the_recorded_run_for_both_manifest_versions(
 
     class OfflineClient:
         def __init__(self, *_args: object) -> None:
-            pass
+            self.email = ""
 
         def __enter__(self) -> OfflineClient:
             return self
@@ -125,12 +129,13 @@ def test_verification_rebuilds_the_recorded_run_for_both_manifest_versions(
         def __exit__(self, *_args: object) -> None:
             pass
 
-        def login(self, *_args: object) -> httpx.Response:
+        def login(self, email: str, *_args: object) -> httpx.Response:
+            self.email = email
             return httpx.Response(200)
 
         def request(self, method: str, path: str, **_kwargs: Any) -> httpx.Response:
             assert (method, path) in {("GET", "/api/auth/me"), ("POST", "/api/auth/logout")}
-            return httpx.Response(200, json={"id": "admin-a"})
+            return httpx.Response(200, json={"id": LOGIN_IDS[self.email]})
 
     def read_records(_client: object, *, dataset: Any, **_kwargs: Any):
         assert len(dataset.records) == expected_total

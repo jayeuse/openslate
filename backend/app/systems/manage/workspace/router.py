@@ -23,8 +23,8 @@ from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import (
     ProviderUnavailable,
     Storage,
+    file_processing,
     hold_file_worker,
-    transfer_slot,
 )
 from app.systems.platform.files.purge import (
     DeletionClaim,
@@ -159,8 +159,14 @@ def update_workspace(
     db: Annotated[Session, Depends(get_db)],
 ) -> WorkspaceResponse:
     logo_supplied = "logo_file_id" in payload.model_fields_set
-    with transfer_slot() if logo_supplied else nullcontext():
-        return _save_workspace(payload, actor.id, db, logo_supplied)
+    actor_id = actor.id
+    if logo_supplied:
+        # The old logo's Storage cleanup cannot be retried by the client, so wait for a slot.
+        # End the authentication read first: a waiting save holds no pooled connection, and
+        # the save locks and checks everything again in its own transaction.
+        db.rollback()
+    with file_processing() if logo_supplied else nullcontext():
+        return _save_workspace(payload, actor_id, db, logo_supplied)
 
 
 def _save_workspace(

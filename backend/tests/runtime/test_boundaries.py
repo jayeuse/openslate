@@ -4,7 +4,7 @@ from secrets import token_urlsafe
 from unittest.mock import Mock
 
 import pytest
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import Engine
@@ -13,7 +13,9 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from app.core.config import Settings
 from app.core.database import session as database_session
-from app.main import _read_bounded_body, create_app
+from app.core.middleware.file_transfers import read_bounded_body as _read_bounded_body
+from app.core.observability import failure_cause
+from app.main import create_app
 from tests.config_support import settings_values
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
@@ -79,6 +81,33 @@ def test_database_availability_failure_is_mapped_to_safe_503_with_diagnostic_id(
     assert "private database detail" not in response.text
 
 
+class _DriverError(Exception):
+    def __init__(self, sqlstate: str | None) -> None:
+        self.sqlstate = sqlstate
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (OperationalError("SELECT 1", {}, _DriverError("40P01")), "database_deadlock"),
+        (OperationalError("SELECT 1", {}, _DriverError("40001")), "database_serialization_failure"),
+        (OperationalError("SELECT 1", {}, _DriverError("55P03")), "database_lock_unavailable"),
+        (OperationalError("SELECT 1", {}, _DriverError("57014")), "database_statement_timeout"),
+        (OperationalError("SELECT 1", {}, _DriverError("08006")), "database_08006"),
+        (OperationalError("SELECT 1", {}, _DriverError("bad; code")), "database_operation_failed"),
+        (OperationalError("SELECT 1", {}, _DriverError(None)), "database_operation_failed"),
+        (SQLAlchemyTimeoutError("checkout timed out"), "database_pool_timeout"),
+        (_DriverError("53300"), "database_53300"),
+        (HTTPException(409, detail="private detail"), "http_409"),
+        (RuntimeError("private detail"), "RuntimeError"),
+    ],
+)
+def test_a_database_failure_logs_its_kind_without_exception_detail(error, reason) -> None:
+    # Live seven-pack run: a 503 logged only database_operation_failed, so a lock conflict
+    # could not be told from an outage.
+    assert failure_cause(error) == reason
+
+
 def test_non_file_timeout_is_not_mislabeled_as_a_file_transfer_timeout() -> None:
     app = create_app()
 
@@ -93,11 +122,11 @@ def test_non_file_timeout_is_not_mislabeled_as_a_file_transfer_timeout() -> None
 
 
 def test_expired_file_transfer_deadline_uses_file_timeout_response(monkeypatch) -> None:
-    import app.main as main
+    import app.request_middleware as request_middleware
     from app.core.middleware.file_transfers import FileTransferPolicy
 
     monkeypatch.setattr(
-        main,
+        request_middleware,
         "file_transfer_policy",
         lambda path, method: (
             FileTransferPolicy(1024, 0) if path == "/api/test-file-timeout" else None
@@ -230,21 +259,24 @@ def test_file_content_limit_is_scoped_to_real_uuid_transfer_paths() -> None:
     assert ordinary.status_code == 413
 
 
-def test_file_capacity_is_acquired_before_buffering_and_released_on_denial() -> None:
-    from app.systems.platform.files.providers import transfer_slot
+def test_file_capacity_is_acquired_before_buffering_and_released_on_denial(monkeypatch) -> None:
+    from app.systems.platform.files import providers
 
+    monkeypatch.setattr(providers, "_pool", providers.FileCapacity(1, 4))
     client = TestClient(create_app())
     url = "/api/files/019c0000-0000-7000-8000-000000000001/content"
-    with transfer_slot(), transfer_slot():
-        busy = client.get(url)
+    with providers.transfer_admission(1):
+        busy = client.put(url, content=b"x")
         assert busy.status_code == 503
         assert busy.json()["detail"]["code"] == "files_busy"
+        assert busy.headers["Retry-After"] == "1"
         assert client.get("/api/health").status_code == 200
-        # Metadata routes reach authentication while binary slots are busy.
+        # Metadata routes reach authentication while the file budget is full.
         assert client.post(url.replace("/content", "/archive")).status_code == 401
-    assert client.get(url).status_code == 401
-    assert client.get(url).status_code == 401
-    assert client.get(url).status_code == 401
+    # Each denied upload returns its one-byte reservation, so the next one is admitted.
+    assert client.put(url, content=b"x").status_code == 401
+    assert client.put(url, content=b"x").status_code == 401
+    assert client.put(url, content=b"x").status_code == 401
 
 
 def test_readiness_returns_generic_status_and_disables_caching(monkeypatch) -> None:
@@ -377,3 +409,21 @@ def test_runtime_limit_environment_values_must_preserve_their_bounds(
         Settings.model_validate(dict(os.environ))
 
     assert expected_field in str(error.value)
+
+
+def test_a_provider_failure_names_what_failed_without_its_message() -> None:
+    # Live seven-pack run: an export failed as exports:ProviderUnavailable and a restore
+    # confirmation as 503 with no cause; the provider errors now carry a bounded kind.
+    import httpx
+
+    from app.core.integrations.supabase_auth import SupabaseAuthUnavailable, _json_response
+    from app.systems.platform.files.providers import ProviderUnavailable
+    from app.systems.platform.files.supabase_storage import SupabaseStorage
+
+    with pytest.raises(SupabaseAuthUnavailable) as auth:
+        _json_response(httpx.Response(429, text="private detail"))
+    assert failure_cause(auth.value) == "SupabaseAuthUnavailable_http_429"
+    with pytest.raises(ProviderUnavailable) as storage:
+        SupabaseStorage._require_success(503)
+    assert failure_cause(storage.value) == "ProviderUnavailable_http_503"
+    assert failure_cause(ProviderUnavailable("x", kind="bad kind; drop")) == "ProviderUnavailable"

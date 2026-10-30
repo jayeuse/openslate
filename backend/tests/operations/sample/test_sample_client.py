@@ -409,6 +409,51 @@ def test_only_confirmed_prewrite_record_503_gets_bounded_retry(
     assert {entry["failure_code"] for entry in entries if entry.get("status_code") == 503} == {code}
 
 
+FILES_BUSY = {"code": "files_busy", "message": "File capacity is busy"}
+
+
+@pytest.mark.parametrize("method", ["GET", "PUT"])
+@pytest.mark.parametrize(
+    ("busy", "detail", "statuses", "sleeps"),
+    [
+        (2, FILES_BUSY, [503, 503, 200], [1.0, 1.0]),
+        (99, FILES_BUSY, [503] * 61, [1.0] * 60),
+        (1, {"code": "file_integrity_error", "message": "unavailable"}, [503], []),
+    ],
+    ids=["retried-until-free", "bounded-total-wait", "other-503-not-retried"],
+)
+def test_a_refused_file_transfer_is_retried_after_retry_after_within_a_bounded_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method, busy, detail, statuses, sleeps
+) -> None:
+    # The API refuses files_busy before any work, so any method can be resent (C3).
+    seen: list[int] = []
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return _login_response()
+        status = 503 if len(seen) < busy else 200
+        seen.append(status)
+        if status == 503:
+            return httpx.Response(503, json={"detail": detail}, headers={"Retry-After": "1"})
+        return httpx.Response(200, json={"id": "file"})
+
+    path = f"/api/files/{REQUEST_ID}/content"
+    with _client(tmp_path, httpx.MockTransport(handler)) as client:
+        client.login(EMAIL, PASSWORD)
+        if method == "PUT" and statuses[-1] == 503:
+            with pytest.raises(SampleWriteOutcomeUnknown) as unknown:
+                client.request(method, path, content=b"bytes")
+            assert unknown.value.failure_code == detail["code"]
+        else:
+            response = client.request(method, path, content=b"bytes" if method == "PUT" else None)
+            assert response.status_code == statuses[-1]
+
+    assert seen == statuses
+    assert slept == sleeps
+
+
 def test_write_rate_limit_is_reported_without_replay(tmp_path: Path) -> None:
     seen: list[str] = []
 
@@ -570,3 +615,49 @@ def test_an_organization_bound_client_sends_its_organization_on_every_request(
         ("/api/events", organization, organization),
         ("/api/records", None, None),
     ]
+
+
+def test_journal_tags_each_request_with_a_hashed_account_and_never_the_email(
+    tmp_path: Path,
+) -> None:
+    # Live seven-pack run: five packs' refreshes failed at once, and the journal could
+    # not say whether they were one shared account.
+    import hashlib
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return _login_response()
+        return httpx.Response(200, json={"ok": True})
+
+    with _client(tmp_path, httpx.MockTransport(handler)) as client:
+        client.login(EMAIL, PASSWORD)
+        client.request("GET", "/api/auth/me")
+    journal = (tmp_path / "private" / "requests.jsonl").read_text()
+    started = [json.loads(line) for line in journal.splitlines() if "request_started" in line]
+    tag = hashlib.sha256(EMAIL.strip().lower().encode()).hexdigest()[:12]
+    assert [row.get("account") for row in started] == [tag, tag]
+    assert EMAIL not in journal
+
+
+def test_idle_connections_expire_before_the_api_closes_them(monkeypatch, tmp_path) -> None:
+    # Four-pack run on 2026-10-29: a GET went out on a keep-alive connection the API had
+    # closed at its 5 s SERVER_KEEP_ALIVE_SECONDS and failed with no response.
+    import httpx as real_httpx
+
+    import operations.sample.client as sample_client
+
+    seen: dict[str, object] = {}
+    original = real_httpx.Client
+
+    def recording(*args, **kwargs):
+        seen.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sample_client.httpx, "Client", recording)
+    with sample_client.SampleClient(
+        "https://api.example.test", "https://workspace.example.test", tmp_path / "j.jsonl"
+    ):
+        pass
+    limits = seen["limits"]
+    assert isinstance(limits, real_httpx.Limits)
+    assert limits.keepalive_expiry is not None and limits.keepalive_expiry < 5

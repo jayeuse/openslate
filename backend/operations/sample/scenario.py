@@ -99,8 +99,11 @@ def build_dataset(
     organization: OrganizationPack | None = None,
     module_counts_override: Mapping[str, int] | None = None,
     host_acceptance: bool = False,
+    installation_controls: bool = True,
 ) -> SampleDataset:
     """Build the design, records and plan from one immutable organization pack."""
+    if host_acceptance and not installation_controls:
+        raise ValueError("Host acceptance needs the installation controls")
     pack = organization or default_pack()
     counts = (
         dict(module_counts(profile, pack))
@@ -134,4 +137,5 @@ def build_dataset(
         ),
         named_scenarios=pack.generators.named_scenarios,
         host_acceptance=host_acceptance,
+        installation_controls=installation_controls,
     )

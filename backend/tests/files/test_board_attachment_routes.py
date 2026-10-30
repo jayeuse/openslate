@@ -25,7 +25,7 @@ from app.systems.boards.post_models import (
 )
 from app.systems.platform.files.board_router import router as board_file_router
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files.providers import transfer_admission
 from app.systems.platform.files.router import router as generic_file_router
 from app.systems.platform.files.storage import get_storage
 from tests.boards.support import board_group
@@ -48,7 +48,7 @@ def _client(db, actor, store) -> TestClient:
 
     @app.middleware("http")
     async def admitted(request, call_next):
-        with transfer_slot() as lease:
+        with transfer_admission() as lease:
             request.state.file_transfer_lease = lease
             return await call_next(request)
 

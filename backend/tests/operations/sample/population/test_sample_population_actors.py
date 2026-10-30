@@ -10,7 +10,7 @@ import pytest
 
 from operations.sample.client import SampleClient
 from operations.sample.packs import get_pack
-from operations.sample.population import workflow
+from operations.sample.population import administrator, workflow
 from operations.sample.population.people import (
     SampleActorCredential,
     SamplePeopleResult,
@@ -20,6 +20,8 @@ from operations.sample.population.run import SamplePopulationError
 from tests.operations.sample.sample_datasets import sample_dataset
 
 MANAGER = "internal_finance_lead"
+OPERATOR_EMAIL = "owner@install.example"
+ADMIN_PASSWORD = "offline-admin-password"
 
 
 class ContentReady(RuntimeError):
@@ -76,6 +78,7 @@ def _isolated_workflow(tmp_path, monkeypatch, missing=None, *, complete=False):
     emails = {person.email: _id(key) for key, person in people.items()}
     admin_email = "administrator@northside.example"
     emails[admin_email] = _id("admin")
+    emails[OPERATOR_EMAIL] = _id("operator")
 
     def offline_client(*args, **kwargs):
         authenticated = {}
@@ -125,6 +128,7 @@ def _isolated_workflow(tmp_path, monkeypatch, missing=None, *, complete=False):
         for key, value in values.items()
     }
     monkeypatch.setattr(workflow, "SampleClient", offline_client)
+    monkeypatch.setattr(administrator, "SampleClient", offline_client)
     monkeypatch.setattr(
         workflow,
         "assert_pristine_baseline",
@@ -145,7 +149,22 @@ def _isolated_workflow(tmp_path, monkeypatch, missing=None, *, complete=False):
             fields,
         ),
     )
-    monkeypatch.setattr(workflow, "populate_people", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(workflow, "create_run_roster", lambda *_args: "private-roster")
+    invited = []
+
+    def invite(operator, roster, **kwargs):
+        invited.append((operator, roster, kwargs))
+        return SampleActorCredential(_id("admin"), admin_email, ADMIN_PASSWORD)
+
+    monkeypatch.setattr(workflow, "invite_pack_administrator", invite)
+    state["invited"] = invited
+
+    def people_from(admin, *args, **_kwargs):
+        state["people_admin"] = admin
+        assert args[5] == "private-roster"
+        return result
+
+    monkeypatch.setattr(workflow, "populate_people", people_from)
     monkeypatch.setattr(workflow.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(workflow, "prepare_content", prepare_content)
     monkeypatch.setattr(
@@ -177,9 +196,9 @@ def _isolated_workflow(tmp_path, monkeypatch, missing=None, *, complete=False):
             api_url="https://api.example.test",
             origin="https://workspace.example.test",
             mailpit_url="https://mail.example.test",
-            admin_email=admin_email,
-            admin_password="offline-only-password",
-            expected_admin_id=_id("admin"),
+            operator_email=OPERATOR_EMAIL,
+            operator_password="offline-only-password",
+            expected_operator_id=_id("operator"),
             run_directory=tmp_path,
             run_id="a" * 32,
             dataset=dataset,
@@ -277,9 +296,9 @@ def _callback_population(tmp_path, monkeypatch, *, entry, supplied=True, fail_ob
             api_url="https://api.example.test",
             origin="https://workspace.example.test",
             mailpit_url="https://mail.example.test",
-            admin_email="administrator@northside.example",
-            expected_admin_id=_id("admin"),
-            admin_password="offline-only-password",
+            operator_email=OPERATOR_EMAIL,
+            expected_operator_id=_id("operator"),
+            operator_password="offline-only-password",
             run_root=tmp_path,
             profile="small",
             seed=42,
@@ -295,7 +314,7 @@ def _callback_population(tmp_path, monkeypatch, *, entry, supplied=True, fail_ob
             "_local_preflight",
             lambda *_args: (
                 {
-                    "admin_id": _id("admin"),
+                    "admin_id": _id("operator"),
                     "organization_id": _id("organization"),
                     "partner_organization_id": _id("partner"),
                     "storage_objects": 0,
@@ -311,7 +330,7 @@ def _callback_population(tmp_path, monkeypatch, *, entry, supplied=True, fail_ob
             lambda: (
                 {},
                 None,
-                "administrator@northside.example",
+                OPERATOR_EMAIL,
                 "https://api.example.test",
                 "https://workspace.example.test",
                 2.0,
@@ -347,6 +366,7 @@ def _callback_population(tmp_path, monkeypatch, *, entry, supplied=True, fail_ob
         "mfa_observer",
         "host_control",
         "offline-only-password",
+        ADMIN_PASSWORD,
         "private-callback-owned-state",
         "private-callback-failure-marker",
     ):
@@ -386,3 +406,40 @@ def test_callback_failure_is_published_as_safe_incomplete_run(tmp_path, monkeypa
     assert manifest["failed_step"] == "control:account-mfa-reset"
     output = capsys.readouterr()
     assert "private-callback-failure-marker" not in output.out + output.err
+
+
+def test_population_runs_as_the_pack_administrator_and_keeps_the_operator_apart(
+    tmp_path, monkeypatch
+):
+    from operations.sample.phases import population as phases
+
+    invoke, state, manifest, _active, _people = _isolated_workflow(
+        tmp_path, monkeypatch, complete=True
+    )
+    contexts = []
+
+    def execute(action, _dataset, context, *, on_substep):
+        contexts.append(context)
+        return {"action_key": action.key, "request_evidence": []}
+
+    monkeypatch.setattr(phases, "execute_phase_action", execute)
+    invoke(partner_organization_id=_id("partner"))
+
+    # The operator checks the baseline and invites; the pack administrator runs the rest.
+    ((operator, roster, invitation),) = state["invited"]
+    assert roster == "private-roster" and invitation["operator_id"] == _id("operator")
+    assert state["logins"][:2] == [OPERATOR_EMAIL, "administrator@northside.example"]
+    context = contexts[0]
+    assert context.clients["operator"] is operator
+    assert state["people_admin"] is context.clients["admin"] is not operator
+    assert (context.user_ids["admin"], context.user_ids["operator"]) == (
+        _id("admin"),
+        _id("operator"),
+    )
+    assert context.admin_password == ADMIN_PASSWORD
+    assert context.private_values["operator_password"] == "offline-only-password"
+    assert manifest["admin_id"] == _id("admin")
+    # The partner organization's administrator stays the operator.
+    partner = context.private_values["partner_admin"]()
+    assert partner.organization_id == _id("partner")
+    assert state["logins"][-1] == OPERATOR_EMAIL

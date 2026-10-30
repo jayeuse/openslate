@@ -130,6 +130,7 @@ export async function uploadBoardFile(
   rawFileId: string,
   content: Blob,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ): Promise<BoardAttachmentFile> {
   const boardId = uuid.parse(rawBoardId);
   const fileId = uuid.parse(rawFileId);
@@ -152,6 +153,7 @@ export async function uploadBoardFile(
       return response;
     },
     signal,
+    onWaiting,
   );
   return checkedFile(result, boardId);
 }
@@ -230,6 +232,7 @@ export async function downloadBoardAttachment(
   rawFileId: string,
   expectedSize: number,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ): Promise<Blob> {
   const fileId = uuid.parse(rawFileId);
   const path = contentPath(target);
@@ -239,6 +242,7 @@ export async function downloadBoardAttachment(
     expectedSize,
     signal,
     BOARD_FILE_REQUEST_ERROR,
+    onWaiting,
   );
 }
 

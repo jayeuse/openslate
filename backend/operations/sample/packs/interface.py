@@ -53,6 +53,8 @@ class PackIdentity:
     uuid_namespace: str
     span: str
     sampling_scope: str
+    # ISO 4217 code; a symbol such as $ names several currencies.
+    currency_code: str = ""
 
 
 @dataclass(frozen=True)

@@ -6,6 +6,10 @@ import { attachmentTypes, composerFailure } from "../domain/composer-input";
 import { useCommsCommands } from "./runtime";
 import { useCommsClient } from "./client-context";
 import { cacheLocalAttachment } from "../../shared/runtime/local-attachments";
+import {
+  FILES_BUSY_MESSAGE,
+  isFilesBusy,
+} from "../../shared/adapters/files-api";
 
 export function useComposerUploads(
   conversationId: string,
@@ -22,6 +26,8 @@ export function useComposerUploads(
       progress: number;
       error: string;
       active: boolean;
+      /** The upload waits for file capacity on the server. */
+      waiting?: boolean;
       reservation?: string;
     }[]
   >([]);
@@ -50,7 +56,7 @@ export function useComposerUploads(
     if (!client || flights.current.has(item.id)) return;
     const controller = new AbortController();
     flights.current.set(item.id, controller);
-    update(item.id, { active: true, error: "", progress: 0 });
+    update(item.id, { active: true, error: "", progress: 0, waiting: false });
     try {
       const result = await run(
         `upload:${conversationId}:${item.id}`,
@@ -73,6 +79,9 @@ export function useComposerUploads(
             item.file,
             {
               signal,
+              on_waiting: (waiting) => {
+                if (!signal.aborted) update(item.id, { waiting });
+              },
               on_progress: ({ loaded_bytes, total_bytes }) => {
                 if (!signal.aborted)
                   update(item.id, {
@@ -107,8 +116,10 @@ export function useComposerUploads(
           : "";
       update(item.id, {
         active: false,
-        error:
-          code === "file_uploads_full"
+        waiting: false,
+        error: isFilesBusy(error)
+          ? FILES_BUSY_MESSAGE
+          : code === "file_uploads_full"
             ? "Too many files are waiting; try again shortly"
             : code === "file_quota_busy"
               ? "File storage is busy."

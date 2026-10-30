@@ -29,7 +29,7 @@ from app.systems.access.users.profile import ready_avatar
 from app.systems.platform.files.access import error, fresh_user
 from app.systems.platform.files.delivery import read_content, record_download
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import StorageBackend, transfer_slot
+from app.systems.platform.files.providers import StorageBackend, file_processing
 
 
 def get_avatar_identity(
@@ -95,7 +95,7 @@ def _current_avatar(db: Session, identity: CurrentIdentity, target_id: UUID) -> 
     return _bound_avatar(db, identity, target_id)
 
 
-AVATAR_SLOT_WAIT_SECONDS = 2.0
+AVATAR_BYTES = 2 * 1024 * 1024
 AVATAR_LOCK_RETRY_PAUSES = (0.05, 0.2)
 
 
@@ -127,11 +127,11 @@ def deliver_avatar(
     bearer: HTTPAuthorizationCredentials | None,
     thumbnail_size: ThumbnailSize | None = None,
 ) -> Response:
-    # A page shows several sizes of one photo at once; queue briefly for one of the
-    # two transfer slots instead of refusing the third read (PD67). Return the pooled
+    # A page shows several sizes of one photo at once; queue for a processing slot and
+    # the photo's bytes instead of refusing a read (PD67). Return the pooled
     # connection first: every check below runs again in a new transaction.
     db.rollback()
-    with transfer_slot(wait_seconds=AVATAR_SLOT_WAIT_SECONDS):
+    with file_processing(AVATAR_BYTES):
         try:
             file = _current_avatar(db, identity, target_id)
             file_id, digest, size = file.id, file.digest, file.actual_size

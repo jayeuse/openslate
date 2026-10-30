@@ -898,3 +898,32 @@ test("without an organization the own profile comes from the account, with no ro
     groups: [],
   });
 });
+
+test("a profile photo bind that meets busy file capacity waits and sends the same body again", async () => {
+  const photo = "00000000-0000-4000-8000-0000000000aa";
+  let calls = 0;
+  const mock = installFetch(() => {
+    calls += 1;
+    return calls === 1
+      ? Response.json(
+          { detail: { code: "files_busy", message: "File capacity is busy" } },
+          { status: 503, headers: { "Retry-After": "1" } },
+        )
+      : Response.json(self({ avatar_file_id: photo }));
+  });
+  const waiting: boolean[] = [];
+  try {
+    const saved = await saveProfile(
+      userA,
+      { avatar_file_id: photo },
+      undefined,
+      (value) => waiting.push(value),
+    );
+    expect(saved).toMatchObject({ id: userA });
+    expect(mock.requests).toHaveLength(2);
+    expect(mock.requests[1]?.init?.body).toBe(mock.requests[0]?.init?.body);
+    expect(waiting).toEqual([true, false]);
+  } finally {
+    mock.restore();
+  }
+});

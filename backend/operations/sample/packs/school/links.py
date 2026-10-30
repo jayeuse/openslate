@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from operations.sample.realism import skewed_parent
+
 # Typed codes that repeat a link the department already has as a relationship.
 REFERENCE_FIELDS = (
     ("attendance_exceptions", "student_reference"),
@@ -81,7 +83,13 @@ def parent_indices(
     source = _SOURCE_MODULES.get(key)
     if source is None:
         raise ValueError("Unknown School relationship")
+    if key in _UNEVEN:
+        return (skewed_parent(key, target, counts[source]),)
     return (target % counts[source],)
+
+
+# Links where some parents get many children and some get none (spec R5).
+_UNEVEN = frozenset({"course_sections", "section_assessments", "room_maintenance"})
 
 
 # Links from another department's record to the student it is about: key -> source module.

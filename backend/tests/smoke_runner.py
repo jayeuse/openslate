@@ -26,6 +26,7 @@ import tempfile
 import time
 from collections import Counter, defaultdict
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -81,7 +82,14 @@ def parse_options(argv: Sequence[str]) -> argparse.Namespace:
         help="seed the listed packs at Small and skip the browser suite",
     )
     parser.add_argument("--packs", help="comma-separated pack keys (with --seed-only)")
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="seed the listed packs at the same time; the first runs the installation controls",
+    )
     options = parser.parse_args(list(argv))
+    if options.parallel and not options.seed_only:
+        parser.error("--parallel needs --seed-only")
     if options.packs is None:
         options.packs = (ORGANIZATION,)
         return options
@@ -181,26 +189,31 @@ def create_pack_organizations(owner_url: str, pack_key: str, admin_id: str) -> d
         engine.dispose()
 
 
-def smoke_identities(credentials: dict[str, object], admin: dict[str, str]) -> dict[str, object]:
-    """Pick the signed-in roles from the seeded roster; refuse a missing or inactive one."""
+def smoke_identities(
+    credentials: dict[str, object], admin: dict[str, str]
+) -> tuple[dict[str, dict[str, str]], dict[str, str]]:
+    """Pick the signed-in roles from the seeded roster; refuse a missing or inactive one.
+
+    Returns the roles (email and name) and, apart, the passwords by role: the roles go to
+    the private fixture file, the passwords only into the browser suite's environment.
+    """
 
     accounts = credentials.get("accounts")
     if not isinstance(accounts, list):
         raise RuntimeError("The seeded roster has no accounts")
     by_key = {account.get("key"): account for account in accounts if isinstance(account, dict)}
-    identities: dict[str, object] = {
-        "admin": {"email": admin["email"], "password": admin["password"]}
-    }
+    roles: dict[str, dict[str, str]] = {"admin": {"email": str(admin["email"])}}
+    passwords: dict[str, str] = {"admin": admin["password"]}
     for role, key in SMOKE_ROLES.items():
         account = by_key.get(key)
         if not account or account.get("status") != "active" or not account.get("password"):
             raise RuntimeError(f"The seeded roster lacks an active {role} account")
-        identities[role] = {
-            "email": account["email"],
-            "password": account["password"],
-            "name": account.get("display_name") or account.get("username"),
+        roles[role] = {
+            "email": str(account["email"]),
+            "name": str(account.get("display_name") or account.get("username")),
         }
-    return identities
+        passwords[role] = str(account["password"])
+    return roles, passwords
 
 
 def gateway_root_certificate(caddy: DisposableCaddy, private: Path) -> Path:
@@ -223,6 +236,11 @@ def gateway_root_certificate(caddy: DisposableCaddy, private: Path) -> Path:
         target.write_text(certificate, encoding="utf-8")
     target.chmod(0o600)
     return target
+
+
+# Passwords travel only in a child process's environment; the private files hold none.
+SEED_PASSWORD_ENV = "OPENSLATE_SMOKE_ADMIN_PASSWORD"
+FIXTURE_PASSWORDS_ENV = "OPENSLATE_SMOKE_PASSWORDS"
 
 
 def _write_private(path: Path, value: object) -> Path:
@@ -326,6 +344,8 @@ def main(argv: Sequence[str] = ()) -> int:
         # Automations and scheduled work run here as they do in production; the seeder
         # waits for record-created automation results.
         api_env["E2E_BACKGROUND_WORKERS"] = "true"
+        # Measure API worker processes (C8): the caller's API_WORKERS, else one process.
+        api_env["API_WORKERS"] = os.environ.get("API_WORKERS", "1")
         run([sys.executable, "operations/provision_storage.py", "--confirm"], BACKEND, api_env)
         admin = seed(owner_url, run_id, migration_env, roles=("admin",))["admin"]
         register_installation_operator(owner_url, admin["id"])
@@ -341,7 +361,8 @@ def main(argv: Sequence[str] = ()) -> int:
                 subprocess.Popen(
                     [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
                      "--port", RUNNER_API_PORT, "--no-access-log",
-                     "--limit-concurrency", str(RUNNER_CONCURRENCY_LIMIT)],
+                     "--limit-concurrency", str(RUNNER_CONCURRENCY_LIMIT),
+                     "--workers", environment["API_WORKERS"]],
                     cwd=BACKEND, env=environment, stdout=log, stderr=log, text=True,
                     start_new_session=True,
                 )
@@ -355,8 +376,9 @@ def main(argv: Sequence[str] = ()) -> int:
         caddy.start()
         wait_for(WEB + "/login", caddy, verify=False)
         certificate = gateway_root_certificate(caddy, private)
-        for pack in options.packs:
-            timed(f"{pack.title()} Small seeding")
+        env = {**api_env, "SSL_CERT_FILE": str(certificate)}
+
+        def prepare(pack: str, installation_controls: bool) -> Path:
             pack_results[pack] = {"status": "failed"}
             parameters = _write_private(
                 private / f"seed-parameters-{pack}.json",
@@ -366,36 +388,58 @@ def main(argv: Sequence[str] = ()) -> int:
                     "mailpit_url": postgres.mail_url,
                     "admin_email": admin["email"],
                     "admin_id": admin["id"],
-                    "admin_password": admin["password"],
                     "run_root": str(private / "sample-runs" / pack),
                     "seed": SEED,
                     "anchor_date": ANCHOR_DATE,
                     "organization": pack,
+                    "installation_controls": installation_controls,
                     **create_pack_organizations(owner_url, pack, admin["id"]),
                 },
             )
             (private / "sample-runs" / pack).mkdir(mode=0o700)
+            return parameters
+
+        def seed_pack(pack: str, parameters: Path) -> None:
             seeding_started = time.monotonic()
-            run(
-                [sys.executable, "-m", "tests.smoke_seed", str(parameters)],
-                BACKEND,
-                {**api_env, "SSL_CERT_FILE": str(certificate)},
-            )
+            # The password reaches the seeder through its environment, never a file.
+            seed_env = {**env, SEED_PASSWORD_ENV: admin["password"]}
+            run_streamed([sys.executable, "-m", "tests.smoke_seed", str(parameters)],
+                         BACKEND, seed_env, log)  # fmt: skip
             sample_run = next((private / "sample-runs" / pack).iterdir())
             pack_results[pack] = {
                 "status": "complete",
                 "seconds": round(time.monotonic() - seeding_started, 1),
+                "installation_controls": pack == options.packs[0] or not options.parallel,
                 **request_timings(sample_run / "requests.jsonl"),
             }
+
+        if options.parallel:
+            # Packs share one installation; only the first runs the installation controls.
+            timed(f"Parallel Small seeding ({', '.join(options.packs)})")
+            print(f"Smoke: {stage}", flush=True)
+            prepared = {pack: prepare(pack, pack == options.packs[0]) for pack in options.packs}
+            with ThreadPoolExecutor(max_workers=len(options.packs)) as pool:
+                futures = [pool.submit(seed_pack, pack, path) for pack, path in prepared.items()]
+                errors = [future.exception() for future in futures]
+            failed = next((error for error in errors if error is not None), None)
+            if failed is not None:
+                raise failed
+        else:
+            for pack in options.packs:
+                timed(f"{pack.title()} Small seeding")
+                print(f"Smoke: {stage}", flush=True)
+                seed_pack(pack, prepare(pack, True))
+        sample_run = next((private / "sample-runs" / options.packs[-1]).iterdir())
         if not options.seed_only:
             credentials = json.loads((sample_run / "credentials.json").read_text(encoding="utf-8"))
+            roles, passwords = smoke_identities(credentials, admin)
             fixture = _write_private(
                 private / "smoke-fixture.json",
                 {
                     "runId": run_id,
                     "baseURL": WEB,
                     "workspaceName": get_pack(ORGANIZATION).identity.workspace_name,
-                    "roles": smoke_identities(credentials, admin),
+                    "roles": roles,
                 },
             )
             stop_process_group(processes.pop())
@@ -415,6 +459,7 @@ def main(argv: Sequence[str] = ()) -> int:
                     "BASE_URL": WEB,
                     "OPENSLATE_FULLSTACK_SUITE": "smoke",
                     "OPENSLATE_FULLSTACK_FIXTURE": str(fixture),
+                    FIXTURE_PASSWORDS_ENV: json.dumps(passwords),
                     "OPENSLATE_FULLSTACK_RUN_ID": run_id,
                     "OPENSLATE_SMOKE_STATE_DIR": str(private / "smoke-state"),
                     "E2E_ALLOW_MUTATIONS": "true",

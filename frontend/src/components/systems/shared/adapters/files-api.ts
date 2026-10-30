@@ -91,6 +91,7 @@ export async function uploadFileContent<T extends { id: string }>(
   schema: z.ZodType<T>,
   request: () => Promise<Response>,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ): Promise<T> {
   if (
     !(content instanceof Blob) ||
@@ -98,7 +99,7 @@ export async function uploadFileContent<T extends { id: string }>(
     content.size > MAX_FILE_BYTES
   )
     throw new ApiContractError();
-  const response = await request();
+  const response = await retryFilesBusy(request, { signal, onWaiting });
   const body: unknown = await response.json().catch((error: unknown) => {
     if (signal?.aborted) throw error;
     throw new ApiContractError();
@@ -109,12 +110,116 @@ export async function uploadFileContent<T extends { id: string }>(
   return result.data;
 }
 
+export const FILES_BUSY_MESSAGE = "The server is busy. Try again in a moment.";
+
+export function isFilesBusy(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    error.status === 503 &&
+    error.code === "files_busy"
+  );
+}
+
+export type FilesBusyOptions = {
+  signal?: AbortSignal;
+  onWaiting?: (waiting: boolean) => void;
+};
+
+export type FilesBusyTiming = {
+  now: () => number;
+  sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+};
+
+// The whole wait, from the first attempt; one more wait past it is not started.
+const FILES_BUSY_WAIT_MS = 30_000;
+
+const browserTiming: FilesBusyTiming = {
+  now: () => Date.now(),
+  sleep: (milliseconds, signal) =>
+    new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) return reject(signal.reason);
+      const stop = () => {
+        clearTimeout(timer);
+        reject(signal?.reason);
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", stop);
+        resolve();
+      }, milliseconds);
+      signal?.addEventListener("abort", stop, { once: true });
+    }),
+};
+
+/**
+ * Repeats a file request that the server refused for file capacity (503
+ * `files_busy`) after its Retry-After (1 to 10 s), for about 30 s in all; then
+ * the last refusal is thrown. `onWaiting(true)` reports the first refusal and
+ * `onWaiting(false)` the end of the whole request. The request must send the
+ * same bytes again and throw an ApiError with the code for a refusal.
+ */
+export async function retryFilesBusy<T>(
+  request: () => Promise<T>,
+  { signal, onWaiting }: FilesBusyOptions = {},
+  timing: FilesBusyTiming = browserTiming,
+): Promise<T> {
+  const started = timing.now();
+  let waiting = false;
+  try {
+    while (true) {
+      try {
+        return await request();
+      } catch (error) {
+        if (!isFilesBusy(error) || signal?.aborted) throw error;
+        const delay = Math.min(10, Math.max(1, error.retryAfter ?? 1)) * 1000;
+        if (timing.now() + delay - started > FILES_BUSY_WAIT_MS) throw error;
+        if (!waiting) {
+          waiting = true;
+          onWaiting?.(true);
+        }
+        await timing.sleep(delay, signal);
+      }
+    }
+  } finally {
+    if (waiting) onWaiting?.(false);
+  }
+}
+
+/** The whole-second Retry-After of a refused response, if it has one. */
+export function retryAfterSeconds(response: Response): number | undefined {
+  const value = response.headers.get("Retry-After")?.trim();
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds) ? seconds : undefined;
+}
+
+function errorCode(body: unknown): string | undefined {
+  if (typeof body !== "object" || body === null || !("detail" in body))
+    return undefined;
+  const detail = body.detail;
+  return typeof detail === "object" &&
+    detail !== null &&
+    "code" in detail &&
+    typeof detail.code === "string"
+    ? detail.code
+    : undefined;
+}
+
+/** A 503 keeps only its code (`files_busy` is retried); other bodies are dropped unread. */
 export async function throwFileRequestError(
   response: Response,
   message = "File request could not be completed",
 ): Promise<never> {
-  await response.body?.cancel().catch(() => undefined);
-  throw new ApiError(response.status, message);
+  let code: string | undefined;
+  if (response.status === 503)
+    code = errorCode(await response.json().catch(() => null));
+  else await response.body?.cancel().catch(() => undefined);
+  throw new ApiError(
+    response.status,
+    message,
+    undefined,
+    code,
+    retryAfterSeconds(response),
+  );
 }
 
 export async function requestFileContent(
@@ -122,6 +227,7 @@ export async function requestFileContent(
   expectedSize: number,
   signal?: AbortSignal,
   requestErrorMessage = "File request could not be completed",
+  onWaiting?: (waiting: boolean) => void,
 ): Promise<Blob> {
   if (
     !Number.isInteger(expectedSize) ||
@@ -129,8 +235,25 @@ export async function requestFileContent(
     expectedSize > MAX_FILE_BYTES
   )
     throw new ApiContractError();
-  const response = await apiRequest(path, { cache: "no-store", signal });
-  if (!response.ok) return throwFileRequestError(response, requestErrorMessage);
+  return readFileContent(
+    await retryFilesBusy(
+      async () => {
+        const response = await apiRequest(path, { cache: "no-store", signal });
+        if (!response.ok)
+          return throwFileRequestError(response, requestErrorMessage);
+        return response;
+      },
+      { signal, onWaiting },
+    ),
+    expectedSize,
+  );
+}
+
+/** A nosniff attachment of exactly `expectedSize` bytes, read in bounded chunks. */
+async function readFileContent(
+  response: Response,
+  expectedSize: number,
+): Promise<Blob> {
   const disposition = response.headers.get("Content-Disposition") ?? "";
   const sniffing = response.headers.get("X-Content-Type-Options") ?? "";
   if (
@@ -177,6 +300,7 @@ export async function requestFileContent(
 }
 
 export function fileErrorMessage(error: unknown, action: string): string {
+  if (isFilesBusy(error)) return FILES_BUSY_MESSAGE;
   if (error instanceof ApiError) {
     if (String(error.code) === "file_uploads_full")
       return "Too many uploads are still unfinished. Try again later.";

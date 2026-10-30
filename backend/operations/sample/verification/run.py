@@ -23,6 +23,7 @@ from operations.sample.packs.registry import default_pack, get_pack
 from operations.sample.packs.types import SampleProfile
 from operations.sample.phases.expectations import final_people_pack, read_phase_plan
 from operations.sample.phases.verification import verify_phases
+from operations.sample.population.administrator import ADMINISTRATOR_KEY, administrator_identity
 from operations.sample.population.content import verify_content
 from operations.sample.population.people import _people
 from operations.sample.scenario import build_dataset
@@ -36,6 +37,10 @@ from operations.sample.verification.history import verify_history
 from operations.sample.verification.isolation import roster_logins, verify_isolation
 from operations.sample.verification.rejections import verify_rejections
 from operations.sample.verification.route_coverage import verify_route_coverage
+from operations.sample.verification.triggers import _verify_triggers
+from operations.sample.verification.triggers import (
+    trigger_evidence_issues as trigger_evidence_issues,
+)
 
 
 @dataclass(frozen=True)
@@ -46,8 +51,11 @@ class SampleVerificationReport:
     issues: tuple[str, ...]
 
 
-def read_run_manifest(directory: Path, expected_admin_id: str) -> dict[str, Any]:
-    """Reject public, redirected, mismatched or malformed run evidence."""
+def read_run_manifest(directory: Path, expected_operator_id: str) -> dict[str, Any]:
+    """Reject public, redirected, mismatched or malformed run evidence.
+
+    The run belongs to the operator who verifies it; its pack administrator is another account.
+    """
     try:
         metadata = directory.lstat()
         if (
@@ -79,8 +87,17 @@ def read_run_manifest(directory: Path, expected_admin_id: str) -> dict[str, Any]
         or value["schema_version"] not in {1, 2}
     ):
         raise SampleVerificationError("Run manifest schema is unsupported")
-    if value.get("admin_id") != expected_admin_id:
-        raise SampleVerificationError("Run belongs to another administrator")
+    if value.get("operator_id") != expected_operator_id:
+        raise SampleVerificationError("Run belongs to another operator")
+    admin_id = value.get("admin_id")
+    try:
+        # A run that stopped before its invitation has no pack administrator yet.
+        if (admin_id is not None or value.get("status") in {"populated", "complete"}) and (
+            str(UUID(str(admin_id))) != admin_id or admin_id == expected_operator_id
+        ):
+            raise ValueError
+    except ValueError:
+        raise SampleVerificationError("Run has no valid pack administrator") from None
     if (
         value.get("run_id") != directory.name
         or not re.fullmatch(r"[a-f0-9]{32}", directory.name)
@@ -148,15 +165,25 @@ def _people_issues(
     *,
     organization: OrganizationPack | None = None,
 ) -> tuple[dict[str, int], list[str]]:
+    """The pack's people, its administrator and the operator, and no one else."""
     actual = {str(row.get("id")): row for row in list_all_rows(client, "/api/users")}
     expected = manifest["people"]
     issues: list[str] = []
     expected_ids = {str(person.get("user_id")) for person in expected.values()}
-    specs = _people(final_people_pack(organization or default_pack(), read_phase_plan(manifest)))
+    pack = organization or default_pack()
+    specs = _people(final_people_pack(pack, read_phase_plan(manifest)))
+    staff = {admin_id, str(manifest.get("operator_id"))}
     if len(expected) != len(specs) or len(expected_ids) != len(specs):
         issues.append("identity manifest does not cover the pack's unique people")
-    if set(actual) != expected_ids | {admin_id}:
+    if set(actual) != expected_ids | staff or expected_ids & staff:
         issues.append("identity roster differs from the recorded run")
+    administrator = actual.get(admin_id, {})
+    if any(
+        administrator.get(key) != value
+        for key, value in administrator_identity(pack).items()
+        if key in {"email", "username", "role", "status"}
+    ) or administrator.get("is_deleted") is not False:
+        issues.append("the pack administrator's identity, role or account state differs")
     if set(expected) != {person.key for person in specs}:
         issues.append("identity manifest differs from the authored person catalogue")
     for spec in specs:
@@ -194,10 +221,10 @@ def _people_issues(
                 issues.append("a guest sponsor or future expiry differs")
         elif row.get("sponsor_user_id") is not None or row.get("expires_at") is not None:
             issues.append("an internal sample identity has guest-only settings")
-    observed = {"people": len(actual) - int(admin_id in actual)}
+    observed = {"people": len(set(actual) - staff)}
     for status in ("active", "pending", "disabled"):
         observed[f"people_{status}"] = sum(
-            row.get("status") == status for key, row in actual.items() if key != admin_id
+            row.get("status") == status for key, row in actual.items() if key not in staff
         )
     for status in ("active", "pending", "disabled"):
         count = sum(person.status == status for person in specs)
@@ -210,12 +237,13 @@ def verify_sample_data(
     *,
     api_url: str,
     origin: str,
-    admin_email: str,
-    expected_admin_id: str,
-    admin_password: str,
+    operator_email: str,
+    expected_operator_id: str,
+    operator_password: str,
     run_directory: Path,
 ) -> SampleVerificationReport:
-    manifest = read_run_manifest(run_directory, expected_admin_id)
+    """Read back as the run's pack administrator; installation readbacks use the operator."""
+    manifest = read_run_manifest(run_directory, expected_operator_id)
     if manifest["status"] not in {"populated", "complete"}:
         return SampleVerificationReport(
             "incomplete",
@@ -231,18 +259,29 @@ def verify_sample_data(
         organization=pack,
         module_counts_override=counts,
         host_acceptance=manifest.get("host_acceptance") is True,
+        installation_controls=manifest.get("installation_controls", True) is not False,
     )
     observed: dict[str, int] = {}
     issues: list[str] = []
     organization_id = manifest.get("organization_id")
+    expected_admin_id = str(manifest["admin_id"])
     journal = run_directory / "verification-requests.jsonl"
-    with SampleClient(api_url, origin, journal, organization_id) as client:
-        if client.login(admin_email, admin_password).status_code != 200:
-            raise SampleVerificationError("Verification administrator login failed")
+    operator_login = (operator_email, operator_password)
+    admin_login = roster_logins(run_directory / "credentials.json", [ADMINISTRATOR_KEY])
+    with (
+        SampleClient(api_url, origin, journal, organization_id) as client,
+        SampleClient(api_url, origin, journal, organization_id) as operator,
+    ):
+        for signed, login, expected_id, label in (
+            (operator, operator_login, expected_operator_id, "operator"),
+            (client, admin_login[0] if admin_login else None, expected_admin_id, "administrator"),
+        ):
+            if login is None or signed.login(*login).status_code != 200:
+                raise SampleVerificationError(f"Verification {label} login failed")
+            response = signed.request("GET", "/api/auth/me")
+            if response.status_code != 200 or response.json().get("id") != expected_id:
+                raise SampleVerificationError(f"Verification {label} identity differs")
         try:
-            response = client.request("GET", "/api/auth/me")
-            if response.status_code != 200 or response.json().get("id") != expected_admin_id:
-                raise SampleVerificationError("Verification administrator identity differs")
             counts, record_issues = verify_records_and_relationships(
                 client,
                 dataset=dataset,
@@ -288,7 +327,7 @@ def verify_sample_data(
                 api_url=api_url,
                 origin=origin,
                 journal=journal,
-                admin_login=(admin_email, admin_password),
+                operator_login=operator_login,
                 member_logins=roster_logins(
                     run_directory / "credentials.json",
                     (p.key for p in final_people if p.role == "member" and p.status == "active"),
@@ -299,25 +338,28 @@ def verify_sample_data(
             configuration_maps = manifest["mappings"]
             if "control_plan" in manifest:
                 control_counts, control_issues = verify_controls(
-                    client, dataset, manifest, expected_admin_id
+                    client, dataset, manifest, expected_admin_id, operator=operator
                 )
                 observed.update(control_counts)
                 issues.extend(control_issues)
                 settings_counts, settings_issues = verify_settings_runs(
                     client, dataset, manifest, expected_admin_id, api_url=api_url, origin=origin,
-                    journal=journal, admin_login=(admin_email, admin_password),
+                    journal=journal, operator_login=operator_login,
+                    operator_id=expected_operator_id,
                 )
                 observed.update(settings_counts)
                 issues.extend(settings_issues)
                 content_counts, content_issues = verify_content_runs(
                     client, dataset, manifest, expected_admin_id, api_url=api_url, origin=origin,
-                    journal=journal, admin_login=(admin_email, admin_password),
+                    journal=journal, operator_login=operator_login,
+                    operator_id=expected_operator_id,
                 )
                 observed.update(content_counts)
                 issues.extend(content_issues)
                 search_counts, search_issues = verify_search_runs(
                     client, dataset, manifest, expected_admin_id, api_url=api_url, origin=origin,
-                    journal=journal, admin_login=(admin_email, admin_password),
+                    journal=journal, operator_login=operator_login,
+                    operator_id=expected_operator_id,
                 )
                 observed.update(search_counts)
                 issues.extend(search_issues)
@@ -369,9 +411,12 @@ def verify_sample_data(
             issues.extend(trigger_issues)
         finally:
             client.request("POST", "/api/auth/logout")
+            operator.request("POST", "/api/auth/logout")
     if "control_plan" in manifest:
         route_counts, route_issues = verify_route_coverage(
-            run_directory, host_acceptance=dataset.host_acceptance
+            run_directory,
+            host_acceptance=dataset.host_acceptance,
+            installation_controls=dataset.installation_controls,
         )
         observed.update(route_counts)
         issues.extend(route_issues)
@@ -381,108 +426,3 @@ def verify_sample_data(
         observed,
         tuple(dict.fromkeys(issues)),
     )
-
-
-def trigger_evidence_issues(
-    evidence: list[dict[str, Any]],
-    runs: list[Mapping[str, Any]],
-    record_data: Mapping[str, Mapping[str, Any]],
-) -> list[str]:
-    by_id = {str(run.get("id")): run for run in runs}
-    issues: list[str] = []
-    for item in evidence:
-        if item.get("enabled") is False:
-            continue
-        run_ids = item.get("run_ids")
-        if not isinstance(run_ids, list) or not run_ids:
-            issues.append("an exercised trigger has no recorded execution")
-            continue
-        for run_id in run_ids:
-            run = by_id.get(str(run_id), {})
-            details = run.get("details")
-            if (
-                run.get("triggerName") != item.get("name")
-                or run.get("state") != "succeeded"
-                or not isinstance(details, Mapping)
-                or not isinstance(details.get("actionsApplied"), int)
-                or details["actionsApplied"] < 1
-            ):
-                issues.append("a recorded trigger execution is missing or did not apply its action")
-        data = record_data.get(str(item.get("target_logical_id")), {})
-        if data.get(str(item.get("target_field_id"))) != item.get("expected_value"):
-            issues.append("a trigger target no longer contains the expected result")
-    return issues
-
-
-def _verify_triggers(
-    client: SampleClient,
-    manifest: Mapping[str, Any],
-    *,
-    organization: OrganizationPack | None = None,
-) -> tuple[dict[str, int], list[str]]:
-    pack = organization or default_pack()
-    evidence = manifest.get("trigger_evidence", [])
-    mutations = manifest.get("mutation_evidence", [])
-    issues: list[str] = []
-    if not isinstance(evidence, list) or len(evidence) != len(pack.generators.trigger_keys):
-        return {}, ["trigger evidence must cover all authored rules"]
-    if not isinstance(mutations, list) or len(mutations) != len(pack.blueprint.patch_trigger_keys):
-        issues.append("trigger evidence must include the authored record updates")
-        mutations = []
-    runs = list_all_rows(client, "/api/sandbox/trigger-runs", page_size=50)
-    record_data: dict[str, Mapping[str, Any]] = {}
-    record_ids = manifest["mappings"].get("records", {})
-    for item in evidence:
-        if item.get("enabled") is False:
-            continue
-        logical = item.get("target_logical_id")
-        record_id = record_ids.get(logical)
-        if not record_id:
-            issues.append("trigger target mapping is missing")
-            continue
-        response = client.request("GET", f"/api/records/{record_id}")
-        if response.status_code != 200:
-            issues.append("trigger target readback failed")
-            continue
-        data = response.json().get("data")
-        if isinstance(data, dict):
-            record_data[logical] = data
-    issues.extend(trigger_evidence_issues(evidence, runs, record_data))
-    response = client.request("GET", "/api/sandbox/document")
-    if response.status_code != 200:
-        issues.append("published trigger configuration could not be read")
-    else:
-        triggers = response.json().get("document", {}).get("triggers", [])
-        for item in evidence:
-            if item.get("enabled") is False and not any(
-                trigger.get("name") == item.get("name") and trigger.get("enabled") is False
-                for trigger in triggers
-            ):
-                issues.append("a scheduled trigger is not disabled in its saved configuration")
-    matches = 0
-    for mutation in mutations:
-        rows = list_all_rows(
-            client,
-            "/api/audit-logs",
-            params={
-                "entity_type": "records",
-                "entity_id": mutation.get("record_id"),
-                "created_after": manifest["started_at"],
-                "created_before": manifest["finished_at"],
-            },
-        )
-        if mutation.get("request_id") and any(
-            row.get("entity_id") == mutation.get("record_id")
-            and row.get("performed_by") == mutation.get("actor_id")
-            and row.get("action") == "update"
-            and row.get("request_id") == mutation["request_id"]
-            and row.get("request_method") == "PATCH"
-            and row.get("request_path") == mutation.get("request_path")
-            for row in rows
-        ):
-            matches += 1
-        else:
-            issues.append(
-                "an authored record update lacks matching actor and request audit evidence"
-            )
-    return {"trigger_runs": len(runs), "record_update_audit_matches": matches}, issues

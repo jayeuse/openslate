@@ -1,13 +1,9 @@
-import asyncio
-import time
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import ExitStack, asynccontextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse, Response
 
@@ -24,17 +20,7 @@ from app.core.config.provider_instance import assert_provider_instance
 from app.core.config.settings import DOTENV_PATH
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import dispose_database_resources, get_engine
-from app.core.middleware.file_transfers import (
-    CapacityResponse,
-    FileDispatchMiddleware,
-    backup_export_body_limit,
-    file_transfer_policy,
-)
-from app.core.middleware.request_context import (
-    RequestContext,
-    bind_request_context,
-    reset_request_context,
-)
+from app.core.middleware.file_transfers import FileDispatchMiddleware
 from app.core.middleware.trusted_hosts import ExactTrustedHostMiddleware
 from app.core.observability import configure_observability_logging, log_event
 from app.core.readiness import (
@@ -42,6 +28,7 @@ from app.core.readiness import (
     get_readiness_snapshot,
 )
 from app.core.static_site import StaticSite
+from app.request_middleware import install_request_middleware
 from app.systems.access.auth.aggregate_router import router as auth_router
 from app.systems.access.auth.mfa_router import router as mfa_router
 from app.systems.access.identity.provider_signout_worker import ProviderSignoutWorker
@@ -75,7 +62,6 @@ from app.systems.comms.realtime.publisher import install_publication
 from app.systems.comms.router import router as comms_router
 from app.systems.manage.audit.router import internal_security_events_router, security_events_router
 from app.systems.manage.audit.router import router as audit_router
-from app.systems.manage.backups.downloads import release_export_response, wrap_export_response
 from app.systems.manage.backups.router import router as backups_router
 from app.systems.manage.jobs.router import router as jobs_router
 from app.systems.manage.workspace.router import router as workspace_router
@@ -90,10 +76,10 @@ from app.systems.platform.events.hub import (
     PostgresInvalidationListener,
     subscriber_capacity,
 )
+from app.systems.platform.events.publisher import InvalidationPublisher
 from app.systems.platform.events.router import router as events_router
 from app.systems.platform.files.board_router import router as board_files_router
 from app.systems.platform.files.lifecycle_router import router as file_lifecycle_router
-from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as files_router
 from app.systems.platform.realtime.router import router as realtime_router
 from app.systems.platform.scheduling.notification_router import router as notifications_router
@@ -114,54 +100,6 @@ from app.systems.sandbox.relationships.router import router as relationships_rou
 from app.systems.sandbox.test_runs.router import router as sandbox_test_runs_router
 
 
-def _request_route(request: Request) -> str:
-    route = request.scope.get("route")
-    # FastAPI included routers keep the child route in scope; their effective
-    # context carries the registered template with all inclusion prefixes.
-    fastapi_scope = request.scope.get("fastapi", {})
-    effective = fastapi_scope.get("effective_route_context")
-    if effective is not None and getattr(effective, "original_route", None) is route:
-        route = effective
-    path = getattr(route, "path", None)
-    return path if isinstance(path, str) else "unknown"
-
-
-def _request_headers(context: RequestContext) -> dict[str, str]:
-    return {"X-Request-ID": str(context.request_id)}
-
-
-def _database_unavailable_response(request: Request, context: RequestContext) -> JSONResponse:
-    log_event(
-        "database_unavailable",
-        request_id=context.request_id,
-        method=request.method,
-        route=_request_route(request),
-        status=503,
-        reason_code="database_operation_failed",
-    )
-    return JSONResponse(
-        status_code=503,
-        content={"detail": "Database unavailable"},
-        headers=_request_headers(context),
-    )
-
-
-def _unexpected_error_response(request: Request, context: RequestContext) -> JSONResponse:
-    log_event(
-        "http_failure",
-        request_id=context.request_id,
-        method=request.method,
-        route=_request_route(request),
-        status=500,
-        reason_code="unexpected_error",
-    )
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"},
-        headers=_request_headers(context),
-    )
-
-
 @asynccontextmanager
 async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_observability_logging()
@@ -177,6 +115,9 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
             expected_user="openslate_runtime",
         )
     app.state.events_listener.start()
+    invalidation_publisher = getattr(app.state, "invalidation_publisher", None)
+    if invalidation_publisher is not None:
+        invalidation_publisher.start()
     app.state.trigger_worker.start()
     app.state.comms_publisher.start()
     report_worker = getattr(app.state, "report_scheduling_worker", None)
@@ -192,6 +133,8 @@ async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
         report_stopped = report_worker.stop() if report_worker is not None else True
         comms_stopped = app.state.comms_publisher.stop() if report_stopped else False
         trigger_stopped = app.state.trigger_worker.stop()
+        if invalidation_publisher is not None:
+            invalidation_publisher.stop()
         app.state.events_listener.stop()
         if trigger_stopped and report_stopped and signout_stopped and comms_stopped:
             dispose_readiness_resources()
@@ -236,6 +179,7 @@ def create_app() -> FastAPI:
     events_hub = EventHub(max_subscribers=subscriber_capacity(settings.server_max_concurrency))
     app.state.events_hub = events_hub
     app.state.events_listener = PostgresInvalidationListener(events_hub)
+    app.state.invalidation_publisher = InvalidationPublisher()
     app.state.trigger_worker = TriggerWorker(settings)
     app.state.provider_signout_worker = ProviderSignoutWorker(settings)
     relaxed_development = is_relaxed_development(settings)
@@ -253,119 +197,7 @@ def create_app() -> FastAPI:
             },
         )
     app.add_middleware(FileDispatchMiddleware)
-
-    @app.middleware("http")
-    async def add_request_context(
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        context = RequestContext(method=request.method, path=request.url.path)
-        request.state.request_context = context
-        token = bind_request_context(context)
-        started = time.perf_counter()
-        transfer = file_transfer_policy(request.url.path, request.method)
-        capacity = ExitStack()
-        sandbox_document_limit = _sandbox_document_body_limit(request.url.path, request.method)
-        export_limit = backup_export_body_limit(request.url.path, request.method)
-        body_limit = (
-            export_limit
-            if export_limit is not None
-            else transfer.request_bytes
-            if transfer is not None
-            else sandbox_document_limit
-            if sandbox_document_limit is not None
-            else None
-            if relaxed_development
-            else settings.request_body_max_bytes
-        )
-        body_refusal = (
-            {"code": "export_body_too_large", "message": "Export request body is too large"}
-            if export_limit is not None
-            else "Request body is too large"
-        )
-        deadline = None
-        try:
-            if transfer is not None:
-                request.state.file_transfer_lease = capacity.enter_context(transfer_slot())
-            declared_size = request.headers.get("content-length")
-            response: Response
-            if (
-                body_limit is not None
-                and declared_size is not None
-                and _is_body_too_large(
-                    declared_size,
-                    body_limit,
-                )
-            ):
-                response = JSONResponse(
-                    status_code=413,
-                    content={"detail": body_refusal},
-                )
-            else:
-                async with asyncio.timeout(
-                    transfer.deadline_seconds if transfer else None
-                ) as deadline:
-                    if body_limit is not None and not await _read_bounded_body(request, body_limit):
-                        response = JSONResponse(
-                            status_code=413,
-                            content={"detail": body_refusal},
-                        )
-                    else:
-                        response = await call_next(request)
-        except HTTPException as error:
-            response = JSONResponse(
-                status_code=error.status_code,
-                content={"detail": error.detail},
-                headers=error.headers,
-            )
-        except TimeoutError:
-            if transfer is not None and deadline is not None and deadline.expired():
-                response = JSONResponse(
-                    status_code=504,
-                    content={
-                        "detail": {
-                            "code": "file_timeout",
-                            "message": (
-                                "File operation timed out; inspect its state before retrying"
-                            ),
-                        }
-                    },
-                )
-            else:
-                response = _unexpected_error_response(request, context)
-        except (OperationalError, SQLAlchemyTimeoutError):
-            response = _database_unavailable_response(request, context)
-        except Exception:
-            response = _unexpected_error_response(request, context)
-        except BaseException:
-            # Client cancellation must close admission without dropping a running worker ref.
-            capacity.close()
-            release_export_response(request)
-            reset_request_context(token)
-            raise
-        try:
-            if request.url.path.startswith("/api"):
-                response.headers.setdefault("Cache-Control", "no-store")
-            if request.url.path.rstrip("/") in {"/auth/setup", "/auth/recovery"}:
-                response.headers["Cache-Control"] = "no-store"
-                response.headers["Referrer-Policy"] = "no-referrer"
-            if not relaxed_development:
-                _add_security_headers(response)
-            response.headers.update(_request_headers(context))
-            log_event(
-                "http_request",
-                method=request.method,
-                route=_request_route(request),
-                status=response.status_code,
-                duration_ms=int((time.perf_counter() - started) * 1000),
-            )
-            return CapacityResponse(wrap_export_response(request, response), capacity.close)
-        except BaseException:
-            capacity.close()
-            release_export_response(request)
-            raise
-        finally:
-            reset_request_context(token)
+    install_request_middleware(app, settings, relaxed_development=relaxed_development)
 
     app.include_router(auth_router, prefix="/api")
     app.include_router(mfa_router, prefix="/api")
@@ -474,43 +306,4 @@ def _trusted_hosts(public_origin: str, *, environment: str) -> list[str]:
     return allowed
 
 
-def _add_security_headers(response: Response) -> None:
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    response.headers.setdefault(
-        "Permissions-Policy", "camera=(), geolocation=(), microphone=(), payment=()"
-    )
-
-
 app = create_app()
-
-
-def _is_body_too_large(content_length: str, limit: int) -> bool:
-    try:
-        return int(content_length) > limit
-    except ValueError:
-        return False
-
-
-def _sandbox_document_body_limit(path: str, method: str) -> int | None:
-    if (path, method) in {
-        ("/api/sandbox/document", "PUT"),
-        ("/api/sandbox/imports", "POST"),
-    }:
-        return 5 * 1024 * 1024
-    return None
-
-
-async def _read_bounded_body(request: Request, limit: int) -> bool:
-    """Cache only an in-limit body so the downstream request can read it once."""
-
-    chunks: list[bytes] = []
-    total = 0
-    async for chunk in request.stream():
-        total += len(chunk)
-        if total > limit:
-            return False
-        chunks.append(chunk)
-    request._body = b"".join(chunks)  # noqa: SLF001 - Starlette middleware cache contract.
-    return True

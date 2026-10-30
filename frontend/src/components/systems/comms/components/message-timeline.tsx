@@ -53,6 +53,10 @@ import {
   type TimelinePeople,
 } from "./message-shared";
 import { reportCommsError } from "../state/comms-feedback";
+import {
+  FILES_BUSY_MESSAGE,
+  isFilesBusy,
+} from "../../shared/adapters/files-api";
 import { recordContext } from "../domain/records";
 import { useCommsClient } from "../state/client-context";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
@@ -364,6 +368,8 @@ const TimelineRow = memo(function TimelineRow({
       : message.id;
   const lifetime = useRef<AbortController | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
+  // The active download waits for file capacity on the server.
+  const [downloadWaiting, setDownloadWaiting] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller;
@@ -694,7 +700,13 @@ const TimelineRow = memo(function TimelineRow({
                           const download = await client.downloadAttachment(
                             message.conversation,
                             file.id,
-                            { signal },
+                            {
+                              signal,
+                              on_waiting: (waiting) => {
+                                if (!signal.aborted)
+                                  setDownloadWaiting(waiting);
+                              },
+                            },
                           );
                           await client.bootstrap({ signal });
                           const url = URL.createObjectURL(download.bytes);
@@ -706,18 +718,29 @@ const TimelineRow = memo(function TimelineRow({
                           } finally {
                             URL.revokeObjectURL(url);
                           }
-                        } catch {
+                        } catch (failure) {
                           setNotice(
-                            "The attachment could not be downloaded. Local file bytes are unavailable after reload.",
+                            isFilesBusy(failure)
+                              ? FILES_BUSY_MESSAGE
+                              : "The attachment could not be downloaded. Local file bytes are unavailable after reload.",
                           );
                         } finally {
                           setDownloading(null);
+                          setDownloadWaiting(false);
                         }
                       }}
                     >
                       Download {file.name}
                     </button>
                   )}
+                  <span
+                    role="status"
+                    className="text-muted-foreground block text-xs"
+                  >
+                    {downloading === file.id && downloadWaiting
+                      ? "Waiting for the server…"
+                      : ""}
+                  </span>
                 </AttachmentContent>
               </Attachment>
             ))}

@@ -7,6 +7,7 @@ import {
   ORGANIZATION_THEMES,
   type OrganizationTheme,
 } from "@/lib/appearance-preferences";
+import { retryFilesBusy } from "../../shared/adapters/files-api";
 import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 
 const organizationThemeSchema = z.enum(ORGANIZATION_THEMES);
@@ -354,12 +355,19 @@ export function getManageWorkspace(
 export function updateManageWorkspace(
   patch: ManageWorkspaceSettingsPatch,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ): Promise<ManageWorkspaceFullProfile> {
-  return apiFetch("/workspace", workspaceFullProfileSchema, {
-    method: "PATCH",
-    body: JSON.stringify(workspaceSettingsPatchSchema.parse(patch)),
-    signal,
-  });
+  const body = JSON.stringify(workspaceSettingsPatchSchema.parse(patch));
+  // Binding a new logo waits for file capacity; a files_busy refusal changed nothing.
+  return retryFilesBusy(
+    () =>
+      apiFetch("/workspace", workspaceFullProfileSchema, {
+        method: "PATCH",
+        body,
+        signal,
+      }),
+    { signal, onWaiting },
+  );
 }
 
 export function isStaleWorkspaceRevision(error: unknown): boolean {

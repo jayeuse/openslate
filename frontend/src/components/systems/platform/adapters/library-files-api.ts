@@ -202,6 +202,7 @@ export async function uploadLibraryFile(
   rawFileId: string,
   content: Blob,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ): Promise<LibraryFile> {
   const departmentId = uuid.parse(rawDepartmentId);
   const fileId = uuid.parse(rawFileId);
@@ -221,6 +222,7 @@ export async function uploadLibraryFile(
       return response;
     },
     signal,
+    onWaiting,
   );
 }
 
@@ -271,6 +273,7 @@ export async function reopenLibraryFile(
 export function downloadLibraryFile(
   file: LibraryFile,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ): Promise<Blob> {
   if (file.state !== "ready") throw new ApiContractError();
   const fileId = uuid.parse(file.id);
@@ -278,5 +281,7 @@ export function downloadLibraryFile(
     `/files/${fileId}/content`,
     file.actualSize ?? file.expectedSize,
     signal,
+    undefined,
+    onWaiting,
   );
 }

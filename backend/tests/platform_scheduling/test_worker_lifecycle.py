@@ -389,3 +389,65 @@ def test_due_report_worker_poll_commits_one_run_work_and_notification(
             # Every module reader at run time gets one notification.
             == 3
         )
+
+
+def test_a_failed_poll_logs_its_first_organization_cause_and_count_once(monkeypatch) -> None:
+    # Live seven-pack run: comms_scheduling_poll_failed named no organization and no cause.
+    from sqlalchemy.exc import OperationalError
+
+    from app.systems.platform.scheduling import worker as module
+
+    first, second = uuid7(), uuid7()
+    events = []
+    worker = module.ReportSchedulingWorker(
+        SimpleNamespace(environment="development"), comms_poll=Mock()
+    )
+    monkeypatch.setattr(module, "active_organization_ids", lambda _e: [first, second])
+    monkeypatch.setattr(module, "get_engine", lambda: None)
+    monkeypatch.setattr(module, "log_event", lambda *a, **k: events.append((a, k)))
+
+    class _Deadlock(Exception):
+        sqlstate = "40P01"
+
+    worker._comms_poll = Mock(side_effect=OperationalError("UPDATE", {}, _Deadlock()))
+    worker._poll(now=NOW, reports=False, posts=False, reminders=False, comms=True)
+    worker._poll(now=NOW, reports=False, posts=False, reminders=False, comms=True)
+
+    assert events == [(("operational_attention",), {
+        "reason_code": "comms_scheduling_poll_failed", "upstream": "comms-jobs",
+        "org_id": first, "cause": "database_deadlock", "count": 2,
+    })]
+
+
+def test_a_failed_scheduled_report_attempt_logs_its_work_and_cause(monkeypatch) -> None:
+    # Live seven-pack run: 30 bare "Scheduled Report attempt failed" lines with no cause.
+    from contextlib import nullcontext
+
+    from fastapi import HTTPException
+
+    from app.systems.platform.scheduling import execution
+    from app.systems.platform.scheduling.models import WorkKind
+    from app.systems.platform.scheduling.service import WorkClaim
+
+    claim = WorkClaim(id=uuid7(), lease_token=uuid7())
+    work = SimpleNamespace(kind=WorkKind.REPORT_RUN, report_id=uuid7())
+    report = SimpleNamespace(id=work.report_id)
+    db = SimpleNamespace(get=lambda model, _id: work if model is ScheduledWork else report)
+    events, failed = [], []
+    monkeypatch.setattr(execution, "_session", lambda _engine: nullcontext(db))
+    monkeypatch.setattr(execution, "report_source", lambda *_a, **_k: object())
+    monkeypatch.setattr(execution, "current_worker_organization", lambda: None)
+
+    def lost_source(*_args, **_kwargs):
+        raise HTTPException(404, detail="Report not found")
+
+    monkeypatch.setattr(execution, "capture_report_snapshot", lost_source)
+    monkeypatch.setattr(execution, "_fail_claim", lambda *_a, **_k: failed.append(True))
+    monkeypatch.setattr(execution, "log_event", lambda *a, **k: events.append((a, k)))
+
+    assert execution.execute_report_claim(object(), claim) is None
+    assert failed == [True]
+    assert events == [(("operational_attention",), {
+        "reason_code": "scheduled_report_attempt_failed", "upstream": "report-scheduler",
+        "operation_id": claim.id, "org_id": None, "cause": "http_404",
+    })]

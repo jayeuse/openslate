@@ -11,7 +11,11 @@ from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient, SampleClientError
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import SamplePhaseActionError, _read_json
-from operations.sample.verification.core import SampleVerificationError, list_all_rows
+from operations.sample.verification.core import (
+    SampleVerificationError,
+    list_all_rows,
+    list_security_events,
+)
 
 # fmt: off
 CONTROL_ROUTES = frozenset({
@@ -335,12 +339,14 @@ def verify_mfa_request_evidence(
         issues.append("MFA control request evidence differs from its exact owned-actor contract")
 
 
-def _security_events(admin: SampleClient, result: Mapping[str, Any]) -> int:
+def _security_events(
+    admin: SampleClient, result: Mapping[str, Any], manifest: Mapping[str, Any]
+) -> int:
     receipt = result["reset_receipt"]
     descriptor = next(
         row for row in result["request_evidence"] if row["step"] == "reset_target_mfa"
     )
-    rows = list_all_rows(admin, "/api/security-events")
+    rows = list_security_events(admin, manifest)
     matches = [row for row in rows if row.get("request_id") == descriptor["request_id"]]
     _require(len(matches) == 2, "mfa_events")
     events = [SecurityEventResponse.model_validate(row) for row in matches]
@@ -472,7 +478,7 @@ def verify_mfa_controls(
     if issues:
         return counts, issues
     try:
-        counts["mfa_control_security_events"] = _security_events(admin, result)
+        counts["mfa_control_security_events"] = _security_events(admin, result, manifest)
         _final_state(admin, action, result, admin_id)
     except (
         SampleClientError,
@@ -483,8 +489,10 @@ def verify_mfa_controls(
         TypeError,
         ValueError,
         StopIteration,
-    ):
-        issues.append("MFA control event correlation or final-state readback is invalid")
+    ) as error:
+        # The step names the failed readback; a bare message hid it in a live run.
+        step = getattr(error, "step", None) or type(error).__name__
+        issues.append(f"MFA control event correlation or final-state readback is invalid ({step})")
     if not issues:
         counts["mfa_control_actions"] = 1
     return counts, issues

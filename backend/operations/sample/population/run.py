@@ -80,8 +80,11 @@ def create_private_run_directory(root: Path, run_id: str) -> Path:
         raise SamplePopulationError("Sample run directory must be owner-only") from None
 
 
-def read_admin_password(path: Path, expected_email: str) -> str:
-    """Read only a private administrator password file matching the local account."""
+def read_admin_password(path: Path, expected_email: str | None) -> str:
+    """Read only a private administrator password file matching the local account.
+
+    With ``expected_email`` None the file holds only a password (the pack administrator's).
+    """
     target = Path(path).expanduser()
     if not target.is_absolute():
         raise SamplePopulationError("Administrator credential path must be absolute")
@@ -111,7 +114,9 @@ def read_admin_password(path: Path, expected_email: str) -> str:
         raise SamplePopulationError("Administrator credential file is invalid")
     email = payload.get("email")
     password = payload.get("password")
-    if not isinstance(email, str) or email.strip().casefold() != expected_email.strip().casefold():
+    if expected_email is not None and (
+        not isinstance(email, str) or email.strip().casefold() != expected_email.strip().casefold()
+    ):
         raise SamplePopulationError(
             "Administrator credential identity does not match this instance"
         )
@@ -148,6 +153,25 @@ def _write_manifest(directory: Path, document: Mapping[str, Any]) -> None:
             os.unlink(temporary)
 
 
+def refusal_detail(response: Any) -> str:
+    """The API's error code and up to three field errors (field ID and rule, never a value)."""
+    try:
+        detail = response.json().get("detail")
+    except (AttributeError, TypeError, ValueError):
+        return ""
+    if not isinstance(detail, Mapping):
+        return ""
+    code = detail.get("code")
+    parts = [code] if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code) else []
+    errors = detail.get("errors")
+    for error in errors[:3] if isinstance(errors, list) else []:
+        if isinstance(error, Mapping):
+            field = str(error.get("field_id", ""))[:36]
+            rule = str(error.get("message", ""))[:80]
+            parts.append(f"{field}: {rule}" if field else rule)
+    return f" ({'; '.join(parts)})" if parts else ""
+
+
 def _api(
     client: SampleClient,
     method: str,
@@ -160,7 +184,9 @@ def _api(
 ) -> dict[str, Any]:
     response = client.request(method, path, json_body=body, params=params, headers=headers)
     if response.status_code not in expected:
-        raise SamplePopulationError(f"{method} {path} returned HTTP {response.status_code}")
+        raise SamplePopulationError(
+            f"{method} {path} returned HTTP {response.status_code}{refusal_detail(response)}"
+        )
     if response.status_code == 204:
         return {}
     try:
@@ -367,9 +393,9 @@ def populate_sample_data(
     api_url: str,
     origin: str,
     mailpit_url: str,
-    admin_email: str,
-    expected_admin_id: str,
-    admin_password: str,
+    operator_email: str,
+    expected_operator_id: str,
+    operator_password: str,
     run_root: Path,
     profile: SampleProfile,
     seed: int,
@@ -379,6 +405,8 @@ def populate_sample_data(
     host_control: Callable[..., object] | None = None,
     organization_id: str | None = None,
     partner_organization_id: str | None = None,
+    administrator_password: str | None = None,
+    installation_controls: bool = True,
 ) -> SamplePopulationReport:
     """Create a private run, populate through user APIs, then prove the readback."""
     dataset = build_dataset(
@@ -387,6 +415,7 @@ def populate_sample_data(
         anchor_date,
         organization=organization,
         host_acceptance=host_control is not None,
+        installation_controls=installation_controls,
     )
     from operations.sample.phases.expectations import phase_plan_summary
 
@@ -413,7 +442,9 @@ def populate_sample_data(
         "seed": seed,
         "anchor_date": anchor_date.isoformat(),
         "host_acceptance": host_control is not None,
-        "admin_id": expected_admin_id,
+        "installation_controls": installation_controls,
+        "admin_id": None,
+        "operator_id": expected_operator_id,
         "organization_id": organization_id,
         "partner_organization_id": partner_organization_id,
         "started_at": None,
@@ -438,9 +469,9 @@ def populate_sample_data(
             api_url=api_url,
             origin=origin,
             mailpit_url=mailpit_url,
-            admin_email=admin_email,
-            admin_password=admin_password,
-            expected_admin_id=expected_admin_id,
+            operator_email=operator_email,
+            operator_password=operator_password,
+            expected_operator_id=expected_operator_id,
             run_directory=directory,
             run_id=run_id,
             dataset=dataset,
@@ -449,6 +480,7 @@ def populate_sample_data(
             host_control=host_control,
             organization_id=organization_id,
             partner_organization_id=partner_organization_id,
+            administrator_password=administrator_password,
         )
         manifest["mappings"] = _journal_mappings(directory / "requests.jsonl")
         manifest["observed"] = dict(observed)
@@ -460,9 +492,9 @@ def populate_sample_data(
         verification = verify_sample_data(
             api_url=api_url,
             origin=origin,
-            admin_email=admin_email,
-            expected_admin_id=expected_admin_id,
-            admin_password=admin_password,
+            operator_email=operator_email,
+            expected_operator_id=expected_operator_id,
+            operator_password=operator_password,
             run_directory=directory,
         )
         manifest["observed"].update(verification.observed)

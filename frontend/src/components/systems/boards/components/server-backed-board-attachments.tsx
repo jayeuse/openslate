@@ -5,7 +5,7 @@ import { ApiContractError, ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { FilePickerButton } from "@/components/ui/file-picker-button";
-import { fileErrorMessage } from "../../shared/adapters/files-api";
+import { fileErrorMessage, isFilesBusy } from "../../shared/adapters/files-api";
 import { FileList } from "../../shared/components/file-list";
 import {
   attachBoardFile,
@@ -71,7 +71,11 @@ const REJECTED_UPLOAD =
 const UNCLEAR_UPLOAD =
   "The upload result is unclear. Use Attach file to finish, or choose the file again.";
 
+const WAITING_FOR_SERVER = "Waiting for the server…";
+
 function ambiguousUpload(error: unknown): boolean {
+  // A capacity refusal comes before the server reads the bytes.
+  if (isFilesBusy(error)) return false;
   if (error instanceof ApiError) return error.status >= 500;
   return !(error instanceof AttachmentFileError);
 }
@@ -117,6 +121,8 @@ export function ServerBoardAttachments(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  // The active download waits for file capacity on the server.
+  const [downloadWaiting, setDownloadWaiting] = useState(false);
   const operationController = useRef<AbortController | null>(null);
   const versionsRef = useRef<BoardAttachmentVersions | null>(
     props.access === "edit" ? props.versions : null,
@@ -273,6 +279,12 @@ export function ServerBoardAttachments(props: Props) {
         reserved.id,
         file,
         controller.signal,
+        (waiting) => {
+          if (operationController.current === controller)
+            setOperation(
+              waiting ? WAITING_FOR_SERVER : `Uploading ${file.name}…`,
+            );
+        },
       );
       const failure = uploadFailure(uploaded);
       if (failure) throw failure;
@@ -369,6 +381,8 @@ export function ServerBoardAttachments(props: Props) {
         stableTarget,
         file.id,
         file.actualSize ?? file.expectedSize,
+        undefined,
+        setDownloadWaiting,
       );
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -402,7 +416,7 @@ export function ServerBoardAttachments(props: Props) {
         </Alert>
       ) : null}
       <p role="status" className="text-muted-foreground text-sm">
-        {operation ?? notice ?? ""}
+        {operation ?? (downloadWaiting ? WAITING_FOR_SERVER : notice) ?? ""}
       </p>
     </>
   );

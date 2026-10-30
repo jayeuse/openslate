@@ -9,6 +9,7 @@ from app.systems.access.users.sessions_schemas import AdminSessionCollectionResp
 from app.systems.manage.workspace.security_schemas import WorkspaceSecurityResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.controls.account import plan_account_controls
+from operations.sample.controls.planned_actors import OPERATOR, partner_action
 from operations.sample.packs.phase_types import PhaseAction, PhaseJsonValue
 from operations.sample.phases.actions import (
     PhaseExecutionContext,
@@ -44,7 +45,7 @@ _SESSION_QUERY = {
 
 def organization_settings(dataset: SampleDataset) -> dict[str, str]:
     identity = dataset.organization.identity
-    currency = {"₱": "PHP", "£": "GBP"}.get(identity.currency_symbol)
+    currency = identity.currency_code or {"₱": "PHP", "£": "GBP"}.get(identity.currency_symbol)
     if currency is None:
         raise ValueError("The pack currency symbol has no declared ISO currency")
     return {
@@ -68,13 +69,38 @@ def _primary_keys(dataset: SampleDataset) -> tuple[str, ...]:
     )
 
 
+def _shared_primary_keys(dataset: SampleDataset) -> tuple[str, ...]:
+    """Primary members who joined the partner organization before the bulk revocation."""
+    from operations.sample.controls.comms_structure import plan_structure_controls
+
+    keys = {plan_account_controls(dataset)[0].actor_key}
+    for action in plan_structure_controls(dataset):
+        listed = action.values.get("member_keys")
+        if partner_action(action.values) and isinstance(listed, list):
+            keys |= {key for key in listed if isinstance(key, str)}
+    return tuple(sorted(keys & set(_primary_keys(dataset))))
+
+
+def _revoked_primary_keys(dataset: SampleDataset) -> tuple[str, ...]:
+    shared = set(_shared_primary_keys(dataset))
+    return tuple(key for key in _primary_keys(dataset) if key not in shared)
+
+
 def plan_manage_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     if dataset.organization.phases is None:
         return ()
     member = plan_account_controls(dataset)[0].actor_key
+    # The pack administrator revokes; accounts shared with another organization keep sessions.
+    revoke_checks = 5 + len(_primary_keys(dataset)) + len(_revoked_primary_keys(dataset))
     specs: tuple[tuple[str, str, int, dict[str, PhaseJsonValue]], ...] = (
         ("review_workspace_security", "admin", 200, {"read_checks": 1}),
-        ("update_workspace_security", "admin", 200, {"read_checks": 3, "policy_restored": True}),
+        # Installation-wide security fields need the installation owner.
+        (
+            "update_workspace_security",
+            OPERATOR,
+            200,
+            {"read_checks": 3, "policy_restored": True},
+        ),
         ("review_mfa_status", member, 200, {"read_checks": 1, "mfa_optional": True}),
         ("review_admin_sessions", "admin", 200, {"read_checks": 2}),
         (
@@ -82,9 +108,10 @@ def plan_manage_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             "admin",
             204,
             {
-                "read_checks": 3 + 2 * len(_primary_keys(dataset)),
+                "read_checks": revoke_checks,
                 "sessions_revoked": True,
                 "primary_sessions_authenticated": True,
+                "shared_sessions_kept": True,
             },
         ),
     )
@@ -95,7 +122,7 @@ def plan_manage_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             kind="manage_controls",
             actor_key=actor,
             target_key=actor
-            if actor != "admin"
+            if actor not in {"admin", OPERATOR}
             else "control:admin-sessions"
             if operation in {"review_admin_sessions", "revoke_admin_sessions"}
             else "control:workspace-security",
@@ -105,6 +132,8 @@ def plan_manage_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             expected_end_state=end_state,
         )
         for operation, actor, status, end_state in specs
+        # The installation security fields are shared; one pack per installation changes them.
+        if dataset.installation_controls or operation != "update_workspace_security"
     )
 
 
@@ -114,7 +143,7 @@ def manage_request_contract(
     operation = action.values.get("operation")
     if operation == "update_workspace_security":
         return {
-            step: ("admin", "PATCH", "/api/workspace/security", 200)
+            step: (OPERATOR, "PATCH", "/api/workspace/security", 200)
             for step in ("update_workspace_security", "restore_workspace_security")
         }
     if operation == "revoke_admin_sessions":
@@ -122,7 +151,7 @@ def manage_request_contract(
             "revoke_admin_sessions": ("admin", "DELETE", "/api/auth/admin-sessions", 204),
             **{
                 f"reauth:{key}": (key, "POST", "/api/auth/login", 200)
-                for key in _primary_keys(dataset)
+                for key in _revoked_primary_keys(dataset)
             },
         }
     return {}
@@ -202,7 +231,7 @@ def execute_manage_control(
             }
         )
         if expected == 204:
-            return {}
+            return dict(response.headers)
         from operations.sample.phases.actions import _read_json
 
         return _read_json(response, step=step, request_id=request_id)
@@ -274,7 +303,7 @@ def execute_manage_control(
         updated = policy(
             write(
                 "update_workspace_security",
-                "admin",
+                action.actor_key,
                 "PATCH",
                 "/api/workspace/security",
                 200,
@@ -290,7 +319,7 @@ def execute_manage_control(
         restored = policy(
             write(
                 "restore_workspace_security",
-                "admin",
+                action.actor_key,
                 "PATCH",
                 "/api/workspace/security",
                 200,
@@ -346,69 +375,8 @@ def execute_manage_control(
                 "Administrator session filters differ from their request", step=action.key
             )
     elif operation == "revoke_admin_sessions":
-        raw = context.private_values.get("credentials")
-        credentials: dict[str, SampleActorCredential] = {}
-        primary = set(context.clients) & set(context.user_ids) - {"admin"}
-        if primary != set(_primary_keys(dataset)) or not isinstance(raw, Mapping):
-            raise SamplePhaseActionError(
-                "Primary actor login prerequisites are incomplete", step=action.key
-            )
-        for key in sorted(primary):
-            value = raw.get(key)
-            person = next(p for p in dataset.organization.actors.people if p.key == key)
-            actor_id = _id(context.user_ids, key, label="primary actor", step=action.key)
-            if (
-                not isinstance(value, SampleActorCredential)
-                or value.user_id != actor_id
-                or value.email != person.email
-                or not value.password
-                or sum(uid == actor_id for uid in context.user_ids.values()) != 1
-            ):
-                raise SamplePhaseActionError(
-                    "Primary actor credential binding is invalid", step=action.key
-                )
-            credentials[key] = value
-        before = sessions({**_SESSION_QUERY, "limit": 100, "status": "current"})
-        admin_id = _id(context.user_ids, "admin", label="administrator", step=action.key)
-        if (
-            len(before) != 1
-            or before[0]["current"] is not True
-            or before[0]["user_id"] != admin_id
-            or not sessions({**_SESSION_QUERY, "limit": 100, "status": "remote"})
-        ):
-            raise SamplePhaseActionError(
-                "Bulk session revocation has no valid current and remote sessions", step=action.key
-            )
-        write("revoke_admin_sessions", "admin", "DELETE", "/api/auth/admin-sessions", 204)
-        after = sessions({**_SESSION_QUERY, "limit": 100}, complete=True)
-        if (
-            len(after) != 1
-            or after[0]["id"] != before[0]["id"]
-            or after[0]["current"] is not True
-            or after[0]["user_id"] != admin_id
-        ):
-            raise SamplePhaseActionError(
-                "Bulk session revocation did not preserve only the current administrator",
-                step=action.key,
-            )
-        for key in credentials:
-            # A revoked session cannot refresh, so the probe reads without refreshing first.
-            probe = read("/api/auth/session", actor=key, refresh_first=False)
-            if probe.get("authenticated") is not False:
-                raise SamplePhaseActionError(
-                    "A remote primary session remains authenticated", step=action.key
-                )
-        for key, credential in credentials.items():
-            write(f"reauth:{key}", key, "POST", "/api/auth/login", 200, credential=credential)
-            identity = read("/api/auth/me", actor=key)
-            if (
-                identity.get("id") != credential.user_id
-                or identity.get("role") != "member"
-                or identity.get("status") != "active"
-            ):
-                raise SamplePhaseActionError(
-                    "Primary actor reauthentication resolved another identity", step=action.key
-                )
-        extra.update({"sessions_revoked": True, "primary_sessions_authenticated": True})
+        from operations.sample.controls.manage_sessions import revoke_admin_sessions
+
+        extra.update(revoke_admin_sessions(action, dataset, context, read, write, sessions))
     extra["read_checks"] = checks
     return _result(action, context, evidence, [], extra=extra)

@@ -24,6 +24,7 @@ from operations.sample.scenario import build_dataset
 from operations.sample.verification.core import SampleVerificationError
 
 ADMIN_ID = "55555555-5555-4555-8555-555555555555"
+OPERATOR_ID = "0b6f1f5e-2c39-4f4e-9d0a-0c2bb1f6a1d4"
 MANAGER_ID = "66666666-6666-4666-8666-666666666666"
 BOARD_ID = "77777777-7777-4777-8777-777777777777"
 REQUEST_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -131,7 +132,9 @@ def _verify(
         tmp_path / "verification-requests.jsonl",
         transport=httpx.MockTransport(handle),
     ) as client:
-        return verification.verify_controls(client, dataset, manifest, admin_id=ADMIN_ID)
+        return verification.verify_controls(
+            client, dataset, {"operator_id": OPERATOR_ID, **manifest}, ADMIN_ID, operator=client
+        )
 
 
 def test_control_verifier_checks_request_and_all_final_families(
@@ -247,7 +250,11 @@ def test_platform_verification_requires_exact_requests_and_restored_state(
             key = wire.created[0]
             wire.records[key] = {"id": key, "module_id": BOARD_ID, "data": {}, "is_deleted": True}
         counts, issues = verification.verify_controls(
-            context.clients["admin"], dataset, manifest, context.user_ids["admin"]
+            context.clients["admin"],
+            dataset,
+            {"operator_id": OPERATOR_ID, **manifest},
+            context.user_ids["admin"],
+            operator=context.clients["admin"],
         )
         if fault == "none":
             assert issues == []

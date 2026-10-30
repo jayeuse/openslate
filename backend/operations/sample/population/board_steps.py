@@ -47,23 +47,40 @@ class StepSpec:
     needs_records: tuple[str, ...] = ()
 
 
+# Posts and events per Board grow with the profile (spec R9).
+PROFILE_SCALE = {"small": 1, "standard": 2, "large": 6}
+
+
+def post_state(spec: Any, index: int) -> str:
+    """The pack's authored life cycle for its own posts; later posts are mostly published."""
+    if index < spec.posts_per_board:
+        return str(spec.post_states[index // 2])
+    return "archived" if index % 4 == 3 else "published"
+
+
 def plan_board_steps(
-    boards: Sequence[BoardMeta], *, organization: OrganizationPack | None = None
+    boards: Sequence[BoardMeta],
+    *,
+    organization: OrganizationPack | None = None,
+    profile: str = "small",
 ) -> list[StepSpec]:
     """Interleave posts and events across Boards, then links and attachments, then post
     life cycles. Attaching resets a post to draft, so it runs before the post's life cycle."""
     spec = (organization or default_pack()).content.data
+    scale = PROFILE_SCALE[profile]
+    posts, events = spec.posts_per_board * scale, spec.events_per_board * scale
     steps: list[StepSpec] = []
-    for index in range(spec.events_per_board):
+    for index in range(max(posts, events)):
         for board_index, board in enumerate(boards):
             rotation = board_index * 3 + index
-            if index < spec.posts_per_board:
+            if index < posts:
                 author = board.authors[rotation % len(board.authors)]
                 steps.append(StepSpec(f"post:{board.logical_id}:{index}", "post",
                                       board.logical_id, index, author))  # fmt: skip
-            author = board.authors[(rotation + 1) % len(board.authors)]
-            steps.append(StepSpec(f"event:{board.logical_id}:{index}", "event",
-                                  board.logical_id, index, author))  # fmt: skip
+            if index < events:
+                author = board.authors[(rotation + 1) % len(board.authors)]
+                steps.append(StepSpec(f"event:{board.logical_id}:{index}", "event",
+                                      board.logical_id, index, author))  # fmt: skip
     by_key = {step.key: step for step in steps}
     for link in spec.board_links:
         parent = f"{link.kind}:{link.board}:{link.index}"
@@ -86,8 +103,8 @@ def plan_board_steps(
             steps.append(StepSpec(item.key, "file", item.board, item.index,
                                   by_key[parent].author_key, (parent,)))  # fmt: skip
             files.setdefault(parent, []).append(item.key)
-    for index in range(spec.posts_per_board):
-        if spec.post_states[index // 2] == "draft":
+    for index in range(posts):
+        if post_state(spec, index) == "draft":
             continue
         for board in boards:
             post = by_key[f"post:{board.logical_id}:{index}"]
@@ -184,7 +201,7 @@ class BoardQueue:
                 "writer": client,
                 "index": step.index,
                 "board_index": board_index,
-                "state": spec.post_states[step.index // 2],
+                "state": post_state(spec, step.index),
             }
             publications, revisions = finalize_post(
                 post, self._republished, datetime.now(UTC), organization=pack

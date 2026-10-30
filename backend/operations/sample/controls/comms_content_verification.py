@@ -141,7 +141,8 @@ def verify_content_runs(
     api_url: str,
     origin: str,
     journal: Path,
-    admin_login: tuple[str, str],
+    operator_login: tuple[str, str],
+    operator_id: str,
 ) -> tuple[dict[str, int], list[str]]:
     from operations.sample.controls.comms_content import plan_content_controls
 
@@ -173,11 +174,11 @@ def verify_content_runs(
                 issues.append("S18 partner binding differs")
                 continue
             with SampleClient(api_url, origin, journal, partner_id) as partner:
-                if partner.login(*admin_login).status_code != 200:
+                if partner.login(*operator_login).status_code != 200:
                     issues.append("S18 partner verification sign-in failed")
                     continue
                 try:
-                    current = verify_content_control(partner, action, result, admin_id)
+                    current = verify_content_control(partner, action, result, operator_id)
                 finally:
                     partner.request("POST", "/api/auth/logout")
         issues.extend(current)

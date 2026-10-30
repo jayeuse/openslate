@@ -202,11 +202,11 @@ def test_registered_attachment_flow_obeys_parent_and_transfer_contracts(
     content = output.getvalue()
     storage = Store(db)
     app = FastAPI()
-    from app.systems.platform.files.providers import transfer_slot
+    from app.systems.platform.files.providers import transfer_admission
 
     @app.middleware("http")
     async def file_capacity(request, call_next):
-        with transfer_slot() as lease:
+        with transfer_admission() as lease:
             request.state.file_transfer_lease = lease
             return await call_next(request)
 

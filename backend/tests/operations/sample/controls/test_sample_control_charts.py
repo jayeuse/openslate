@@ -426,6 +426,7 @@ def test_run_count_boundary_credits_only_native_certified_dashboard(
 
     monkeypatch.setattr(boundary, "verify_content", content)
     original = wire.__call__
+    reads: list[httpx.Request] = []
 
     def with_identity(request):
         if request.url.path == "/api/dashboards":
@@ -436,9 +437,11 @@ def test_run_count_boundary_credits_only_native_certified_dashboard(
                 json={"items": list(wire.dashboards.values())},
             )
         if request.url.path == "/api/auth/me":
+            # The operator and the pack administrator each read their identity once.
+            reads.append(request)
             return httpx.Response(
                 200,
-                headers={"X-Request-ID": identity("verify identity")},
+                headers={"X-Request-ID": identity(f"verify identity {len(reads)}")},
                 json={"id": context.user_ids["admin"]},
             )
         if request.url.path == "/api/auth/logout":
@@ -446,14 +449,51 @@ def test_run_count_boundary_credits_only_native_certified_dashboard(
         return original(request)
 
     context.clients["admin"]._client._transport = httpx.MockTransport(with_identity)
+    # One fixture session answers for both the operator and the pack administrator.
+    manifest.update(admin_id=context.user_ids["admin"], operator_id=context.user_ids["admin"])
+    before = deepcopy(manifest)
+    monkeypatch.setattr(
+        boundary, "roster_logins", lambda *_args: [("administrator@sample.test", "fixture")]
+    )
     report = boundary.verify_sample_data(
         api_url="http://sample.test",
         origin="http://localhost",
-        admin_email="admin@sample.test",
-        expected_admin_id=context.user_ids["admin"],
-        admin_password="fixture-password",
+        operator_email="admin@sample.test",
+        expected_operator_id=context.user_ids["admin"],
+        operator_password="fixture-password",
         run_directory=directory,
     )
     assert report.status == ("complete" if fault is None else "incomplete")
     assert seen == [{"dashboards": 1 if fault == "uncertified" else 2, "dashboard_widgets": 0}]
     assert manifest == before
+
+
+@pytest.mark.parametrize("case", ["planned_relist", "unplanned_move", "planned_content_change"])
+def test_chart_verifier_allows_only_a_planned_archive_and_restore_of_its_source(chart_setup, case):
+    # Live runs on 2026-10-29 (Local government, FMCG distributor, School): the
+    # reorganization phase archived and restored the Chart control's source Dashboard
+    # later in the run, two revisions after the control certified it.
+    from operations.sample.controls.charts_verification import verify_chart_controls
+
+    dataset, action, context, wire, _ = chart_setup
+    result = execute_openview_control(action, dataset, context)
+    manifest = _manifest(context, result)
+    if case != "unplanned_move":
+        manifest["phase_plan"] = [
+            {
+                "key": "reorganization:openview_restore_dashboard",
+                "target_key": action.values["source_dashboard_key"],
+            }
+        ]
+    source = wire.dashboards[wire.source_dashboard_id]
+    source["revision"] += 2
+    source["updated_at"] = "2026-10-29T14:14:12.263792Z"
+    if case == "planned_content_change":
+        source["name"] = "Renamed later"
+    observed, issues = verify_chart_controls(
+        context.clients["admin"], dataset, manifest, context.user_ids["admin"]
+    )
+    if case == "planned_relist":
+        assert issues == [] and observed["chart_sources_preserved"] == 1
+    else:
+        assert issues == ["Chart final source/owned state could not be certified"]

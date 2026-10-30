@@ -1,13 +1,15 @@
 """Workspace security contracts through signed sessions (fake provider) and the runtime DB role."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
@@ -16,6 +18,7 @@ from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from tests.conftest import membership_of, workspace_of
+from tests.race_support import join, start, wait_until_blocked_by
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -494,3 +497,63 @@ def test_retention_defaults_independent_updates_and_omissions_preserve_policy(se
             for field in fields:
                 setattr(profile, field, before[field])
             db.commit()
+
+
+def _save_while_session_held(client, owner, session_id: UUID, payload: dict):
+    """Hold one session row FOR UPDATE, as a refresh or a publication does, during a save."""
+    with owner.connect() as holder:
+        holder.execute(
+            select(IdentitySession.id).where(IdentitySession.id == session_id).with_for_update()
+        )
+        holder_pid = int(holder.connection.driver_connection.info.backend_pid)
+        thread, results = start(lambda: client.patch("/api/workspace/security", json=payload))
+        try:
+            wait_until_blocked_by(owner, holder_pid)
+        finally:
+            holder.commit()
+    return join(thread, results)
+
+
+def test_security_save_waits_for_a_refresh_that_holds_the_actor_session(security_workspace):
+    # Real trigger: the owner's other tab refreshes the session while the owner saves.
+    client, _actor_id, owner = security_workspace
+    initial = client.get("/api/workspace/security").json()
+    current = UUID(
+        next(row["id"] for row in client.get("/api/auth/sessions").json() if row["current"])
+    )
+    saved = _save_while_session_held(
+        client, owner, current, {"revision": initial["revision"], "password_min_length": 16}
+    )
+    assert saved.status_code == 200
+    assert saved.json()["password_min_length"] == 16
+    assert saved.json()["revision"] == initial["revision"] + 1
+
+
+def test_timeout_save_waits_for_and_clamps_a_session_a_publication_holds(security_workspace):
+    # Real trigger (School sample run): another administrator publishes the Sandbox, which
+    # holds their session row, while the installation owner shortens the session timeout.
+    client, actor_id, owner = security_workspace
+    initial = client.get("/api/workspace/security").json()
+    now = utc_now()
+    with Session(owner) as db:
+        other = IdentitySession(
+            user_id=actor_id,
+            refresh_token_digest=uuid7().hex + uuid7().hex,
+            csrf_token_digest=uuid7().hex + uuid7().hex,
+            created_at=now,
+            refreshed_at=now,
+            expires_at=now + timedelta(hours=1),
+        )
+        db.add(other)
+        db.commit()
+        other_id = other.id
+    saved = _save_while_session_held(
+        client, owner, other_id, {"revision": initial["revision"], "session_timeout_minutes": 30}
+    )
+    assert saved.status_code == 200
+    assert saved.json()["session_timeout_minutes"] == 30
+    with Session(owner) as db:
+        held = db.get(IdentitySession, other_id)
+        assert held is not None
+        # The held session is clamped to the shorter timeout, not skipped.
+        assert held.expires_at == held.refreshed_at + timedelta(minutes=30)

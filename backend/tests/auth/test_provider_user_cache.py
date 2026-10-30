@@ -14,7 +14,7 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity import provider_sessions, provider_user_cache
 from app.systems.access.identity.mfa import MFARequired
-from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.provider_jwt_support import session_database
@@ -35,7 +35,9 @@ def _subject(*, assurance: str = "aal1"):
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
+    user, membership = create_member(
+        None,
+        WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_user_id,
         email="person@example.test",
@@ -92,3 +94,18 @@ def test_mfa_denial_from_a_cached_account_is_recomputed_from_a_fresh_read(monkey
     provider_user_cache.remember_provider_user(ProviderUser(claims.user_id, None))
     assert provider_sessions.resolve_provider_session(db, claims, client, now=now)
     assert client.get_admin_user.call_count == 2
+
+
+def test_a_factor_verified_in_another_api_process_requires_aal2_on_the_next_request() -> None:
+    """Each API process caches on its own; only the shared MFA observation reaches them all."""
+    now, db, claims, client = _subject()
+    resolved = provider_sessions.resolve_provider_session(db, claims, client, now=now)
+    assert resolved is not None
+    # Another API process verifies a factor. It drops only its own cached account, so this
+    # process still holds the account without the factor, inside the reuse window.
+    factor = ProviderFactor(uuid4(), "totp", "verified")
+    client.get_admin_user.return_value = ProviderUser(claims.user_id, None, factors=(factor,))
+    observation = db.get(IdentityMfaObservation, resolved[0].id)
+    observation.verified_totp, observation.observed_at = True, now
+    with pytest.raises(MFARequired):
+        provider_sessions.resolve_provider_session(db, claims, client, now=now)

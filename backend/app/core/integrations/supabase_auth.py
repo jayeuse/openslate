@@ -22,8 +22,19 @@ if TYPE_CHECKING:
     from app.core.integrations.supabase_email_changes import EmailChangeConfirmation
 
 
+# Auth can run on another clock than the API (the Docker VM on a macOS workstation, or a
+# hosted Auth beside an on-premises API). A token minted a moment "ahead" of this host is
+# not refused for it; RFC 7519 4.1.5 allows a small leeway for clock skew. Expiry has none.
+_ISSUED_AT_ALLOWANCE_SECONDS = 5
+
+
 class SupabaseAuthUnavailable(Exception):
     """The provider could not establish an authoritative answer."""
+
+    def __init__(self, message: str, *, kind: str | None = None) -> None:
+        super().__init__(message)
+        # What failed (timeout, connect, http_<status>) for operational logs.
+        self.kind = kind
 
 
 class InvalidProviderCredentials(Exception):
@@ -36,6 +47,11 @@ class ProviderUserNotFound(InvalidProviderCredentials):
 
 class InvalidProviderToken(Exception):
     """An access token failed local signature or claim validation."""
+
+    def __init__(self, message: str, *, kind: str | None = None) -> None:
+        super().__init__(message)
+        # The failed check's class name (ExpiredSignatureError, ...) for operational logs.
+        self.kind = kind
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +132,9 @@ class SupabaseAuthClient:
                     params=params,
                 )
         except httpx.RequestError as error:
-            raise SupabaseAuthUnavailable("Supabase Auth is unavailable") from error
+            raise SupabaseAuthUnavailable(
+                "Supabase Auth is unavailable", kind=_transport_kind(error)
+            ) from error
 
     def _exchange(self, payload: dict[str, str], grant_type: str) -> ProviderTokens:
         response = self._request("POST", "token", json=payload, params={"grant_type": grant_type})
@@ -292,12 +310,20 @@ class SupabaseAuthClient:
                 audience=self._audience,
                 options={
                     "require": ["sub", "session_id", "iss", "aud", "iat", "exp", "aal"],
+                    # Checked below with the clock allowance; expiry keeps zero leeway.
+                    "verify_iat": False,
+                    "verify_nbf": False,
                 },
                 leeway=0,
             )
             if claims.get("aud") != self._audience:
                 raise InvalidProviderToken("Invalid access token")
             issued = _numeric_date(claims, "iat")
+            latest = datetime.now(UTC).timestamp() + _ISSUED_AT_ALLOWANCE_SECONDS
+            if issued.timestamp() > latest or (
+                "nbf" in claims and _numeric_date(claims, "nbf").timestamp() > latest
+            ):
+                raise jwt.ImmatureSignatureError("The token is not yet valid")
             expiry = _numeric_date(claims, "exp")
             if expiry <= issued:
                 raise InvalidProviderToken("Invalid access token")
@@ -312,7 +338,7 @@ class SupabaseAuthClient:
                 assurance_level=assurance,
             )
         except (InvalidTokenError, KeyError, TypeError, ValueError) as error:
-            raise InvalidProviderToken("Invalid access token") from error
+            raise InvalidProviderToken("Invalid access token", kind=type(error).__name__) from error
 
     def _key_for(self, kid: str) -> Any:
         with self._jwks_lock:
@@ -382,9 +408,17 @@ def _secret(value: SecretStr | str) -> str:
     return value.get_secret_value() if isinstance(value, SecretStr) else str(value)
 
 
+def _transport_kind(error: httpx.RequestError) -> str:
+    if isinstance(error, httpx.TimeoutException):
+        return "timeout"
+    return "connect" if isinstance(error, httpx.ConnectError) else "transport"
+
+
 def _json_response(response: httpx.Response) -> dict[str, Any]:
     if response.status_code != 200:
-        raise SupabaseAuthUnavailable("Supabase Auth is unavailable")
+        raise SupabaseAuthUnavailable(
+            "Supabase Auth is unavailable", kind=f"http_{response.status_code}"
+        )
     try:
         data = response.json()
     except ValueError as error:

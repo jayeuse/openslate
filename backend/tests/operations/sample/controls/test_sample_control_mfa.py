@@ -24,6 +24,10 @@ OWNER_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 OTP = "287082"  # RFC 6238 SHA1 at timestamp 59, reduced to six digits.
 
 
+# The end of population: the verification readbacks read security events up to here.
+FINISHED_AT = "2026-10-30T08:00:00+00:00"
+
+
 class MfaServer:
     def __init__(self, dataset, fault=None):
         from operations.sample.controls.mfa import plan_mfa_controls
@@ -55,6 +59,7 @@ class MfaServer:
                        for key in dataset.organization.actors.group_access}
         # fmt: on
         self.events = []
+        self.event_windows: list[str | None] = []
         self.reset_receipt = None
 
     def response(self, body=None, status=200, headers=()):
@@ -224,6 +229,7 @@ class MfaServer:
                 self.events.append(self.event(request, response, operation, outcome, metadata))
             return response
         if path == "/api/security-events":
+            self.event_windows.append(request.url.params.get("occurred_before"))
             return self.page(self.events, request)
         if path == "/api/access/groups":
             return self.page(list(self.groups.values()), request)
@@ -406,9 +412,13 @@ def test_mfa_success_requires_real_step_up_revocation_and_exact_restoration(
         "actor_ids": context.user_ids,
         "mappings": {"user": context.user_ids, "group": context.group_ids},
         "admin_id": OWNER_ID,
+        "finished_at": FINISHED_AT,
     }
     counts, issues = verify_mfa_controls(context.clients["admin"], dataset, manifest, OWNER_ID)
     assert issues == [] and counts["mfa_control_actions"] == 1
+    # Seven-pack run on 2026-10-30: Clinic's open-ended readback grew while its pages
+    # were read (the operator signs in to every pack); it must read a closed window.
+    assert server.event_windows[-1] == FINISHED_AT
     assert "control_requests_verified" not in counts  # Family counts cannot replace totals.
     serialized = json.dumps(result) + (tmp_path / "requests.jsonl").read_text()
     for secret in (

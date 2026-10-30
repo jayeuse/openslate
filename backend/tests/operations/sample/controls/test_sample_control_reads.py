@@ -83,10 +83,10 @@ def test_read_control_target_follows_a_changed_dataset_not_the_last_answer() -> 
     from dataclasses import replace
 
     dataset = _dataset("harbor")
-    assert plan_read_controls(dataset)[0].target_key == "internal_field_02"
+    assert plan_read_controls(dataset)[0].target_key == "internal_field_03"
     actors = dataset.organization.actors
     people = tuple(
-        replace(person, status="disabled") if person.key == "internal_field_02" else person
+        replace(person, status="disabled") if person.key == "internal_field_03" else person
         for person in actors.people
     )
     changed = replace(
@@ -95,8 +95,8 @@ def test_read_control_target_follows_a_changed_dataset_not_the_last_answer() -> 
     )
 
     # The first target is no longer an active member, so the next sorted candidate is.
-    assert plan_read_controls(changed)[0].target_key == "internal_field_03"
-    assert plan_read_controls(dataset)[0].target_key == "internal_field_02"
+    assert plan_read_controls(changed)[0].target_key == "internal_field_05"
+    assert plan_read_controls(dataset)[0].target_key == "internal_field_03"
 
 
 def _client(tmp_path: Path, handler) -> SampleClient:
@@ -309,6 +309,8 @@ def test_bulk_session_control_fails_when_post_readback_is_not_empty(tmp_path: Pa
         "policy_not_saved",
         "pagination",
         "remaining_page",
+        "shared_revoked",
+        "skipped_count",
         "session_retention_ignored",
         "event_retention_ignored",
         "retention_restore_lost",
@@ -353,7 +355,10 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
         "mfa_identity": "Sample MFA status differs from the unenrolled actor",
         "policy_not_saved": "Workspace security update was not persisted",
         "pagination": "Administrator session pagination is incomplete or ambiguous",
-        "remaining_page": "Administrator session pagination is incomplete or ambiguous",
+        # The server kept a pack-only session, or ended a shared account's sessions.
+        "remaining_page": "did not keep exactly the shared accounts",
+        "shared_revoked": "skipped other accounts than the shared ones",
+        "skipped_count": "skipped other accounts than the shared ones",
         "session_retention_ignored": "Workspace security update was not persisted",
         "event_retention_ignored": "Workspace security update was not persisted",
         "retention_restore_lost": "Workspace security policy was not restored",
@@ -375,7 +380,8 @@ def test_manage_controls_stop_at_invalid_dependency_or_end_state(tmp_path, probl
             assert error.value.attempt_id is not None
             assert error.value.request_id is not None
         deletes = [row for row in state["seen"] if row == ("DELETE", "/api/auth/admin-sessions")]
-        assert len(deletes) == (problem in {"bulk_unknown", "reauth_denied", "remaining_page"})
+        revoking = {"bulk_unknown", "reauth_denied", "remaining_page", "shared_revoked"}
+        assert len(deletes) == (problem in revoking | {"skipped_count"})
         if problem == "remaining_page":
             assert len(state["logins"]) == len(context.clients)
         if "retention" in problem:

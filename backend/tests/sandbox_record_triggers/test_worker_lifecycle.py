@@ -1,6 +1,7 @@
 """Worker start/stop ownership stays safe around application shutdown."""
 
 import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
@@ -29,7 +30,9 @@ def _one_organization(request: pytest.FixtureRequest, monkeypatch: pytest.Monkey
 
 
 def test_test_environment_never_starts_a_background_worker() -> None:
-    worker = TriggerWorker(SimpleNamespace(environment="test", e2e_background_workers=False))
+    worker = TriggerWorker(
+        SimpleNamespace(environment="test", e2e_background_workers=False, trigger_workers=4)
+    )
 
     worker.start()
 
@@ -38,8 +41,8 @@ def test_test_environment_never_starts_a_background_worker() -> None:
 
 
 def test_stop_reports_when_a_worker_did_not_join() -> None:
-    worker = TriggerWorker(SimpleNamespace(environment="development"))
-    worker._thread = SimpleNamespace(join=lambda **_kwargs: None, is_alive=lambda: True)  # type: ignore[assignment]
+    worker = TriggerWorker(SimpleNamespace(environment="development", trigger_workers=1))
+    worker._threads = [SimpleNamespace(join=lambda **_kwargs: None, is_alive=lambda: True)]  # type: ignore[list-item]
 
     assert not worker.stop()
 
@@ -93,7 +96,7 @@ def test_datetime_thresholds_compare_instants_instead_of_iso_text() -> None:
 
 
 def test_claim_failure_logs_context_and_increases_the_next_idle_wait(monkeypatch) -> None:
-    worker = TriggerWorker(SimpleNamespace(environment="development"))
+    worker = TriggerWorker(SimpleNamespace(environment="development", trigger_workers=1))
     log_event = Mock()
     monkeypatch.setattr("app.systems.sandbox.record_triggers.worker.get_engine", Mock())
     monkeypatch.setattr(
@@ -111,7 +114,7 @@ def test_claim_failure_logs_context_and_increases_the_next_idle_wait(monkeypatch
 
 
 def test_claim_retry_delay_caps_and_resets_after_a_successful_claim_pass(monkeypatch) -> None:
-    worker = TriggerWorker(SimpleNamespace(environment="development"))
+    worker = TriggerWorker(SimpleNamespace(environment="development", trigger_workers=1))
     worker._claim_retry_seconds = 32
     monkeypatch.setattr("app.systems.sandbox.record_triggers.worker.get_engine", Mock())
     monkeypatch.setattr(
@@ -139,7 +142,7 @@ def test_claim_retry_delay_caps_and_resets_after_a_successful_claim_pass(monkeyp
 
 
 def test_shutdown_releases_every_claim_that_was_not_executed(monkeypatch) -> None:
-    worker = TriggerWorker(SimpleNamespace(environment="development"))
+    worker = TriggerWorker(SimpleNamespace(environment="development", trigger_workers=1))
     claims = [
         ClaimedTriggerEvent(id=uuid7(), lease_token=uuid7()),
         ClaimedTriggerEvent(id=uuid7(), lease_token=uuid7()),
@@ -192,3 +195,70 @@ def test_lifespan_keeps_database_pool_when_trigger_worker_is_alive(monkeypatch) 
 
     dispose_database.assert_not_called()
     dispose_readiness.assert_not_called()
+
+
+def test_the_worker_reports_events_run_their_mean_time_and_the_longest_wait(monkeypatch) -> None:
+    # Live seven-pack run: automations waited 16-21 s, and the worker logged no wait or run time.
+    # Several lanes run events at once; they share one line per interval, not one per lane.
+    from datetime import timedelta
+
+    from app.core.base_model import utc_now
+    from app.systems.sandbox.record_triggers import worker as trigger_worker
+
+    worker = TriggerWorker(SimpleNamespace(environment="development", trigger_workers=4))
+    events = []
+    monkeypatch.setattr(trigger_worker, "log_event", lambda *a, **k: events.append((a, k)))
+    monkeypatch.setattr(worker, "_run_claim", lambda _claim: None)
+    together = threading.Barrier(4, timeout=10)
+
+    def lane(waited_seconds: int) -> None:
+        together.wait()
+        for _event in range(50):
+            queued = utc_now() - timedelta(seconds=waited_seconds)
+            worker._execute(ClaimedTriggerEvent(uuid7(), uuid7(), queued))
+        together.wait()
+        worker._report_metrics()
+
+    worker._metrics_started -= trigger_worker._METRICS_SECONDS
+    lanes = [threading.Thread(target=lane, args=(seconds,)) for seconds in (0, 0, 0, 3)]
+    for thread in lanes:
+        thread.start()
+    for thread in lanes:
+        thread.join(10)
+
+    ((name,), fields), = events
+    assert name == "worker_metrics"
+    assert fields["upstream"] == "sandbox-triggers" and fields["count"] == 200
+    assert 3000 <= fields["age_ms"] < 10000
+
+
+def test_an_idle_lane_polls_again_as_soon_as_another_lane_ran_events(monkeypatch) -> None:
+    # A lane's runs queue follow-up events; an idle lane must not leave them for its next poll.
+    worker = TriggerWorker(SimpleNamespace(environment="development", trigger_workers=2))
+    worker._claim_retry_seconds = 60
+    idle_polls = []
+    first_idle_poll = threading.Event()
+    polled_again = threading.Event()
+    ran = threading.Event()
+
+    def run_once(lane: int = 0) -> int:
+        if lane == 1:
+            if ran.is_set():
+                worker._stop.wait(10)
+                return 0
+            # Run only after the idle lane found nothing, so its wait is the one tested.
+            assert first_idle_poll.wait(10)
+            ran.set()
+            return 1
+        idle_polls.append(lane)
+        first_idle_poll.set()
+        if len(idle_polls) == 2:
+            polled_again.set()
+        return 0
+
+    monkeypatch.setattr(worker, "run_once", run_once)
+    worker.start()
+    try:
+        assert polled_again.wait(10), "the idle lane slept through the other lane's work"
+    finally:
+        assert worker.stop()

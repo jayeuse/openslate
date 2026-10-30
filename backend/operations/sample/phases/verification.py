@@ -458,7 +458,15 @@ def verify_phases(
             if rule.dynamic_session and session_id is not None:
                 if rule.security_event is not None:
                     _verify_session_security_event(
-                        client, rule, item, session_id, admin_id, seen_event_ids, counts, issues
+                        client,
+                        rule,
+                        item,
+                        session_id,
+                        admin_id,
+                        seen_event_ids,
+                        counts,
+                        issues,
+                        manifest.get("finished_at"),
                     )
                 user_id = _person_id(manifest, mappings, action.target_key)
                 if user_id is not None:

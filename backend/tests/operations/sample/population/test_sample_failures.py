@@ -188,6 +188,7 @@ def test_populate_uses_one_generated_seed_for_plan_and_population(
         *,
         organization: object,
         host_acceptance: bool = False,
+        installation_controls: bool = True,
     ) -> object:
         planned.append(seed)
         return SimpleNamespace(seed=seed)
@@ -267,6 +268,9 @@ def test_verifier_rebuilds_from_the_recorded_seed_without_drawing_randomness(
         "people": {},
         "content_counts": {},
         "history_skipped": [],
+        # One fixture identity answers for the operator and the pack administrator.
+        "admin_id": "admin-id",
+        "operator_id": "admin-id",
     }
     built_seeds: list[int] = []
 
@@ -303,6 +307,9 @@ def test_verifier_rebuilds_from_the_recorded_seed_without_drawing_randomness(
         ),
     )
     monkeypatch.setattr(verifier, "SampleClient", FakeClient)
+    monkeypatch.setattr(
+        verifier, "roster_logins", lambda *_a: [("admin@harbor.test", "synthetic")]
+    )
     monkeypatch.setattr(verifier, "verify_records_and_relationships", lambda *_a, **_k: ({}, []))
     monkeypatch.setattr(verifier, "verify_history", lambda *_a, **_k: ({}, []))
     monkeypatch.setattr(verifier, "verify_rejections", lambda *_a, **_k: ({}, []))
@@ -315,9 +322,9 @@ def test_verifier_rebuilds_from_the_recorded_seed_without_drawing_randomness(
     result = verifier.verify_sample_data(
         api_url="http://127.0.0.1:8000",
         origin="http://127.0.0.1:3000",
-        admin_email="admin@example.test",
-        expected_admin_id="admin-id",
-        admin_password="synthetic",
+        operator_email="admin@example.test",
+        expected_operator_id="admin-id",
+        operator_password="synthetic",
         run_directory=Path("/private/run"),
     )
 
@@ -354,9 +361,9 @@ def test_population_manifest_records_the_selected_seed(
         api_url="http://127.0.0.1:8000",
         origin="http://127.0.0.1:3000",
         mailpit_url="http://127.0.0.1:8025",
-        admin_email="admin@example.test",
-        expected_admin_id="admin-id",
-        admin_password="synthetic",
+        operator_email="admin@example.test",
+        expected_operator_id="admin-id",
+        operator_password="synthetic",
         run_root=tmp_path,
         profile="small",
         seed=dataset_seed,
@@ -394,9 +401,9 @@ def test_population_failure_records_safe_message_and_failed_stage(
         api_url="http://127.0.0.1:8000",
         origin="http://127.0.0.1:3000",
         mailpit_url="http://127.0.0.1:8025",
-        admin_email="admin@example.test",
-        expected_admin_id="admin-id",
-        admin_password="synthetic",
+        operator_email="admin@example.test",
+        expected_operator_id="admin-id",
+        operator_password="synthetic",
         run_root=tmp_path,
         profile="small",
         seed=42,

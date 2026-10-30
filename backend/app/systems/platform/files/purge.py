@@ -93,8 +93,9 @@ def purge_confirmed(
     """Parent must validate its signed/digest confirmation and current-logo exclusion."""
     if not get_settings().lifecycle_purge_enabled:
         raise error("purge_disabled", PURGE_DISABLED_MESSAGE, 403)
-    authorize_lifecycle(db, actor_id, load(db, file_id))
-    lock_quota(db)
+    candidate = load(db, file_id)
+    authorize_lifecycle(db, actor_id, candidate)
+    lock_quota(db, account=candidate.creator_id if candidate.org_id is None else None)
     if validate_locked is not None:
         validate_locked()
     file = load(db, file_id, lock=True)

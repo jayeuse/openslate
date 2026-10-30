@@ -39,6 +39,8 @@ export function ExportTools({
   const [format, setFormat] = useState<"csv" | "xlsx">("csv");
   const [after, setAfter] = useState("");
   const [before, setBefore] = useState("");
+  // The export download that waits for file capacity on the server.
+  const [waitingExport, setWaitingExport] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
@@ -84,7 +86,12 @@ export function ExportTools({
     setError("");
     try {
       const file = await run(`export-download:${id}`, (client, signal) =>
-        client.downloadExport(id, { signal }),
+        client.downloadExport(id, {
+          signal,
+          on_waiting: (waiting) => {
+            if (!signal.aborted) setWaitingExport(waiting ? id : null);
+          },
+        }),
       );
       const url = URL.createObjectURL(file.bytes);
       try {
@@ -102,6 +109,8 @@ export function ExportTools({
           "The export is unavailable. Start a new export.",
         ),
       );
+    } finally {
+      setWaitingExport(null);
     }
   }
   function choices(privateSources: boolean) {
@@ -221,6 +230,9 @@ export function ExportTools({
                 Download export
               </Button>
             )}
+            <p role="status" className="text-muted-foreground text-sm">
+              {waitingExport === job.id ? "Waiting for the server…" : ""}
+            </p>
           </section>
         ))}
         <ToolAdvanced tool="export">

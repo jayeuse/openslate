@@ -26,7 +26,11 @@ from app.systems.sandbox.fields.validation import parse_field_key, validate_reco
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.record_triggers.outbox import enqueue_record_event
 from app.systems.sandbox.records.assignment_notifications import notify_record_assignments
-from app.systems.sandbox.records.display import FieldDisplayResolver, displayed_record
+from app.systems.sandbox.records.display import (
+    FieldDisplayResolver,
+    displayed_record,
+    label_readers,
+)
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import (
     RecordValidationError,
@@ -210,9 +214,11 @@ def _merge_patch_data(
     existing: dict[str, Any],
     requested: dict[str, Any],
     fields: list[Field],
+    *,
+    readers: frozenset[UUID] | None = None,
 ) -> dict[str, Any]:
     normalized = validate_record_mutation(requested, existing, fields)
-    validate_live_user_assignments(db, module_id, normalized, fields)
+    validate_live_user_assignments(db, module_id, normalized, fields, readers=readers)
     return normalized
 
 
@@ -272,20 +278,25 @@ def create_record(
     fields = _module_fields(db, payload.module_id)
     if not any(not field.is_deleted for field in fields):
         raise _conflict("Module has no active fields")
+    # One read of the module's readers serves validation, notifications and labels.
+    readers = label_readers(db, payload.module_id, fields)
     try:
-        normalized_data = prepare_record_creation(db, payload.module_id, payload.data, fields)
+        normalized_data = prepare_record_creation(
+            db, payload.module_id, payload.data, fields, readers=readers
+        )
     except RecordValidationError as error:
         raise _record_validation_http_error(error) from error
     record = Record(org_id=fields[0].org_id, module_id=payload.module_id, data=normalized_data)
     db.add(record)
     db.flush()
     enqueue_record_event(db, record, previous=None)
-    notify_record_assignments(db, record, previous=None, fields=fields)
+    notify_record_assignments(db, record, previous=None, fields=fields, readers=readers)
+    # The resolver keeps what it needs from the fields, so the commit expiring them
+    # costs no second read.
+    resolver = FieldDisplayResolver(db, payload.module_id, fields, readers=readers)
     _commit(db, "Unable to create record")
     db.refresh(record)
-    # The commit expired the fields; reading them again is one query, not one per field.
-    fields = _module_fields(db, record.module_id)
-    return displayed_record(record, FieldDisplayResolver(db, record.module_id, fields))
+    return displayed_record(record, resolver)
 
 
 @router.patch(
@@ -314,19 +325,22 @@ def update_record(
     if record.is_deleted:
         raise _conflict("Record is deleted")
     _require_current_revision(record, if_match)
+    fields = _module_fields(db, record.module_id)
+    # One read of the module's readers serves validation, notifications and labels.
+    readers = label_readers(db, record.module_id, fields)
     if payload.data is not None:
         previous = dict(record.data)
-        fields = _module_fields(db, record.module_id)
         try:
-            record.data = _merge_patch_data(db, record.module_id, record.data, payload.data, fields)
+            record.data = _merge_patch_data(
+                db, record.module_id, record.data, payload.data, fields, readers=readers
+            )
         except RecordValidationError as error:
             raise _record_validation_http_error(error) from error
         enqueue_record_event(db, record, previous=previous)
-        notify_record_assignments(db, record, previous=previous, fields=fields)
+        notify_record_assignments(db, record, previous=previous, fields=fields, readers=readers)
+    resolver = FieldDisplayResolver(db, record.module_id, fields, readers=readers)
     _commit(db, "Unable to update record")
-    return displayed_record(
-        record, FieldDisplayResolver(db, record.module_id, _module_fields(db, record.module_id))
-    )
+    return displayed_record(record, resolver)
 
 
 @router.delete("/{record_id}", status_code=status.HTTP_204_NO_CONTENT)

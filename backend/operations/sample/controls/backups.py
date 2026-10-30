@@ -54,6 +54,8 @@ _UNSTARTED_FACTS = (
 
 
 def plan_backup_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
+    if not dataset.installation_controls:
+        return ()  # Another pack in this installation runs the installation controls.
     if dataset.organization.phases is None:
         return ()
     specs: tuple[tuple[str, int, dict[str, PhaseJsonValue]], ...] = (
@@ -68,7 +70,7 @@ def plan_backup_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             key=f"control:backups:{operation}",
             phase="reorganization",
             kind="backup_controls",
-            actor_key="admin",
+            actor_key="operator",
             target_key="control:version" if operation == "review_version" else "control:backups",
             values={
                 "operation": operation,
@@ -215,7 +217,7 @@ def backup_request_contract(action: PhaseAction) -> dict[str, tuple[str, str, st
         "review_version": (("version_observation", "GET", "/api/version"),),
     }
     return {
-        step: ("admin", method, path, 201 if method == "POST" else 200)
+        step: ("operator", method, path, 201 if method == "POST" else 200)
         for step, method, path in routes[str(action.values["operation"])]
     }
 
@@ -247,7 +249,7 @@ def execute_backup_control(
             action,
             context,
             [],
-            actor_key="admin",
+            actor_key=action.actor_key,
             method=method,
             path=path,
             step=step,
@@ -265,8 +267,8 @@ def execute_backup_control(
         evidence.append(
             {
                 "step": step,
-                "actor_key": "admin",
-                "actor_id": _id(context.user_ids, "admin", label="actor", step=step),
+                "actor_key": action.actor_key,
+                "actor_id": _id(context.user_ids, action.actor_key, label="actor", step=step),
                 "method": method,
                 "path": path,
                 "expected_status": response.status_code,
@@ -366,7 +368,12 @@ def execute_backup_control(
                 "Queued backup readback differs from its receipt", step=action.key
             )
         _record_mapping(
-            context, context.clients["admin"], "backup_requests", QUEUE_KEY, run["id"], mappings
+            context,
+            context.clients[action.actor_key],
+            "backup_requests",
+            QUEUE_KEY,
+            run["id"],
+            mappings,
         )
         extra["queued_run"] = run
     elif operation == "review_backup_history":

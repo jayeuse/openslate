@@ -24,7 +24,7 @@ from app.systems.access.users.schemas import (
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.access import error, fresh_user
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import StorageBackend, transfer_slot
+from app.systems.platform.files.providers import StorageBackend, file_processing
 from app.systems.platform.files.purge import (
     DeletionClaim,
     claim_avatar_replacement,
@@ -111,10 +111,15 @@ def update_self_profile(
     avatar_supplied = "avatar_file_id" in payload.model_fields_set
     actor_id = identity.user.id
     claim: DeletionClaim | None = None
-    with transfer_slot() if avatar_supplied else nullcontext():
+    if avatar_supplied:
+        # The old avatar's Storage cleanup cannot be retried by the client, so wait for a slot.
+        # End the authentication read first: a waiting save holds no pooled connection, and
+        # the save rechecks the session and locks the person again in its own transaction.
+        db.rollback()
+    with file_processing() if avatar_supplied else nullcontext():
         try:
             if avatar_supplied:
-                lock_quota(db)
+                lock_quota(db, account=actor_id)
             require_live_session(db, actor_id=actor_id, session_id=identity.session_id)
             db.refresh(identity.user, with_for_update={"nowait": True} if avatar_supplied else True)
             actor = fresh_user(db, actor_id)

@@ -9,7 +9,10 @@ class IdentityError(RuntimeError):
 
 
 class InvalidCredentials(IdentityError):
-    pass
+    def __init__(self, message: str = "Invalid credentials", *, reason: str | None = None) -> None:
+        super().__init__(message)
+        # A fixed refusal kind for operational logs; never account or token data.
+        self.reason = reason
 
 
 class RefreshReplayDetected(InvalidCredentials):

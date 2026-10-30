@@ -26,7 +26,20 @@ from operations.sample.phases.actions import (
 
 
 def _audit_actions(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
-    module = dataset.organization.catalog.modules[0]
+    modules = dataset.organization.catalog.modules
+    # The review searches the module name, so pick one no other module name contains.
+    module = next(
+        (
+            candidate
+            for candidate in modules
+            if not any(
+                candidate.name.lower() in other.name.lower()
+                for other in modules
+                if other is not candidate
+            )
+        ),
+        modules[0],
+    )
     return tuple(
         PhaseAction(
             key=f"control:{operation}",

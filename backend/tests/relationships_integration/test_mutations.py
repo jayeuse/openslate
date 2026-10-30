@@ -102,22 +102,40 @@ def test_postgres_partial_unique_allows_relink_after_soft_delete(
     assert sum(not edge.is_deleted for edge in edges) == 1
 
 
-@pytest.mark.parametrize("side", ["source", "target"])
+# One-to-one field with live edges s0->t0 and s1->t1. The checks report in order:
+# duplicate, then the source's existing target, then the target's existing source.
+@pytest.mark.parametrize(
+    ("source_index", "target_index", "message"),
+    [
+        (0, 0, "Relationship already exists"),
+        (0, 2, "Source already has a relationship target"),
+        (2, 0, "Target already has a relationship source"),
+        (0, 1, "Source already has a relationship target"),
+    ],
+    ids=["duplicate", "source", "target", "source-before-target"],
+)
 def test_relationship_cardinality_rejects_a_second_edge(
-    side: str, integration_db: Session, owned_ids: set[UUID]
+    source_index: int,
+    target_index: int,
+    message: str,
+    integration_db: Session,
+    owned_ids: set[UUID],
 ) -> None:
-    field, _, _, sources, targets = _seed_graph(integration_db, owned_ids, record_count=2)
+    field, _, _, sources, targets = _seed_graph(integration_db, owned_ids, record_count=3)
     _add_edge(integration_db, owned_ids, field, sources[0], targets[0])
-    source, target = (sources[0], targets[1]) if side == "source" else (sources[1], targets[0])
-    with pytest.raises(RelationshipConflict):
-        create_relationship(integration_db, field.id, source.id, target.id)
+    _add_edge(integration_db, owned_ids, field, sources[1], targets[1])
+    with pytest.raises(RelationshipConflict) as raised:
+        create_relationship(
+            integration_db, field.id, sources[source_index].id, targets[target_index].id
+        )
+    assert raised.value.detail == message
     assert (
         integration_db.scalar(
             select(func.count())
             .select_from(RelationshipEdge)
             .where(RelationshipEdge.field_id == field.id)
         )
-        == 1
+        == 2
     )
 
 

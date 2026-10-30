@@ -33,7 +33,8 @@ def test_real_chart_flushes_publish_one_opaque_hint_only_after_commit_and_none_a
     db.commit()
     published = []
     monkeypatch.setattr(
-        "app.systems.manage.audit.listeners.publish_invalidations", published.extend
+        "app.systems.manage.audit.listeners.publish_invalidations",
+        lambda events, **_kwargs: published.extend(events),
     )
     chart = Chart(
         org_id=module.org_id,

@@ -27,6 +27,10 @@ import {
 } from "@/components/profile/adapters/profile-api";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
+  FILES_BUSY_MESSAGE,
+  isFilesBusy,
+} from "@/components/systems/shared/adapters/files-api";
+import {
   profileSelfKey,
   profileSelfOptions,
 } from "@/components/profile/adapters/profile-queries";
@@ -75,6 +79,8 @@ export function useIdentityEditor() {
   // The Photo row's own words after a photo command (PD54): the photo saves
   // at once, so it never moves the Save profile chip.
   const [photoDone, setPhotoDone] = useState<"saved" | "removed" | null>(null);
+  // The photo upload waits for file capacity on the server.
+  const [photoWaiting, setPhotoWaiting] = useState(false);
   const [photoRunning, setPhotoRunning] = useState<"upload" | "remove" | null>(
     null,
   );
@@ -217,6 +223,8 @@ export function useIdentityEditor() {
       setPhotoRunning(file ? "upload" : "remove");
     }
     const submitted = draft;
+    // The server refused the photo bytes before reading them; nothing changed.
+    let uploadRefused = false;
     try {
       await client.cancelQueries({
         queryKey: profileSelfKey(userId),
@@ -231,14 +239,22 @@ export function useIdentityEditor() {
           reserved.id,
           file,
           controller.signal,
-        );
+          (waiting) => {
+            if (current()) setPhotoWaiting(waiting);
+          },
+        ).catch((failure: unknown) => {
+          uploadRefused = isFilesBusy(failure);
+          throw failure;
+        });
         if (!current()) return;
         patch = { avatar_file_id: uploaded.id };
       }
       if (!patch || !current()) return;
       let partial = false;
       try {
-        await saveProfile(userId, patch, controller.signal);
+        await saveProfile(userId, patch, controller.signal, (waiting) => {
+          if (current()) setPhotoWaiting(waiting);
+        });
       } catch (failure) {
         if (!profileCleanupPartial(failure)) throw failure;
         partial = true;
@@ -268,7 +284,9 @@ export function useIdentityEditor() {
       void client.invalidateQueries({ queryKey: authMeOptions().queryKey });
     } catch (failure) {
       if (!current()) return;
-      if (photoCommand) {
+      if (uploadRefused || isFilesBusy(failure))
+        setPhotoError(FILES_BUSY_MESSAGE);
+      else if (photoCommand) {
         setPhotoError(PHOTO_UNCERTAIN);
         setPhotoLocked(true);
       } else setSaveError("Profile could not be saved. Try again.");
@@ -278,6 +296,7 @@ export function useIdentityEditor() {
       if (mounted.current) {
         setPending(false);
         setPhotoRunning(null);
+        setPhotoWaiting(false);
       }
     }
   }
@@ -326,7 +345,9 @@ export function useIdentityEditor() {
     /** The Photo row's status words: during, then after a photo command. */
     photoStatus:
       photoRunning === "upload"
-        ? "Uploading…"
+        ? photoWaiting
+          ? "Waiting for the server…"
+          : "Uploading…"
         : photoRunning === "remove"
           ? "Removing…"
           : photoDone === "saved"
@@ -335,6 +356,8 @@ export function useIdentityEditor() {
               ? "Photo removed"
               : "",
     uploading: photoRunning === "upload",
+    /** The upload waits for the server; its status words are shown, not only heard. */
+    photoWaiting: photoRunning === "upload" && photoWaiting,
     photoDisabled: blocked || photoLocked,
     retryable: Boolean(loadError) || photoLocked,
     retrying: verifying,

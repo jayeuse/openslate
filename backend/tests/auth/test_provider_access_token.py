@@ -4,7 +4,8 @@ Every token here is signed with a key generated for the test, and ``SupabaseAuth
 verifies it for real against a JWKS served over ``httpx.MockTransport``. The claim matrix
 (issuer, audience, expiry, subject, session, assurance, foreign key) is owned by
 ``test_mfa.py::test_verified_provider_access_uses_exact_instance_session_and_assurance``;
-this file owns the token size bound, the header refusals, zero leeway, the JWKS key filter
+this file owns the token size bound, the header refusals, zero expiry leeway, the issued-at
+clock allowance, the JWKS key filter
 and the key cache timing.
 """
 
@@ -138,11 +139,27 @@ def test_expiry_has_zero_leeway(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(jwt.api_jwt, "datetime", FrozenDatetime)
 
-    with pytest.raises(InvalidProviderToken):
+    with pytest.raises(InvalidProviderToken) as refused:
         client.verify_access_token(expired_this_second)
+    # The kind names the failed check for refresh logs (live seven-pack run).
+    assert refused.value.kind == "ExpiredSignatureError"
     assert client.verify_access_token(valid_next_second).expires_at == datetime.fromtimestamp(
         1_900_000_001, UTC
     )
+
+
+@pytest.mark.parametrize("claim", ["iat", "nbf"])
+def test_a_token_issued_on_a_clock_ahead_is_admitted_within_five_seconds(claim: str) -> None:
+    # Live seven-pack run: Auth in the Docker VM minted tokens a fraction of a second
+    # ahead of the API host, and zero leeway refused each refresh as not yet valid.
+    key = ec.generate_private_key(ec.SECP256R1())
+    client = _client([_jwk(key)])
+    now = int(datetime.now(UTC).timestamp())
+
+    assert client.verify_access_token(_token(key, extra={claim: now + 4})).user_id
+    with pytest.raises(InvalidProviderToken) as refused:
+        client.verify_access_token(_token(key, extra={claim: now + 8}))
+    assert refused.value.kind == "ImmatureSignatureError"
 
 
 def test_a_boolean_issued_at_claim_is_refused() -> None:

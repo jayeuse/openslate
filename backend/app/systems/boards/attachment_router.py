@@ -30,6 +30,7 @@ from app.systems.platform.files.providers import (
     ProviderUnavailable,
     StorageBackend,
     hold_file_worker,
+    reserve_download,
 )
 from app.systems.platform.files.schemas import FileResponse
 from app.systems.platform.files.storage import get_storage
@@ -115,6 +116,7 @@ def _download(
         key, digest, size = file.object_key, file.digest, file.actual_size
         filename, media_type = file.filename, file.media_type or "application/octet-stream"
         db.commit()
+        reserve_download(size or 0)
         try:
             content = storage.download(key)
         except ProviderUnavailable as exc:

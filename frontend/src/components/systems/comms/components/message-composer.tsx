@@ -635,12 +635,17 @@ export function MessageComposer({
         >
           <bdi>{item.file.name}</bdi>
           {item.active ? (
-            <progress
-              aria-label={`Upload ${item.file.name}`}
-              max={100}
-              value={item.progress}
-              className="min-w-0 flex-1"
-            />
+            <>
+              <progress
+                aria-label={`Upload ${item.file.name}`}
+                max={100}
+                value={item.progress}
+                className="min-w-0 flex-1"
+              />
+              <span role="status" className="text-muted-foreground">
+                {item.waiting ? "Waiting for the server…" : ""}
+              </span>
+            </>
           ) : (
             <>
               <span role="alert">{item.error}</span>

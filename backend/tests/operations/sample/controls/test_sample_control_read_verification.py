@@ -20,6 +20,7 @@ from operations.sample.phases.plan import phase_action_to_manifest
 from operations.sample.scenario import build_dataset
 
 ADMIN_ID = "55555555-5555-4555-8555-555555555555"
+OPERATOR_ID = "0b6f1f5e-2c39-4f4e-9d0a-0c2bb1f6a1d4"
 TARGET_ID = "66666666-6666-4666-8666-666666666666"
 REQUEST_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 READ_COUNTS = {
@@ -105,7 +106,9 @@ def _verify(
         tmp_path / "verification-requests.jsonl",
         transport=httpx.MockTransport(handle),
     ) as client:
-        return verification.verify_controls(client, dataset, manifest, admin_id=ADMIN_ID)
+        return verification.verify_controls(
+            client, dataset, {"operator_id": OPERATOR_ID, **manifest}, ADMIN_ID, operator=client
+        )
 
 
 def _patch(monkeypatch, action: PhaseAction) -> None:

@@ -131,6 +131,57 @@ test("two admitted tabs share one connection set and the survivor takes ownershi
   }
 });
 
+test("a follower that meets an already live new leader still refetches after the handoff", async ({
+  page,
+  context,
+}) => {
+  const messages: LiveMessage[] = [];
+  const tabs = [page, await context.newPage(), await context.newPage()];
+  const apis = [];
+  for (const tab of tabs)
+    apis.push(await prepare(tab, { messageStore: messages }));
+  const unreadReads = new Map<Page, number>(tabs.map((tab) => [tab, 0]));
+  for (const tab of tabs)
+    tab.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/notifications/unread-count")
+        unreadReads.set(tab, unreadReads.get(tab)! + 1);
+    });
+  try {
+    for (const tab of tabs) {
+      await tab.goto("/comms");
+      await expect(
+        tab.getByRole("status", {
+          name: "Conversation connection",
+          exact: true,
+        }),
+      ).toContainText("Live");
+    }
+    const active = async (tab: Page) => (await streams(tab)).active;
+    const leader = (
+      await Promise.all(tabs.map(async (tab) => [tab, await active(tab)]))
+    ).find(([, count]) => count === 1)?.[0] as Page;
+    const survivors = tabs.filter((tab) => tab !== leader);
+    const before = new Map(
+      survivors.map((tab) => [tab, unreadReads.get(tab)!]),
+    );
+    // Changes committed while no tab holds the stream reach no tab directly.
+    await leader.close();
+    await expect
+      .poll(
+        async () => (await active(survivors[0])) + (await active(survivors[1])),
+      )
+      .toBe(1);
+    const follower = (await active(survivors[0])) ? survivors[1] : survivors[0];
+    // The new stream's opening resync must reach the follower as a refetch.
+    await expect
+      .poll(() => unreadReads.get(follower))
+      .toBeGreaterThan(before.get(follower)!);
+  } finally {
+    for (const tab of tabs) if (!tab.isClosed()) await tab.close();
+    for (const api of apis) api.close();
+  }
+});
+
 test("different organizations hold separate connection sets without cross-scope events", async ({
   page,
   context,

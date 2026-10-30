@@ -10,8 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.platform.files import providers
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files.providers import FileCapacity, file_processing
 from tests.auth.session_policy_support import policy_world as policy_world
 from tests.workspace.test_workspace_logo_cleanup_integration import (
     current,
@@ -27,6 +28,7 @@ pytestmark = pytest.mark.integration
 
 
 def test_cleanup_provider_io_has_no_workspace_file_or_quota_transaction_locks(logo_world):
+    from app.core.database.organization_scope import scope_session
     from app.systems.platform.files.quota import lock_quota
 
     world = logo_world
@@ -36,6 +38,8 @@ def test_cleanup_provider_io_has_no_workspace_file_or_quota_transaction_locks(lo
 
     def independent_locks():
         with Session(world.owner) as db:
+            # The logo is charged to its organization, so the lock is that organization's.
+            scope_session(db, world.logo_org_id)
             lock_quota(db)
             db.scalar(select(WorkspaceProfile).where(
                 WorkspaceProfile.id == world.logo_org_id
@@ -146,12 +150,19 @@ def test_active_replacement_claim_cannot_be_stolen_by_reconciliation(logo_world)
     assert world.storage.deleted == before and stored_file(world, old)["operation_id"] == token
 
 
-def test_supplied_logo_obeys_capacity_while_text_only_settings_still_save(logo_world):
+@pytest.fixture
+def two_slots(monkeypatch):
+    """Two processing slots, and a short wait so a refusal does not take the full bound."""
+    monkeypatch.setattr(providers, "_pool", FileCapacity(256 * 1024 * 1024, 2))
+    monkeypatch.setattr(providers, "PROCESSING_WAIT_SECONDS", 0.05)
+
+
+def test_supplied_logo_obeys_capacity_while_text_only_settings_still_save(logo_world, two_slots):
     world = logo_world
     old, _ = ready_logo(world, bind=True)
     new, _ = ready_logo(world)
     before = current(world)
-    with transfer_slot(), transfer_slot():
+    with file_processing(wait_seconds=0), file_processing(wait_seconds=0):
         refused = patch(world, logo_file_id=str(new))
         assert refused.status_code == 503
         assert refused.json()["detail"]["code"] == "files_busy"
@@ -160,7 +171,7 @@ def test_supplied_logo_obeys_capacity_while_text_only_settings_still_save(logo_w
     assert current(world)[0] == old
 
 
-def test_two_stalled_cleanup_workers_hold_both_slots_until_actual_exit(logo_world):
+def test_two_stalled_cleanup_workers_hold_both_slots_until_actual_exit(logo_world, two_slots):
     world = logo_world
     old, old_key = ready_logo(world, bind=True)
     first, first_key = ready_logo(world)
@@ -189,9 +200,9 @@ def test_two_stalled_cleanup_workers_hold_both_slots_until_actual_exit(logo_worl
         release[old_key].set()
         first_worker.join(10)
         assert not first_worker.is_alive()
-        with transfer_slot():
+        with file_processing(wait_seconds=0):
             with pytest.raises(HTTPException) as caught:
-                with transfer_slot():
+                with file_processing(wait_seconds=0):
                     pytest.fail("A live second cleanup lost its physical slot")
             assert caught.value.status_code == 503
     finally:

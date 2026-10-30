@@ -83,6 +83,7 @@ def _manifest(
         "actor_ids": {"admin": ADMIN_ID, "member": MEMBER_ID, "manager": MEMBER_ID},
         "people": {"member": {"user_id": TARGET_ID}},
         "mappings": mappings or {},
+        "finished_at": "2026-10-29T08:00:00+00:00",
     }
 
 

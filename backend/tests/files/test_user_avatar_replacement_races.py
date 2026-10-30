@@ -143,7 +143,8 @@ def test_replacement_commits_binding_and_deletion_intent_before_unlocked_io(avat
 
     def independent_locks():
         with Session(world.owner) as db:
-            lock_quota(db)
+            # Avatar capacity belongs to the account, so its admission lock is the account's.
+            lock_quota(db, account=world.actor_id)
             user = db.scalar(
                 select(User).where(User.id == world.actor_id).with_for_update(nowait=True)
             )

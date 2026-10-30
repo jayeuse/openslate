@@ -70,6 +70,9 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
             transport http {
+                # Drop an idle upstream connection before uvicorn does (SERVER_KEEP_ALIVE_SECONDS,
+                # 5 s): a request sent on a connection uvicorn just closed fails with 502.
+                keepalive 3s
                 compression off
                 dial_timeout 5s
                 response_header_timeout 30s
@@ -90,6 +93,9 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
             transport http {
+                # Drop an idle upstream connection before uvicorn does (SERVER_KEEP_ALIVE_SECONDS,
+                # 5 s): a request sent on a connection uvicorn just closed fails with 502.
+                keepalive 3s
                 compression off
                 dial_timeout 5s
                 response_header_timeout 330s
@@ -105,6 +111,9 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
             transport http {
+                # Drop an idle upstream connection before uvicorn does (SERVER_KEEP_ALIVE_SECONDS,
+                # 5 s): a request sent on a connection uvicorn just closed fails with 502.
+                keepalive 3s
                 dial_timeout 5s
                 response_header_timeout 60s
             }
@@ -118,6 +127,9 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
             header_up X-Forwarded-Host {http.request.hostport}
             header_up X-Forwarded-Proto {http.request.scheme}
             transport http {
+                # Drop an idle upstream connection before uvicorn does (SERVER_KEEP_ALIVE_SECONDS,
+                # 5 s): a request sent on a connection uvicorn just closed fails with 502.
+                keepalive 3s
                 dial_timeout 5s
                 response_header_timeout 60s
             }

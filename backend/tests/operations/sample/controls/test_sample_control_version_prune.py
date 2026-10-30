@@ -12,6 +12,7 @@ from operations.sample.controls.sandbox import execute_sandbox_control, plan_san
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
 from operations.sample.population import workflow
+from operations.sample.population.people import SampleActorCredential
 from tests.operations.sample.controls.sample_version_prune_wire import (
     ADMIN_ID,
     RUN_ID,
@@ -121,6 +122,15 @@ def test_actual_population_prepares_only_owned_versions_before_its_authored_chec
         raise SandboxFinished
 
     monkeypatch.setattr(workflow, "SampleClient", lambda *_args: context.clients["admin"])
+    # One fixture session acts as the operator and as the pack administrator it invites.
+    monkeypatch.setattr(workflow, "create_run_roster", lambda *_args: None)
+    monkeypatch.setattr(
+        workflow,
+        "invite_pack_administrator",
+        lambda *_args, **_kwargs: SampleActorCredential(
+            ADMIN_ID, "fixture@example.test", "fixture-only"
+        ),
+    )
     monkeypatch.setattr(
         workflow,
         "assert_pristine_baseline",
@@ -137,9 +147,9 @@ def test_actual_population_prepares_only_owned_versions_before_its_authored_chec
             api_url="http://sample.test",
             origin="http://localhost",
             mailpit_url="http://mail.test",
-            admin_email="fixture@example.test",
-            admin_password="fixture-only",
-            expected_admin_id=ADMIN_ID,
+            operator_email="fixture@example.test",
+            operator_password="fixture-only",
+            expected_operator_id=ADMIN_ID,
             run_directory=tmp_path,
             run_id=RUN_ID,
             dataset=dataset,

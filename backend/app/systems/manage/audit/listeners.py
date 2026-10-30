@@ -306,7 +306,10 @@ def broadcast_committed_changes(session: AuditSession) -> None:
     if not invalidations:
         return
     try:
-        publish_invalidations(tuple(dict.fromkeys(invalidations)))
+        publish_invalidations(
+            tuple(dict.fromkeys(invalidations)),
+            database_url=session.get_bind().engine.url.render_as_string(hide_password=False),
+        )
     except Exception:
         # Realtime is best-effort: a committed mutation remains successful.
         log_event(

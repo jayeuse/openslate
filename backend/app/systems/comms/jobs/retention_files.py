@@ -11,9 +11,10 @@ from app.core.base_model import utc_now
 from app.core.database.organization_scope import bound_organization_column
 from app.systems.platform.files.access import require_unlinked
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import StorageBackend, transfer_slot
+from app.systems.platform.files.providers import StorageBackend, file_processing
 from app.systems.platform.files.purge import DeletionClaim, delete_and_finalize
 from app.systems.platform.files.service import _claim
+from app.systems.platform.files.validation import MAX_BYTES
 
 
 def mark_file(db: Session, file: File, now: datetime) -> None:
@@ -73,7 +74,7 @@ def cleanup_file(db: Session, identity: UUID, actor_id: UUID, storage: StorageBa
             file.operation_id,
         )
         db.commit()
-        with transfer_slot():
+        with file_processing(size if size is not None else MAX_BYTES):
             content = storage.download(key)
         from hashlib import sha256
 
@@ -102,6 +103,6 @@ def cleanup_file(db: Session, identity: UUID, actor_id: UUID, storage: StorageBa
     file.deletion_origin = "comms_retention"
     claim = DeletionClaim(file.id, file.object_key, token, actor_id)
     db.commit()
-    with transfer_slot():
+    with file_processing():
         delete_and_finalize(db, claim, storage)
     return True

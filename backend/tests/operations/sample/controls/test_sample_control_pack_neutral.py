@@ -13,7 +13,7 @@ import pytest
 import operations as operations_package
 from app.systems.sandbox.designs.schemas import SandboxBindingResponse
 from operations.sample.controls.actions import plan_controls
-from operations.sample.packs.registry import get_pack
+from operations.sample.packs.registry import get_pack, pack_keys
 from operations.sample.phases.expectations import read_phase_plan
 from operations.sample.scenario import build_dataset
 
@@ -130,7 +130,7 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
     assert actions[-3] == bulk
     assert actions[-2].values["operation"] == "review_notifications"
     assert actions[-1].values["operation"] == "revoke_user_sessions"
-    actors = {person.key for person in dataset.organization.actors.people} | {"admin"}
+    actors = {person.key for person in dataset.organization.actors.people} | {"admin", "operator"}
     assert all(action.actor_key in actors for action in actions)
     assert read_phase_plan({"phase_plan": [asdict(action) for action in actions]}) == actions
     unknown_pack = replace(
@@ -142,13 +142,15 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
 
 
 def test_generic_control_planners_contain_no_fixed_pack_module_or_department_keys() -> None:
-    packs = [get_pack(key) for key in REFERENCE_PACKS]
+    packs = [get_pack(key) for key in pack_keys()]  # Every registered pack, new ones too.
     forbidden = set(REFERENCE_PACKS)
     forbidden.update(module.key for pack in packs for module in pack.catalog.modules)
     forbidden.update(key for pack in packs for key, _ in pack.catalog.departments)
     # Required API binding kinds may coincide with catalog keys; only the
     # actual backend schema defines this wire-vocabulary exception.
     forbidden.difference_update(get_args(SandboxBindingResponse.model_fields["kind"].annotation))
+    # The host runner's own folder of acceptance claims, not the Clinic module.
+    forbidden.discard("claims")
     engine = Path(operations_package.__file__).resolve().parent / "sample"
     paths = sorted(path for path in engine.rglob("*.py") if "packs" not in path.parts)
     assert len(paths) > 50, "the generic sample engine was not found"
@@ -163,3 +165,34 @@ def test_generic_control_planners_contain_no_fixed_pack_module_or_department_key
             ):
                 violations.append(f"{path.name}:{node.lineno}: {node.value}")
     assert not violations, f"Pack-specific keys in generic control code: {violations}"
+
+
+@pytest.mark.parametrize("pack_key", pack_keys())
+def test_the_session_revocation_target_never_belongs_to_a_second_organization(
+    pack_key: str,
+) -> None:
+    # Live Local government run: the target was also a partner-structure member, so the
+    # pack administrator's revocation was refused (409) for a shared account.
+    from operations.sample.controls.account import plan_account_controls
+    from operations.sample.controls.comms_structure import plan_structure_controls
+    from operations.sample.controls.reads import plan_read_controls
+
+    dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
+    shared = {plan_account_controls(dataset)[0].actor_key}
+    shared.update(key for action in plan_structure_controls(dataset)
+                  for key in action.values["member_keys"])  # fmt: skip
+
+    assert plan_read_controls(dataset)[0].target_key not in shared
+
+
+@pytest.mark.parametrize("pack_key", pack_keys())
+def test_the_audit_review_searches_a_module_name_no_other_module_contains(pack_key: str) -> None:
+    # Live Manufacturer run: searching "Customer" also listed Customer Invoice and Customer
+    # Payment entries, so the review saw another module's audit rows.
+    from operations.sample.controls.actions import _audit_actions
+
+    dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
+    label = str(_audit_actions(dataset)[0].values["expected_label"])
+    others = [m.name for m in dataset.organization.catalog.modules if m.name != label]
+
+    assert not [name for name in others if label.lower() in name.lower()]

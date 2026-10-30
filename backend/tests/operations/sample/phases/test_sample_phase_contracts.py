@@ -182,7 +182,7 @@ def test_real_executor_restore_and_session_evidence_uses_canonical_ids(
                 200, json=_page(request, audits[request.url.params["request_id"]])
             )
         if path == "/api/security-events":
-            assert set(request.url.params) == {"limit", "offset"}
+            assert set(request.url.params) == {"limit", "offset", "occurred_before"}
             return httpx.Response(200, json=_page(request, security_events))
         if request.method == "GET":
             if path == "/api/auth/sessions":
@@ -316,6 +316,7 @@ def test_real_executor_restore_and_session_evidence_uses_canonical_ids(
             "phase_results": results,
             "mappings": context.runtime_mappings,
             "actor_ids": user_ids,
+            "finished_at": "2026-10-29T08:00:00+00:00",
         }
         verifying = True
         observed, issues = verify_phases(

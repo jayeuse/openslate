@@ -10,6 +10,7 @@ from app.systems.access.users.sessions_schemas import AdminSessionCollectionRequ
 from app.systems.manage.workspace.security_schemas import WorkspaceSecurityUpdate
 from operations.sample.client import SampleClient
 from operations.sample.controls.actions import plan_controls
+from operations.sample.controls.manage import _shared_primary_keys
 from operations.sample.packs.registry import get_pack
 from operations.sample.phases.actions import PhaseExecutionContext
 from operations.sample.population.people import SampleActorCredential
@@ -54,12 +55,17 @@ def _manage_run(tmp_path, pack_key, problem=None):
         for p in dataset.organization.actors.people
         if p.role == "member" and p.status == "active"
     }
-    user_ids = {key: _id(key) for key in people} | {"admin": _id("admin")}
+    staff = {"admin": _id("admin"), "operator": _id("operator")}
+    user_ids = {key: _id(key) for key in people} | staff
+    # Accounts that also belong to another organization: the server keeps their sessions.
+    shared = {"operator", *_shared_primary_keys(dataset)}
     credentials = {
         key: SampleActorCredential(user_ids[key], p.email, "Owned-Fixture-Password-123")
         for key, p in people.items()
     }
-    emails = {c.email: key for key, c in credentials.items()} | {"admin@example.test": "admin"}
+    emails = {c.email: key for key, c in credentials.items()} | {
+        f"{key}@example.test": key for key in staff
+    }
     sessions, clients = {}, {}
     policy = {
         "revision": 7,
@@ -77,7 +83,14 @@ def _manage_run(tmp_path, pack_key, problem=None):
         **dict.fromkeys(("login_window_minutes", "login_cooldown_minutes"), 15),
         "ip_allow_list": [],
     }
-    state = {"seen": [], "policy": policy, "patches": [], "logins": [], "revoked": False}
+    state = {
+        "seen": [],
+        "policy": policy,
+        "patches": [],
+        "logins": [],
+        "revoked": False,
+        "shared": shared,
+    }
 
     def handler(request):
         path, method = request.url.path, request.method
@@ -122,7 +135,7 @@ def _manage_run(tmp_path, pack_key, problem=None):
                 headers=headers,
                 json={
                     "id": user_ids[actor],
-                    "role": "admin" if actor == "admin" else "member",
+                    "role": "admin" if actor in staff else "member",
                     "status": "active",
                 },
             )
@@ -139,9 +152,11 @@ def _manage_run(tmp_path, pack_key, problem=None):
                     "factors": [],
                 },
             )
-        assert actor == "admin"
+        assert actor in staff
         if path == "/api/workspace/security":
             if method == "PATCH":
+                # Installation-wide fields need the installation owner.
+                assert actor == "operator"
                 state["patches"].append(body)
                 payload = WorkspaceSecurityUpdate.model_validate(body)
                 assert payload.revision == policy["revision"]
@@ -167,24 +182,33 @@ def _manage_run(tmp_path, pack_key, problem=None):
                 return httpx.Response(200, headers=headers, json=merged)
             return httpx.Response(200, headers=headers, json=policy)
         if path == "/api/auth/admin-sessions":
+            assert actor == "admin"
             if method == "DELETE":
                 assert not request.content and not request.url.query
                 if problem == "bulk_unknown":
                     return httpx.Response(
                         503, headers=headers, json={"detail": "Session revocation is unavailable"}
                     )
-                sessions.clear()
-                sessions[session] = "admin"
+                kept = {"operator"} if problem == "shared_revoked" else shared
+                skipped = {key for sid, key in sessions.items() if sid != session} & kept
+                for sid, key in list(sessions.items()):
+                    if sid != session and key not in kept:
+                        del sessions[sid]
                 if problem == "remaining_page":
-                    sessions[_id("unmapped-remote-session")] = "admin"
+                    sessions[_id("unmapped-remote-session")] = next(
+                        key for key in people if key not in shared
+                    )
                 state["revoked"] = True
-                return httpx.Response(204, headers=headers)
+                count = len(skipped) + (problem == "skipped_count")
+                return httpx.Response(
+                    204, headers=[*headers, ("X-Skipped-Shared-Accounts", str(count))]
+                )
             query = AdminSessionCollectionRequest.model_validate(dict(request.url.params))
             rows = [
                 {
                     "id": sid,
                     "user_id": user_ids[key],
-                    "person_name": "Administrator" if key == "admin" else people[key].name,
+                    "person_name": key.title() if key in staff else people[key].name,
                     "user_agent": "python-httpx",
                     "ip_address": None,
                     "device": "Unknown",
@@ -213,8 +237,6 @@ def _manage_run(tmp_path, pack_key, problem=None):
                 reverse=query.sort_order == "desc",
             )
             items = rows[query.offset : query.offset + query.limit]
-            if problem == "remaining_page" and state["revoked"] and query.status == "all":
-                items = [row for row in rows if row["current"]]
             return httpx.Response(
                 200,
                 headers=headers,
@@ -239,7 +261,7 @@ def _manage_run(tmp_path, pack_key, problem=None):
             transport=httpx.MockTransport(handler),
         )
         client.login(
-            "admin@example.test" if actor == "admin" else credentials[actor].email,
+            f"{actor}@example.test" if actor in staff else credentials[actor].email,
             "Owned-Fixture-Password-123",
         )
         clients[actor] = client

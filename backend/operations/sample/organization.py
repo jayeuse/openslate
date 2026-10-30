@@ -16,8 +16,9 @@ from operations.sample.packs.interface import OrganizationPack
 _INITIAL_NAME = "OpenSlate"
 _USAGE_STATEMENT = """
 SELECT o.id,
-       (SELECT count(*) FROM public.memberships m
-         WHERE m.org_id = o.id AND m.user_id <> %(admin)s),
+       (SELECT count(*) FROM public.memberships m JOIN public.users u ON u.id = m.user_id
+         WHERE m.org_id = o.id AND m.user_id <> %(admin)s
+           AND u.email <> %(pack_administrator)s),
        (SELECT count(*) FROM public.records r WHERE r.org_id = o.id),
        EXISTS (SELECT 1 FROM public.memberships m
                 WHERE m.org_id = o.id AND m.user_id = %(admin)s AND m.role = 'admin'
@@ -40,7 +41,8 @@ def sample_slug(pack_key: str, *, partner: bool = False) -> str:
 
     The partner organization is the second one the account control joins and switches to.
     """
-    return f"sample-{pack_key}-partner" if partner else f"sample-{pack_key}"
+    base = f"sample-{pack_key.replace('_', '-')}"  # A slug allows hyphens, not underscores.
+    return f"{base}-partner" if partner else base
 
 
 def sample_organization_name(pack: OrganizationPack, *, partner: bool = False) -> str:
@@ -59,9 +61,27 @@ def pack_email_domains(pack: OrganizationPack) -> frozenset[str]:
     )
 
 
-def organization_usage(connection: Any, slug: str, admin_id: UUID) -> OrganizationUsage | None:
-    """Read the pack organization's sample footprint; None when it does not exist yet."""
-    rows = connection.execute(_USAGE_STATEMENT, {"admin": admin_id, "slug": slug}).fetchall()
+def testing_domain(pack: OrganizationPack) -> str:
+    """The reserved test domain of a pack's testing accounts, for example ``harbor.test``."""
+    return f"{pack.identity.key.replace('_', '-')}.test"
+
+
+def pack_administrator_email(pack: OrganizationPack) -> str:
+    """The pack organization's own administrator, a testing account: ``admin@harbor.test``."""
+    return f"admin@{testing_domain(pack)}"
+
+
+def organization_usage(
+    connection: Any, slug: str, admin_id: UUID, *, pack_administrator: str
+) -> OrganizationUsage | None:
+    """Read the pack organization's sample footprint; None when it does not exist yet.
+
+    Other members leave out the operator and the pack administrator.
+    """
+    rows = connection.execute(
+        _USAGE_STATEMENT,
+        {"admin": admin_id, "slug": slug, "pack_administrator": pack_administrator},
+    ).fetchall()
     if not rows:
         return None
     ((organization_id, members, records, administered),) = rows
@@ -79,9 +99,17 @@ def organization_storage_objects(object_keys: Iterable[str], organization_id: UU
 
 
 def pack_provider_accounts(
-    auth: ResetAuth, admin_provider_id: UUID, admin_email: str, domains: frozenset[str]
+    auth: ResetAuth,
+    admin_provider_id: UUID,
+    admin_email: str,
+    domains: frozenset[str],
+    *,
+    ignored_emails: frozenset[str] = frozenset(),
 ) -> int:
-    """Count provider Auth accounts in the pack's email domains; other packs do not count."""
+    """Count provider Auth accounts in the pack's email domains; other packs do not count.
+
+    A resumed pack organization passes its own pack administrator in ``ignored_emails``.
+    """
     admin_seen = False
     count = 0
     for page in range(1, _MAX_ACCOUNT_PAGES + 1):
@@ -98,7 +126,7 @@ def pack_provider_accounts(
                 user_id, email = UUID(user["id"]), str(user["email"]).strip().casefold()
                 if user_id == admin_provider_id:
                     admin_seen = email == admin_email.strip().casefold()
-                else:
+                elif email not in ignored_emails:
                     count += email.rpartition("@")[2] in domains
         except (ValueError, TypeError, KeyError):
             raise ResetError("The provider Auth inventory is invalid") from None
@@ -119,7 +147,7 @@ def create_sample_organization(
 ) -> UUID:
     """Create the pack organization, owned by the administrator, on the verified owner target."""
     from psycopg import connect
-    from sqlalchemy import create_engine
+    from sqlalchemy import create_engine, make_url
     from sqlalchemy.pool import NullPool
 
     from app.core.config.instance import assert_psycopg_target
@@ -135,7 +163,13 @@ def create_sample_organization(
         connection.rollback()
         return connection
 
-    engine = create_engine("postgresql+psycopg://", creator=owner_connection, poolclass=NullPool)
+    # The URL names the database the commits reach, so the audit listener's post-commit
+    # invalidation publish targets it too; the verified creator still opens each connection.
+    engine = create_engine(
+        make_url(database_url).set(drivername="postgresql+psycopg"),
+        creator=owner_connection,
+        poolclass=NullPool,
+    )
     try:
         with AuditSession(engine) as db:
             organization = provision(

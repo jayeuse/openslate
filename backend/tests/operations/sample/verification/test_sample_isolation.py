@@ -19,18 +19,32 @@ PARTNER = "0190a000-0000-7000-8000-0000000000ab"
 SLUGS = {HARBOR: "sample-harbor", SCHOOL: "sample-school", PARTNER: "sample-harbor-partner"}
 SCHOOL_MODULE = "0190a000-0000-7000-8000-0000000000c1"
 SCHOOL_RECORD = "0190a000-0000-7000-8000-0000000000d1"
-ADMIN = ("owner@install.example", "admin-fixture")
+ADMIN = ("administrator@harbor-ops.example", "admin-fixture")
+OPERATOR = ("owner@install.example", "operator-fixture")
 MEMBER = ("lead@harbor-ops.example", "member-fixture")
 
 
 class _Wire:
-    """Two organizations; the administrator runs both, the member belongs to Harbor."""
+    """Two organizations; the operator runs both, the pack administrator only Harbor."""
 
-    def __init__(self, *, leaky: bool = False, school: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        leaky: bool = False,
+        school: bool = True,
+        operator_login: bool = True,
+        school_records: bool = True,
+    ) -> None:
         self.leaky = leaky
-        # The administrator also runs the pack's partner organization, which is not probed.
-        admin = {HARBOR, PARTNER, SCHOOL} if school else {HARBOR, PARTNER}
-        self.memberships = {ADMIN[0]: admin, MEMBER[0]: {HARBOR, PARTNER}}
+        self.school_records = school_records
+        self.operator_login = operator_login
+        # The operator also runs the pack's partner organization, which is not probed.
+        operator = {HARBOR, PARTNER, SCHOOL} if school else {HARBOR, PARTNER}
+        self.memberships = {
+            ADMIN[0]: {HARBOR},
+            OPERATOR[0]: operator,
+            MEMBER[0]: {HARBOR, PARTNER},
+        }
         self.logins: list[str] = []
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -38,6 +52,8 @@ class _Wire:
         if path == "/api/auth/login":
             email = json.loads(request.content)["email"]
             self.logins.append(email)
+            if email == OPERATOR[0] and not self.operator_login:
+                return httpx.Response(401, json={"authenticated": False})
             cookies = [f"openslate_access={email}; Path=/", "openslate_csrf=csrf; Path=/"]
             return httpx.Response(200, headers=[("set-cookie", value) for value in cookies])
         if path == "/api/auth/logout":
@@ -54,7 +70,7 @@ class _Wire:
         visible = self.leaky or org == SCHOOL
         if path == "/api/records":
             module = request.url.params.get("module_id")
-            listed = visible and module in {None, SCHOOL_MODULE}
+            listed = visible and self.school_records and module in {None, SCHOOL_MODULE}
             rows = [{"id": SCHOOL_RECORD, "module_id": SCHOOL_MODULE}] if listed else []
             return httpx.Response(200, json={"items": rows})
         if path in {f"/api/records/{SCHOOL_RECORD}", f"/api/modules/{SCHOOL_MODULE}"}:
@@ -78,7 +94,7 @@ def _verify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wire: _Wire) -> Any
             api_url="http://api.example.test",
             origin="http://ui.example.test",
             journal=journal,
-            admin_login=ADMIN,
+            operator_login=OPERATOR,
             member_logins=[MEMBER],
         )
 
@@ -92,6 +108,19 @@ def test_another_sample_organization_refuses_this_organizations_people(
     assert observed == {"isolation_organizations": 1, "isolation_refusals": 5}
 
 
+def test_peer_discovery_uses_the_operator_and_fails_without_its_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The pack administrator belongs to Harbor only; its memberships would find no peer.
+    wire = _Wire(operator_login=False)
+
+    observed, issues = _verify(tmp_path, monkeypatch, wire)
+
+    assert issues == ["isolation: the operator could not sign in for peer discovery"]
+    assert observed == {"isolation_organizations": 0, "isolation_refusals": 0}
+    assert wire.logins == [ADMIN[0], OPERATOR[0]]
+
+
 def test_a_cross_organization_read_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -99,6 +128,16 @@ def test_a_cross_organization_read_is_reported(
 
     assert issues == ["isolation: another sample organization's data was readable"]
     assert observed["isolation_refusals"] == 1  # Membership still refused the named organization.
+
+
+def test_a_peer_organization_without_records_is_skipped_not_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Live seven-pack run: a pack that stopped before its records made every other pack's
+    # verification incomplete, though no data crossed organizations.
+    observed, issues = _verify(tmp_path, monkeypatch, _Wire(school_records=False))
+
+    assert (observed, issues) == ({"isolation_organizations": 0, "isolation_refusals": 0}, [])
 
 
 def test_a_single_sample_organization_needs_no_member_sign_in(
@@ -109,7 +148,7 @@ def test_a_single_sample_organization_needs_no_member_sign_in(
     observed, issues = _verify(tmp_path, monkeypatch, wire)
 
     assert (observed, issues) == ({"isolation_organizations": 0, "isolation_refusals": 0}, [])
-    assert wire.logins == [ADMIN[0]]
+    assert wire.logins == [ADMIN[0], OPERATOR[0]]
 
 
 @pytest.mark.parametrize("response", [
@@ -137,7 +176,7 @@ def test_failed_or_malformed_peer_discovery_is_incomplete(tmp_path, monkeypatch,
     observed, issues = _verify(tmp_path, monkeypatch, wire)
     assert issues == ["isolation: peer organization discovery failed"]
     assert observed == {"isolation_organizations": 0, "isolation_refusals": 0}
-    assert wire.logins == [ADMIN[0]]
+    assert wire.logins == [ADMIN[0], OPERATOR[0]]
 
 
 def test_roster_logins_return_only_named_people_with_passwords(tmp_path: Path) -> None:

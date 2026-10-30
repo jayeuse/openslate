@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { FileList } from "../../shared/components/file-list";
 import {
   fileErrorMessage,
+  isFilesBusy,
   MAX_FILE_BYTES,
 } from "../../shared/adapters/files-api";
 import {
@@ -105,6 +106,8 @@ export function RecordFilesPanel({
   const [activeOperation, setActiveOperation] = useState<Operation | null>(
     null,
   );
+  // The active upload or download waits for file capacity on the server.
+  const [transferWaiting, setTransferWaiting] = useState(false);
   const operation = useRef<Operation | null>(null);
   const mounted = useRef(true);
   const denied = accessDenied || readRefused || refused(files.error);
@@ -146,6 +149,7 @@ export function RecordFilesPanel({
       };
       operation.current = owned;
       setActiveOperation(owned);
+      setTransferWaiting(false);
       return owned;
     },
     [],
@@ -261,6 +265,10 @@ export function RecordFilesPanel({
   const hasMore = more?.hasMore ?? files.data?.pagination.hasMore ?? false;
   const busy = activeOperation !== null;
   const canUpload = canWrite && !record.isDeleted;
+  const waitingFor = (owned: Operation) => (waiting: boolean) => {
+    if (mounted.current)
+      setTransferWaiting(waiting && operation.current === owned);
+  };
 
   async function upload(file: File) {
     if (!canUpload || denied || !hasFirstPage || operation.current) return;
@@ -314,11 +322,16 @@ export function RecordFilesPanel({
         check.id,
         file,
         owned.controller.signal,
+        waitingFor(owned),
       );
       await applyUploadStatus(check, uploaded, owned);
     } catch (caught) {
       if (!live(owned)) return;
-      if (check) await readUploadStatus(check, owned);
+      // The server refused the bytes before reading them: the same file can retry.
+      if (check && isFilesBusy(caught)) {
+        setCheckedState("awaiting_upload");
+        setError(fileErrorMessage(caught, "upload the file"));
+      } else if (check) await readUploadStatus(check, owned);
       else setError(fileErrorMessage(caught, "upload the file"));
     } finally {
       finish(owned);
@@ -355,7 +368,11 @@ export function RecordFilesPanel({
     const owned = begin("download", file.id);
     if (!owned) return;
     try {
-      const blob = await downloadRecordFile(file, owned.controller.signal);
+      const blob = await downloadRecordFile(
+        file,
+        owned.controller.signal,
+        waitingFor(owned),
+      );
       if (!live(owned)) return;
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -498,15 +515,17 @@ export function RecordFilesPanel({
       ) : null}
       {activeOperation ? (
         <p role="status" className="text-muted-foreground text-sm">
-          {activeOperation.kind === "upload"
-            ? "Uploading file…"
-            : activeOperation.kind === "check"
-              ? "Checking upload status…"
-              : activeOperation.kind === "archive"
-                ? "Archiving file…"
-                : activeOperation.kind === "download"
-                  ? "Downloading file…"
-                  : "Loading more files…"}
+          {transferWaiting
+            ? "Waiting for the server…"
+            : activeOperation.kind === "upload"
+              ? "Uploading file…"
+              : activeOperation.kind === "check"
+                ? "Checking upload status…"
+                : activeOperation.kind === "archive"
+                  ? "Archiving file…"
+                  : activeOperation.kind === "download"
+                    ? "Downloading file…"
+                    : "Loading more files…"}
         </p>
       ) : null}
       {error ? <Alert variant="destructive">{error}</Alert> : null}

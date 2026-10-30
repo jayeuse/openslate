@@ -11,12 +11,17 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import pytest
 
+from operations.sample.packs import default_pack
 from operations.sample.packs.harbor.people import MODULE_KEYS as HARBOR_MODULE_KEYS
 from operations.sample.population import invitations as sample_invitations
 from operations.sample.population import people as sample_people
+from operations.sample.population.administrator import create_run_roster
+from operations.sample.population.invitations import CredentialRoster
 from operations.sample.population.people import SamplePeopleError, populate_people
+from operations.sample.population.run import SamplePopulationError
 
 ORIGIN = "http://127.0.0.1:3000"
+API_URL = "http://127.0.0.1:8000"
 MAILPIT_URL = "http://127.0.0.1:8025"
 TOKEN = "a" * 56
 DEPARTMENTS = {
@@ -24,6 +29,11 @@ DEPARTMENTS = {
     for key in ("sales", "service", "field", "inventory", "purchasing", "finance")
 }
 MODULES = {key: str(uuid5(NAMESPACE_URL, f"module:{key}")) for key in HARBOR_MODULE_KEYS}
+
+
+def _roster(path: Path) -> CredentialRoster:
+    """The run's private roster: the pack administrator first, then the pack's people."""
+    return create_run_roster(path, default_pack())
 
 
 class FakeMailpit:
@@ -228,7 +238,7 @@ def test_population_creates_ui_groups_and_identity_states_with_private_roster(
     monkeypatch.setattr(sample_people, "_new_acceptance_client", acceptance_client)
 
     result = populate_people(
-        admin, "http://127.0.0.1:8000", DEPARTMENTS, MODULES, MAILPIT_URL, ORIGIN, roster_path
+        admin, API_URL, DEPARTMENTS, MODULES, MAILPIT_URL, ORIGIN, _roster(roster_path)
     )
 
     assert len(result.users) == 44
@@ -251,7 +261,10 @@ def test_population_creates_ui_groups_and_identity_states_with_private_roster(
     assert "before-run" not in inbox.read_ids
     assert stat.S_IMODE(roster_path.stat().st_mode) == 0o600
     roster = json.loads(roster_path.read_text(encoding="utf-8"))
-    assert sum("password" in account for account in roster["accounts"]) == 39
+    # The 39 non-pending people and the pack administrator have generated passwords.
+    assert sum("password" in account for account in roster["accounts"]) == 40
+    assert roster["accounts"][0]["key"] == "administrator"
+    assert roster["accounts"][0]["state"] == "planned"
     assert sum(account["status"] == "pending" for account in roster["accounts"]) == 5
     assert all(
         "password" not in account
@@ -336,14 +349,10 @@ def test_population_refuses_to_overwrite_an_existing_private_roster(tmp_path: Pa
     roster_path = tmp_path / "private" / "credentials.json"
     roster_path.parent.mkdir(mode=0o700)
     roster_path.write_text("owned roster", encoding="utf-8")
-    admin = FakeAdmin(FakeMailpit(), roster_path)
 
-    with pytest.raises(SamplePeopleError, match="already exists"):
-        populate_people(
-            admin, "http://127.0.0.1:8000", DEPARTMENTS, MODULES, MAILPIT_URL, ORIGIN, roster_path
-        )
+    with pytest.raises(SamplePopulationError, match="already exists"):
+        _roster(roster_path)
 
-    assert admin.calls == []
     assert roster_path.read_text(encoding="utf-8") == "owned roster"
 
 
@@ -371,7 +380,7 @@ def test_population_stops_when_the_group_access_etag_is_missing(
             MODULES,
             MAILPIT_URL,
             ORIGIN,
-            tmp_path / "private" / "credentials.json",
+            _roster(tmp_path / "private" / "credentials.json"),
         )
 
     assert not any(path == "/api/auth/invitations" for _, path, _, _ in admin.calls)
@@ -404,7 +413,7 @@ def test_committed_group_with_unusable_success_stops_with_unknown_outcome(
 
     with pytest.raises(SamplePeopleError):
         populate_people(
-            admin, "http://127.0.0.1:8000", DEPARTMENTS, MODULES, MAILPIT_URL, ORIGIN, roster_path
+            admin, API_URL, DEPARTMENTS, MODULES, MAILPIT_URL, ORIGIN, _roster(roster_path)
         )
 
     roster = json.loads(roster_path.read_text(encoding="utf-8"))
@@ -440,7 +449,7 @@ def test_committed_invitation_completion_with_unexpected_success_is_unknown(
 
     with pytest.raises(SamplePeopleError):
         populate_people(
-            admin, "http://127.0.0.1:8000", DEPARTMENTS, MODULES, MAILPIT_URL, ORIGIN, roster_path
+            admin, API_URL, DEPARTMENTS, MODULES, MAILPIT_URL, ORIGIN, _roster(roster_path)
         )
 
     roster = json.loads(roster_path.read_text(encoding="utf-8"))
@@ -480,7 +489,7 @@ def test_committed_invite_with_bad_user_readback_retains_partial_roster(
 
     with pytest.raises(SamplePeopleError, match="User readback"):
         populate_people(
-            admin, "http://127.0.0.1:8000", DEPARTMENTS, MODULES, MAILPIT_URL, ORIGIN, roster_path
+            admin, API_URL, DEPARTMENTS, MODULES, MAILPIT_URL, ORIGIN, _roster(roster_path)
         )
 
     roster = json.loads(roster_path.read_text(encoding="utf-8"))

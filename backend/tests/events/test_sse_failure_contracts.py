@@ -443,3 +443,51 @@ def _sequence(*users: object | None):
         return next(results)
 
     return reauthorize
+
+
+def test_a_failed_publish_logs_its_cause_and_uses_the_committing_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Live sample runs: publish_failed named no cause, and a session bound to another
+    # database notified the configured one.
+    from app.systems.platform.events import publisher
+
+    targets, events = [], []
+
+    def refuse(url, **_kwargs):
+        targets.append(url)
+        raise psycopg.OperationalError("private detail")
+
+    monkeypatch.setattr(publisher.psycopg, "connect", refuse)
+    monkeypatch.setattr(publisher, "log_event", lambda *a, **k: events.append(k))
+    event = InvalidationEvent(entity="records", org_id=ORGANIZATION)
+
+    assert not publish_invalidations(
+        (event,), database_url="postgresql+psycopg://owner:secret@db.test:5432/openslate"
+    )
+    assert targets == ["postgresql://owner:secret@db.test:5432/openslate"]
+    assert events[0]["reason_code"] == "publish_failed"
+    assert events[0]["cause"] == "OperationalError"
+
+
+def test_the_commit_hook_publishes_to_the_session_database(monkeypatch) -> None:
+    from sqlalchemy import create_engine
+
+    from app.systems.manage.audit import listeners
+
+    published = []
+    engine = create_engine("postgresql+psycopg://owner:secret@db.test:5432/openslate")
+    session = SimpleNamespace(
+        info={listeners.REALTIME_INVALIDATION_KEY: [object()]},
+        in_nested_transaction=lambda: False,
+        get_bind=lambda: engine,
+    )
+    monkeypatch.setattr(
+        listeners, "publish_invalidations", lambda events, **kwargs: published.append(kwargs)
+    )
+
+    listeners.broadcast_committed_changes(session)
+
+    assert published == [
+        {"database_url": "postgresql+psycopg://owner:secret@db.test:5432/openslate"}
+    ]

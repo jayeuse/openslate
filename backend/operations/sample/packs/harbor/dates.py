@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import random
 from collections.abc import Mapping
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from operations.sample.packs.harbor.links import invoice_payment_index, parent_indices
+from operations.sample.packs.harbor.realism import date_cluster, holidays
+from operations.sample.realism import entry_time, working_day
 
 _MANILA = ZoneInfo("Asia/Manila")
 
@@ -78,9 +80,15 @@ def activity_date(
         parent_module, parent_field, link, (low, high) = parent
         parent_index = parent_indices(link, index, counts)[0]
         start = related_date(parent_module, parent_field, parent_index, seed, anchor, counts)
-        return min(start + timedelta(days=rng.randint(low, high)), max(start, anchor))
+        cap = max(start, anchor)
+        when = min(start + timedelta(days=rng.randint(low, high)), cap)
+        return working_day(when, holidays(anchor), start, cap)
     latest = _latest_main_date(module_key, index, counts)
-    return anchor + timedelta(days=rng.randint(-365, latest))
+    # Unpaid invoices are the recent ones; older invoices were paid long ago.
+    unpaid = (
+        module_key == "invoices" and index >= 10 and invoice_payment_index(index, counts) is None
+    )
+    return date_cluster(module_key, anchor, -45 if unpaid else -365, latest).pick(rng)
 
 
 def related_date(
@@ -116,5 +124,5 @@ def related_datetime(
     counts: Mapping[str, int],
 ) -> str:
     when = related_date(module_key, field_key, index, seed, anchor, counts)
-    local_time = time(8 + (index % 9), (index * 7) % 60)
+    local_time = entry_time(random.Random(f"{seed}:{module_key}:{index}:{field_key}:time"))
     return datetime.combine(when, local_time, _MANILA).isoformat(timespec="minutes")

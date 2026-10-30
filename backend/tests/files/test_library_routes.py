@@ -40,8 +40,8 @@ def test_library_reservation_rechecks_authority_at_final_admission(
     else:
         original_quota = service.lock_quota
 
-        def lock(session):
-            original_quota(session)
+        def lock(session, **scope):
+            original_quota(session, **scope)
             session.get(type(actor), actor.id).status = "disabled"
             session.commit()
 

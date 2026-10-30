@@ -52,6 +52,7 @@ from operations.sample.organization import (
     create_sample_organization,
     organization_storage_objects,
     organization_usage,
+    pack_administrator_email,
     pack_email_domains,
     pack_provider_accounts,
     sample_slug,
@@ -277,10 +278,16 @@ def _local_preflight(
         object_keys = storage.list_object_keys()
         reset_plan = build_reset_plan(connection, admin_email, storage_object_keys=object_keys)
         slug = sample_slug(pack.identity.key) if pack is not None else None
-        # The pack organization, then its partner; each is absent or must be empty.
+        administrator = pack_administrator_email(pack) if pack is not None else ""
+        # The pack organization, then its partner; each is absent or holds only the operator
+        # and the pack administrator.
         usage, partner = (
-            organization_usage(connection, sample_slug(pack.identity.key, partner=side),
-                               reset_plan.preserved_admin_id)
+            organization_usage(
+                connection,
+                sample_slug(pack.identity.key, partner=side),
+                reset_plan.preserved_admin_id,
+                pack_administrator=administrator,
+            )
             if pack is not None
             else None
             for side in (False, True)
@@ -294,6 +301,8 @@ def _local_preflight(
         reset_plan.preserved_admin_provider_id,
         admin_email,
         pack_email_domains(pack) if pack is not None else frozenset(),
+        # Resuming an existing pack organization ignores only its own pack administrator.
+        ignored_emails=frozenset({administrator}) if usage is not None else frozenset(),
     )
     organization_id = usage.organization_id if usage is not None else None
     report = {
@@ -331,6 +340,12 @@ def _parser() -> argparse.ArgumentParser:
         if name == "populate":
             command.add_argument("--run-root", type=Path, required=True)
             command.add_argument("--admin-password-file", type=Path)
+            # Owner-only JSON {"password": ...}: the kept testing password of the pack
+            # administrator (admin@<pack>.test). Without it, the run generates one.
+            command.add_argument("--administrator-password-file", type=Path)
+            # A pack populating beside another one leaves the installation controls (backups,
+            # installation security) to the pack that runs them.
+            command.add_argument("--without-installation-controls", action="store_true")
     verify = commands.add_parser("verify", help="read back an existing private sample run")
     verify.add_argument("--run-directory", type=Path, required=True)
     verify.add_argument("--admin-password-file", type=Path)
@@ -397,24 +412,32 @@ def main(
                     args.anchor_date,
                     organization=pack,
                     host_acceptance=host_control is not None,
+                    installation_controls=not args.without_installation_controls,
                 )
                 _print_plan(dataset, report, mailpit_url)
                 assert pack is not None
+
                 def create(partner: bool) -> str:
                     admin_id = UUID(str(report["admin_id"]))
                     return str(
                         create_sample_organization(values, target, pack, admin_id, partner=partner)
                     )
 
+                administrator_password = (
+                    read_admin_password(args.administrator_password_file, None)
+                    if args.administrator_password_file
+                    else None
+                )
                 organization_id = report.get("organization_id") or create(False)
                 partner_id = report.get("partner_organization_id") or create(True)
+                # ADMIN_EMAIL is the installation operator; it invites the pack administrator.
                 result = populate_sample_data(
                     api_url=api_url,
                     origin=origin,
                     mailpit_url=mailpit_url,
-                    admin_email=admin_email,
-                    expected_admin_id=report["admin_id"],
-                    admin_password=password,
+                    operator_email=admin_email,
+                    expected_operator_id=report["admin_id"],
+                    operator_password=password,
                     run_root=args.run_root,
                     profile=args.profile,
                     seed=args.seed,
@@ -422,6 +445,8 @@ def main(
                     organization=pack,
                     mfa_observer=mfa_observer,
                     host_control=host_control,
+                    administrator_password=administrator_password,
+                    installation_controls=not args.without_installation_controls,
                     organization_id=organization_id,
                     partner_organization_id=partner_id,
                 )
@@ -429,9 +454,9 @@ def main(
                 result = verify_sample_data(
                     api_url=api_url,
                     origin=origin,
-                    admin_email=admin_email,
-                    expected_admin_id=report["admin_id"],
-                    admin_password=password,
+                    operator_email=admin_email,
+                    expected_operator_id=report["admin_id"],
+                    operator_password=password,
                     run_directory=args.run_directory,
                 )
         finally:

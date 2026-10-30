@@ -77,7 +77,9 @@ def cleanup_expired_buckets(*, now_value: datetime | None = None) -> int:
             )
             .order_by(IdentityRateLimitBucket.window_started_at)
             .limit(STALE_BUCKET_CLEANUP_LIMIT)
-            .with_for_update()
+            # A bucket another transaction holds is in use, not stale: skip it. Locking it
+            # in window order deadlocked with requests that lock buckets in key order.
+            .with_for_update(skip_locked=True)
         )
         count = 0
         for bucket in expired:

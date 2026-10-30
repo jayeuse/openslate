@@ -75,6 +75,7 @@ import {
   WorkspaceLogoBindingChanged,
   type WorkspaceLogoFile,
 } from "./adapters/workspace-logo-api";
+import { FILES_BUSY_MESSAGE, isFilesBusy } from "../shared/adapters/files-api";
 import { BackupPanel } from "./components/backup-panel";
 import { useManageMaintenance } from "./state/controller";
 import { isManageBackupExportId } from "./adapters/backup-api";
@@ -344,6 +345,8 @@ function ManageContent() {
   const [logoDraft, setLogoDraft] = useState<LogoDraft | null>(null);
   const [logoError, setLogoError] = useState("");
   const [logoNotice, setLogoNotice] = useState("");
+  // The logo upload waits for file capacity on the server.
+  const [logoWaiting, setLogoWaiting] = useState(false);
   const [logoCleanupId, setLogoCleanupId] = useState<string | null>(null);
   const [committedReadbackRequired, setCommittedReadbackRequired] =
     useState(false);
@@ -837,9 +840,17 @@ function ManageContent() {
           candidate.id,
           selection.file,
           signal,
+          (waiting) => setLogoWaiting(waiting && owns()),
         );
       } catch (caught) {
         if (!owns()) return { kind: "stopped" };
+        // The server refused the bytes before reading them; the next save
+        // reserves and sends the chosen logo again.
+        if (isFilesBusy(caught)) {
+          setLogoDraft({ kind: "new", file: selection.file });
+          setLogoError(FILES_BUSY_MESSAGE);
+          return { kind: "stopped" };
+        }
         if (
           caught instanceof ApiError &&
           (caught.status === 401 || caught.status === 403)
@@ -1065,7 +1076,11 @@ function ManageContent() {
         capturedOldLogo = workspace.logo_file_id;
         // A logo response is a detached acknowledgement of this admitted write.
         // Only a fresh authorized read may become the current form/brand/theme.
-        const receipt = await updateManageWorkspace(patch, controller.signal);
+        const receipt = await updateManageWorkspace(
+          patch,
+          controller.signal,
+          (waiting) => setLogoWaiting(waiting && ownsCommand()),
+        );
         if (!ownsCommand()) return;
         knownCommitted = true;
         acknowledgedRevision.current = receipt.revision;
@@ -1112,6 +1127,12 @@ function ManageContent() {
           setWorkspaceStale(true);
           setError("");
         }
+        return;
+      }
+      if (isFilesBusy(caught)) {
+        // Refused before any write: the draft and logo stay for the next Save.
+        workspaceNeedsReadback.current = false;
+        setLogoError(FILES_BUSY_MESSAGE);
         return;
       }
       const partial = isWorkspaceLogoCleanupPartial(caught);
@@ -1377,6 +1398,7 @@ function ManageContent() {
                       : { kind: "none" },
                 error: logoError,
                 notice: logoNotice,
+                waiting: logoWaiting,
                 cleanupPending: logoCleanupId !== null,
                 onSelect: chooseLogo,
                 onRemove: removeLogo,

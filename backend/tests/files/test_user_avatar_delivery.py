@@ -15,7 +15,11 @@ from app.systems.access.users import avatar_delivery
 from app.systems.access.users.models import User
 from app.systems.platform.files import providers
 from app.systems.platform.files.models import File
-from app.systems.platform.files.providers import ProviderUnavailable, transfer_slot
+from app.systems.platform.files.providers import (
+    FileCapacity,
+    ProviderUnavailable,
+    file_processing,
+)
 from app.systems.platform.files.quota import lock_quota
 from app.systems.platform.scheduling import notification_router
 from tests.files.user_avatar_support import (
@@ -84,7 +88,8 @@ def test_avatar_download_holds_no_user_file_quota_or_session_locks_during_io(ava
 
     def independent_locks():
         with Session(world.owner) as db:
-            lock_quota(db)
+            # Avatar capacity belongs to the account, so its admission lock is the account's.
+            lock_quota(db, account=world.actor_id)
             db.scalar(select(User).where(User.id == world.actor_id).with_for_update(nowait=True))
             db.scalar(select(File).where(File.id == file_id).with_for_update(nowait=True))
             db.scalar(
@@ -174,7 +179,7 @@ def test_three_parallel_reads_of_one_photo_by_one_session_all_succeed(
     world = avatar_world
     native_avatar(world, bind=True)
     downloading, release, third_admission = Barrier(3), Event(), Event()
-    real_download, real_slots = world.storage.download, providers._slots
+    real_download = world.storage.download
     entered = []
 
     def held_download(key):
@@ -184,22 +189,20 @@ def test_three_parallel_reads_of_one_photo_by_one_session_all_succeed(
             assert release.wait(10)
         return real_download(key)
 
-    class ObservedSlots:
+    class ObservedSlots(FileCapacity):
         attempts = 0
 
-        def acquire(self, **kwargs):
+        def acquire(self, size, *, slot, wait_seconds=0):
             ObservedSlots.attempts += 1
             if ObservedSlots.attempts == 3:
                 third_admission.set()
-            return real_slots.acquire(**kwargs)
-
-        def release(self):
-            real_slots.release()
+            super().acquire(size, slot=slot, wait_seconds=wait_seconds)
 
     world.storage.download = held_download
-    monkeypatch.setattr(providers, "_slots", ObservedSlots())
+    # Two processing slots: two in-flight reads hold both, so the third must wait.
+    monkeypatch.setattr(providers, "_pool", ObservedSlots(256 * 1024 * 1024, 2))
     # The bound itself is owned by the transfer lease tests; a loaded machine must not trip it.
-    monkeypatch.setattr(avatar_delivery, "AVATAR_SLOT_WAIT_SECONDS", 30, raising=False)
+    monkeypatch.setattr(providers, "PROCESSING_WAIT_SECONDS", 30)
     statuses = []
 
     def fetch(size):
@@ -227,22 +230,20 @@ def test_three_parallel_reads_of_one_photo_by_one_session_all_succeed(
 def test_a_photo_read_waiting_for_a_slot_holds_no_pooled_connection(avatar_world, monkeypatch):
     world = avatar_world
     native_avatar(world, bind=True)
-    real_slots, pool = providers._slots, get_engine().pool
+    pool = get_engine().pool
     checked_out, waiting = [], Event()
 
-    class ObservedSlots:
-        def acquire(self, **kwargs):
-            checked_out.append(pool.checkedout())
-            waiting.set()
-            return real_slots.acquire(**kwargs)
+    class ObservedSlots(FileCapacity):
+        def acquire(self, size, *, slot, wait_seconds=0):
+            if slot and self.busy_slots >= self.slots:
+                checked_out.append(pool.checkedout())
+                waiting.set()
+            super().acquire(size, slot=slot, wait_seconds=wait_seconds)
 
-        def release(self):
-            real_slots.release()
-
-    monkeypatch.setattr(avatar_delivery, "AVATAR_SLOT_WAIT_SECONDS", 30, raising=False)
+    monkeypatch.setattr(providers, "_pool", ObservedSlots(256 * 1024 * 1024, 2))
+    monkeypatch.setattr(providers, "PROCESSING_WAIT_SECONDS", 30)
     statuses = []
-    with transfer_slot(), transfer_slot():
-        monkeypatch.setattr(providers, "_slots", ObservedSlots())
+    with file_processing(wait_seconds=0), file_processing(wait_seconds=0):
         idle = pool.checkedout()
         worker = Thread(target=lambda: statuses.append(read(world).status_code))
         worker.start()

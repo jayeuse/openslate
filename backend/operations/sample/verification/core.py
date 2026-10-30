@@ -46,7 +46,8 @@ def has_matching_audit(
     return False
 
 
-def assert_pristine_baseline(client: SampleClient, *, admin_id: str) -> dict[str, Any]:
+def assert_pristine_baseline(client: SampleClient, *, operator_id: str) -> dict[str, Any]:
+    """The operator's new organization holds only the operator, before its administrator."""
     workspace = _api_object(client, "/api/workspace")
     assert_pristine_workspace(workspace)
     sandbox = _api_object(client, "/api/sandbox/document")
@@ -55,12 +56,12 @@ def assert_pristine_baseline(client: SampleClient, *, admin_id: str) -> dict[str
     users = list_all_rows(client, "/api/users")
     if (
         len(users) != 1
-        or str(users[0].get("id")) != admin_id
+        or str(users[0].get("id")) != operator_id
         or users[0].get("role") != "admin"
         or users[0].get("status") != "active"
         or users[0].get("is_deleted") is not False
     ):
-        raise SampleVerificationError("The baseline must contain only the active administrator")
+        raise SampleVerificationError("The baseline must contain only the active operator")
 
     for path, page_size in (
         ("/api/access/groups", 100),
@@ -432,3 +433,17 @@ def list_all_rows(
     if len(output) != expected_total:
         raise SampleVerificationError(f"GET {path} did not return its reported total")
     return output
+
+
+def list_security_events(
+    client: SampleClient, manifest: Mapping[str, Any]
+) -> list[Mapping[str, Any]]:
+    """Read every security event up to the end of population, a closed window.
+
+    The operator belongs to every pack organization and keeps signing in to other packs; its
+    account events are visible here, so an open-ended list grows while its pages are read.
+    """
+    finished = manifest.get("finished_at")
+    if not isinstance(finished, str) or not finished:
+        raise SampleVerificationError("Security event readback window is missing")
+    return list_all_rows(client, "/api/security-events", params={"occurred_before": finished})

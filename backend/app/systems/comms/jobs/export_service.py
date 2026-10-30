@@ -23,7 +23,11 @@ from app.systems.comms.messages.models import CommsMessage
 from app.systems.comms.messages.mutations import lock_counter
 from app.systems.comms.settings.resolution import Scope, resolve_settings
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.platform.files.providers import ProviderUnavailable, StorageBackend, transfer_slot
+from app.systems.platform.files.providers import (
+    ProviderUnavailable,
+    StorageBackend,
+    file_processing,
+)
 from app.systems.platform.scheduling.models import ScheduledWork, WorkKind, WorkState
 
 
@@ -255,8 +259,8 @@ def cleanup_artifact(
 ) -> bool:
     """Own commits around I/O; an unknown upload is not confirmed absence.
 
-    ``slot_held`` means the caller's request already holds a file transfer slot; a second
-    slot would be refused whenever another transfer holds the other one.
+    ``slot_held`` means the caller's request already holds a processing slot; waiting for a
+    second one could wait on itself when every slot is held by such requests.
     """
     current = now or utc_now()
     job, _ = load(db, identity, lock=True)
@@ -275,7 +279,7 @@ def cleanup_artifact(
     db.commit()
     if key is None or size is None or digest is None or not 0 <= size <= MAX_BYTES:
         raise ProviderUnavailable("Artifact cleanup metadata is unavailable")
-    with nullcontext() if slot_held else transfer_slot():
+    with nullcontext() if slot_held else file_processing(size):
         content = storage.download(key)
         if content is None and not confirmed:
             return False  # A failed/abandoned upload may still have an unknown provider outcome.

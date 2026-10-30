@@ -196,9 +196,7 @@ def _consumer_state(facts: Mapping[str, Any]) -> None:
     body = create["request_body"]
     expected = {key: value for key, value in body.items() if key != "widgets"}
     # The copy joins a department whose sample Dashboard is already its home.
-    expected.update(
-        id=facts["ids"]["dashboard_id"], revision=1, is_home=False, is_deleted=False
-    )
+    expected.update(id=facts["ids"]["dashboard_id"], revision=1, is_home=False, is_deleted=False)
     if (
         initial.model_dump(mode="json", exclude={"created_at", "updated_at", "widgets"}) != expected
         or _dashboard_specs(initial) != body["widgets"]
@@ -239,6 +237,19 @@ def _consumer_state(facts: Mapping[str, Any]) -> None:
             raise ValueError("Original append/clear Dashboard full state differs")
 
 
+def _reorganized_dashboard(manifest: Mapping[str, Any]) -> object:
+    """The logical Dashboard the reorganization phase archives and restores, if any."""
+    return next(
+        (
+            row.get("target_key")
+            for row in manifest.get("phase_plan", [])
+            if isinstance(row, Mapping)
+            and row.get("key") == "reorganization:openview_restore_dashboard"
+        ),
+        None,
+    )
+
+
 def verify_chart_controls(
     client: SampleClient, dataset: SampleDataset, manifest: Mapping[str, Any], admin_id: str
 ) -> tuple[dict[str, int], list[str]]:
@@ -257,6 +268,12 @@ def verify_chart_controls(
         )
         if issues:
             return {}, issues
+        source_path = f"/api/dashboards/{facts['ids']['source_dashboard_id']}"
+        # A planned reorganization may archive and restore this same source Dashboard after
+        # the control; only its revision and timestamp may then move forward.
+        relisted = _reorganized_dashboard(manifest) == facts["action"].values.get(
+            "source_dashboard_key"
+        )
         for path, wanted in [
             (f"/api/charts/{facts['ids']['chart_id']}", facts["chart"]),
             (f"/api/dashboards/{facts['ids']['dashboard_id']}", facts["dashboard"]),
@@ -264,16 +281,19 @@ def verify_chart_controls(
                 (f"/api/charts/{identifier}", source)
                 for identifier, source in facts["source_charts"].items()
             ],
-            (
-                f"/api/dashboards/{facts['ids']['source_dashboard_id']}",
-                facts["source_dashboard"],
-            ),
+            (source_path, facts["source_dashboard"]),
         ]:
             response = client.request("GET", path)
             parsed = type(wanted).model_validate_json(response.content, strict=True)
+            if path == source_path and relisted:
+                moved = {"revision", "updated_at"}
+                same = parsed.model_dump(exclude=moved) == wanted.model_dump(exclude=moved)
+                same = same and parsed.revision >= wanted.revision
+            else:
+                same = parsed == wanted
             if (
                 response.status_code != 200
-                or parsed != wanted
+                or not same
                 or _uuid(response.headers.get("X-Request-ID")) is None
             ):
                 raise ValueError("Fresh Chart/source state differs")

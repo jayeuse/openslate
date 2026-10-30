@@ -170,6 +170,7 @@ def prepare_content(
     groups: Mapping[str, str],
     anchor_date: date,
     organization: OrganizationPack | None = None,
+    profile: str = "small",
 ) -> tuple[Any, dict[str, int]]:
     """Set up Boards and plan the Board work people do between record sessions."""
     from operations.sample.population.board_steps import BoardMeta, BoardQueue, plan_board_steps
@@ -188,7 +189,7 @@ def prepare_content(
         for board in board_specs
     ]
     queue = BoardQueue(
-        steps=plan_board_steps(metas, organization=organization),
+        steps=plan_board_steps(metas, organization=organization, profile=profile),
         boards={board["logical_id"]: board for board in board_specs},
         clients=clients,
         fields=fields,
@@ -274,6 +275,7 @@ def verify_content(
         "kanban_labels",
         "kanban_cards",
         "kanban_checklist_items",
+        "calendar_sources",
         "views",
         "dashboards",
         "dashboard_widgets",

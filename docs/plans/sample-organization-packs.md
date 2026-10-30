@@ -123,6 +123,16 @@ The counts below are the proposed Standard counts. The Small profile is about on
   - A storekeeper opens a Patient and gets 404.
   - A guest surveyor edits a Staff Credential and gets 403.
 - **Trade phrases:** rapid test, lab test, QC run, proficiency testing, specimen, sample collection, test result.
+- **Implementation decisions (2026-10-28).** The pack data files in `backend/operations/sample/packs/clinic/` are the source of truth.
+  - Country: United States. US federal holidays (observed dates), USD, `America/Chicago`, fictional 555-01xx phone numbers, reserved `.example` domains.
+  - Payment sits in Revenue Cycle, not Patient Access. The named scenario (Claim 1, charge $420, payer payment $300, balance $120) then stays inside one department, and the payment poster records copays too.
+  - One payer remittance pays one claim. The research's 150 batched remittances become about 290 payer payments at Standard (one for each paid claim); the other payments are copays and self-pay amounts.
+  - Clinical content is a chief complaint, an ICD-10-CM code, an E/M level and a disposition. The Prescription has no dose instructions, and the Incident Report has no patient MRN field (rule 8 and rule 11).
+  - Stock lot expiry and credential expiry are month/year text with an expiry band, because Sandbox date fields accept only dates from a year before to 90 days after the run's anchor date.
+  - The Staff Credential's staff member is text: most of the 70 staff have no OpenSlate account.
+  - Automations become checkbox flags on the same module: Ready to claim (visit finished), denials queue (claim denied), Reorder needed (lot below 20), Work order needed (device out of service), Call-back needed (critical result), Incident report needed (fridge above 8 °C), Root-cause analysis needed (severe harm), and a disabled weekly maintenance review. Planned follow-ups: Claim 1 after visit 5 finishes, Purchase Request 1 after lot 5 drops below 20, Work Order 1 after device 5 goes out of service, Incident Report 1 after the fridge excursion on log 1.
+  - Guests: an accreditation surveyor reads Staff Credentials; a biomedical contractor reads Equipment and Maintenance Work Orders. No guest reads a patient module.
+  - "Proficiency testing" is not a trade phrase in the pack: it holds no marker word, so it needs no allowance.
 
 ### Nonprofit (`nonprofit`)
 
@@ -159,6 +169,18 @@ The counts below are the proposed Standard counts. The Small profile is about on
   - A funder guest edits an Indicator Result and gets 403.
   - A program manager changes a Budget Line amount and gets 403.
 - **Trade phrases:** pre-assessment, post-assessment, pilot test, sample survey, test run of the early warning system.
+- **Implementation decisions (2026-10-28).** The pack data files in `backend/operations/sample/packs/nonprofit/` are the source of truth.
+  - Country: Philippines. Regular holidays and the common special non-working days (Black Saturday, All Souls' Day, Christmas Eve, the last day of the year), PHP and ₱, `Asia/Manila`, reserved `.example` domains, Philippine mobile numbers (`09XX XXX XXXX`, written with +63 by some people). The foundation is "Fairhaven Community Development Foundation"; all people, donors, funders, places and suppliers are invented.
+  - Feedback Case sits in the Executive Office, not MEAL. The plan's 24 modules leave the Executive Office empty, and every department needs a dated module for its OpenView sources. The Executive Director, the accountability and safeguarding officer and the board secretary are the only readers of safeguarding cases (rule 8); MEAL reports complaint totals only.
+  - The Grant module key is `grant_awards`, because `grants` is a word in the generic Comms code that the pack-neutral key scan forbids.
+  - Dates outside the Sandbox window (one year back, 90 days ahead) are text or a year: grant end and MOU end and fund expiry are month/year text, and "Donor since" and "Volunteer since" are years. A Project has a period text and a last-review date.
+  - Status mixes are reshaped where the research's split fails the realism rule (the top status holds 50% or more and twice the next): Pledges Completed 56 / In progress 22, Donors Active 56 / Lapsed 20, Volunteers Active 60 / Inactive 22, Grants Active 52, Projects Implementation 56. The research marks these figures as judgment.
+  - Named scenario: Pledge 1 (₱120,000 in four quarterly installments) settled in part by Donation 1 (₱30,000), balance ₱90,000. Second named scenario: Cash Advance 1 (₱25,000) liquidated in part by Expense Lines 1 to 3 (₱9,500, ₱6,000 and ₱3,250), unliquidated ₱6,250.
+  - Every pledge payment is a Donation linked to its pledge, so a pledge's balance is its total less its linked gifts; every released advance has one release voucher, and every paid order one supplier payment voucher.
+  - Peso thresholds: a gift of ₱50,000 or more flags a thank-you call by the Executive Director; a purchase request of ₱50,000 or more flags three quotes; requests under ₱50,000 are micro-purchases and ₱1,000,000 or more go to open tender.
+  - Automations become checkbox flags on the same module: thank-you call (major gift), consent follow-up (registration without consent), safeguarding referral, off track (result below 70% of target), three quotes, fund setup (grant awarded), overspend alert (burn rate 90% or more), feedback case needed (disputed distribution), ready to close (advance balance 0), and a disabled Friday payment run. Planned follow-ups: Fund 1 after Grant 3 is awarded, and Feedback Case 1 after the dispute on Assistance 5.
+  - Guests: an external auditor reads Finance and Procurement; a funder's grant officer reads Indicators and Indicator Results. No guest reads a beneficiary, donor or safeguarding module.
+  - Refusals as the plan lists them. The procurement assistant opens a Disbursement (404), because a record the user cannot read cannot be edited first.
 
 ### Local government (`local-government`)
 
@@ -193,6 +215,20 @@ The counts below are the proposed Standard counts. The Small profile is about on
   - The accountant releases a Payment Release and gets 403.
   - A council clerk opens a Civil Registry Entry and gets 404.
   - A guest state auditor disallows a voucher and gets 403.
+- **Implementation decisions (2026-10-28).** The pack data files in `backend/operations/sample/packs/local_government/` are the source of truth.
+  - Pack key: `local_government`, not `local-government`. The shared engine imports `operations.sample.packs.<key>.realism` and the chain rules `sample_pack_<key>_chain` by key, and a hyphen cannot be imported. The organization slug is `sample-local_government`.
+  - Country: Philippines. The fictional City Government of Dalisay: `en-PH`, `Asia/Manila`, PHP (₱), regular holidays and special non-working days plus an invented city charter day (September 15), `+63 9xx` mobile numbers, reserved `.example` domains. Reference numbers carry no year, because pack reference codes are built without the anchor date.
+  - Finance keeps one signature per module (research §11). Treasury has an assessment, a collection and a disbursing group; Budget and Accounting has a budget office and an accounting office. Everyone reads their own department; each group writes only its own module.
+  - The civil registry has its own group inside the City Clerk's department. The council secretariat writes only Communications and Legislative Measures, so the registry is hidden from it (404). Entries hold no personal names; the title is the event and the registry number. Civil registry fees are not linked to an Order of Payment, because the Treasury cannot read the registry.
+  - Refusal "A licensing officer creates a Disbursement Voucher" returns 404 "Module not found", not 403: the licensing office cannot read Budget and Accounting, and a hidden module answers 404 (`policy/checks.py`).
+  - The mayor and the executive office have no accounts. The Purchase Order "Approved by" and the voucher "Claim certified by" are text fields that name the signatory's position.
+  - Collection Deposit Reports are daily records (one for each working day; four a day at Large) with an OR series and a day total. They are not linked to Official Receipts: links come from record indexes only, and a link by day would need the anchor date.
+  - A business permit's "Valid until" is dropped (Sandbox dates accept at most 90 days after the anchor date); the permit keeps its number and release date. Occupancy fees are Orders of Payment with source Occupancy, linked to the building permit.
+  - Named scenario: Order of Payment 1 assesses ₱32,400 of business tax; Official Receipt 1 pays the first quarter, ₱8,100; the balance is ₱24,300.
+  - Automations: three record-created rules (drainage and flooding requests get High priority; a failed inspection flags a notice; a delayed registration flags the 10-day posting), four change rules (an assessed application flags its order of payment; a complex building permit past 7 days pending is breached; a request with an ABC of ₱2,000,000 or more gets competitive bidding; a measure approved on third reading flags its transmittal) and a disabled weekly review of work orders on hold. Planned follow-ups: Order of Payment 1 after application 5 is assessed, Enforcement Notice 1 after the failed inspection 1, and Communication 1 (the transmittal) after measure 5 passes third reading.
+  - Guests: a state auditor reads Treasury, Budget and Accounting, and Procurement; a fire safety inspector reads Business and Building Inspections. No guest reads the civil registry or the permit applications.
+  - Legislative Measures carry "Amount appropriated" (appropriation ordinances only), so the Clerk's dashboard has a sum widget (spec R8).
+  - Trade phrases: soil test, concrete cylinder test, water sample, bacteriological test.
 
 ### FMCG distributor (`fmcg-distributor`)
 
@@ -227,6 +263,22 @@ The counts below are the proposed Standard counts. The Small profile is about on
   - A purchasing officer clears a price variance on a Principal Invoice and gets 403.
   - A driver edits a Collection Receipt and gets 404.
   - A principal guest edits a Trade Promotion and gets 403.
+- **Implementation decisions (2026-10-28).** The pack data files in `backend/operations/sample/packs/fmcg_distributor/` are the source of truth.
+  - The pack key is `fmcg_distributor`, the Python package name, because the shared code imports `operations.sample.packs.<key>.realism`. The organization slug writes it as `sample-fmcg-distributor`.
+  - Country: Philippines. Regular holidays and the common special non-working days, PHP and ₱, `en-PH`, `Asia/Manila`, reserved `.example` domains, Philippine mobile numbers (`09XX XXX XXXX`, written with +63 by some people). The distributor is "Silangan Consumer Distributors, Inc."; all principals, brands, outlets and people are invented.
+  - The department key is `credit_collections`, because `credit` is a string in the generic realism check, which the pack-neutral key scan forbids.
+  - Return stays in Warehouse and Inventory (research §4). The returns clerk records it; the salesperson who reported it is named in "Reported by", so Sales reads Returns. Return Line and Display Agreement are deferred; the reason code is on the Return.
+  - A Sales Order has a "Scheme applied" checkbox, not a link to Trade Promotion (research relationship 23). A link needs each order dated inside a scheme window, and the claims office proves scheme sales from the secondary-sales ledger, not from order links.
+  - A Collection Receipt and a Collection Follow-up name their invoice only, and a Stock Adjustment names its lot only: the outlet and the product come through those links (plan rule 11, a code that repeats a link the department has).
+  - Every delivered order has one invoice for what was delivered, and every van sale has one invoice. Cash and van customers pay at the door; credit outlets pay by cheque, transfer or one statement payment for two or three invoices. The plan then fits the profile's receipt count: the newest credit invoices stay unpaid, or an old payment came in two parts. An invoice's balance is its amount less the receipts that did not bounce and were not voided.
+  - Named scenario: Sales Invoice 1 (₱24,600: 6 cases of evaporated milk, 5 of choco drink, 4 of condensada) settled in part by Collection Receipt 1 (a ₱10,000 cheque), balance ₱14,600.
+  - Delivery trips and van tours spread evenly through the quarter. An order is booked one or two working days before its first trip, and its invoice is dated on the trip that delivered it. Stock lot expiry is month/year text with an expiry band, and a vehicle's registration is a month (the LTO renews by the plate's last digit), because Sandbox dates stay within a year back and 90 days ahead.
+  - Status mixes are reshaped where the research's split fails the realism rule (the top status holds 50% or more and twice the next): Stock lots Available 58 / Depleted 20, Trade promotions Claimed 52 / Active 24, Returns Credited 52 / Replaced 12, Principal claims Settled – credit note 50 / Under principal review 16. An order closes through its invoice, so Invoiced and Closed are not order statuses (Delivered 82%). The research marks these figures as judgment.
+  - Each department has four writers or fewer: at the 1:50 sample, one pre-seller and one van salesman carry the routes with the area supervisor.
+  - Automations become checkbox flags on the same module: credit check needed (credit order of ₱50,000 or more), approval needed (purchase order of ₱500,000 or more), recount needed (count variance over 2%), short-delivery claim needed (receipt posted with a discrepancy), near-expiry alert (lot moves into 31–90 days), follow-up needed (invoice more than 30 days past due), variance review needed (van tour short by more than ₱500), and a disabled Monday A-item count review. Planned follow-ups: Principal Claim 1 after Goods Receipt 5 is posted with a discrepancy, and Collection Follow-up 1 after Invoice 5 passes 30 days.
+  - Guests: a principal's account manager reads Trade Promotions and Products; an external auditor reads Credit and Collections and Accounting and Claims. No principal guest reads Principal Claims, which show every principal's money.
+  - Refusals as the plan lists them. The driver opens a Collection Receipt (404), because a record the user cannot read cannot be edited first.
+  - Trade phrase: "free samples" (the stock adjustment reason "Free samples issued").
 
 ### Manufacturer (`manufacturer`)
 
@@ -267,6 +319,21 @@ The counts below are the proposed Standard counts. The Small profile is about on
   - A customer service rep moves a Production Order due date and gets 403.
   - A guest auditor edits a CAPA and gets 403.
 - **Trade phrases:** metal detector test, pH retest, test kitchen, retain sample, sample size, trial run.
+- **Implementation decisions (2026-10-28).** The pack data files in `backend/operations/sample/packs/manufacturer/` are the source of truth.
+  - Country: United States. The fictional Tillmore Kettle Foods: `en-US`, `America/Chicago`, USD, fictional 555-01xx phone numbers, reserved `.example` domains. All people, customers, suppliers, products and equipment models are invented.
+  - Plant holidays, observed: New Year's Day, Memorial Day, Independence Day, Labor Day, Thanksgiving and the day after, Christmas Eve and Christmas Day. The plant works on the other federal holidays.
+  - The Production department key is `manufacturing`, because `production` is a string in the generic host code that the pack-neutral key scan forbids.
+  - The span is the last 30 working days before the anchor date (about six weeks, one month-end), not fixed calendar dates. Purchase orders and material lots reach back up to 11 weeks, because material is received before it is used. Planned work (released production orders, booked loads, scheduled maintenance) lies up to 12 working days ahead.
+  - Production Orders sit in Planning and Purchasing: the planner creates and releases them (research §3B). The floor, Quality and customer service read them.
+  - Food Safety Logs are written by Quality; "Checked by" is a QA technician, because a User field must name a reader of the module. Shift supervisors read the Quality department (research §11) and the floor reads Finished Goods Lots.
+  - Access additions for rule 11: Sales reads Products; Warehouse reads Sales Orders, Purchase Orders and Finished Goods Lots; Production reads Production Orders and Material Lots; Planning reads Work Centers; Quality reads Planning, Production and the Warehouse; Maintenance reads Work Centers and Downtime Events; Finance reads every other department. Finance splits receivables, collections and payables into three groups.
+  - Status mixes reshaped where the research split fails the realism rule: Material Lots Consumed 62 / Released 25; Finished Goods Lots of closed orders Shipped out 80 / Released 12. The research marks these figures as judgment.
+  - Dates outside the Sandbox window are text: the best-by print (`BEST BY 16 OCT 2027`), material best-before (month/year), BOM "Effective since" (month/year) and certificate expiry. Customer since and equipment install dates are years. Lot codes follow 21 CFR 114.80 (`A6289L2B`: plant, year digit, day of year, line, shift).
+  - Named scenario: Customer Invoice 1 bills $12,480.00 for one retail load; Customer Payment 1 pays $9,360.00 and short-pays a promotion deduction; the balance is $3,120.00. A shipped load has one invoice (one-to-one); freight rebills, art and plate charges and pallet charges are invoices with no shipment, and a refused load is credited.
+  - Automations: three record-created flags (a rejected receipt flags an NCR; a critical NCR flags a CAPA; a breakdown of 30 minutes or more flags a work order), four change rules (pH above 4.40 sets the batch to QA hold, as the research writes it; OEE below 55% flags the shift report for review; paste totes below 6 on hand flag a reorder; a price variance above $500 flags match review) and a disabled weekly review of work orders waiting on parts. Planned follow-ups: NCR 1 after the rejected receipt (Material Lot 1), CAPA 1 after the critical complaint NCR 2, and Work Order 1 after breakdown Downtime Event 1.
+  - Guests: a food safety auditor reads Food Safety Logs and CAPAs; a boiler and refrigeration contractor reads the Maintenance department. No guest reads customers, prices or invoices.
+  - Refusals as the plan lists them, all 403 because each actor reads the module. One addition: the guest auditor opens a Customer Invoice and gets 404, because the auditor group has no grant for Finance. A second Work Order linked to an already-linked breakdown is refused with 409 (one-to-one).
+  - Trade phrases are written in lower case (`ph retest`), because the shared check compares lower-cased text.
 
 ### Harbor (`harbor`) and the field-service research
 

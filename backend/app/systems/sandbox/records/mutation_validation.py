@@ -55,12 +55,17 @@ def _apply_creation_defaults(data: dict[str, Any], fields: list[Field]) -> dict[
 
 
 def prepare_record_creation(
-    db: Session, module_id: UUID, data: dict[str, Any], fields: list[Field]
+    db: Session,
+    module_id: UUID,
+    data: dict[str, Any],
+    fields: list[Field],
+    *,
+    readers: frozenset[UUID] | None = None,
 ) -> dict[str, Any]:
     """Apply published defaults and validate one new record without writing it."""
 
     normalized = validate_record_mutation(_apply_creation_defaults(data, fields), {}, fields)
-    validate_live_user_assignments(db, module_id, normalized, fields)
+    validate_live_user_assignments(db, module_id, normalized, fields, readers=readers)
     return normalized
 
 
@@ -204,8 +209,14 @@ def validate_live_user_assignments(
     module_id: UUID,
     data: dict[str, Any],
     fields: list[Field],
+    *,
+    readers: frozenset[UUID] | None = None,
 ) -> None:
-    """Check only explicitly assigned active user values against current access."""
+    """Check only explicitly assigned active user values against current access.
+
+    ``readers`` are the module's readers when the caller already read them in this
+    transaction; otherwise they are read here.
+    """
 
     assignments = [
         (field, data[str(field.id)])
@@ -217,7 +228,8 @@ def validate_live_user_assignments(
     ]
     if not assignments:
         return
-    readers = module_reader_ids(db, module_id)
+    if readers is None:
+        readers = module_reader_ids(db, module_id)
 
     def eligible(value: Any) -> bool:
         if not isinstance(value, str):

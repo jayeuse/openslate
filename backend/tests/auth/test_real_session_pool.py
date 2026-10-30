@@ -14,18 +14,19 @@ from tests.auth.provider_jwt_support import client_for_key, provider_settings, s
 
 
 def test_pool_leases_sessions_whose_iat_leads_the_host_clock(monkeypatch) -> None:
-    # Auth runs in the Docker VM; its clock can lead this host across a second boundary.
+    # Auth runs in the Docker VM; its clock can lead this host. The pool reads session ids
+    # without verification, so it leases even a token the verifier's allowance refuses.
     key = ec.generate_private_key(ec.SECP256R1())
     provider_id = uuid4()
     session_ids = [uuid4() for _ in range(fake_support.SESSIONS_PER_USER)]
-    leading = datetime.now(UTC) + timedelta(seconds=1)
+    leading = datetime.now(UTC) + timedelta(seconds=10)
     tokens = [
         signed_access(key, user_id=str(provider_id), session_id=str(session_id),
                       extra={"iat": leading})
         for session_id in session_ids
     ]
     real = client_for_key(key)
-    # The production verifier refuses these tokens on this host: the case is real.
+    # The production verifier refuses these tokens: the case is real.
     with pytest.raises(InvalidProviderToken):
         real.verify_access_token(tokens[0])
     issued = iter(tokens)

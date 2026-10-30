@@ -50,10 +50,12 @@ def test_primary_partner_moderation_storage_and_password_purge_samples(native_ro
                 clients[name, index] = client
         context = PhaseExecutionContext(
             clients={"admin": clients["primary", 0], member_key: clients["primary", 1]},
-            user_ids={"admin": str(room.people[0].id), member_key: str(room.people[1].id)},
+            user_ids={"admin": str(room.people[0].id), member_key: str(room.people[1].id),
+                      "operator": str(room.people[0].id)},
             group_ids={}, department_ids={}, module_ids={}, field_ids={}, mappings={},
             admin_password=room.people[0].password,
             private_values={"partner_admin": lambda: clients["partner", 0],
+                            "operator_password": room.people[0].password,
                             "partner_actor": lambda _key: clients["partner", 1]},
         )
         for namespace, org in (("primary", room.org), ("partner", room.other_org)):

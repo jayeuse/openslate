@@ -18,6 +18,14 @@ from operations.sample.packs.harbor.links import (
 from operations.sample.packs.harbor.links import (
     receipt_order_index as _receipt_order_index,
 )
+from operations.sample.packs.harbor.realism import (
+    AMOUNT_SHAPES,
+    DEFAULT_AMOUNT,
+    INVOICE_TOTAL,
+    INVOICED_ORDER_WEIGHTS,
+    PRODUCT_PRICE,
+    STATUS_WEIGHTS,
+)
 from operations.sample.packs.harbor.text import (
     email_value,
     note_text,
@@ -30,10 +38,25 @@ from operations.sample.packs.harbor.text import (
 from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.types import OMIT as _OMIT
 from operations.sample.packs.types import FieldSpec, JsonValue, ModuleSpec
+from operations.sample.realism import (
+    DIRT,
+    dirty_text,
+    dirty_value,
+    long_tail_amount,
+    ordered_skew,
+    weighted_label,
+)
+
+# Records below this index carry named business cases; the realism rules leave them alone.
+PINNED = 10
+
+
+# The service request that exercises the "Start urgent requests" rule (Open and Urgent).
+URGENT_REQUEST = 2
 
 
 def _product_price(index: int) -> int:
-    return 40 + (index * 17) % 160
+    return int(long_tail_amount(random.Random(f"harbor:product_price:{index}"), PRODUCT_PRICE))
 
 
 def _ordered_quantities(order_index: int) -> tuple[int, int]:
@@ -77,14 +100,21 @@ def _purchase_total(order_index: int, product_count: int) -> int:
 
 
 def _invoice_total(index: int) -> int:
-    return 12_000 if index == 0 else 1_000 + (index * 137) % 10_000
+    if index == 0:
+        return 12_000
+    if index < PINNED:  # Named invoice cases and the threshold trigger use these totals.
+        return 1_000 + (index * 137) % 10_000
+    return int(long_tail_amount(random.Random(f"harbor:invoice_total:{index}"), INVOICE_TOTAL))
 
 
 def _payment_amount(payment_index: int, counts: dict[str, int]) -> int:
     invoice_total = _invoice_total(_payment_invoice_index(payment_index))
     if payment_index == 0:
         return 4_500
-    return invoice_total if payment_index % 4 == 1 else max(1, invoice_total // 2)
+    if payment_index < PINNED:  # Named payment cases (for example invoice 8 overdue).
+        return invoice_total if payment_index % 4 == 1 else max(1, invoice_total // 2)
+    # Most customers pay in full; every fifth payment covers half the invoice.
+    return invoice_total if payment_index % 5 else max(1, invoice_total // 2)
 
 
 def _invoice_due_date(index: int, seed: int, anchor: date, counts: dict[str, int]) -> date:
@@ -118,11 +148,12 @@ def _status_label(
             return "Cancelled"
         if index == 0:
             return "Partially fulfilled"
-        active_statuses = tuple(status for status in module.statuses if status != "Cancelled")
-        return active_statuses[(index + seed) % len(active_statuses)]
+        return weighted_label(_status_rng(module, index, seed), INVOICED_ORDER_WEIGHTS)
     special = SPECIAL_STATUSES.get(module.key, {}).get(index)
     if special is not None:
         return special
+    if (module.key, index) == ("service_requests", URGENT_REQUEST):
+        return "Open"
     if module.key == "purchase_orders":
         return _purchase_order_status(index)
     if module.key == "purchase_lines":
@@ -141,15 +172,24 @@ def _status_label(
             index
         ):
             return "Paid"
+        if payment_index is not None and index >= PINNED:
+            return "Partially paid"
         if _invoice_due_date(index, seed, anchor, counts) < anchor:
             return "Overdue"
         if payment_index is not None:
             return "Partially paid"
         return "Disputed" if index == 601 else "Issued"
-    return module.statuses[(index + seed) % len(module.statuses)]
+    weights = STATUS_WEIGHTS.get(module.key)
+    if weights is None:
+        return module.statuses[(index + seed) % len(module.statuses)]
+    return weighted_label(_status_rng(module, index, seed), weights)
 
 
-def _field_value(
+def _status_rng(module: ModuleSpec, index: int, seed: int) -> random.Random:
+    return random.Random(f"{seed}:{module.key}:{index}:status")
+
+
+def _clean_field_value(
     organization: OrganizationPack,
     module: ModuleSpec,
     field: FieldSpec,
@@ -172,13 +212,11 @@ def _field_value(
             return _OMIT
         return _option_id(seed, module.key, field.key, label, organization)
     if field.value_kind == "choice":
-        return _option_id(
-            seed,
-            module.key,
-            field.key,
-            field.options[(index + seed) % len(field.options)],
-            organization,
-        )
+        label = weighted_label(rng, ordered_skew(field.options))
+        if (module.key, field.key, index) == ("service_requests", "priority", URGENT_REQUEST):
+            # The "Start urgent requests" rule needs one Open, Urgent request in every seed.
+            label = "Urgent"
+        return _option_id(seed, module.key, field.key, label, organization)
     if field.value_kind == "owner":
         return f"@user:{assignee_key(module.key, module.department, index, seed, organization)}"
     if field.value_kind == "notes":
@@ -223,15 +261,14 @@ def _field_value(
             )
         if field.key == "credit_limit" and index % 13 == 0:
             return 0
-        if field.key == "annual_value":
-            return 1_200 + rng.randrange(0, 30_000, 100)
         if field.key == "score" or field.key == "risk_score":
             return 65 + (index * 7) % 36
         if field.key == "latitude":
             return 14.5 + (index % 100) / 100
         if field.key == "labor_hours":
             return 0 if index % 23 == 0 else 1 + (index % 24)
-        return 500 + rng.randrange(0, 9_000, 25)
+        shape = AMOUNT_SHAPES.get((module.key, field.key), DEFAULT_AMOUNT)
+        return long_tail_amount(rng, shape)
     if field.value_kind in {"integer", "variance"}:
         if field.key == "quantity":
             return (
@@ -292,3 +329,49 @@ def _field_value(
             return index % 4 == 0
         return index % 3 == 0
     return _OMIT
+
+
+def _field_value(
+    organization: OrganizationPack,
+    module: ModuleSpec,
+    field: FieldSpec,
+    index: int,
+    seed: int,
+    anchor: date,
+    counts: dict[str, int],
+) -> JsonValue | object:
+    """The value as people type it (spec R6, R7); pinned records stay exact."""
+    value = _clean_field_value(organization, module, field, index, seed, anchor, counts)
+    if index < PINNED or value is _OMIT or field.value_kind not in _DIRTY_KINDS:
+        return value
+    kind = field.value_kind
+    previous = index - 1 >= PINNED
+    redone = _RECREATED.get(module.key)
+    if kind == "title" and previous and redone is not None:
+        # Refused or cancelled, then entered again: the new record repeats the old title.
+        if _status_label(module, index - 1, seed, counts, anchor) == redone:
+            return _clean_field_value(organization, module, field, index - 1, seed, anchor, counts)
+    if kind == "title" and module.key in _NEAR_DUPLICATE_MODULES and index >= 2 * PINNED:
+        rng = random.Random(f"{seed}:{module.key}:{index}:near-duplicate")
+        if rng.random() < 0.02:
+            other = _clean_field_value(organization, module, field, index - 7, seed, anchor, counts)
+            if isinstance(other, str):
+                return dirty_text(rng, other)
+    note = (_clean_field_value(organization, module, field, index - 1, seed, anchor, counts)
+            if kind == "notes" and previous else None)  # fmt: skip
+    return dirty_value(
+        random.Random(f"{seed}:{module.key}:{index}:{field.key}:dirt"),
+        kind,
+        value,
+        required=field.required,
+        country_code="63",
+        quick_entry=random.Random(f"{seed}:{module.key}:{index}:quick").random() < DIRT.quick_entry,
+        previous_note=note if isinstance(note, str) else None,
+    )
+
+
+# A record entered again after this status; its title names no linked parent.
+_RECREATED = {"expenses": "Rejected"}
+_DIRTY_KINDS = frozenset({"title", "notes", "phone", "email", "url"})
+# Named things where a second, slightly different entry for the same company appears.
+_NEAR_DUPLICATE_MODULES = frozenset({"customers", "suppliers"})

@@ -11,10 +11,14 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.core.middleware.file_transfers import FileDispatchMiddleware, FileTransferPolicy
 from app.main import create_app
-from app.systems.platform.files import service
-from app.systems.platform.files.providers import transfer_slot
+from app.systems.platform.files import providers, service
+from app.systems.platform.files import router as files_router
+from app.systems.platform.files.providers import FileCapacity, transfer_admission
 from app.systems.platform.files.storage import get_storage
+from tests.files.transfer_support import uploaded_file
 from tests.organization_scope_support import scoped_override
+
+BODY = b"x" * 512
 
 
 @pytest.mark.parametrize("blocking_stage", ["provider", "dependency"])
@@ -22,7 +26,7 @@ from tests.organization_scope_support import scoped_override
 def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
     monkeypatch, blocking_stage, completion
 ):
-    import app.main as main
+    import app.request_middleware as request_middleware
 
     started = [Event(), Event()]
     unblock = [Event(), Event()]
@@ -38,20 +42,25 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
             started[index].set()
             assert unblock[index].wait(timeout=10)
 
-    def download(*args, **kwargs):
+    def upload(*args, **kwargs):
         if blocking_stage == "provider":
             blocked()
-        return b"safe", "application/pdf", "document.pdf"
+        return uploaded_file()
 
     def actor():
         if blocking_stage == "dependency":
             blocked()
         return SimpleNamespace(id="actor")
 
-    monkeypatch.setattr(service, "download", download)
+    monkeypatch.setattr(service, "upload", upload)
     monkeypatch.setattr(
-        main, "file_transfer_policy", lambda path, method: FileTransferPolicy(1024, 0.15)
+        request_middleware,
+        "file_transfer_policy",
+        lambda path, method: FileTransferPolicy(1024, 0.15),
     )
+    # Two 512-byte bodies fill the budget, so a third request shows what is still held.
+    pool = FileCapacity(2 * len(BODY), 4)
+    monkeypatch.setattr(providers, "_pool", pool)
     deadlines = []
     original_timeout = asyncio.timeout
 
@@ -62,10 +71,10 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
         deadlines.append(timeout)
         return timeout
 
-    monkeypatch.setattr(main.asyncio, "timeout", timeout_after_admission)
+    monkeypatch.setattr(asyncio, "timeout", timeout_after_admission)
     app = create_app()
     app.dependency_overrides[get_db] = lambda: object()
-    app.dependency_overrides[get_current_user] = scoped_override(actor)
+    app.dependency_overrides[files_router.get_upload_user] = scoped_override(actor)
     app.dependency_overrides[get_storage] = lambda: object()
 
     async def scenario():
@@ -79,7 +88,7 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
             async def receive():
                 if not reads:
                     reads.append(True)
-                    return {"type": "http.request", "body": b"", "more_body": False}
+                    return {"type": "http.request", "body": BODY, "more_body": False}
                 await asyncio.Event().wait()
 
             async def send(message):
@@ -91,13 +100,13 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
                 "type": "http",
                 "asgi": {"version": "3.0", "spec_version": "2.4"},
                 "http_version": "1.1",
-                "method": "GET",
+                "method": "PUT",
                 "scheme": "http",
                 "path": "/api/files/019c0000-0000-7000-8000-000000000001/content",
                 "raw_path": b"/api/files/019c0000-0000-7000-8000-000000000001/content",
                 "query_string": b"",
                 "root_path": "",
-                "headers": [(b"host", b"localhost")],
+                "headers": [(b"host", b"localhost"), (b"content-length", b"512")],
                 "client": ("127.0.0.1", 1234),
                 "server": ("localhost", 80),
             }
@@ -110,6 +119,7 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
             assert await asyncio.to_thread(started[0].wait, 3), (first[1], calls, first[0].done())
             second = request()
             assert await asyncio.to_thread(started[1].wait, 3), (second[1], calls, second[0].done())
+            assert pool.reserved == 2 * len(BODY)
             if completion == "deadline":
                 assert len(deadlines) == 2
                 for timeout in deadlines:
@@ -125,6 +135,7 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
             assert third[1] == [503]
             assert third[3] == []  # Capacity rejected it before middleware read any body.
             assert calls == 2
+            assert pool.reserved == 2 * len(BODY)  # The running workers still hold their bodies.
             unblock[0].set()
             await asyncio.wait_for(asyncio.gather(first[0], return_exceptions=True), 3)
             recovered = request()
@@ -137,17 +148,28 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
             await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 5)
 
     asyncio.run(scenario())
+    assert (pool.reserved, pool.busy_slots) == (0, 0)
 
 
+def _download(*args, **kwargs):
+    providers.reserve_download(4)  # As delivery does before its Storage read.
+    return b"safe", "application/pdf", "file.pdf"
+
+
+@pytest.mark.parametrize("method", ["GET", "PUT"])
 @pytest.mark.parametrize("disconnect_on", ["http.response.start", "http.response.body"])
-def test_disconnected_response_releases_transfer_capacity(monkeypatch, disconnect_on):
-    monkeypatch.setattr(
-        service, "download", lambda *args, **kwargs: (b"safe", "application/pdf", "file.pdf")
-    )
+def test_disconnected_response_releases_transfer_capacity(monkeypatch, disconnect_on, method):
+    monkeypatch.setattr(service, "download", _download)
+    monkeypatch.setattr(service, "upload", uploaded_file)
+    pool = FileCapacity(1024, 4)
+    monkeypatch.setattr(providers, "_pool", pool)
     app = create_app()
+    actor = SimpleNamespace(id="actor")
     app.dependency_overrides[get_db] = lambda: object()
-    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="actor")
+    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[files_router.get_upload_user] = lambda: actor
     app.dependency_overrides[get_storage] = lambda: object()
+    body = BODY if method == "PUT" else b""
 
     async def request(disconnect):
         status = []
@@ -156,7 +178,7 @@ def test_disconnected_response_releases_transfer_capacity(monkeypatch, disconnec
         async def receive():
             if not reads:
                 reads.append(True)
-                return {"type": "http.request", "body": b"", "more_body": False}
+                return {"type": "http.request", "body": body, "more_body": False}
             await asyncio.Event().wait()
 
         async def send(message):
@@ -169,12 +191,12 @@ def test_disconnected_response_releases_transfer_capacity(monkeypatch, disconnec
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.4"},
             "http_version": "1.1",
-            "method": "GET",
+            "method": method,
             "scheme": "http",
             "path": "/api/files/019c0000-0000-7000-8000-000000000001/content",
             "query_string": b"",
             "root_path": "",
-            "headers": [(b"host", b"localhost")],
+            "headers": [(b"host", b"localhost"), (b"content-length", str(len(body)).encode())],
             "client": ("127.0.0.1", 1234),
             "server": ("localhost", 80),
         }
@@ -189,11 +211,12 @@ def test_disconnected_response_releases_transfer_capacity(monkeypatch, disconnec
         assert await request(False) == [200]
 
     asyncio.run(scenario())
+    assert (pool.reserved, pool.busy_slots) == (0, 0)
 
 
 def test_a_route_dispatched_after_its_admission_closed_answers_files_busy_and_never_runs() -> None:
     # The request middleware closes admission when the request times out or is cancelled.
-    with transfer_slot() as lease:
+    with transfer_admission() as lease:
         pass
     routed: list[bool] = []
     messages: list[dict[str, object]] = []

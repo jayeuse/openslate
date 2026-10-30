@@ -45,6 +45,10 @@ class FakeSession:
     def in_nested_transaction(self) -> bool:
         return False
 
+    def get_bind(self) -> object:
+        url = SimpleNamespace(render_as_string=lambda hide_password: "postgresql://db.test/x")
+        return SimpleNamespace(engine=SimpleNamespace(url=url))
+
     def scalars(self, query) -> object:
         self.scalars_calls += 1
         return SimpleNamespace(all=lambda: self.scalar_rows)
@@ -153,7 +157,7 @@ def test_only_a_successful_commit_publishes_the_staged_opaque_invalidations(
     published: list[InvalidationEvent] = []
     monkeypatch.setattr(
         "app.systems.manage.audit.listeners.publish_invalidations",
-        lambda events: published.extend(events),
+        lambda events, **_target: published.extend(events),
     )
 
     broadcast_committed_changes(session)
@@ -189,7 +193,7 @@ def test_commit_deduplicates_staged_invalidations_before_one_publish_call(
     calls: list[tuple[InvalidationEvent, ...]] = []
     monkeypatch.setattr(
         "app.systems.manage.audit.listeners.publish_invalidations",
-        lambda events: calls.append(tuple(events)),
+        lambda events, **_target: calls.append(tuple(events)),
     )
 
     broadcast_committed_changes(session)

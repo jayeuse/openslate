@@ -266,6 +266,12 @@ published it: a publisher who is later disabled or loses access does not stop
 the trigger. Its changes have no user in `performed_by`; their audit entries
 carry `actor_label = "Trigger: <name>"`. Loop protection limits a chain of
 trigger events to depth 10 and 100 applied actions.
+Record triggers run on `TRIGGER_WORKERS` threads (default 4) that claim from one
+shared queue with `FOR UPDATE SKIP LOCKED`. One record's events run one at a
+time, in creation order: the claim skips an event while an earlier event of the
+same record is pending or running. Runs for other records of the same module
+proceed together; they hold the module's fields and trigger definitions
+`FOR SHARE`, so a publication still waits for them.
 Invitation and recovery email use Supabase Auth rather than an application SMTP
 outbox.
 

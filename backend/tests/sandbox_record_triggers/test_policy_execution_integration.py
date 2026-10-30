@@ -66,12 +66,17 @@ def _triggered_trigger(
 
 
 def _field_change_claim(db: Session) -> ClaimedTriggerEvent:
-    claims = claim_due_events(db)
-    for claim in claims:
-        event = db.get(RecordTriggerEvent, claim.id)
-        if event is not None and event.event_kind == "field-changed":
+    """Claim the record's field change; its creation event is claimed and runs first."""
+
+    for _pass in range(2):
+        claims = claim_due_events(db)
+        db.commit()
+        for claim in claims:
+            event = db.get(RecordTriggerEvent, claim.id)
+            if event is not None and event.event_kind == "field-changed":
+                return claim
+            assert execute_claim(db, claim)
             db.commit()
-            return claim
     raise AssertionError("Expected a field-changed trigger event")
 
 
@@ -104,7 +109,9 @@ def test_trigger_keeps_running_after_its_publisher_loses_access(
     record = record_row
     integration_owner_db.refresh(definition)
     run = integration_owner_db.scalar(
-        select(RecordTriggerRun).where(RecordTriggerRun.trigger_id == definition.id)
+        select(RecordTriggerRun).where(
+            RecordTriggerRun.trigger_id == definition.id, RecordTriggerRun.event_id == claim.id
+        )
     )
     assert record.data[str(fields["status"].id)] == option_id(fields["status"], "In progress")
     assert record.performed_by is None

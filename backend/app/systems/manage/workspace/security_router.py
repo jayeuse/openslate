@@ -24,6 +24,7 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
+from app.core.observability import failure_cause, log_event
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
@@ -37,6 +38,7 @@ from app.systems.manage.workspace.security_policy import (
     ip_allowed,
     load_platform_policy,
     load_workspace_policy,
+    lock_live_sessions,
     lock_policy_users,
     mfa_role_required,
     snapshot_deadlines,
@@ -53,9 +55,24 @@ Database = Annotated[Session, Depends(get_db)]
 _PLATFORM_FIELDS = frozenset(PlatformSettings.__table__.columns.keys()) & (
     WorkspaceSecurityResponse.model_fields.keys() - {"revision"}
 )
+_DEADLINE_FIELDS = frozenset({"session_timeout_minutes", "session_absolute_lifetime_minutes"})
 
 
-def _unavailable() -> HTTPException:
+def _unavailable(error: BaseException | None) -> HTTPException:
+    # School sample run (2026-10-29): a save failed with 503 and nothing logged a cause.
+    # A policy read wraps its database error; name the database failure, not the wrapper.
+    cause = (
+        error.__cause__
+        if isinstance(error, SupabaseAuthUnavailable)
+        and isinstance(error.__cause__, SQLAlchemyError)
+        else error
+    )
+    log_event(
+        "upstream_failure",
+        reason_code="workspace_security_unavailable",
+        upstream="supabase-auth" if isinstance(cause, SupabaseAuthUnavailable) else "postgresql",
+        cause=failure_cause(cause) if cause is not None else "policy_row_missing",
+    )
     return HTTPException(
         503,
         detail={
@@ -80,7 +97,7 @@ def get_workspace_security(
         })
     except SupabaseAuthUnavailable as error:
         db.rollback()
-        raise _unavailable() from error
+        raise _unavailable(error) from error
 
 
 def _factor_evidence(
@@ -150,6 +167,19 @@ def update_workspace_security(
         platform = db.scalar(select(PlatformSettings).where(
             PlatformSettings.singleton_key.is_(True)
         ).execution_options(populate_existing=True).with_for_update())
+        # Sessions before the organization row, with a normal wait. A publication, a
+        # refresh, a sign-in and an MFA step hold a session row while they run, and a
+        # publication or MFA step then locks the organization row: taking the organization
+        # row first would deadlock with them. No path locks a session and then the
+        # installation policy. NOWAIT refused every such holder at once (School, 503).
+        session = db.scalar(
+            select(IdentitySession)
+            .where(IdentitySession.id == identity.session_id)
+            .execution_options(populate_existing=True)
+            .with_for_update()
+        )
+        if changed & _DEADLINE_FIELDS:
+            lock_live_sessions(db)
         profile = db.scalar(
             select(WorkspaceProfile)
             .where(WorkspaceProfile.id == bound_organization(db))
@@ -158,13 +188,13 @@ def update_workspace_security(
         )
     except (SQLAlchemyError, SupabaseAuthUnavailable) as error:
         db.rollback()
-        raise _unavailable() from error
+        raise _unavailable(error) from error
     except InvalidProviderToken as error:
         db.rollback()
         raise HTTPException(401, detail="Invalid authentication credentials") from error
     if not isinstance(profile, WorkspaceProfile) or not isinstance(platform, PlatformSettings):
         db.rollback()
-        raise _unavailable()
+        raise _unavailable(None)
     if payload.revision != profile.revision:
         db.rollback()
         raise HTTPException(
@@ -202,16 +232,6 @@ def update_workspace_security(
         platform.performed_by = actor.id
     try:
         lock_policy_users(db, old_roles, profile, changed)
-        try:
-            session = db.scalar(
-                select(IdentitySession)
-                .where(IdentitySession.id == identity.session_id)
-                .execution_options(populate_existing=True)
-                .with_for_update(nowait=True)
-            )
-        except SQLAlchemyError as error:
-            db.rollback()
-            raise _unavailable() from error
         if (
             session is None
             or session.user_id != actor_id
@@ -234,7 +254,7 @@ def update_workspace_security(
         ):
             db.rollback()
             raise HTTPException(401, detail="Invalid authentication credentials")
-        if changed & {"session_timeout_minutes", "session_absolute_lifetime_minutes"}:
+        if changed & _DEADLINE_FIELDS:
             clamp_session_deadlines(db, old_deadlines, platform)
         if actual_changes:
             operation_id = uuid7()
@@ -264,7 +284,7 @@ def update_workspace_security(
         db.commit()
     except SQLAlchemyError as error:
         db.rollback()
-        raise _unavailable() from error
+        raise _unavailable(error) from error
     response.headers["Cache-Control"] = "no-store"
     return WorkspaceSecurityResponse.model_validate({
         field: getattr(platform if field in _PLATFORM_FIELDS else profile, field)

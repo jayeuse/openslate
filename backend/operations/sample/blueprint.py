@@ -95,6 +95,9 @@ class SampleDataset:
     # Host backup and export acceptance needs a trusted host callback; ordinary
     # sample runs and the release smoke seed leave it out of the plan.
     host_acceptance: bool = False
+    # Installation-wide controls (backups and the installation security settings). Packs
+    # that populate at the same time share one installation, so only one of them runs them.
+    installation_controls: bool = True
 
 
 def edge_child_ids(dataset: SampleDataset) -> tuple[str, ...]:

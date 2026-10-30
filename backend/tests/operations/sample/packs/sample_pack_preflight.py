@@ -418,6 +418,15 @@ def _validate_access_and_totals(dataset: SampleDataset) -> None:
     for record in dataset.records:
         module = modules[record.module_key]
         assert planned_access_level(pack, record.creator_key, module.department, module.key) >= 2
+        # The server accepts a person in a User field only as an active reader of the module
+        # (mutation_validation.validate_live_user_assignments); Clinic's live run hit it.
+        for field in module.fields:
+            value = record.data.get(dataset.field_ids[module.key][field.key])
+            if field.type == "User" and isinstance(value, str) and value.startswith("@user:"):
+                person = value.removeprefix("@user:")
+                assert planned_access_level(pack, person, module.department, module.key) >= 1, (
+                    f"{record.logical_id}: {field.key} names {person}, who cannot read it"
+                )
         assert planned_access_level(pack, record.assignee_key, module.department, module.key) >= 2
     for logical_id, parent_ids in record_parents(dataset).items():
         assert logical_id in records

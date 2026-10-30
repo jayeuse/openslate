@@ -7,6 +7,7 @@ import {
 import {
   fileWireSchema,
   reserveFile,
+  retryFilesBusy,
   uploadFileContent,
   throwFileRequestError,
 } from "@/components/systems/shared/adapters/files-api";
@@ -163,14 +164,21 @@ export async function saveProfile(
   userId: string,
   patch: ProfilePatch,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ) {
+  const body = JSON.stringify(patchSchema.parse(patch));
+  // Binding a new photo waits for file capacity; a files_busy refusal changed nothing.
   return requireOwner(
-    await apiFetch("/auth/me/profile", profileSchema, {
-      method: "PATCH",
-      body: JSON.stringify(patchSchema.parse(patch)),
-      signal,
-      refreshOnUnauthorized: false,
-    }),
+    await retryFilesBusy(
+      () =>
+        apiFetch("/auth/me/profile", profileSchema, {
+          method: "PATCH",
+          body,
+          signal,
+          refreshOnUnauthorized: false,
+        }),
+      { signal, onWaiting },
+    ),
     userId,
   );
 }
@@ -243,6 +251,7 @@ export async function uploadAvatar(
   fileId: string,
   file: File,
   signal?: AbortSignal,
+  onWaiting?: (waiting: boolean) => void,
 ) {
   const id = uuid.parse(fileId);
   if (!validAvatarSelection(file)) throw new ApiContractError();
@@ -266,6 +275,7 @@ export async function uploadAvatar(
       return response;
     },
     signal,
+    onWaiting,
   );
 }
 
@@ -310,13 +320,21 @@ export async function readPersonAvatar(
 }
 
 async function readAvatarBytes(userId: string, signal?: AbortSignal) {
-  const response = await apiRequest(`/users/${uuid.parse(userId)}/avatar`, {
-    signal,
-    redirect: "error",
-    cache: "no-store",
-    refreshOnUnauthorized: false,
-  });
-  if (!response.ok) return throwFileRequestError(response, "Photo unavailable");
+  const path = `/users/${uuid.parse(userId)}/avatar`;
+  const response = await retryFilesBusy(
+    async () => {
+      const response = await apiRequest(path, {
+        signal,
+        redirect: "error",
+        cache: "no-store",
+        refreshOnUnauthorized: false,
+      });
+      if (!response.ok)
+        return throwFileRequestError(response, "Photo unavailable");
+      return response;
+    },
+    { signal },
+  );
   const type = response.headers
     .get("Content-Type")
     ?.split(";")[0]

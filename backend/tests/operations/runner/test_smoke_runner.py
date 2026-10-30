@@ -92,6 +92,7 @@ def smoke_boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         build_env=None,
         base_env=None,
         api_env=None,
+        api_command=None,
         log=None,
         cleanup_state=None,
         commands=[],
@@ -164,6 +165,7 @@ def smoke_boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             assert state.build.returncode == 0, "API started with a failed build"
             assert state.provisioned.is_set(), "API started before provisioning completed"
             state.api_env = dict(kwargs["env"])
+            state.api_command = list(command)
             raise _ReachedAPI("both prerequisites reached the API boundary")
         state.commands.append(command)
         assert command in [
@@ -289,6 +291,27 @@ def test_smoke_overlaps_build_with_startup_and_waits_for_both_prerequisites(
     )
 
 
+@pytest.mark.parametrize(("configured", "workers"), [(None, "1"), ("3", "3")])
+def test_smoke_starts_the_api_with_the_configured_worker_processes(
+    smoke_boundary, monkeypatch: pytest.MonkeyPatch, configured: str | None, workers: str
+) -> None:
+    # The runner builds the API environment from scratch, so API_WORKERS must pass through.
+    if configured is None:
+        monkeypatch.delenv("API_WORKERS", raising=False)
+    else:
+        monkeypatch.setenv("API_WORKERS", configured)
+    state = smoke_boundary
+    state.launch()
+    state.release_startup.set()
+    state.build.finish(0)
+    report = _joined(state)
+
+    assert report["failure_type"] == "_ReachedAPI"
+    command = state.api_command
+    assert command[command.index("--workers") + 1] == workers
+    assert state.api_env["API_WORKERS"] == workers
+
+
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_smoke_preserves_build_failure_during_startup_and_cleans_the_owned_stack(
     smoke_boundary, cleanup_fails: bool
@@ -342,8 +365,11 @@ def test_smoke_options_take_a_pack_list_only_for_a_seed_only_run() -> None:
     assert (default.seed_only, default.packs) == (False, ("harbor",))
     seeded = runner.parse_options(["--seed-only", "--packs", "harbor,school"])
     assert (seeded.seed_only, seeded.packs) == (True, ("harbor", "school"))
+    parallel = runner.parse_options(["--seed-only", "--parallel", "--packs", "harbor,school"])
+    assert (parallel.parallel, parallel.packs) == (True, ("harbor", "school"))
+    assert default.parallel is False
     for argv in (["--packs", "school"], ["--seed-only", "--packs", "harbor,unknown"],
-                 ["--seed-only", "--packs", "harbor,harbor"]):  # fmt: skip
+                 ["--seed-only", "--packs", "harbor,harbor"], ["--parallel"]):  # fmt: skip
         with pytest.raises(SystemExit):
             runner.parse_options(argv)
 
@@ -397,6 +423,7 @@ def test_smoke_seed_populates_the_pack_organization_it_is_given(
         return SimpleNamespace(status="complete", run_directory=tmp_path, issues=())
 
     monkeypatch.setattr(smoke_seed, "populate_sample_data", populate)
+    monkeypatch.setenv("OPENSLATE_SMOKE_ADMIN_PASSWORD", "test")
     parameters = tmp_path / "parameters.json"
     parameters.write_text(
         json.dumps(
@@ -406,7 +433,6 @@ def test_smoke_seed_populates_the_pack_organization_it_is_given(
                 "mailpit_url": "http://127.0.0.1:1",
                 "admin_email": "admin@example.test",
                 "admin_id": "0190a000-0000-7000-8000-000000000001",
-                "admin_password": "test",
                 "run_root": str(tmp_path),
                 "seed": 42,
                 "anchor_date": "2026-09-30",
@@ -422,6 +448,13 @@ def test_smoke_seed_populates_the_pack_organization_it_is_given(
     assert seen["organization_id"] == "0190a000-0000-7000-8000-00000000000a"
     assert seen["partner_organization_id"] == "0190a000-0000-7000-8000-00000000000b"
     assert seen["organization"].identity.key == "school"
+    # A seed file written before concurrent runs keeps the installation controls.
+    assert seen["installation_controls"] is True
+
+    document = json.loads(parameters.read_text(encoding="utf-8"))
+    parameters.write_text(json.dumps({**document, "installation_controls": False}), "utf-8")
+    assert smoke_seed.main([str(parameters)]) == 0
+    assert seen["installation_controls"] is False
 
 
 def test_smoke_seed_prints_each_verification_issue_as_the_cli_does(
@@ -437,6 +470,7 @@ def test_smoke_seed_prints_each_verification_issue_as_the_cli_does(
             status="incomplete", run_directory=tmp_path, issues=("boards: count differs",)
         ),
     )
+    monkeypatch.setenv("OPENSLATE_SMOKE_ADMIN_PASSWORD", "test")
     parameters = tmp_path / "parameters.json"
     parameters.write_text(
         json.dumps(
@@ -446,7 +480,6 @@ def test_smoke_seed_prints_each_verification_issue_as_the_cli_does(
                 "mailpit_url": "http://127.0.0.1:1",
                 "admin_email": "admin@example.test",
                 "admin_id": "0190a000-0000-7000-8000-000000000001",
-                "admin_password": "test",
                 "run_root": str(tmp_path),
                 "seed": 42,
                 "anchor_date": "2026-09-30",
@@ -460,3 +493,38 @@ def test_smoke_seed_prints_each_verification_issue_as_the_cli_does(
 
     assert smoke_seed.main([str(parameters)]) == 1
     assert "incomplete: boards: count differs" in capsys.readouterr().out.splitlines()
+
+
+def test_smoke_files_hold_no_password_and_the_seeder_reads_it_from_its_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CodeQL py/clear-text-storage-sensitive-data: the runner wrote passwords into its
+    # private seed-parameter and smoke-fixture files. They now travel only in a child
+    # process's environment.
+    from tests import smoke_runner, smoke_seed
+
+    roles, passwords = smoke_runner.smoke_identities(
+        {
+            "accounts": [
+                {
+                    "key": key,
+                    "status": "active",
+                    "email": f"{role}@example.test",
+                    "password": f"secret-{role}",
+                    "display_name": role.title(),
+                }
+                for role, key in smoke_runner.SMOKE_ROLES.items()
+            ]
+        },
+        {"email": "a@example.test", "password": "secret-admin"},
+    )
+    assert passwords["admin"] == "secret-admin"
+    assert set(passwords) == {"admin", *smoke_runner.SMOKE_ROLES}
+    assert "secret" not in json.dumps(roles)
+    with pytest.raises(RuntimeError):
+        smoke_runner.smoke_identities({"accounts": []}, {"email": "a", "password": "b"})
+    monkeypatch.delenv(smoke_runner.SEED_PASSWORD_ENV, raising=False)
+    with pytest.raises(SystemExit):
+        smoke_seed._admin_password()
+    monkeypatch.setenv(smoke_runner.SEED_PASSWORD_ENV, "from-env")
+    assert smoke_seed._admin_password() == "from-env"

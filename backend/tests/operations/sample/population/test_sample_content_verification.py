@@ -160,6 +160,8 @@ def test_project_board_grants_require_exact_intended_groups_and_levels(
             f"/api/boards/{BOARD_ID}/cards",
         }:
             return httpx.Response(200, json=_page([]))
+        if request.url.path == f"/api/boards/{BOARD_ID}/calendar-sources":
+            return httpx.Response(200, json={"items": []})
         raise AssertionError(f"Unexpected GET {request.url.path}")
 
     mappings = {

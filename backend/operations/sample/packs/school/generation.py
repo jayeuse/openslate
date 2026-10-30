@@ -18,7 +18,25 @@ from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.school import dates, text, vocabulary
 from operations.sample.packs.school.catalog_fields import YEAR_GROUPS
 from operations.sample.packs.school.links import parent_indices, reference_parents
+from operations.sample.packs.school.realism import (
+    ADJUSTMENT,
+    BURSARY,
+    BURSARY_SHARE,
+    FEE_TIERS,
+    STATUS_WEIGHTS,
+)
 from operations.sample.packs.types import OMIT, FieldSpec, JsonValue, ModuleSpec
+from operations.sample.realism import (
+    DIRT,
+    dirty_text,
+    dirty_value,
+    long_tail_amount,
+    ordered_skew,
+    weighted_label,
+)
+
+# Records below this index carry named business cases; the realism rules leave them alone.
+PINNED = 10
 
 NAMED_SCENARIOS = (
     NamedScenario(
@@ -48,8 +66,14 @@ def _year_group_index(index: int, seed: int) -> int:
 def _assessment_totals(index: int) -> tuple[int, int, int]:
     if index == 0:
         return 5_000, 800, 4_200
-    gross = 6_800 + (index * 197) % 6_000
-    adjustments = (index * 73) % 1_200
+    if index < PINNED:
+        gross, adjustments = 6_800 + (index * 197) % 6_000, (index * 73) % 1_200
+        return gross, adjustments, gross - adjustments
+    rng = random.Random(f"school:fees:{index}")
+    gross = rng.choices(FEE_TIERS, weights=(14, 18, 22, 20, 15, 11))[0]
+    adjustments = 0
+    if rng.random() < BURSARY_SHARE:
+        adjustments = min(gross // 2, int(long_tail_amount(rng, BURSARY)))
     return gross, adjustments, gross - adjustments
 
 
@@ -77,11 +101,13 @@ def _paid_total(assessment_index: int, counts: Mapping[str, int]) -> int:
     if assessment_index == 4:
         return net_due // 3
     remainder = assessment_index % 100
-    if remainder < 32:
+    # Two thirds of families have paid the term in full by now.
+    full, half, third = (32, 82, 91) if assessment_index < PINNED else (66, 86, 94)
+    if remainder < full:
         return net_due
-    if remainder < 82:
+    if remainder < half:
         return net_due // 2
-    if remainder < 91:
+    if remainder < third:
         return net_due // 3
     return max(1, net_due // 4)
 
@@ -98,6 +124,8 @@ def _payment_amount(payment_index: int, counts: Mapping[str, int]) -> int:
 
 def _status_label(module: ModuleSpec, index: int, seed: int) -> str:
     key = module.key
+    if index >= PINNED and key in STATUS_WEIGHTS:
+        return weighted_label(random.Random(f"{seed}:{key}:{index}:status"), STATUS_WEIGHTS[key])
     if key == "applications":
         if index == 4:
             return "Enrolled"
@@ -176,7 +204,10 @@ def _choice_label(field: FieldSpec, index: int, seed: int, anchor: date | None =
         current_year = anchor.year if anchor.month >= 9 else anchor.year - 1
         target_year = current_year + (field.key == "entry_year")
         return min(field.options, key=lambda label: abs(int(label[:4]) - target_year))
-    return field.options[(index * 7 + seed) % len(field.options)]
+    if index < PINNED:
+        return field.options[(index * 7 + seed) % len(field.options)]
+    rng = random.Random(f"{seed}:{field.key}:{index}:choice")
+    return weighted_label(rng, ordered_skew(field.options))
 
 
 def _reference_value(
@@ -222,7 +253,7 @@ def _student_name_part(index: int, seed: int, first: bool) -> str:
     return names[(index * multiplier + offset) % len(names)]
 
 
-def _field_value(
+def _clean_field_value(
     organization: OrganizationPack,
     module: ModuleSpec,
     field: FieldSpec,
@@ -360,11 +391,15 @@ def _field_value(
     if kind == "payment_amount":
         return _payment_amount(index, counts)
     if kind == "fee_item_amount":
-        return 250 + (index * 375) % 4_500
+        if index < PINNED:
+            return 250 + (index * 375) % 4_500
+        return rng.choice((150, 250, 350, 500, 750, 1_000, 1_500, 2_500, 4_500))
     if kind == "adjustment_value":
         return 5 + (index * 3) % 25
     if kind == "adjustment_amount":
-        return 150 + (index * 191) % 3_500
+        if index < PINNED:
+            return 150 + (index * 191) % 3_500
+        return long_tail_amount(rng, ADJUSTMENT)
     if kind == "amount_overdue":
         assessment_index = 4 if index == 0 else index % counts["fee_assessments"]
         return _fee_assessment_value("balance", assessment_index, counts)
@@ -421,3 +456,49 @@ def _field_value(
     if field.type == "Text":
         return text.record_title(module.key, index, seed, counts)
     raise ValueError(f"Unsupported School field generator {module.key}.{field.key}")
+
+
+def _field_value(
+    organization: OrganizationPack,
+    module: ModuleSpec,
+    field: FieldSpec,
+    index: int,
+    seed: int,
+    anchor: date,
+    counts: Mapping[str, int],
+) -> JsonValue | object:
+    """The value as people type it (spec R6, R7); pinned records stay exact."""
+    value = _clean_field_value(organization, module, field, index, seed, anchor, counts)
+    if index < PINNED or value is OMIT or field.value_kind not in _DIRTY_KINDS:
+        return value
+    kind = field.value_kind
+    previous = index - 1 >= PINNED
+    redone = _RECREATED.get(module.key)
+    if kind == "title" and previous and redone is not None:
+        # Refused or cancelled, then entered again: the new record repeats the old title.
+        if _status_label(module, index - 1, seed) == redone:
+            return _clean_field_value(organization, module, field, index - 1, seed, anchor, counts)
+    if kind == "title" and module.key in _NEAR_DUPLICATE_MODULES and index >= 2 * PINNED:
+        rng = random.Random(f"{seed}:{module.key}:{index}:near-duplicate")
+        if rng.random() < 0.02:
+            other = _clean_field_value(organization, module, field, index - 7, seed, anchor, counts)
+            if isinstance(other, str):
+                return dirty_text(rng, other)
+    note = (_clean_field_value(organization, module, field, index - 1, seed, anchor, counts)
+            if kind == "notes" and previous else None)  # fmt: skip
+    return dirty_value(
+        random.Random(f"{seed}:{module.key}:{index}:{field.key}:dirt"),
+        kind,
+        value,
+        required=field.required,
+        country_code="44",
+        quick_entry=random.Random(f"{seed}:{module.key}:{index}:quick").random() < DIRT.quick_entry,
+        previous_note=note if isinstance(note, str) else None,
+    )
+
+
+# A record entered again after this status; its title names no linked parent.
+_RECREATED = {"staff_leave": "Cancelled"}
+_DIRTY_KINDS = frozenset({"title", "notes", "phone", "email", "url"})
+# Named things where a second, slightly different entry for the same company appears.
+_NEAR_DUPLICATE_MODULES = frozenset({"rooms"})

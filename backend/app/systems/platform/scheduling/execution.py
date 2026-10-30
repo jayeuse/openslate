@@ -6,7 +6,6 @@ active, its audit entries carry no user and the label "Scheduled report: <name>"
 and every module reader at run time may open the run.
 """
 
-import logging
 from datetime import datetime
 from uuid import UUID
 
@@ -16,6 +15,7 @@ from uuid6 import uuid7
 from app.core.base_model import utc_now
 from app.core.database.organization_scope import current_worker_organization
 from app.core.database.session import AuditSession
+from app.core.observability import failure_cause, log_event
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, get_audit_context
 from app.systems.openview.reports.eligibility import capture_run_eligible_users
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
@@ -38,8 +38,6 @@ from app.systems.platform.scheduling.service import (
     report_source,
     scheduled_actor_label,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def _session(engine: Engine) -> AuditSession:
@@ -182,10 +180,17 @@ def execute_report_claim(
             engine, report_id, None, org_id=current_worker_organization()
         )
         return _finalize_claim(engine, claim, snapshot, now=now)
-    except Exception:
+    except Exception as error:
         # This is the worker process boundary. A failed capture or final write
         # has rolled back before a separate, lease-checked retry transition.
-        logger.warning("Scheduled Report attempt failed; applying bounded retry")
+        log_event(
+            "operational_attention",
+            reason_code="scheduled_report_attempt_failed",
+            upstream="report-scheduler",
+            operation_id=claim.id,
+            org_id=current_worker_organization(),
+            cause=failure_cause(error),
+        )
         _fail_claim(engine, claim, now=now)
         return None
 

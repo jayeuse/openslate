@@ -1,0 +1,180 @@
+"""Clinic's planned record and Access requests that must be refused (plan: Refusals)."""
+
+from __future__ import annotations
+
+from operations.sample.packs.clinic.people import (
+    CLAIMS_SPECIALIST_KEY,
+    DISABLED_KEY,
+    FRONT_DESK_KEY,
+    GUEST_SURVEYOR_KEY,
+    NURSE_KEY,
+    PAYMENT_POSTER_KEY,
+    PENDING_KEY,
+    STOREKEEPER_KEY,
+)
+from operations.sample.packs.types import RejectionCase
+
+FORBIDDEN = "Forbidden"
+HIDDEN = "Record not found"
+BAD_CREDENTIALS = "Invalid authentication credentials"
+INVALID_OPTION_KEY = "openslate:clinic:invalid-select-option"
+INVALID_FIELD_KEY = "openslate:clinic:unknown-field"
+
+ACTIVITY_CASES = (
+    RejectionCase(
+        key="front_desk_opens_lab_result",
+        actor_key=FRONT_DESK_KEY,
+        needs=("lab_results:000001",),
+        expected_status=404,
+        expected_detail=HIDDEN,
+        operation="read-record",
+        target_record_id="lab_results:000001",
+    ),
+    RejectionCase(
+        key="claims_specialist_edits_encounter",
+        actor_key=CLAIMS_SPECIALIST_KEY,
+        needs=("encounters:000002",),
+        expected_status=403,
+        expected_detail=FORBIDDEN,
+        operation="edit-record",
+        target_record_id="encounters:000002",
+    ),
+    RejectionCase(
+        key="nurse_finalizes_lab_result",
+        actor_key=NURSE_KEY,
+        needs=("lab_results:000002",),
+        expected_status=403,
+        expected_detail=FORBIDDEN,
+        operation="edit-record",
+        target_record_id="lab_results:000002",
+    ),
+    RejectionCase(
+        key="storekeeper_opens_patient",
+        actor_key=STOREKEEPER_KEY,
+        needs=("patients:000001",),
+        expected_status=404,
+        expected_detail=HIDDEN,
+        operation="read-record",
+        target_record_id="patients:000001",
+    ),
+    RejectionCase(
+        key="guest_surveyor_edits_staff_credential",
+        actor_key=GUEST_SURVEYOR_KEY,
+        needs=("staff_credentials:000001",),
+        expected_status=403,
+        expected_detail=FORBIDDEN,
+        operation="edit-record",
+        target_record_id="staff_credentials:000001",
+    ),
+    RejectionCase(
+        key="unversioned_payment_edit",
+        actor_key="admin",
+        needs=("payments:000003",),
+        expected_status=428,
+        expected_detail="If-Match required",
+        operation="unversioned-record-edit",
+        target_record_id="payments:000003",
+    ),
+    RejectionCase(
+        key="missing_required_field",
+        actor_key="internal_patient_access_02",
+        needs=(),
+        expected_status=422,
+        expected_detail="required_field",
+        template_record_id="patients:000002",
+        invalid_field_action="remove",
+        field_key="name",
+    ),
+    RejectionCase(
+        key="unknown_select_option",
+        actor_key="internal_patient_access_02",
+        needs=(),
+        expected_status=422,
+        expected_detail="invalid_field_value",
+        template_record_id="patients:000002",
+        invalid_field_action="invalid-option",
+        field_key="status",
+    ),
+    RejectionCase(
+        key="wrong_value_type",
+        actor_key=PAYMENT_POSTER_KEY,
+        needs=(),
+        expected_status=422,
+        expected_detail="invalid_field_value",
+        template_record_id="payments:000002",
+        invalid_field_action="set",
+        field_key="amount",
+        field_value="forty dollars",
+    ),
+    RejectionCase(
+        key="unknown_field",
+        actor_key="internal_patient_access_02",
+        needs=(),
+        expected_status=422,
+        expected_detail="unknown_field",
+        template_record_id="patients:000002",
+        invalid_field_action="add-unknown-field",
+        field_value="Front desk reserve",
+    ),
+    RejectionCase(
+        key="duplicate_specimen_order",
+        actor_key="internal_laboratory_02",
+        needs=("specimens:000001", "orders:000001"),
+        expected_status=409,
+        expected_detail="Relationship already exists",
+        operation="create-relationship",
+        relationship_key="specimen_orders",
+        source_record_id="specimens:000001",
+        target_record_id="orders:000001",
+    ),
+    RejectionCase(
+        key="second_encounter_for_appointment",
+        actor_key="internal_clinical_02",
+        needs=("encounters:000002", "appointments:000001"),
+        expected_status=409,
+        expected_detail="Target already has a relationship source",
+        operation="replace-relationship",
+        relationship_key="encounter_appointment",
+        source_record_id="encounters:000002",
+        target_record_id="appointments:000001",
+    ),
+    RejectionCase(
+        key="stale_group_edit",
+        actor_key="admin",
+        needs=(),
+        expected_status=412,
+        expected_detail="Resource changed",
+        operation="stale-group-edit",
+        group_key="clinicians",
+        fallback_description="Clinical Services",
+    ),
+)
+
+CLOSING_CASES = (
+    RejectionCase(
+        key="stale_post_edit",
+        actor_key="internal_clinical_lead",
+        needs=(),
+        expected_status=409,
+        expected_detail="stale_post_revision",
+        operation="stale-post-edit",
+        board_key="department:clinical",
+        post_key="department:clinical:post:03",
+    ),
+    RejectionCase(
+        key="pending_account_sign_in",
+        actor_key=PENDING_KEY,
+        needs=(),
+        expected_status=401,
+        expected_detail=BAD_CREDENTIALS,
+        operation="sign-in",
+    ),
+    RejectionCase(
+        key="disabled_account_sign_in",
+        actor_key=DISABLED_KEY,
+        needs=(),
+        expected_status=401,
+        expected_detail=BAD_CREDENTIALS,
+        operation="sign-in",
+    ),
+)

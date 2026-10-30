@@ -346,7 +346,7 @@ def test_baseline_refuses_partial_workspace_or_sandbox_without_any_write() -> No
         fresh_sandbox,
     )
     with pytest.raises(SampleVerificationError, match="workspace"):
-        assert_pristine_baseline(workspace_client, admin_id="admin-id")
+        assert_pristine_baseline(workspace_client, operator_id="admin-id")
     assert workspace_client.methods == ["GET"]
 
     sandbox_client = _BaselineClient(
@@ -367,7 +367,7 @@ def test_baseline_refuses_partial_workspace_or_sandbox_without_any_write() -> No
         ),
     )
     with pytest.raises(SampleVerificationError, match="Sandbox"):
-        assert_pristine_baseline(sandbox_client, admin_id="admin-id")
+        assert_pristine_baseline(sandbox_client, operator_id="admin-id")
     assert sandbox_client.methods == ["GET", "GET"]
 
 
@@ -396,13 +396,13 @@ def test_plan_summary_reports_exact_profile_counts_and_fixed_supporting_catalogu
         "events": 144,
         "reminders": 24,
         "attachments": 11,
-        "kanban_stages": 5,
-        "kanban_labels": 3,
-        "kanban_cards": 12,
+        "kanban_stages": 28,
+        "kanban_labels": 18,
+        "kanban_cards": 72,
         "kanban_checklist_items": 7,
         "views": 18,
         "dashboards": 6,
-        "dashboard_widgets": 24,
+        "dashboard_widgets": 42,
         "reports": 12,
     }
 

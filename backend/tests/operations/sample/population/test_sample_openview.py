@@ -165,7 +165,7 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
     assert counts == {
         "views": 18,
         "dashboards": 6,
-        "dashboard_widgets": 24,
+        "dashboard_widgets": 42,  # Seven widgets for each of the six departments.
         "reports": 12,
         "report_runs": 12,
         "schedules": 12,
@@ -185,19 +185,27 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
         body["presentation"]["group_by_field_id"] in body["presentation"]["column_field_ids"]
         for body in grouped
     )
-    assert all(len(body["widgets"]) == 4 for body in dashboard_bodies)
     for body in dashboard_bodies:
         DashboardCreate.model_validate(body)
+        widgets = body["widgets"]
+        # Spec R8: the Overview preset, with the first 2 x 2 of rows 4-5 left free.
         assert [
             (widget["widget_type"], widget["grid_column"], widget["grid_row"])
             + (widget["column_span"], widget["row_span"])
-            for widget in body["widgets"]
+            for widget in widgets
         ] == [
-            ("summary", 0, 0, 2, 1),
-            ("workload", 2, 0, 2, 2),
-            ("records", 0, 1, 2, 2),
-            ("chart", 2, 2, 2, 2),
+            ("summary", 0, 0, 1, 1),
+            ("summary", 1, 0, 1, 1),
+            ("summary", 2, 0, 1, 1),
+            ("summary", 3, 0, 1, 1),
+            ("chart", 0, 1, 2, 2),
+            ("workload", 2, 1, 2, 2),
+            ("records", 2, 3, 2, 2),
         ]
+        queries = [widget["config"]["query"] for widget in widgets]
+        assert any(query.get("aggregation") in {"sum", "average"} for query in queries)
+        assert widgets[4]["config"]["chart_type"] == "line"
+        assert queries[4]["mode"] == "date_series" and queries[4]["bucket"] == "month"
     assert len(report_bodies) == len(run_requests) == len(schedule_bodies) == 12
     assert len({request.headers["idempotency-key"] for request in run_requests}) == 12
     assert {body["cadence"] for body in schedule_bodies} == {"daily", "weekly"}

@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from operations.backups.host import SERVICES, Host, Json, RunnerError, digest, physical_archive
+from operations.sample.controls.planned_actors import OPERATOR
 from operations.sample.phases.actions import PhaseSubstep, SamplePhaseActionError
 
 if TYPE_CHECKING:
@@ -397,19 +398,19 @@ def restore_account(run: _Delivery) -> None:
     from operations.sample.controls.mfa_verification import _factor_inventory, _group_members
 
     run.observed(
-        "admin",
+        OPERATOR,
         "restore_owner_refresh",
         "POST",
         "/api/auth/refresh",
         run.admin.refresh(),
         200,
     )
-    owner = run.read("admin", "restore_owner_identity", "/api/auth/me")
+    owner = run.read(OPERATOR, "restore_owner_identity", "/api/auth/me")
     require(
         all(owner.get(k) == run.owner.get(k) for k in ("id", "role", "status", "email")),
         "host_restore_account",
     )
-    current = run.read("admin", "restore_actor_read", f"/api/users/{run.actor_id}")
+    current = run.read(OPERATOR, "restore_actor_read", f"/api/users/{run.actor_id}")
     require(
         current.get("id") == run.actor_id
         and current.get("status") == "active"
@@ -420,7 +421,7 @@ def restore_account(run: _Delivery) -> None:
         run.person(
             run.read_response(
                 run.request(
-                    "admin",
+                    OPERATOR,
                     "restore_actor_role",
                     "PATCH",
                     f"/api/users/{run.actor_id}",
@@ -432,7 +433,7 @@ def restore_account(run: _Delivery) -> None:
         )
     for group in run.actor_groups:
         response = run.request(
-            "admin", "restore_group_read:" + group, "GET", f"/api/access/groups/{group}"
+            OPERATOR, "restore_group_read:" + group, "GET", f"/api/access/groups/{group}"
         )
         body = run.read_response(response, "host_restore_groups")
         members = sorted(body.get("member_ids", []))
@@ -449,7 +450,7 @@ def restore_account(run: _Delivery) -> None:
             "host_restore_groups",
         )
         run.request(
-            "admin",
+            OPERATOR,
             "restore_group:" + group,
             "PUT",
             f"/api/access/groups/{group}/members",
@@ -458,7 +459,7 @@ def restore_account(run: _Delivery) -> None:
         )
     require(_group_members(run.admin) == run.groups, "host_restore_groups")
     for key, client in run.context.clients.items():
-        if key == "admin":
+        if key in {"admin", OPERATOR}:
             continue
         credential = run.credentials[key]
         run.observed(
@@ -480,7 +481,7 @@ def restore_account(run: _Delivery) -> None:
         )[1]
         == []
         and _factor_inventory(
-            run.read("admin", "restored_owner_factors", "/api/auth/mfa"),
+            run.read(OPERATOR, "restored_owner_factors", "/api/auth/mfa"),
             run.owner_id,
             "host_restore_account",
         )[1]

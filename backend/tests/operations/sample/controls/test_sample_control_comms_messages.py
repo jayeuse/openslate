@@ -309,7 +309,13 @@ def test_message_executor_covers_message_routes_and_checks_observed_state_withou
             receipts.pop(0)
         if fault == "end_state_erased":
             result.pop("message_deleted")
-        counts, issues = verify_controls(client, dataset, manifest, ADMIN)
+        counts, issues = verify_controls(
+            client,
+            dataset,
+            {**manifest, "operator_id": str(uuid5(NAMESPACE_URL, "operator"))},
+            ADMIN,
+            operator=client,
+        )
         if fault in {"receipt_erased", "end_state_erased"}:
             assert issues, "Incomplete execution must not verify"
         else:

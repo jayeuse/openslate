@@ -186,7 +186,10 @@ def record_title(module_key: str, index: int, seed: int, counts: Mapping[str, in
         return f"{first} {last}"
     if module_key == "quotes":
         customer = customer_name(_parent("customer_quotes", index, counts), seed)
-        return f"{customer} — {QUOTE_OFFERS[rng.randrange(len(QUOTE_OFFERS))]}"
+        offer = QUOTE_OFFERS[rng.randrange(len(QUOTE_OFFERS))]
+        # A busy customer asks again; people tell the quotes apart by revision or quarter.
+        qualifier = rng.choice(("", "", "", " (renewal)", " — revised", f" (Q{rng.randint(1, 4)})"))
+        return f"{customer} — {offer}{qualifier}"
     if module_key == "sales_orders":
         customer = customer_name(_parent("customer_orders", index, counts), seed)
         items = ORDER_ITEMS[rng.randrange(len(ORDER_ITEMS))]
@@ -250,11 +253,11 @@ def record_title(module_key: str, index: int, seed: int, counts: Mapping[str, in
         order = _parent("purchase_order_receipts", index, counts)
         return f"Receipt for {reference_code('purchase_orders', order, seed)}"
     if module_key == "invoices":
-        customer = customer_name(index % counts["customers"], seed)
+        customer = customer_name(_parent("invoice_customer", index, counts), seed)
         return f"{reference_code('invoices', index, seed)} — {customer}"
     if module_key == "payments":
         invoice = _parent("invoice_payments", index, counts)
-        customer = customer_name(invoice % counts["customers"], seed)
+        customer = customer_name(_parent("invoice_customer", invoice, counts), seed)
         return f"Payment from {customer} for {reference_code('invoices', invoice, seed)}"
     if module_key == "expenses":
         return _expense_text(index, seed)
@@ -432,7 +435,8 @@ def email_value(module_key: str, index: int, seed: int, counts: Mapping[str, int
     if module_key == "suppliers":
         return f"orders@{_company_domain(supplier_name(index))}"
     if module_key == "invoices":
-        return email_value("customers", index % counts["customers"], seed, counts)
+        customer = _parent("invoice_customer", index, counts)
+        return email_value("customers", customer, seed, counts)
     raise ValueError(f"No e-mail rule for {module_key}")
 
 

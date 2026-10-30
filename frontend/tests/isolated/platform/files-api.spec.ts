@@ -4,15 +4,20 @@ import { z, ZodError } from "zod";
 import {
   ApiContractError,
   ApiError,
+  apiRequest,
   type LifecycleErrorCode,
 } from "../../../src/lib/api";
 import {
   MAX_FILE_BYTES,
   fileErrorMessage,
   formatFileSize,
+  isFilesBusy,
   requestFileContent,
   reserveFile,
+  retryFilesBusy,
+  throwFileRequestError,
   uploadFileContent,
+  type FilesBusyTiming,
 } from "../../../src/components/systems/shared/adapters/files-api";
 import { ids, installFetch } from "./fixtures";
 
@@ -323,6 +328,11 @@ const messages: { name: string; error: unknown; message: string }[] = [
       "The server returned an invalid attachment response. Refresh and try again.",
   },
   {
+    name: "file capacity that stayed busy",
+    error: apiError(503, "files_busy"),
+    message: "The server is busy. Try again in a moment.",
+  },
+  {
     name: "any other server failure",
     error: apiError(503),
     message: "Could not upload the file. Try again.",
@@ -338,6 +348,183 @@ for (const row of messages)
   test(`file error message for ${row.name}`, () => {
     expect(fileErrorMessage(row.error, "upload the file")).toBe(row.message);
   });
+
+// File capacity refusals (503 files_busy) are retried after Retry-After for
+// about 30 s by every upload and download; the time here is a fake clock.
+const busyAnswer = (retryAfter?: string) =>
+  Response.json(
+    { detail: { code: "files_busy", message: "File capacity is busy" } },
+    {
+      status: 503,
+      headers: retryAfter === undefined ? {} : { "Retry-After": retryAfter },
+    },
+  );
+
+function fakeTiming() {
+  let clock = 0;
+  const waits: number[] = [];
+  const timing: FilesBusyTiming = {
+    now: () => clock,
+    sleep: async (milliseconds) => {
+      waits.push(milliseconds);
+      clock += milliseconds;
+    },
+  };
+  return { timing, waits };
+}
+
+/** Sends the bytes the way the file adapters do. */
+const sendBytes = (content: Blob, signal?: AbortSignal) => async () => {
+  const response = await apiRequest(`/files/${ids.file}/content`, {
+    method: "PUT",
+    body: content,
+    signal,
+  });
+  if (!response.ok) return throwFileRequestError(response);
+  return response;
+};
+
+test("a refused file request keeps the files_busy code and its Retry-After", async () => {
+  const failure = await throwFileRequestError(busyAnswer("3")).catch(
+    (error: unknown) => error,
+  );
+  expect(failure).toMatchObject({
+    status: 503,
+    code: "files_busy",
+    retryAfter: 3,
+    message: "File request could not be completed",
+  });
+  expect(isFilesBusy(failure)).toBe(true);
+});
+
+test("a busy file request waits Retry-After, clamped to 1 to 10 s, and sends the same bytes again", async () => {
+  const content = new Blob(["pdf"]);
+  const answers = [
+    busyAnswer("0"),
+    busyAnswer("30"),
+    busyAnswer(),
+    Response.json({ id: ids.file }),
+  ];
+  const refused = answers.slice(0, 3);
+  const mock = installFetch(() => answers.shift() ?? busyAnswer());
+  const { timing, waits } = fakeTiming();
+  const waiting: boolean[] = [];
+  try {
+    const response = await retryFilesBusy(
+      sendBytes(content),
+      { onWaiting: (value) => waiting.push(value) },
+      timing,
+    );
+    expect(await response.json()).toEqual({ id: ids.file });
+    expect(waits).toEqual([1000, 10000, 1000]);
+    expect(mock.requests).toHaveLength(4);
+    for (const request of mock.requests)
+      expect(request.init?.body).toBe(content);
+    for (const answer of refused) expect(answer.bodyUsed).toBe(true);
+    expect(waiting).toEqual([true, false]);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a file request that stays busy fails with the busy error after about 30 s", async () => {
+  const mock = installFetch(() => busyAnswer("1"));
+  const { timing, waits } = fakeTiming();
+  const waiting: boolean[] = [];
+  try {
+    const failure = await retryFilesBusy(
+      sendBytes(new Blob(["pdf"])),
+      { onWaiting: (value) => waiting.push(value) },
+      timing,
+    ).catch((error: unknown) => error);
+    expect(isFilesBusy(failure)).toBe(true);
+    expect(fileErrorMessage(failure, "upload the file")).toBe(
+      "The server is busy. Try again in a moment.",
+    );
+    expect(waits.reduce((total, wait) => total + wait, 0)).toBe(30000);
+    expect(mock.requests).toHaveLength(31);
+    expect(waiting).toEqual([true, false]);
+  } finally {
+    mock.restore();
+  }
+});
+
+for (const row of [
+  {
+    name: "another 503 code",
+    answer: () =>
+      Response.json(
+        { detail: { code: "comms_unavailable", message: "Unavailable" } },
+        { status: 503, headers: { "Retry-After": "1" } },
+      ),
+    status: 503,
+  },
+  {
+    name: "a 503 without a JSON body",
+    answer: () => new Response("Service Unavailable", { status: 503 }),
+    status: 503,
+  },
+  {
+    name: "files_busy on another status",
+    answer: () =>
+      Response.json(
+        { detail: { code: "files_busy", message: "File capacity is busy" } },
+        { status: 429, headers: { "Retry-After": "1" } },
+      ),
+    status: 429,
+  },
+])
+  test(`a file request is not retried for ${row.name}`, async () => {
+    const mock = installFetch(row.answer);
+    const { timing, waits } = fakeTiming();
+    const waiting: boolean[] = [];
+    try {
+      const failure = await retryFilesBusy(
+        sendBytes(new Blob(["pdf"])),
+        { onWaiting: (value) => waiting.push(value) },
+        timing,
+      ).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(ApiError);
+      expect(failure).toMatchObject({ status: row.status });
+      expect(isFilesBusy(failure)).toBe(false);
+      expect(mock.requests).toHaveLength(1);
+      expect(waits).toEqual([]);
+      expect(waiting).toEqual([]);
+    } finally {
+      mock.restore();
+    }
+  });
+
+test("an abort stops the wait for file capacity at once", async () => {
+  const mock = installFetch(() => busyAnswer("10"));
+  const controller = new AbortController();
+  const waiting: boolean[] = [];
+  let guard: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const retry = retryFilesBusy(
+      sendBytes(new Blob(["pdf"]), controller.signal),
+      {
+        signal: controller.signal,
+        onWaiting: (value) => {
+          waiting.push(value);
+          if (value) controller.abort();
+        },
+      },
+    );
+    // A hang guard well below the 10 s wait, not a measured duration.
+    const hang = new Promise<never>((_, reject) => {
+      guard = setTimeout(() => reject(new Error("still waiting")), 3000);
+    });
+    await expect(Promise.race([retry, hang])).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(mock.requests).toHaveLength(1);
+    expect(waiting).toEqual([true, false]);
+  } finally {
+    clearTimeout(guard);
+    mock.restore();
+  }
+});
 
 for (const row of [
   { bytes: 1023, label: "1023 bytes" },

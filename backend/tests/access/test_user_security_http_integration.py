@@ -101,6 +101,27 @@ def test_shared_person_sessions_are_visible_but_only_operator_revokes(world, pee
     assert world.client.get("/api/users", headers=world.headers()).status_code == 200
 
 
+@pytest.mark.parametrize("operator", [False, True])
+def test_ending_all_sessions_keeps_people_of_other_organizations_for_every_admin(
+    world, peer, operator
+):
+    # Decision C9 (2026-10-29): the operator ends sessions in one organization like that
+    # organization's administrator; a person who also belongs to another one keeps theirs.
+    with Session(world.owner) as db:
+        target = db.get(User, world.target_id)
+        create_member(db, db.get(WorkspaceProfile, peer), user=target)
+        add_session(db, db.get(User, world.actor_id))
+        if not operator:
+            db.delete(db.scalars(select(PlatformOperator).where(
+                PlatformOperator.user_id == world.actor_id,
+            )).one())
+        db.commit()
+    ended = world.client.delete("/api/auth/admin-sessions", headers=world.headers())
+    assert ended.status_code == 204, ended.text
+    assert ended.headers["X-Skipped-Shared-Accounts"] == "1"
+    assert all(row.revoked_at is None for row in world.sessions())
+
+
 @pytest.mark.parametrize("membership_state", ["foreign", "removed"])
 def test_person_security_hides_targets_before_provider_observation(world, peer, membership_state):
     with Session(world.owner) as db:
