@@ -226,6 +226,31 @@ class CiWorkflowContractTests(unittest.TestCase):
         # The wall-clock measurement reports only (docs/plans/ci-stability.md D2).
         self.assertNotIn("MEASURE", verify.split("\n  measure:\n", 1)[0])
 
+    def test_frontend_checks_retried_tests_against_the_flaky_ledger(self):
+        # docs/plans/ci-stability.md D1: CI allows one retry, and a test that passes
+        # only on it fails the job unless frontend/tests/flaky.json lists it.
+        source = self.source("frontend.yml")
+        isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
+        http = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
+        config = (ROOT / "frontend" / "playwright.config.ts").read_text(encoding="utf-8")
+
+        self.assertIn("  retries: isCI ? 1 : 0,\n", config)
+        measure = config.split('name: "measure"', 1)[1].split("dependencies:", 1)[0]
+        self.assertIn("retries: 0,", measure)
+        for job, report in (
+            (isolated, "test-results/ci/isolated.json"),
+            (http, "test-results/ci/http-${{ strategy.job-index }}.json"),
+        ):
+            with self.subTest(report=report):
+                step = job.split("- name: Check retried tests against the flaky ledger\n", 1)[1]
+                step = step.split("\n      - name:", 1)[0]
+                self.assertIn("if: ${{ always() }}", step)
+                self.assertNotIn("continue-on-error", step)
+                command = (
+                    f"python3 ../scripts/playwright_flaky.py {report} --ledger tests/flaky.json"
+                )
+                self.assertIn(f"run: {command}", step)
+
     def test_frontend_runs_wall_clock_measurements_alone(self):
         source = self.source("frontend.yml")
         measure = source.split("\n  measure:\n", 1)[1]

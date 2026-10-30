@@ -133,6 +133,9 @@ jobs:
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/isolated.json
         run: npm test -- --project=isolated --reporter=line,json
+      - name: Check retried tests against the flaky ledger
+        if: ${{ always() }}
+        run: python3 ../scripts/playwright_flaky.py test-results/ci/isolated.json --ledger tests/flaky.json
       - name: Record the checked-out test identity
         if: ${{ always() }}
         run: |
@@ -239,6 +242,9 @@ jobs:
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/http-${{ strategy.job-index }}.json
         run: npm test -- --project=http --workers=2 --test-list=test-results/ci/selected.txt --reporter=line,json
+      - name: Check retried tests against the flaky ledger
+        if: ${{ always() }}
+        run: python3 ../scripts/playwright_flaky.py test-results/ci/http-${{ strategy.job-index }}.json --ledger tests/flaky.json
       - name: Keep failure context and traces
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
