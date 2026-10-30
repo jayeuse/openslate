@@ -60,6 +60,10 @@ class RelationshipEdge(BaseModel):
             "target_record_id",
             postgresql_where=text("is_deleted = false"),
         ),
+        # The record foreign keys' delete checks cover every edge, deleted ones too; the
+        # partial field-led indexes above cannot serve them.
+        Index("ix_relationship_edges_source_record", "org_id", "source_record_id"),
+        Index("ix_relationship_edges_target_record", "org_id", "target_record_id"),
     )
 
     org_id: Mapped[UUID] = mapped_column(
