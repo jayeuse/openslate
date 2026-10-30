@@ -6,7 +6,6 @@ from unittest.mock import Mock
 
 import pytest
 
-import app.core.database.model_registry  # noqa: F401
 from app.core.database.base import Base
 from operations.reset.models import ResetError
 from operations.reset.organization import (
