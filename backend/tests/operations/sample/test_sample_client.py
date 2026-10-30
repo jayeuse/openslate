@@ -661,3 +661,59 @@ def test_idle_connections_expire_before_the_api_closes_them(monkeypatch, tmp_pat
     limits = seen["limits"]
     assert isinstance(limits, real_httpx.Limits)
     assert limits.keepalive_expiry is not None and limits.keepalive_expiry < 5
+
+
+@pytest.mark.parametrize("idle_minutes", [20, 1])
+def test_a_session_that_expired_while_idle_signs_in_again_once(
+    tmp_path: Path, idle_minutes: int
+) -> None:
+    # Large Harbor and School on 2026-10-30: the operator's client sat idle for 79 minutes,
+    # past the 60-minute session timeout, and its next step stopped on a refused refresh
+    # (refresh_session_expired). A person returning after an idle expiry signs in again;
+    # a refusal after recent use (a revoked session) still stops the step.
+    import base64
+    import time
+
+    def token(expires_in: float) -> str:
+        claims = json.dumps({"exp": time.time() + expires_in}).encode()
+        return "h." + base64.urlsafe_b64encode(claims).rstrip(b"=").decode() + ".s"
+
+    seen: list[str] = []
+    logins = iter([token(5), token(3600)])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/api/auth/login":
+            return httpx.Response(
+                200,
+                json={"authenticated": True, "setup_required": False},
+                headers=[
+                    ("set-cookie", f"openslate_access={next(logins)}; Path=/; HttpOnly"),
+                    ("set-cookie", f"openslate_refresh={REFRESH}; Path=/api/auth; HttpOnly"),
+                    ("set-cookie", f"openslate_csrf={CSRF}; Path=/"),
+                    ("X-Request-ID", REQUEST_ID),
+                ],
+            )
+        if request.url.path == "/api/auth/refresh":
+            return httpx.Response(
+                401, json={"detail": "Expired"}, headers=[("X-Request-ID", REQUEST_ID)]
+            )
+        return httpx.Response(200, json={"id": "record"}, headers=[("X-Request-ID", REQUEST_ID)])
+
+    with _client(tmp_path, httpx.MockTransport(handler)) as client:
+        assert client.login(EMAIL, PASSWORD).status_code == 200
+        client._last_sent_at = time.monotonic() - idle_minutes * 60
+        if idle_minutes >= 15:
+            assert (
+                client.request("POST", "/api/records", json_body={"name": "x"}).status_code == 200
+            )
+            assert seen == [
+                "/api/auth/login",
+                "/api/auth/refresh",
+                "/api/auth/login",
+                "/api/records",
+            ]
+        else:
+            with pytest.raises(SampleAuthenticationError):
+                client.request("POST", "/api/records", json_body={"name": "x"})
+            assert seen == ["/api/auth/login", "/api/auth/refresh"]
