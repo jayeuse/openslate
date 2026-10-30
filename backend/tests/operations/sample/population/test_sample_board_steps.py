@@ -66,3 +66,22 @@ def test_create_steps_from_different_boards_interleave() -> None:
     steps = [step for step in plan_board_steps(BOARDS) if step.kind in {"post", "event"}]
     first_twenty = {step.board for step in steps[:20]}
     assert len(first_twenty) == len(BOARDS)
+
+
+def test_a_linked_post_is_published_only_after_its_late_records_are_linked() -> None:
+    # Large Manufacturer on 2026-10-30: the payment the Finance post links to was created after
+    # the post's life cycle published it, so the link read the post as a draft and got 404.
+    from datetime import date
+
+    from operations.sample.packs.registry import get_pack
+    from operations.sample.population.board_steps import BoardQueue
+
+    pack = get_pack("manufacturer")
+    steps = plan_board_steps(BOARDS, organization=pack, profile="large")
+    queue = BoardQueue(steps, boards={}, clients={}, fields={}, anchor_date=date(2026, 10, 30))
+    order: list[str] = []
+    queue._run = lambda step, records: order.append(step.key)  # type: ignore[method-assign]
+    for position in range(len(steps)):
+        queue.after_session(position, {})
+    queue.flush({key: {} for step in steps for key in step.needs_records})
+    assert order.index("link:finance-post") < order.index("lifecycle:department:finance:2")

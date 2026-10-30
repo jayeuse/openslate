@@ -65,7 +65,7 @@ def plan_board_steps(
     profile: str = "small",
 ) -> list[StepSpec]:
     """Interleave posts and events across Boards, then links and attachments, then post
-    life cycles. Attaching resets a post to draft, so it runs before the post's life cycle."""
+    life cycles. Links and attachments edit the draft, so they run before the post's life cycle."""
     spec = (organization or default_pack()).content.data
     scale = PROFILE_SCALE[profile]
     posts, events = spec.posts_per_board * scale, spec.events_per_board * scale
@@ -82,9 +82,12 @@ def plan_board_steps(
                 steps.append(StepSpec(f"event:{board.logical_id}:{index}", "event",
                                       board.logical_id, index, author))  # fmt: skip
     by_key = {step.key: step for step in steps}
+    # Links and attachments both edit the draft, so a post's life cycle waits for them.
+    drafts: dict[str, list[str]] = {}
     for link in spec.board_links:
         parent = f"{link.kind}:{link.board}:{link.index}"
         if parent in by_key:
+            drafts.setdefault(parent, []).append(link.key)
             steps.append(
                 StepSpec(
                     link.key,
@@ -96,20 +99,19 @@ def plan_board_steps(
                     link.records,
                 )
             )
-    files: dict[str, list[str]] = {}
     for item in spec.board_files:
         parent = f"{item.kind}:{item.board}:{item.index}"
         if parent in by_key:
             steps.append(StepSpec(item.key, "file", item.board, item.index,
                                   by_key[parent].author_key, (parent,)))  # fmt: skip
-            files.setdefault(parent, []).append(item.key)
+            drafts.setdefault(parent, []).append(item.key)
     for index in range(posts):
         if post_state(spec, index) == "draft":
             continue
         for board in boards:
             post = by_key[f"post:{board.logical_id}:{index}"]
             key = f"lifecycle:{board.logical_id}:{index}"
-            needs = (post.key, *files.get(post.key, ()))
+            needs = (post.key, *drafts.get(post.key, ()))
             steps.append(
                 StepSpec(key, "lifecycle", board.logical_id, index, post.author_key, needs)
             )
