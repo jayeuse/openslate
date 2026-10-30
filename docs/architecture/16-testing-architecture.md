@@ -122,8 +122,10 @@ export. [`playwright_shards.py`](../../scripts/playwright_shards.py) uses curren
 native collection for membership and committed duration weights for assignment;
 the shards run `--project=http --workers=2 --test-list=<selected-file>` with the
 lockfile-pinned Chromium browser. The isolated CI job uses the configured default
-of one worker; local Playwright uses up to three workers. UTC, `en-US` and zero
-retries are pinned in the config. Failure contexts/traces and native JSON reports
+of one worker; local Playwright uses up to three workers. UTC and `en-US` are
+pinned in the config. CI allows one retry and local runs allow none; a test that
+passes only on its retry must have a current entry in `frontend/tests/flaky.json`,
+or `frontend-verify` fails. The `measure` project never retries. Failure contexts/traces and native JSON reports
 have their own artifact paths; the `verify` job preserves one required check
 (`frontend-verify`; the backend workflow has `backend-verify`). The `measure` job
 runs the Comms timeline measurement alone and writes its numbers to the job

@@ -138,7 +138,10 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 5_000 },
   forbidOnly: isCI,
-  retries: 0,
+  // One retry in CI only (docs/plans/ci-stability.md D1): local runs and the
+  // pre-push gate keep zero, and frontend-verify fails on a retried test that
+  // has no entry in tests/flaky.json, or whose entry has expired.
+  retries: isCI ? 1 : 0,
   reporter: process.env.PLAYWRIGHT_JSON_OUTPUT_NAME
     ? [["line"], ["json"]]
     : "line",
@@ -165,6 +168,8 @@ export default defineConfig({
             testMatch: measuredSpecs,
             use: { browserName: "chromium" as const },
             workers: 1,
+            // A second attempt would hide a slow first measurement.
+            retries: 0,
             dependencies: [
               ...(testLayer === "all" ? ["isolated"] : []),
               ...httpProjects.map((project) => project.name),

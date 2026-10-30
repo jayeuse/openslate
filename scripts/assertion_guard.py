@@ -79,7 +79,8 @@ _TS_FORBIDDEN: Final = {
         r"eslint-disable(-next-line|-line)?|@ts-(ignore|expect-error|nocheck)"
     ),
     "loose matcher": re.compile(r"\.(toBeTruthy|toBeFalsy|toBeDefined)\(\)|expect\.anything\(\)"),
-    "retry": re.compile(r"\bretries\s*:\s*[1-9]"),
+    # Zero, or exactly one retry in CI only (docs/plans/ci-stability.md D1).
+    "retry": re.compile(r"\bretries\s*:\s*(?!0\b|isCI \? 1 : 0\b)[^\s,}]"),
 }
 _TS_TIMING: Final = {"timeout raise": re.compile(r"\btest\.(setTimeout|slow)\(")}
 _TS_TIMEOUT_VALUE: Final = re.compile(r"\btimeout\s*:\s*([\d_]+)")

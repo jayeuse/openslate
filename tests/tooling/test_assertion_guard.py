@@ -468,6 +468,19 @@ class AnalyzeTests(unittest.TestCase):
                 violations = self.analyze([change(path, added=[line])])
                 self.assertEqual(len(violations), 1, violations)
 
+    def test_only_zero_or_one_ci_retry_is_allowed_in_the_config(self):
+        # docs/plans/ci-stability.md D1: one retry in CI only, zero everywhere else.
+        for line, refused in (
+            ("  retries: isCI ? 1 : 0,", False),
+            ("            retries: 0,", False),
+            ("  retries: isCI ? 2 : 0,", True),
+            ("  retries: process.env.CI ? 1 : 0,", True),
+            ("  retries: 1,", True),
+        ):
+            with self.subTest(line=line):
+                violations = self.analyze([change("frontend/playwright.config.ts", added=[line])])
+                self.assertEqual(len(violations), int(refused), violations)
+
     def test_short_timeouts_are_allowed(self):
         violations = self.analyze(
             [
