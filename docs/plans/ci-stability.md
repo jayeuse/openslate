@@ -119,7 +119,7 @@ Each slice is one commit of five files or fewer, in this order. S1 to S3 need th
 |---|---|---|---|
 | S0 | Flake report: read the `frontend-playwright-*` JSON artifacts of `main` runs and list failures per test | `scripts/ci_flake_report.py`, its tooling test | The report reproduces the table in 1.1 |
 | S1 | D2: remove `measure` from the `needs` list and the checks of `frontend-verify`; the job writes its numbers to the summary | `frontend.yml`, `test_ci_workflows.py`, testing architecture doc | Workflow contract tests |
-| S2 | D3: pin `.node-version` to the exact local version (now `26`, so CI takes any 26.x); find the rest of the 1 KB difference; add the warning zone | `.node-version`, `comms-js-budget.spec.ts`, ledger | The cause is named and removed, or the budget is measured only in the CI build job |
+| S2 | D3: pin `.node-version` to the exact local version (was `26`, so CI took any 26.x); find the 1 KB difference (see 4.0); add the warning zone | `.node-version`, `comms-js-budget.spec.ts`, ledger | The cause is named and removed, or the budget is measured only in the CI build job |
 | S3a | D1: CI-only retry, guard rule for the exact form | `playwright.config.ts`, `assertion_guard.py`, its test, testing architecture doc | Guard tests refuse `retries: 2` and accept `isCI ? 1 : 0` |
 | S3b | D1: flaky summary step and `flaky.json` check | `frontend.yml`, `test_ci_workflows.py`, `frontend/tests/flaky.json` | A planted flaky test shows in the summary |
 | S4 | Fix each class C spec at its cause, one commit per spec | One spec (and a helper if needed) per commit | 20 of 20 repeats at 4 workers, and the same spec in the Linux image (4.2) |
@@ -128,6 +128,20 @@ Each slice is one commit of five files or fewer, in this order. S1 to S3 need th
 | S6 | Refresh the shard weights from the last 14 days of artifacts; compare 1 and 2 workers on the class C specs | `.test-durations.json`, `playwright_shards.py` doc line | Shard times within 20% of each other |
 | S7 | Nightly stress job: specs changed in the last 7 days, `--repeat-each=20 --workers=4`, zero retries, 30-minute limit, not required. `a79a8923` needed 20 repeats to show its race. | New workflow, `test_ci_workflows.py` | A planted race fails the job |
 | S8 | Mutation job: fix the `NATIVE` step, or remove the schedule | `mutation.yml` or `scripts/mutation.py` | One green manual dispatch |
+
+### 4.0 S2 finding: the 1 KB budget difference
+
+The CI and local builds are byte-identical (100 chunks, 5,136,294 bytes, same names). The difference is in the gzip step of `comms-js-budget.spec.ts`:
+
+| Node build | zlib | `0t6o3jw5ozuec.js` at level 9 | Cold `/comms` total |
+|---|---|---|---|
+| Homebrew Node 26.8.1 (macOS arm64) | 1.2.12 (system) | 33,634 bytes | 547,836 bytes |
+| Official Node 26.8.1 (Docker, amd64 and arm64) | 1.3.2.1-motley (bundled) | 33,759 bytes | — |
+| CI, official Node 26.8.1 and 26.13.0 | 1.3.2.1-motley (bundled) | 33,759 bytes | 548,839 bytes |
+
+The Node version and the CPU are not the cause. Homebrew links Node to the system zlib; the official builds bundle Chromium's zlib, which compresses differently. The `.node-version` pin stays for parity, but it does not remove the difference.
+
+**Next step (owner choice):** use an official Node build locally (for example `fnm`, which reads `.node-version` per directory and leaves other projects on Homebrew Node). Local budget numbers then equal CI. The spec already records `process.versions.zlib` in its report.
 
 ### 4.1 Known causes in the class C backlog
 
