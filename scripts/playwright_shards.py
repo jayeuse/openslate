@@ -1,8 +1,9 @@
 """Generate whole-file HTTP shards from trusted native collection and CI weights.
 
 Current collection owns membership; duration history supplies weights only.
-Refresh the seed manually from complete, verified CI reports. Predicted weight
-balance is not measured wall time. Run each generated native --test-list without
+Refresh the seed with the `weights` command from the six HTTP reports of one complete,
+green CI run (the `frontend-playwright-http-*` artifacts). Predicted weight balance is
+not measured wall time. Run each generated native --test-list without
 also passing --shard or positional file filters.
 """
 
@@ -12,18 +13,67 @@ import argparse
 import json
 from pathlib import Path
 from statistics import median
+from typing import Any
+
+
+def weights_from_reports(reports: Path, shards: int) -> dict[str, object]:
+    """Sum each file's test durations (every attempt) across one run's shard reports."""
+
+    metadata = sorted(reports.rglob("http-*.metadata.txt"))
+    if len(metadata) != shards:
+        raise SystemExit(f"expected {shards} shard reports, found {len(metadata)}")
+    identities = set()
+    files: dict[str, float] = {}
+    for path in metadata:
+        fields = dict(
+            line.split("=", 1)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if "=" in line
+        )
+        identities.add((fields["run_id"], fields["revision"], fields["tree"]))
+        report = json.loads(path.with_name(path.name.replace(".metadata.txt", ".json")).read_text())
+        if report["stats"]["unexpected"]:
+            raise SystemExit(f"{path.name}: the run has failed tests; use a green run")
+
+        def walk(suite: dict[str, Any]) -> None:
+            for spec in suite.get("specs", []):
+                for test in spec.get("tests", []):
+                    files[spec["file"]] = files.get(spec["file"], 0) + sum(
+                        result["duration"] for result in test.get("results", [])
+                    )
+            for child in suite.get("suites", []):
+                walk(child)
+
+        for suite in report["suites"]:
+            walk(suite)
+    if len(identities) != 1:
+        raise SystemExit("shard reports come from different runs or revisions")
+    run_id, revision, tree = identities.pop()
+    return {
+        "provenance": {"run_id": run_id, "revision": revision, "tree": tree, "units": "ms"},
+        "files": {file: round(files[file]) for file in sorted(files)},
+    }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["plan"])
-    parser.add_argument("--collection", type=Path, required=True)
-    parser.add_argument("--weights", type=Path, required=True)
-    parser.add_argument("--shard", type=int, required=True)
-    parser.add_argument("--shards", type=int, required=True)
-    parser.add_argument("--test-list", type=Path, required=True)
-    parser.add_argument("--receipt", type=Path, required=True)
+    commands = parser.add_subparsers(dest="command", required=True)
+    refresh = commands.add_parser("weights")
+    refresh.add_argument("--reports", type=Path, required=True)
+    refresh.add_argument("--shards", type=int, required=True)
+    refresh.add_argument("--output", type=Path, required=True)
+    plan = commands.add_parser("plan")
+    plan.add_argument("--collection", type=Path, required=True)
+    plan.add_argument("--weights", type=Path, required=True)
+    plan.add_argument("--shard", type=int, required=True)
+    plan.add_argument("--shards", type=int, required=True)
+    plan.add_argument("--test-list", type=Path, required=True)
+    plan.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args()
+    if args.command == "weights":
+        seed = weights_from_reports(args.reports, args.shards)
+        args.output.write_text(json.dumps(seed, indent=2) + "\n", encoding="utf-8")
+        return
     if not 1 <= args.shard <= args.shards:
         parser.error("shard must be in the range 1..shards")
 

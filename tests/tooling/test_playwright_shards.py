@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -141,6 +142,74 @@ class PlaywrightShardTests(unittest.TestCase):
         reordered_selection, reordered_receipt = self.plan()
         self.assertEqual(reordered_selection, plans[0][0])
         self.assertEqual(reordered_receipt["assignments"], receipt["assignments"])
+
+    def write_shard_report(self, index, specs, revision="r1", unexpected=0):
+        folder = self.root / f"reports/frontend-playwright-http-{index}"
+        folder.mkdir(parents=True)
+        report = {
+            "stats": {"unexpected": unexpected},
+            "suites": [
+                {
+                    "file": file,
+                    "specs": [
+                        {
+                            "file": file,
+                            "tests": [{"results": [{"duration": ms} for ms in durations]}],
+                        }
+                    ],
+                    "suites": [],
+                }
+                for file, durations in specs.items()
+            ],
+        }
+        (folder / f"http-{index}.json").write_text(json.dumps(report))
+        (folder / f"http-{index}.metadata.txt").write_text(
+            f"revision={revision}\ntree=t1\nrun_id=42\nrun_attempt=1\n"
+        )
+
+    def refresh(self, shards=2):
+        return subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/playwright_shards.py"),
+                "weights",
+                "--reports",
+                str(self.root / "reports"),
+                "--shards",
+                str(shards),
+                "--output",
+                str(self.root / "weights.json"),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_weights_sum_every_attempt_per_file_from_one_green_run(self):
+        self.write_shard_report(0, {"http/a.spec.ts": [100.4, 50.2]})
+        self.write_shard_report(1, {"http/b.spec.ts": [300.0]})
+
+        result = self.refresh()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        seed = json.loads((self.root / "weights.json").read_text())
+        self.assertEqual(
+            seed["provenance"], {"run_id": "42", "revision": "r1", "tree": "t1", "units": "ms"}
+        )
+        self.assertEqual(seed["files"], {"http/a.spec.ts": 151, "http/b.spec.ts": 300})
+
+    def test_weights_refuse_a_red_run_mixed_revisions_or_a_missing_shard(self):
+        for case, setup in (
+            ("red", lambda: self.write_shard_report(1, {"http/b.spec.ts": [1]}, unexpected=1)),
+            ("mixed", lambda: self.write_shard_report(1, {"http/b.spec.ts": [1]}, revision="r2")),
+            ("missing", lambda: None),
+        ):
+            with self.subTest(case=case):
+                shutil.rmtree(self.root / "reports", ignore_errors=True)
+                self.write_shard_report(0, {"http/a.spec.ts": [1]})
+                setup()
+                self.assertNotEqual(self.refresh().returncode, 0)
 
 
 if __name__ == "__main__":
