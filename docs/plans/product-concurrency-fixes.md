@@ -130,6 +130,7 @@ Per worker: about 250–300 MB, and at most `DATABASE_POOL_SIZE` + `DATABASE_MAX
 2. Guarded reset of development data, then populate the seven Small packs into the development database, two at a time, with no fix sized to the run. A real defect a pack exposes gets the same treatment as C1: cause, failing-first test, fix.
 3. Run a hands-on pass for the changed user flows: purge confirmation, session refresh, file upload and download.
 4. Run the pre-push gate (`prepush.py --serial`) on a freed machine when you decide to push.
+5. Large packs are the permanent development data (2026-10-31): all seven are populated, two at a time. They are never reset again; one pack is removed and repopulated with `seed_sample_data.py remove --organization <pack>` (dry run, then `--execute --confirm-digest`, API stopped), which deletes only that pack's organization pair, its Storage prefixes and its own accounts, and fails if any other organization's row counts change. A single-pack populate beside other organizations leaves out the installation-wide controls. Manufacturer was removed (12.7 s) and repopulated after T9; the other six packs' counts were unchanged.
 
 ## Decisions
 
