@@ -28,9 +28,13 @@ const gzip = {
 // target. The target began at the S04 baseline; the owner raised it to 548,000
 // on 2026-10-26 for the sidebar's Departments section (OpenView part A, DA2),
 // an approved shell feature, after parts B and C removed the OpenView group.
+// Raised to 550,000 on 2026-10-30 for the approved concurrency plan's shell work:
+// the "Reconnecting…" session status (C2, about 350 bytes) and the busy-file
+// waiting state in the Comms composer, timeline and file adapters (C3). Measured
+// 547,836 locally and 548,839 in CI at 50ac61ba.
 // Growth is reported against the last recorded measurement.
 const s04BaselineColdGzipBytes = 546_979;
-const coldTargetGzipBytes = 548_000;
+const coldTargetGzipBytes = 550_000;
 const baselineColdGzipBytes = 578_709;
 
 function manifestChunks(value: unknown): string[] {
