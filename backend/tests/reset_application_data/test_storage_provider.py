@@ -90,3 +90,21 @@ def test_storage_reset_rejects_changed_inventory_before_cleanup() -> None:
     with pytest.raises(ResetError, match="plan changed"):
         storage.delete_and_verify_empty(keys)
     assert deleted == []
+
+
+def test_prefixed_cleanup_lists_and_deletes_only_the_named_prefixes() -> None:
+    client, buckets, _deleted = _storage_api()
+    storage = ResetStorage("http://provider.local", "server-secret", 2, client=client)
+    prefixes = ("openslate-avatars/user/account", "openslate-ready/folder/deep")
+
+    keys = storage.list_prefixed_keys(prefixes)
+
+    assert keys == ("openslate-avatars/user/account/avatar", "openslate-ready/folder/deep/unlinked")
+    with pytest.raises(ResetError, match="plan is invalid"):
+        storage.delete_prefixed_and_verify_empty(("openslate-ready/folder/orphan",), prefixes)
+    storage.delete_prefixed_and_verify_empty(keys, prefixes)
+    assert buckets["openslate-avatars"] == set()
+    assert buckets["openslate-ready"] == {"folder/orphan"} | {
+        f"root-{index:03d}" for index in range(101)
+    }
+    assert storage.list_prefixed_keys(prefixes) == ()

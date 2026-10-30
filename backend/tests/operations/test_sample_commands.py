@@ -126,6 +126,7 @@ def _populate(
 
     def populate(**kwargs: Any) -> object:
         populated.append((kwargs["organization_id"], kwargs["partner_organization_id"]))
+        events.append(f"installation_controls:{kwargs['installation_controls']}")
         return population.SamplePopulationReport("complete", tmp_path, (), {})
 
     monkeypatch.setattr(commands, "_local_preflight", preflight)
@@ -157,7 +158,7 @@ def test_populate_reuses_the_pack_organization_found_by_slug(
 
     assert status == 0
     assert [pack.identity.key for pack in packs] == ["school"]
-    assert events == ["password"]
+    assert events == ["password", "installation_controls:True"]
     assert populated == [(EXISTING_ORG, EXISTING_PARTNER)]
 
 
@@ -170,7 +171,8 @@ def test_populate_creates_the_missing_pack_organization_after_the_password(
 
     assert status == 0
     assert events == [
-        "password", f"create:school:{ADMIN_ID}:pack", f"create:school:{ADMIN_ID}:partner"
+        "password", f"create:school:{ADMIN_ID}:pack", f"create:school:{ADMIN_ID}:partner",
+        "installation_controls:True",
     ]
     assert populated == [(CREATED_ORG, CREATED_PARTNER)]
 
@@ -189,3 +191,41 @@ def test_populate_refuses_a_pack_organization_that_holds_sample_data(
     assert status == 2
     assert "already holds sample data" in capsys.readouterr().err
     assert events == [] and populated == []
+
+
+def test_populate_beside_another_organization_leaves_out_the_installation_controls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    status, _packs, events, _populated = _populate(
+        monkeypatch,
+        tmp_path,
+        {"organization_id": EXISTING_ORG, "partner_organization_id": EXISTING_PARTNER,
+         "other_organizations": 1},
+    )
+
+    assert status == 0
+    assert events == ["password", "installation_controls:False"]
+
+
+def test_plan_beside_another_organization_has_no_installation_control_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from operations.sample.controls.actions import plan_controls
+
+    printed: list[Any] = []
+    monkeypatch.setattr(
+        commands,
+        "_local_preflight",
+        lambda _pack: ({"admin_id": ADMIN_ID, "other_organizations": 1}, "http://api", "m"),
+    )
+    monkeypatch.setattr(commands, "_print_plan", lambda dataset, *_args: printed.append(dataset))
+
+    status = commands.main(
+        ["plan", "--organization", "school", "--profile", "small", "--seed", "83",
+         "--anchor-date", "2026-09-30"]
+    )
+
+    keys = {action.key for action in plan_controls(printed[0])}
+    assert status == 0
+    assert not any(key.startswith("control:backups:") for key in keys)
+    assert "control:update-workspace-security" not in keys

@@ -205,6 +205,11 @@ class ResetStorage:
             raise ResetError("Private Storage cleanup plan is invalid")
         if self.list_object_keys() != expected:
             raise ResetError("Private Storage cleanup plan changed; run a fresh dry run")
+        self._delete_keys(expected)
+        if self.list_object_keys():
+            raise ResetError("Private Storage cleanup is incomplete")
+
+    def _delete_keys(self, expected: Sequence[str]) -> None:
         for bucket in _BUCKETS:
             prefix = f"{bucket}/"
             keys = [full_key[len(prefix) :] for full_key in expected if full_key.startswith(prefix)]
@@ -216,5 +221,37 @@ class ResetStorage:
                 )
                 if status != 200:
                     raise ResetError("Private Storage cleanup is incomplete")
-        if self.list_object_keys():
+
+    def list_prefixed_keys(self, prefixes: Sequence[str]) -> tuple[str, ...]:
+        """List only the objects under each ``<bucket>/<folder>`` prefix, for example one
+        organization's ``openslate-ready/org/<id>``; the rest of the bucket is not read."""
+        keys: list[str] = []
+        checked: set[str] = set()
+        for prefix in prefixes:
+            bucket, _, folder = prefix.partition("/")
+            if bucket not in _BUCKETS or not folder or "" in folder.split("/"):
+                raise ResetError("The private Storage prefix is invalid")
+            if bucket not in checked:
+                self._require_private_bucket(bucket)
+                checked.add(bucket)
+            objects: set[str] = set()
+            self._list_folder(bucket, folder, set(), objects)
+            keys.extend(f"{bucket}/{key}" for key in objects)
+        return tuple(sorted(keys))
+
+    def delete_prefixed_and_verify_empty(
+        self, object_keys: Sequence[str], prefixes: Sequence[str]
+    ) -> None:
+        """Delete the planned objects of these prefixes and prove the prefixes are empty."""
+        expected = tuple(object_keys)
+        if (
+            tuple(sorted(expected)) != expected
+            or len(set(expected)) != len(expected)
+            or any(not any(key.startswith(f"{p}/") for p in prefixes) for key in expected)
+        ):
+            raise ResetError("Private Storage cleanup plan is invalid")
+        if self.list_prefixed_keys(prefixes) != expected:
+            raise ResetError("Private Storage cleanup plan changed; run a fresh dry run")
+        self._delete_keys(expected)
+        if self.list_prefixed_keys(prefixes):
             raise ResetError("Private Storage cleanup is incomplete")
