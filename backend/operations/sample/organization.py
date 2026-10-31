@@ -45,6 +45,12 @@ def sample_slug(pack_key: str, *, partner: bool = False) -> str:
     return f"{base}-partner" if partner else base
 
 
+def other_organizations(organization_rows: Iterable[str], pack: OrganizationPack | None) -> int:
+    """Count the organizations, frozen as JSON rows by the reset plan, outside the pack's pair."""
+    pair = {sample_slug(pack.identity.key, partner=side) for side in (False, True)} if pack else ()
+    return sum(json.loads(row)["slug"] not in pair for row in organization_rows)
+
+
 def sample_organization_name(pack: OrganizationPack, *, partner: bool = False) -> str:
     """The pack organization starts at the fresh-install name; the partner has its own."""
     return f"{pack.identity.workspace_name} Partner" if partner else _INITIAL_NAME

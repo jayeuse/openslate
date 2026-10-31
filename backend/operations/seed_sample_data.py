@@ -52,6 +52,7 @@ from operations.sample.organization import (
     create_sample_organization,
     organization_storage_objects,
     organization_usage,
+    other_organizations,
     pack_administrator_email,
     pack_email_domains,
     pack_provider_accounts,
@@ -61,6 +62,7 @@ from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.registry import default_pack, get_pack, pack_keys
 from operations.sample.plan_summary import build_plan_summary as build_plan_summary
 from operations.sample.plan_summary import print_plan as _print_plan
+from operations.sample.removal import add_remove_command, remove_sample_pack
 from operations.sample.scenario import build_dataset
 
 
@@ -209,11 +211,7 @@ def _assert_owned_mailpit(values: Mapping[str, str], target: InstanceTarget) -> 
         mail_network = mailpit["NetworkSettings"]["Networks"][f"{target.instance_id}_mail-egress"]
         network_id = auth_network.get("NetworkID")
         inspected_network = _docker_json(
-            [
-                "network",
-                "inspect",
-                f"{target.instance_id}_mail-egress",
-            ]
+            ["network", "inspect", f"{target.instance_id}_mail-egress"]
         )
         if (
             not isinstance(network_id, str)
@@ -320,6 +318,7 @@ def _local_preflight(
             organization_storage_objects(object_keys, row.organization_id) for row in found
         ),
         "provider_accounts": provider_accounts,
+        "other_organizations": other_organizations(reset_plan.organization_snapshot, pack),
     }
     return report, api_url, mailpit_url
 
@@ -343,12 +342,12 @@ def _parser() -> argparse.ArgumentParser:
             # Owner-only JSON {"password": ...}: the kept testing password of the pack
             # administrator (admin@<pack>.test). Without it, the run generates one.
             command.add_argument("--administrator-password-file", type=Path)
-            # A pack populating beside another one leaves the installation controls (backups,
-            # installation security) to the pack that runs them.
+            # Also automatic beside another organization: these controls are installation-wide.
             command.add_argument("--without-installation-controls", action="store_true")
     verify = commands.add_parser("verify", help="read back an existing private sample run")
     verify.add_argument("--run-directory", type=Path, required=True)
     verify.add_argument("--admin-password-file", type=Path)
+    add_remove_command(commands)
     return parser
 
 
@@ -365,7 +364,12 @@ def main(
         if args.command in {"plan", "populate"} and args.anchor_date is None:
             args.anchor_date = _today_for_organization(args.organization)
         pack = get_pack(args.organization) if args.command != "verify" else None
+        if args.command == "remove":
+            return remove_sample_pack(get_pack(args.organization), args, *_environment_values()[:2])
         report, api_url, mailpit_url = _local_preflight(pack)
+        controls = not getattr(args, "without_installation_controls", False) and (
+            host_control is not None or not report.get("other_organizations")
+        )
         if args.command == "plan":
             dataset = build_dataset(
                 args.profile,
@@ -373,6 +377,7 @@ def main(
                 args.anchor_date,
                 organization=pack,
                 host_acceptance=host_control is not None,
+                installation_controls=controls,
             )
             _print_plan(dataset, report, mailpit_url)
             return 0
@@ -412,7 +417,7 @@ def main(
                     args.anchor_date,
                     organization=pack,
                     host_acceptance=host_control is not None,
-                    installation_controls=not args.without_installation_controls,
+                    installation_controls=controls,
                 )
                 _print_plan(dataset, report, mailpit_url)
                 assert pack is not None
@@ -446,7 +451,7 @@ def main(
                     mfa_observer=mfa_observer,
                     host_control=host_control,
                     administrator_password=administrator_password,
-                    installation_controls=not args.without_installation_controls,
+                    installation_controls=controls,
                     organization_id=organization_id,
                     partner_organization_id=partner_id,
                 )

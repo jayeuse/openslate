@@ -150,6 +150,7 @@ def test_plan_without_seed_draws_once_per_invocation_and_explicit_seed_wins(
         *,
         organization: object,
         host_acceptance: bool = False,
+        installation_controls: bool = True,
     ) -> object:
         built.append(seed)
         return SimpleNamespace(seed=seed)

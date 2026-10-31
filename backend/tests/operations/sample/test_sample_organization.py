@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 import httpx
@@ -12,6 +13,7 @@ from operations.reset.models import ResetError
 from operations.sample.organization import (
     organization_storage_objects,
     organization_usage,
+    other_organizations,
     pack_administrator_email,
     pack_email_domains,
     pack_provider_accounts,
@@ -188,3 +190,13 @@ def test_pack_organization_writes_publish_to_the_database_they_commit_to(monkeyp
     )
     assert result == created
     assert seen == [owner]
+
+
+def test_other_organizations_leave_out_only_the_pack_pair() -> None:
+    frozen = [
+        json.dumps({"slug": slug})
+        for slug in ("sample-school", "sample-school-partner", "sample-harbor", "acme")
+    ]
+
+    assert other_organizations(frozen, get_pack("school")) == 2
+    assert other_organizations(frozen[:2], get_pack("school")) == 0

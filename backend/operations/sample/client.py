@@ -42,6 +42,9 @@ _SAFE_MAPPING_VALUE = re.compile(r"[A-Za-z0-9_:-]{1,160}\Z")
 # The API rotates an access token only when it has 30 seconds or less left, so
 # an earlier refresh returns the same token and cannot extend the session.
 _REFRESH_WITHIN_SECONDS = 20.0
+# The shortest session timeout the product allows (15 minutes): a refresh refused after
+# this much idle time is an idle expiry, not a revocation, and the client signs in again.
+RELOGIN_AFTER_IDLE_SECONDS = 15 * 60
 # The browser sets no request timeout; a publication can run longer than the default.
 _PUBLICATION_PATH = "/api/sandbox/publications"
 _PUBLICATION_TIMEOUT_SECONDS = 120.0
@@ -159,6 +162,9 @@ class SampleClient:
         )
         self._journal_path = Path(journal_path)
         self._last_auth_at: float | None = None
+        # In memory only: a session that expired while idle signs in again, as a person does.
+        self._login: tuple[str, str] | None = None
+        self._last_sent_at: float | None = None
         # A short hash of the signed-in email: one account reads the same in every pack's
         # journal, so a shared account's failures line up without naming it.
         self._account_tag: str | None = None
@@ -190,6 +196,7 @@ class SampleClient:
         )
         if response.is_success:
             self._last_auth_at = time.monotonic()
+            self._login = (email, password)
         return response
 
     def refresh(self) -> httpx.Response:
@@ -251,7 +258,10 @@ class SampleClient:
     ) -> httpx.Response:
         expires_at = self._access_expires_at() if refresh_first and self._last_auth_at else None
         if expires_at is not None and expires_at - time.time() <= _REFRESH_WITHIN_SECONDS:
+            idle = time.monotonic() - (self._last_sent_at or time.monotonic())
             refreshed = self.refresh()
+            if refreshed.status_code == 401 and self._login and idle >= RELOGIN_AFTER_IDLE_SECONDS:
+                refreshed = self.login(*self._login)
             if not refreshed.is_success:
                 raise SampleAuthenticationError(
                     "Session refresh was refused; the requested operation was not sent",
@@ -290,6 +300,7 @@ class SampleClient:
     ) -> httpx.Response:
         normalized_method = method.upper()
         self._validate_path(path)
+        self._last_sent_at = time.monotonic()
         if normalized_method not in _ALLOWED_METHODS:
             raise ValueError("Unsupported sample API method")
         if content is not None and any(value is not None for value in (json_body, data, files)):
