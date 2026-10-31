@@ -39,7 +39,6 @@ class CommsSchedule(BaseModel):
         ),
         CheckConstraint("jsonb_typeof(request) = 'object'", name="ck_comms_schedules_request"),
         CheckConstraint("revision BETWEEN 1 AND 2147483647", name="ck_comms_schedules_revision"),
-        Index("ix_comms_schedules_author", "org_id", "author_id"),
         Index("ix_comms_schedules_conversation", "org_id", "conversation_id"),
     )
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"))

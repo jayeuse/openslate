@@ -71,10 +71,10 @@ class User(BaseModel):
         ),
     )
 
-    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
     supabase_user_id: Mapped[UUID | None] = mapped_column(nullable=True, unique=True, index=True)
 
-    username: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(100), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     theme_preference: Mapped[str] = mapped_column(
         Text, nullable=False, default="system", server_default=text("'system'")

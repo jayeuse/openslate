@@ -49,12 +49,6 @@ class RelationshipEdge(BaseModel):
             postgresql_where=text("is_deleted = false"),
         ),
         Index(
-            "ix_relationship_edges_active_source",
-            "field_id",
-            "source_record_id",
-            postgresql_where=text("is_deleted = false"),
-        ),
-        Index(
             "ix_relationship_edges_active_target",
             "field_id",
             "target_record_id",

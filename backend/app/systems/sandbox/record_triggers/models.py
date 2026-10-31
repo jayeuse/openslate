@@ -83,7 +83,7 @@ class RecordTrigger(BaseModel):
     publisher_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT", use_alter=True), nullable=False, index=True
     )
-    module_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    module_id: Mapped[UUID] = mapped_column(nullable=False)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")

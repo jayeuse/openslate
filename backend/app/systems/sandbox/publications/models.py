@@ -120,7 +120,7 @@ class SandboxPublication(BaseModel):
     org_id: Mapped[UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    document_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    document_id: Mapped[UUID] = mapped_column(nullable=False)
     version_id: Mapped[UUID] = mapped_column(nullable=False)
     actor_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT", use_alter=True), nullable=False, index=True
