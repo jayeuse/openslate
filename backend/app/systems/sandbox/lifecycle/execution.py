@@ -180,7 +180,9 @@ def _delete_department_board_children(db: Session, plan: LifecyclePlan) -> None:
 
     _delete_rows(db, plan, (("board_calendar_sources", BoardCalendarSource),))
     if plan.target_type is not LifecycleTargetType.DEPARTMENT:
-        _delete_rows(db, plan, CARD_ROW_MODELS)
+        # Only notifications about the purged records; a Department purge below also
+        # removes the notifications of its Board's scheduled work.
+        _delete_rows(db, plan, (("in_app_notifications", InAppNotification), *CARD_ROW_MODELS))
         return
 
     child_models: tuple[tuple[str, type[Any]], ...] = (
