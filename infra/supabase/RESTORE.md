@@ -200,6 +200,14 @@ docker compose --project-name NEW_TARGET_PROJECT --env-file TARGET_PROVIDER_ENV 
   -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml up -d api
 ```
 
+Check that the restored file rows and Storage objects agree. The database and Storage volumes can come from different times. Run the read-only check from `backend/` with the target application environment:
+
+```sh
+uv run python operations/check_file_storage.py
+```
+
+Exit 0 means that each ready file has its object, with the recorded size. Exit 1 lists each missing object, extra object, and size difference with its bucket and file ID. Keep ingress closed and investigate each one before you continue. Exit 2 means that the check could not read the database or Storage. The check changes nothing.
+
 Bring up public Caddy only after target TLS, origin, ports, application health, and the absence of source routes have been checked:
 
 ```sh
