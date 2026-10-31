@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database.organization_scope import bound_organization_column
 from app.systems.platform.scheduling.models import InAppNotification
-from app.systems.sandbox.lifecycle.planning_scope import row_state
+from app.systems.sandbox.lifecycle.department_board_dependencies import dependency_state
 from app.systems.sandbox.lifecycle.schemas import LifecycleRowState
 
 
@@ -31,14 +31,8 @@ def load_record_notification_purge_dependencies(
         )
         .order_by(InAppNotification.id)
     ).all()
-    rows = []
-    for notification in notifications:
-        state = row_state("in_app_notifications", notification)
-        state.state_fingerprint = fingerprint(
-            {
-                column.name: getattr(notification, column.name)
-                for column in InAppNotification.__table__.columns
-            }
-        )
-        rows.append(state)
+    rows = [
+        dependency_state("in_app_notifications", notification, fingerprint)
+        for notification in notifications
+    ]
     return rows, tuple(notification.id for notification in notifications)

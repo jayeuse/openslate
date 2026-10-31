@@ -56,6 +56,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     with op.get_context().autocommit_block():
         for name, table, columns, where in INDEXES:
+            # A concurrent build that hit the lock limit leaves an INVALID index of this
+            # name; drop it so a rerun builds a valid one.
+            op.drop_index(name, table_name=table, postgresql_concurrently=True, if_exists=True)
             op.create_index(
                 name,
                 table,
@@ -63,5 +66,4 @@ def downgrade() -> None:
                 unique=False,
                 postgresql_where=sa.text(where) if where else None,
                 postgresql_concurrently=True,
-                if_not_exists=True,
             )

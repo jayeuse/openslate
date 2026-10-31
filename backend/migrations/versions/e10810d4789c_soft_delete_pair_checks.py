@@ -4,11 +4,12 @@ Every table with both soft-delete columns gets ``ck_<table>_deletion_state``, th
 that ``app/core/database/base.py`` adds to each such model (plan finding F7). Alembic
 does not compare check constraints, so this revision is written by hand.
 
-Each constraint is added NOT VALID in one short transaction, so no table is scanned
-while its exclusive lock is held, then validated one table at a time outside it, which
-does not block writes. A row that breaks the rule fails the validation and the upgrade;
-the data is never repaired here. A failed upgrade leaves the constraints NOT VALID, and
-a rerun after the data is fixed replaces them.
+Each constraint is added NOT VALID in its own statement outside a transaction, so each
+table's exclusive lock lasts only for that statement and no table is scanned under it.
+Each is then validated one table at a time, which does not block writes. A row that
+breaks the rule fails the validation and the upgrade; the data is never repaired here.
+A failed upgrade leaves the constraints NOT VALID, and a rerun after the data is fixed
+replaces them.
 
 Revision ID: e10810d4789c
 Revises: 48e05d7138d7
@@ -50,11 +51,13 @@ TABLES = (
 
 
 def upgrade() -> None:
-    for table in TABLES:
-        name = f"ck_{table}_deletion_state"
-        op.execute(f"ALTER TABLE public.{table} DROP CONSTRAINT IF EXISTS {name}")
-        op.execute(f"ALTER TABLE public.{table} ADD CONSTRAINT {name} CHECK ({CHECK}) NOT VALID")
     with op.get_context().autocommit_block():
+        for table in TABLES:
+            name = f"ck_{table}_deletion_state"
+            op.execute(
+                f"ALTER TABLE public.{table} DROP CONSTRAINT IF EXISTS {name}, "
+                f"ADD CONSTRAINT {name} CHECK ({CHECK}) NOT VALID"
+            )
         for table in TABLES:
             op.execute(
                 f"ALTER TABLE public.{table} VALIDATE CONSTRAINT ck_{table}_deletion_state"

@@ -250,7 +250,13 @@ def test_removed_live_group_membership_hides_card_but_not_the_profile_photo(pers
 
 
 @pytest.mark.parametrize(
-    "defect", ["separate_boards", "board_is_deleted", "board_deleted_at", "removed_board_grant"]
+    "defect",
+    [
+        "separate_boards",
+        "board_is_deleted",
+        "half_deleted_board_rejected_then_deleted",
+        "removed_board_grant",
+    ],
 )
 def test_board_visibility_requires_a_shared_live_board(person_world, defect):
     world = person_world
@@ -278,7 +284,7 @@ def test_board_visibility_requires_a_shared_live_board(person_world, defect):
             grant.is_deleted, grant.deleted_at = True, utc_now()
         elif defect == "board_is_deleted":
             board.is_deleted, board.deleted_at = True, world.clock
-        elif defect == "board_deleted_at":
+        elif defect == "half_deleted_board_rejected_then_deleted":
             # Half of the soft-delete pair alone can no longer be stored.
             board.deleted_at = world.clock
             with pytest.raises(IntegrityError) as half:

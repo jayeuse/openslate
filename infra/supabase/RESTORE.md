@@ -200,11 +200,18 @@ docker compose --project-name NEW_TARGET_PROJECT --env-file TARGET_PROVIDER_ENV 
   -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml up -d api
 ```
 
-Check that the restored file rows and Storage objects agree. The database and Storage volumes can come from different times. Run the read-only check from `backend/` with the target application environment:
+Check that the restored file rows and Storage objects agree. The database and Storage volumes can come from different times. The production database has no host port, so run the read-only check in a short-lived container of the release server image on the target provider network, with the target application environment:
 
 ```sh
-uv run python operations/check_file_storage.py
+docker run --rm --pull=never --network NEW_TARGET_PROJECT_provider \
+  --env-file TARGET_APPLICATION_ENV --env OPENSLATE_ENV_SOURCE=process \
+  --user 10001:10001 --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001 \
+  --cap-drop ALL --security-opt no-new-privileges --no-healthcheck \
+  --entrypoint python OPENSLATE_SERVER_IMAGE operations/check_file_storage.py
 ```
+
+On a development installation, run `uv run python operations/check_file_storage.py` from `backend/` instead.
 
 Exit 0 means that each ready file has its object, with the recorded size. Exit 1 lists each missing object, extra object, and size difference with its bucket and file ID. Keep ingress closed and investigate each one before you continue. Exit 2 means that the check could not read the database or Storage. The check changes nothing.
 
