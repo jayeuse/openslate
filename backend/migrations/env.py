@@ -21,6 +21,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+# A migration that cannot get a table lock fails instead of queueing every request behind it.
+MIGRATION_LOCK_TIMEOUT = "5s"
 
 
 def run_migrations_offline() -> None:
@@ -62,6 +64,9 @@ def run_migrations_online() -> None:
         )
         with context.begin_transaction():
             with migration_advisory_lock(connection):
+                # After the advisory wait, so only waits for table locks are limited. A
+                # session setting, so it still holds after an autocommit block commits.
+                connection.exec_driver_sql(f"SET lock_timeout = '{MIGRATION_LOCK_TIMEOUT}'")
                 context.run_migrations()
 
 

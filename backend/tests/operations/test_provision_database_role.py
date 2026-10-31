@@ -95,6 +95,24 @@ def test_provision_rotates_existing_managed_login_role_passwords_after_validatio
     assert statements.count("password") == 2
 
 
+def test_provision_limits_only_idle_runtime_transactions_on_every_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for _ in range(2):
+        connection, cursor = _database()
+        monkeypatch.setattr(provisioner, "connect", MagicMock(return_value=connection))
+
+        provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL)
+
+        statements = _statements(cursor)
+        assert (
+            "alter role openslate_runtime set idle_in_transaction_session_timeout = '60s'"
+            in statements
+        )
+        # Product concurrency fix C11 relies on ordinary lock waits for the runtime role.
+        assert "lock_timeout" not in statements
+
+
 @pytest.mark.parametrize(
     ("bootstrap", "owner", "runtime"),
     [

@@ -1,10 +1,11 @@
 import os
 from collections.abc import Callable
-from time import perf_counter
+from secrets import randbits
+from time import monotonic, perf_counter, sleep
 
 import pytest
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.orm import Session
 
@@ -99,3 +100,47 @@ def test_readiness_connection_enforces_read_only_mode(integration_db: Session) -
             connection.rollback()
     finally:
         engine.dispose()
+
+
+def test_runtime_role_ends_an_idle_transaction_and_releases_its_locks(
+    integration_db: Session,
+) -> None:
+    # F9: a transaction left open by a bug held its locks with no limit. The provisioned
+    # limit is 60 s; this session lowers its own copy so the test needs no long wait.
+    assert integration_db.connection().scalar(text("SELECT 1")) == 1
+    engine = _runtime_engine()
+    observer_engine = _runtime_engine()
+    key = randbits(62)
+    try:
+        with engine.connect() as idle, observer_engine.connect() as observer:
+            settings = idle.execute(
+                text(
+                    "SELECT name, setting FROM pg_settings WHERE name IN "
+                    "('idle_in_transaction_session_timeout', 'lock_timeout') ORDER BY name"
+                )
+            ).all()
+            assert [tuple(row) for row in settings] == [
+                ("idle_in_transaction_session_timeout", "60000"),
+                ("lock_timeout", "0"),
+            ]
+            idle.rollback()
+            idle.execute(text("SET idle_in_transaction_session_timeout = '100ms'"))
+            idle.commit()
+            idle.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+            # The idle transaction holds the lock until the server ends its session.
+            deadline = monotonic() + 15
+            while True:
+                acquired = observer.scalar(
+                    text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": key}
+                )
+                observer.rollback()
+                if acquired or monotonic() > deadline:
+                    break
+                sleep(0.05)
+            assert acquired is True
+            with pytest.raises(DBAPIError) as ended:
+                idle.execute(text("SELECT 1"))
+            assert getattr(ended.value.orig, "sqlstate", None) == "25P03"
+    finally:
+        engine.dispose()
+        observer_engine.dispose()
