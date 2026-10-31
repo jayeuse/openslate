@@ -9,6 +9,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.models import Membership, User, UserStatus
@@ -263,6 +264,7 @@ def test_expired_final_report_lease_notifies_once_or_rolls_back_with_state(
         assert claim_due_work(db, now=now + timedelta(days=1)) == []
         assert list_current_user_notifications(db, owner.id) == notices
         grant.is_deleted = True
+        grant.deleted_at = utc_now()
         db.commit()
         assert list_current_user_notifications(db, owner.id) == []
 

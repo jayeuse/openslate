@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import GroupAccess, GroupMember
 from app.systems.comms.conversations.models import CommsConversation, CommsMember
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
@@ -85,6 +86,7 @@ def test_duplicate_checks_both_scopes_and_copies_configuration_without_content(d
                 )
             )
             grant.is_deleted = True
+            grant.deleted_at = utc_now()
             db.commit()
         before = _snapshot(case)
         _error(
@@ -100,7 +102,7 @@ def test_duplicate_checks_both_scopes_and_copies_configuration_without_content(d
                     CommsCapabilityGrant.capability == capability,
                 )
             )
-            grant.is_deleted = False
+            grant.is_deleted, grant.deleted_at = False, None
             db.commit()
     stale = _read(actor, source)
     _ok(

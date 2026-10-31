@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, text
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.manage.audit.models import AuditLog
 from tests.comms.test_message_transactions import _send, _stored_state
 from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
@@ -249,6 +250,7 @@ def test_authorization_after_counter_wait_observes_committed_membership_revocati
                     membership = organization_membership(revoker, org.peer, fresh=True)
                     assert membership is not None
                     membership.is_deleted = True
+                    membership.deleted_at = utc_now()
                     revoker.commit()
                 after_revocation = _committed_state(comms_world)
             finally:
@@ -324,6 +326,7 @@ def test_replay_authorization_uses_current_read_rights_not_new_send_permissions(
             membership = organization_membership(writer, org.peer, fresh=True)
             assert membership is not None
             membership.is_deleted = True
+            membership.deleted_at = utc_now()
             writer.commit()
         after_revocation = _committed_state(comms_world)
         with pytest.raises(HTTPException) as refused:

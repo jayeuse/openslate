@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import GroupAccess
 from app.systems.manage.audit.models import SecurityEvent
@@ -177,7 +178,8 @@ def test_later_distinct_module_is_rechecked_after_materialization(
             completed.append(True)
             if len(completed) == 2:
                 with Session(export_world.owner) as writer:
-                    writer.get(GroupAccess, grant_id).is_deleted = True
+                    soft_deleted = writer.get(GroupAccess, grant_id)
+                    soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
                     writer.commit()
             return result
 
@@ -241,7 +243,8 @@ def test_batch_fences_live_authority_before_output(export_world: ExportWorld, mo
         if len(completed) == 2:
             with Session(export_world.owner) as writer:
                 if lost == "module_access":
-                    writer.get(GroupAccess, export_world.grant_id).is_deleted = True
+                    soft_deleted = writer.get(GroupAccess, export_world.grant_id)
+                    soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
                 else:
                     writer.get(IdentitySession, export_world.session_id).revoked_at = datetime.now(
                         UTC

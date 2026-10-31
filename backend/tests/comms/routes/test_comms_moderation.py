@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
+from app.core.base_model import utc_now
 from app.systems.comms.messages.models import CommsMessage
 from app.systems.manage.audit.models import AuditLog
 from tests.comms.routes.message_support import _ok, _payload, send
@@ -232,6 +233,7 @@ def test_group_moderation_grant_is_narrow_and_message_actions_need_both_capabili
     with case.world.session(org) as db:
         membership = db.get(GroupMember, membership_id)
         membership.is_deleted = True
+        membership.deleted_at = utc_now()
         db.commit()
     assert moderator.get(path).status_code == 403
 

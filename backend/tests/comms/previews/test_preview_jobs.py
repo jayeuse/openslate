@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import GroupAccess, GroupMember
 from app.systems.access.users.models import Membership
@@ -147,6 +148,7 @@ def test_inflight_preview_cannot_survive_source_or_policy_revocation(job_routes,
             with case.world.session(org) as db:
                 for row in db.scalars(select(GroupAccess).where(GroupAccess.org_id == org.id)):
                     row.is_deleted = True
+                    row.deleted_at = utc_now()
                 db.commit()
         elif change == "archive":
             current = admin.get(root)
@@ -158,7 +160,8 @@ def test_inflight_preview_cannot_survive_source_or_policy_revocation(job_routes,
             )
         else:
             with case.world.session(org) as db:
-                db.get(WorkspaceProfile, org.id).is_deleted = True
+                soft_deleted = db.get(WorkspaceProfile, org.id)
+                soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
                 db.commit()
         return dict(META)
 

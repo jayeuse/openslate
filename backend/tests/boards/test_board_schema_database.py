@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.users.models import User
 from app.systems.boards.attachment_models import BoardAttachment, BoardPostRevisionAttachment
 from app.systems.boards.models import Board, BoardGroup, BoardScope
@@ -196,6 +197,7 @@ def test_board_groups_allow_one_active_row_for_each_group_and_a_known_level(
     _rejects(db, BoardGroup(org_id=board.org_id,
                             board_id=board.id, group_id=uuid7(), level="owner"))
     first.is_deleted = True
+    first.deleted_at = utc_now()
     db.flush()
     db.add(BoardGroup(org_id=board.org_id, board_id=board.id, group_id=group.id, level="manage"))
     db.flush()
@@ -331,6 +333,7 @@ def test_record_links_must_match_their_board_post_and_record(
 
     def change_snapshot() -> None:
         snapshot.is_deleted = True
+        snapshot.deleted_at = utc_now()
 
     _rejects(db, change_snapshot)
     unrelated = _revision(db, other_item)

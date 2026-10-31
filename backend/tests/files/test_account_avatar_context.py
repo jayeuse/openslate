@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -31,6 +32,7 @@ def restore_membership(avatar_world):
             Membership.org_id == world.org_id, Membership.user_id == world.actor_id,
         ))
         membership.is_deleted, membership.status, membership.expires_at = False, "active", None
+        membership.deleted_at = None
         db.commit()
 
 
@@ -43,6 +45,7 @@ def test_account_only_avatar_round_trip_does_not_admit_organization_resources(av
             db.get(IdentitySession, world.session_ids[0]).active_org_id = None
         elif state == "removed":
             membership.is_deleted = True
+            membership.deleted_at = utc_now()
         elif state == "expired":
             membership.expires_at = world.clock - timedelta(seconds=1)
         elif state == "ip":

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import GroupMember
 from app.systems.access.users.person_visibility import visible_person_ids
 from app.systems.comms.access import (
@@ -88,7 +89,8 @@ def test_harbor_scale_access_relation_results(policy_case):
     # Organization channels make every active person visible to every other one.
     assert visible_person_ids(db, accounts["writer"], everyone) == active
     for name in organization:
-        db.get(CommsConversation, world.conversations[name]).is_deleted = True
+        soft_deleted = db.get(CommsConversation, world.conversations[name])
+        soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
     db.flush()
     writer_peers = {
         *(person for n in (0, 1, 2, 3, 5) for person in teams[n]), teams[4][0], *guests,

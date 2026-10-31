@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import event
 
+from app.core.base_model import utc_now
 from app.systems.access.users.person_visibility import visible_person, visible_person_ids
 from app.systems.boards.models import Board
 from tests.rbac.support import add_module, make_group_access
@@ -28,12 +29,14 @@ def test_comms_sharing_leave_and_access_loss_are_current_not_positive_cached(pol
     assert visible_person(db, c.actor, c.peer.id).id == c.peer.id
     assert visible_person_ids(db, c.actor, {c.peer.id, c.world.second.peer}) == {c.peer.id}
     peer_access.is_deleted = True
+    peer_access.deleted_at = utc_now()
     db.flush()
     hidden(db, c.actor, c.peer)
-    peer_access.is_deleted = False
+    peer_access.is_deleted, peer_access.deleted_at = False, None
     db.flush()
     assert visible_person(db, c.actor, c.peer.id).id == c.peer.id
     channel.is_deleted = True
+    channel.deleted_at = utc_now()
     db.flush()
     hidden(db, c.actor, c.peer)
 
@@ -52,6 +55,7 @@ def test_organization_channel_makes_eligible_members_mutually_visible_including_
         for peer_id in peers:
             assert visible_person(db, actor, peer_id).id == peer_id
     channel.is_deleted = True
+    channel.deleted_at = utc_now()
     db.flush()
     hidden(db, c.actor, c.peer)
     hidden(db, guest, c.actor)
@@ -74,6 +78,7 @@ def test_independent_non_comms_fallback_survives_and_is_not_assumed_absent(polic
     assert visible_person(db, c.actor, c.peer.id).id == c.peer.id
     assert visible_person_ids(db, c.actor, {c.peer.id, c.world.second.peer}) == {c.peer.id}
     edge.is_deleted = True
+    edge.deleted_at = utc_now()
     db.flush()
     hidden(db, c.actor, c.peer)
 

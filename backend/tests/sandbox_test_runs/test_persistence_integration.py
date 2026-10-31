@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.access.users.models import UserStatus
 from app.systems.sandbox.designs.models import SandboxDocument
 from app.systems.sandbox.designs.service import read_document, replace_document
@@ -93,4 +94,5 @@ def test_runtime_role_can_manage_saved_test_evidence(
 
     assert integration_db.get(SandboxTestRun, run.id) is run
     run.is_deleted = True
+    run.deleted_at = utc_now()
     integration_db.flush()

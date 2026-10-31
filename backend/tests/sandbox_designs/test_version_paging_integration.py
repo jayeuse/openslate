@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.common.dependencies import get_current_user
+from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.sandbox.designs.models import SandboxDocument
 from app.systems.sandbox.designs.service import _append_version, read_document
@@ -45,6 +46,7 @@ def version_page(integration_owner_db):
         )
         versions.append(version)
     versions[4].is_deleted = True
+    versions[4].deleted_at = utc_now()
     db.commit()
     app = route_app()
     app.dependency_overrides[get_db] = lambda: db

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.core.database.session import get_engine
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users import avatar_delivery
@@ -116,7 +117,8 @@ def test_stale_avatar_or_identity_after_provider_latency_never_delivers_bytes(
             if mutation == "replace":
                 db.get(User, world.actor_id).avatar_file_id = None
             elif mutation == "archive":
-                db.get(File, file_id).is_deleted = True
+                soft_deleted = db.get(File, file_id)
+                soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
             elif mutation == "revoke":
                 db.get(IdentitySession, world.session_ids[0]).revoked_at = world.clock
             else:

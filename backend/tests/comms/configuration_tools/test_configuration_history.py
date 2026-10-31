@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import Group
 from app.systems.access.users.models import Membership
 from app.systems.comms.conversations.models import CommsConversation, CommsMember
@@ -198,7 +199,8 @@ def test_history_read_tolerance_does_not_restore_unavailable_group_references(to
     )
     assert changed.status_code == 200
     with case.world.session(org) as db:
-        db.get(Group, org.group).is_deleted = True
+        soft_deleted = db.get(Group, org.group)
+        soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
         db.commit()
     entries = _ok(api.get(ROOT + "/history"))["items"]
     entry = next(row for row in entries if row["before"]["capabilities"]["group_grants"])

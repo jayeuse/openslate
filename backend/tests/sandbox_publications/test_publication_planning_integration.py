@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.schemas import DesignField
@@ -63,6 +64,7 @@ def test_close_plan_blocks_unbound_children_records_and_live_relationships(
     unmanaged = integration_owner_db.scalar(select(Module).where(Module.module_name == "Unmanaged module"))
     assert unmanaged is not None
     unmanaged.is_deleted = True
+    unmanaged.deleted_at = utc_now()
     source = Record(org_id=requests.org_id, module_id=requests.id, data={})
     target = Record(org_id=requests.org_id, module_id=bound_module(integration_owner_db, "sample-equipment").id, data={})
     integration_owner_db.add_all([source, target])

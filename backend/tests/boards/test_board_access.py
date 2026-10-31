@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User, UserRole
 from app.systems.boards.access import board_level, board_reader_ids
@@ -260,6 +261,7 @@ def test_department_board_name_follows_the_department(integration_owner_db: Sess
     assert refused.json()["detail"]["code"] == "board_name_fixed"
     department.department_name = f"Stock {uuid7().hex[:8]}"
     department.is_deleted = True
+    department.deleted_at = utc_now()
     department_board(db, department)
     db.refresh(board)
     assert board.name == department.department_name

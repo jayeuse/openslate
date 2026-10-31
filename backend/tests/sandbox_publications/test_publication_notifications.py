@@ -8,6 +8,7 @@ from sqlalchemy import event, select
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.designs.models import SandboxVersion
@@ -124,6 +125,7 @@ def test_fresh_publications_notify_eligible_admins_once_with_atomic_rollback(
     membership_of(db, other.id).role = UserRole.ADMIN.value
     version = db.get(SandboxVersion, result.version.id)
     version.is_deleted = True
+    version.deleted_at = utc_now()
     db.commit()
     assert client.get("/api/notifications").json()["pagination"]["total"] == 1
 

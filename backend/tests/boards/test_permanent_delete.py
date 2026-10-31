@@ -212,11 +212,14 @@ def test_board_purge_preview_requires_admin_toggle_and_closed_board_and_lists_al
     board.status = "active"
     board.is_deleted = True
     board.deleted_at = None
-    db.commit()
-    inconsistent_delete = board_client(db, admin, lifecycle_router.router).post(path)
-    assert inconsistent_delete.status_code == 409
-    assert inconsistent_delete.json()["detail"]["code"] == "purge_requires_closed"
+    # A deleted Board without a deletion time can no longer exist: the database rejects it.
+    with pytest.raises(IntegrityError) as inconsistent:
+        db.commit()
+    assert inconsistent.value.orig.diag.constraint_name == "ck_boards_deletion_state"
+    db.rollback()
 
+    board.status = "active"
+    board.is_deleted = True
     board.deleted_at = datetime.now(UTC)
     db.commit()
     assert board_client(db, admin, lifecycle_router.router).post(path).status_code == 200

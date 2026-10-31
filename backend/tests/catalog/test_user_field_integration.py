@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user
+from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.sandbox.fields.models import Field
@@ -92,6 +93,7 @@ def test_assignable_picker_and_record_writes_follow_current_module_readers(
         assert created.json()["display_values"][str(assignee.id)] == "Alex Reader"
 
         grant.is_deleted = True
+        grant.deleted_at = utc_now()
         db.commit()
         historical = client.get(f"/api/records/{record_id}")
         assert historical.status_code == 200

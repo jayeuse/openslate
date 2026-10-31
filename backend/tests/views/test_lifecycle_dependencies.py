@@ -4,6 +4,7 @@ import pytest
 from uuid6 import uuid7
 from views.test_access import actor
 
+from app.core.base_model import utc_now
 from app.systems.openview.views.models import SavedView
 from app.systems.platform.files.models import File
 from app.systems.sandbox.lifecycle.batch_dependencies import load_purge_dependencies
@@ -96,6 +97,7 @@ def test_purge_lists_and_blocks_unpurged_attachments_and_lists_saved_views(query
         definition={"version": 1},
     )
     module.is_deleted = True
+    module.deleted_at = utc_now()
     query_db.add_all([attachment, view])
     query_db.flush()
     plan = plan_lifecycle(query_db, "module", module.id, "purge", None)
@@ -138,6 +140,7 @@ def test_parent_purge_deletes_confirmed_file_inventory_and_views_through_audit(q
         object_key=uuid7().hex,
         state="purged",
         is_deleted=True,
+        deleted_at=utc_now(),
     )
     view = SavedView(
         org_id=module.org_id,
@@ -146,6 +149,7 @@ def test_parent_purge_deletes_confirmed_file_inventory_and_views_through_audit(q
         definition={"version": 1},
     )
     module.is_deleted = True
+    module.deleted_at = utc_now()
     query_db.add_all([attachment, view])
     query_db.commit()
     module_id, record_id, file_id, view_id = (

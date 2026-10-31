@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.users.models import Membership, PlatformOperator, User
@@ -301,7 +302,8 @@ def test_status_discards_provider_facts_after_authority_or_binding_changes(world
                 elif change == "session":
                     db.get(IdentitySession, world.session_id).revoked_at = datetime.now(UTC)
                 elif change == "membership":
-                    membership_of(db, world.target_id).is_deleted = True
+                    soft_deleted = membership_of(db, world.target_id)
+                    soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
                 else:
                     db.get(User, world.target_id).supabase_user_id = uuid4()
                 db.commit()

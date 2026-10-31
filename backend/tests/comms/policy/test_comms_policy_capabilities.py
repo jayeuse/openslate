@@ -3,6 +3,7 @@
 import pytest
 from fastapi import HTTPException
 
+from app.core.base_model import utc_now
 from app.systems.comms.capabilities import (
     capability_check,
     channel_creation_check,
@@ -147,6 +148,7 @@ def test_everyone_switches_grants_and_person_specific_locks(policy_case):
     assert validate_capability_configuration(db, local, empty) == empty
     for row in (local_thread, local_channel, local_react):
         row.is_deleted = True
+        row.deleted_at = utc_now()
     db.flush()
     check = capability_check(db, c.actor, channel.id)
     assert check["capabilities"]["manageThreads"]["allowed"] is False

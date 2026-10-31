@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.designs.schemas import SandboxDocument, TriggerDocument
 from app.systems.sandbox.fields.models import Field
@@ -277,6 +278,7 @@ def test_retired_trigger_children_do_not_block_field_closure(
         )
     )
     record_trigger.is_deleted = True
+    record_trigger.deleted_at = utc_now()
     record_trigger.enabled = False
     integration_owner_db.flush()
     retired_plan = publication_plan(integration_owner_db, closing)

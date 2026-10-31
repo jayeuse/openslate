@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.record_triggers.models import RecordTriggerEvent
 from app.systems.sandbox.records.models import Record
@@ -93,6 +94,7 @@ def test_invalid_second_change_rolls_back_both_fields_while_other_items_commit(
         )
         if bad_field == "closed":
             second.is_deleted = True
+            second.deleted_at = utc_now()
         elif bad_field == "foreign":
             second.module_id = add_module(world.db, add_department(world.db)).id
         else:

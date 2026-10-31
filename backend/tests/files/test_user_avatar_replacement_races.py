@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
 from app.systems.access.users.models import PlatformOperator, User
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -271,6 +272,7 @@ def test_profile_refuses_unbindable_avatar_without_mutating_old_binding(avatar_w
             file.state = "awaiting_upload"
         elif defect == "archived":
             file.is_deleted = True
+            file.deleted_at = utc_now()
         elif defect == "operation":
             file.operation_id = uuid4()
             file.operation_expires_at = world.clock + timedelta(seconds=30)

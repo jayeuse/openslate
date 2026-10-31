@@ -15,6 +15,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import GroupAccess
 from app.systems.access.users.models import User
@@ -150,7 +151,8 @@ def test_export_rechecks_exact_authority_after_generation(
         result = original(engine, payload, reader_id=reader_id, org_id=org_id)
         with Session(export_world.owner) as db:
             if lost == "module_access":
-                db.get(GroupAccess, export_world.grant_id).is_deleted = True
+                soft_deleted = db.get(GroupAccess, export_world.grant_id)
+                soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
             elif lost == "session":
                 db.get(IdentitySession, export_world.session_id).revoked_at = datetime.now(UTC)
             else:
@@ -340,7 +342,8 @@ def test_module_reader_scope_is_required_for_export(export_world: ExportWorld, r
         readable = export_world.client.post("/api/records/export", json=export_world.payload())
         assert readable.status_code == 200
     with Session(export_world.owner) as db:
-        db.get(GroupAccess, export_world.grant_id).is_deleted = True
+        soft_deleted = db.get(GroupAccess, export_world.grant_id)
+        soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
         db.commit()
     denied = export_world.client.post("/api/records/export", json=export_world.payload())
     assert denied.status_code == 404
@@ -368,6 +371,7 @@ def test_export_view_metadata_is_scoped_and_current(export_world: ExportWorld, s
             view.module_id = foreign_id
         else:
             view.is_deleted = True
+            view.deleted_at = utc_now()
         db.commit()
     try:
         response = export_world.client.post(

@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.sandbox.modules.models import Module
@@ -233,6 +234,7 @@ def test_group_patch_no_longer_accepts_members(world: DelegationWorld) -> None:
 def test_member_candidates_are_the_non_administrator_accounts(world: DelegationWorld) -> None:
     deleted = add_user(world.db, "delegation-deleted")
     deleted.is_deleted = True
+    deleted.deleted_at = utc_now()
     world.db.flush()
 
     response = world.client(world.manager).get(
@@ -262,6 +264,7 @@ def test_member_candidates_are_the_non_administrator_accounts(world: DelegationW
 def test_administrator_lists_member_candidates_when_no_group_exists(world: DelegationWorld) -> None:
     for group in world.db.scalars(select(Group).where(Group.is_deleted.is_(False))).all():
         group.is_deleted = True
+        group.deleted_at = utc_now()
     world.db.commit()
 
     response = world.client(world.admin).get(

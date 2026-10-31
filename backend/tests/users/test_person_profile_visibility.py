@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.models import Membership, User
@@ -48,7 +49,9 @@ def target_groups(world):
             world.person_owned.append((GroupMember, member.id))
             groups.append((group.id, name, member))
         groups[2][2].is_deleted = True
-        db.get(Group, groups[3][0]).is_deleted = True
+        groups[2][2].deleted_at = utc_now()
+        soft_deleted = db.get(Group, groups[3][0])
+        soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
         db.commit()
     zeta, alpha = groups[0], groups[1]
     return [{"id": str(alpha[0]), "name": alpha[1]}, {"id": str(zeta[0]), "name": zeta[1]}]
@@ -151,10 +154,12 @@ def test_a_removed_or_disabled_member_is_not_available_even_to_an_administrator(
         saved = membership.is_deleted, target.status, target.is_deleted
         if state == "removed_membership":
             membership.is_deleted = True
+            membership.deleted_at = utc_now()
         elif state == "disabled_account":
             target.status = "disabled"
         else:
             target.is_deleted = True
+            target.deleted_at = utc_now()
         db.commit()
     try:
         hidden = profile(world)
@@ -170,6 +175,8 @@ def test_a_removed_or_disabled_member_is_not_available_even_to_an_administrator(
                 select(Membership).where(Membership.user_id == world.target_id)
             ).one()
             membership.is_deleted, target.status, target.is_deleted = saved
+            membership.deleted_at = utc_now() if membership.is_deleted else None
+            target.deleted_at = utc_now() if target.is_deleted else None
             db.commit()
 
 

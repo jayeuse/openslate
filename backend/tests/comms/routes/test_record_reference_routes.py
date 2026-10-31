@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import GroupAccess, GroupMember
 from app.systems.comms.conversations.models import CommsConversation, CommsMember
 from app.systems.sandbox.fields.models import Field
@@ -85,7 +86,8 @@ def test_live_record_cards_capture_module_and_recheck_record_and_conversation_so
         db.commit()
     assert _ok(peer.get(ref_path))["title"] == "Changed title"
     with case.world.session(org) as db:
-        db.get(GroupAccess, grant).is_deleted = True
+        soft_deleted = db.get(GroupAccess, grant)
+        soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
         db.commit()
     unavailable = {"id": card["id"], "state": "unavailable"}
     assert _ok(peer.get(ref_path)) == unavailable

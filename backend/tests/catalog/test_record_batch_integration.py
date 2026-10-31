@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import AccessLevel
 from app.systems.manage.audit.models import AuditAction, AuditLog
@@ -194,6 +195,7 @@ def test_batch_rejects_unsupported_field_changes_per_item(batch_world, bad_field
     )
     if bad_field == "closed":
         field.is_deleted = True
+        field.deleted_at = utc_now()
     elif bad_field == "foreign":
         field.module_id = add_module(world.db, add_department(world.db)).id
     else:
