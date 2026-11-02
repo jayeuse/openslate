@@ -53,7 +53,7 @@ def queue_export(
     digest = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
     payload_hmac = hmac.new(
         key,
-        b"openslate.backup.export.request.v1\0" + payload.backup_run_id.bytes + b"\0" + plaintext,
+        b"slateops.backup.export.request.v1\0" + payload.backup_run_id.bytes + b"\0" + plaintext,
         hashlib.sha256,
     ).hexdigest()
     prior = db.scalar(
