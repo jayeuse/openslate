@@ -48,7 +48,7 @@ One pull request for each slice. Run the pre-push gate once for each push.
 | `openslate-accent`, `openslate-radius`, `openslate.sample.draft-text.v1.`, `openslate.sample.v1.` | Legacy browser keys. The code reads or removes them because old browsers still hold them. | Keep |
 | `slateops_user_id`, `slateops_invitation_operation_id` | Keys in Supabase Auth `app_metadata`. Each existing user stores them. | Slice 4 (data update) |
 | `slateops-sandbox` (design file `kind`) | Stored in design rows and in exported design files. | Slice 4 (data update, import decision) |
-| `slateops.backup.export.request.v1` | Encryption context of backup export requests. | Slice 4 |
+| `openslate.backup.export.request.v1` | HMAC context of backup export requests. Kept so the line matches the CodeQL alert that main dismissed (idempotency HMAC, not a password hash). | Keep |
 | `slateops-sample-people-v1` | File format of sample-run records on disk. | Slice 4 |
 | `slateops_session_liveness` | Policy on `auth.sessions`. | Slice 4 |
 | Sample-pack `uuid_namespace` values (`slateops:harbor-operations:v4` and others) | They decide the IDs of the permanent sample data. A change creates duplicates on the next run. | Keep |
