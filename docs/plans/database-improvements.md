@@ -1,6 +1,6 @@
 # Database improvements
 
-Status: approved (2026-10-31). Jay approved D1 to D12 as recommended; D13 is open. Phase 1 is implemented on `database-improvements-1`; the Phase 0 baseline is next.
+Status: approved (2026-10-31). Jay approved D1 to D12 as recommended; D13 and D14 are open. Phase 0 and Phase 1 are done on `database-improvements-1` (pull request 1).
 
 Target: the same as [Product concurrency fixes](product-concurrency-fixes.md): one server with 8 cores and 16 GB, up to about 300 people active at the same time across all organizations. Data volume: the seven Large packs in one installation, which is the permanent development data.
 
@@ -56,6 +56,8 @@ Source: the development database on 2026-10-31, read only. It holds the seven La
 | F24 | Scalability | The Auth audit log grows with no limit. | `auth.audit_log_entries`: 66,771 rows since 2026-09-29, 21 MB (15.6k logins, 13.4k logouts, 9.5k sign-ups). OpenSlate's `security_events` already records the sign-in events that OpenSlate needs. | Supabase Auth (`gotrue v2.196.0`) keeps its audit entries, and no setting or job limits them. |
 | F25 | Integrity | Auth sessions have no time limit. | `auth.sessions`: 1,333 rows; OpenSlate has 722 sessions, of which 326 are revoked. `infra/supabase/compose.yaml` sets no Auth session time limit. | A provider session can stay in Auth after its OpenSlate session ends. Auth cleans up only sessions that have a limit. |
 | F26 | Performance | Queries cannot use the 21 partial indexes that filter on deleted rows. | The application filters with `is_deleted IS false` (SQLAlchemy `.is_(False)`, 378 places in 116 files), and every partial index uses `WHERE is_deleted = false`. Same lookup on `relationship_edges`: `IS false` scans `ix_relationship_edges_target_record` and filters (estimated cost 6,942); `= false` uses `ix_relationship_edges_active_target` (cost 8.44). Found during step 1.4 (`EXPLAIN`, 2026-10-31). | PostgreSQL turns `x = false` into `NOT x` but keeps `x IS FALSE` as a separate test, because the two differ for null. It does not use the `NOT NULL` constraint to prove they match, so a predicate written one way never serves a query written the other way. |
+| F27 | Performance | The Manage audit page is unusable for a member with wide access. | Baseline 2026-11-02: each audit statement for `academic.manager@school.test` takes 7.1 to 9.6 s, and each page takes 13.9 to 23.3 s, slower with each page. The Harbor manager, with narrower access, takes about 50 ms per statement. `audit_logs` was read in full 84 times in the pass. | Not yet known. The member path filters by what the member may see (departments, modules, links and snapshots; `manage/audit/service.py`), and the plan does not use an index for that filter. |
+| F28 | Efficiency | Background workers poll the database many times a second. | Baseline 2026-11-02: the record trigger event poll ran 21,336 times in 7.6 minutes (about 47 a second, mean 5.8 ms, 124 s of database time), more than all audit statements together. Board event reminders, report schedules and `scheduled_work` are also scanned thousands of times. | Each worker thread polls on a short timer. Product concurrency C4 added 4 trigger threads per API process, and each one polls. |
 
 Checked and correct (keep as is): every table has a primary key; every timestamp is `timestamptz`; foreign keys use `(org_id, id)` pairs, so a row cannot reference another organization's row; 84 of 97 tables have RLS, and the 13 without it are account and installation tables by documented decision; the Comms message counters (`last_seq`) match their messages; decimals are validated as decimal strings; the earlier "unindexed foreign keys" are composite keys with a usable index on the second column. Realtime keeps its broadcast messages in daily partitions that it creates and drops itself; no replication slot exists, and `max_slot_wal_keep_size = 512MB` limits the write-ahead log that a stuck slot can keep; the `LISTEN/NOTIFY` queue is empty. `auth.users` and OpenSlate users match one to one. `pg_net` has no queued requests or stored responses. About 20 of 100 connections are open at idle.
 
@@ -91,7 +93,7 @@ The work follows the phase order below, split into eight pull requests. Line cou
 | 2b | 2.4 | 1,200 | Monthly audit partitions, rehearsed first on the Large development data |
 | 2c | 2.5 | 1,300 | Audit seals and the verify command |
 | 2d | 2.6, 2.7, 1.5 schedule | 1,800 | Archive and drop of audit months and old security events; the file check on the backup runner's schedule |
-| 3a | 3.3–3.6 | 1,550 | Backend query paths: Comms counts, access once per request, scheduler wake-up, Comms realtime indexes |
+| 3a | 3.3–3.7 | 1,900 | Backend query paths: Comms counts, access once per request, worker wake-up instead of polling, Comms realtime indexes, member audit page |
 | 3b | 3.1, 3.2 | 1,900 | Capped totals and keyset paging, backend and frontend; `ui-ux-pro-max` decides the visible change, and a feature pass checks it |
 | 4 | 4.1–4.6, Phase 5 | 750 | PostgreSQL settings, edge index, Auth audit log, Auth sessions, final measurements |
 
@@ -107,6 +109,32 @@ Order: integrity and safety first, because constraints are cheapest to add while
 |---|---|
 | 0.1 | Write the measurement procedure in this plan: reset `pg_stat_statements` and the table statistics, run a read-only hands-on pass on Harbor and School Large as admin and as a department manager, then record p50 and p95 per query family, sequential scans per table, and table sizes. Add a Comms-heavy part: two accounts with open conversations, presence and typing, and record the writes per active person per minute to `comms_realtime_grants`, `comms_presence` and `comms_typing`. Never reset development data for this. |
 | 0.2 | Run it once and record the numbers below this table. These numbers are the baseline for DBI-1 and DBI-2. |
+
+**Procedure (0.1).** The pass is an API script, not a browser pass: an agent may not type a password into a browser, so the script signs in through `operations.sample.client.SampleClient` and reads the shared testing password from `~/.config/openslate-handson/administrator-password.json` itself. The scripts and SQL are kept in the ignored run record `.agent-runtime/database-improvements/phase0/`.
+
+1. Run the API without reload (`backend-stable`), and run no tests or sample runs beside the pass.
+2. As `postgres`, run `select pg_stat_statements_reset();`. The `postgres` role cannot reset the table counters, so take a snapshot of `pg_stat_user_tables` instead and subtract it at the end.
+3. Run `read_pass.py` once: for each account in turn (`admin@harbor.test`, `sales.manager@harbor.test`, `admin@school.test`, `academic.manager@school.test`), make the same GET requests the pages make, one at a time: Access, Sandbox, the OpenView department page, a records list (sorted, filtered and paged), reports, the dashboard, Boards, My calendar, Manage audit (6 pages, then one department, then one person), notifications and Comms.
+4. Comms window: run `comms_writes.sql`, keep the two Harbor accounts active in one conversation for 5 minutes (presence heartbeats and typing signals, no messages), and run it again.
+5. Run `baseline_collect.sql`. The p95 of a query family is estimated as mean + 2 × standard deviation, because `pg_stat_statements` has no percentiles.
+
+**Baseline (0.2), 2026-11-02, development data with the seven Large packs, after the Phase 1 commits.**
+
+| Page (server time, p50 / p95 ms) | Harbor admin | Harbor manager | School admin | School manager |
+|---|---|---|---|---|
+| Access | 9 / 25 | 6 / 9 | 12 / 27 | 9 / 12 |
+| OpenView records | 16 / 53 | 13 / 17 | 17 / 20 | 22 / 53 |
+| Boards Kanban | 9 / 14 | 26 / 28 | 8 / 53 | 19 / 81 |
+| Notifications list | 182 | 63 | 184 | 90 |
+| Comms | 31 / 64 | 34 / 52 | 29 / 56 | 52 / 102 |
+| **Manage audit** | **299 / 468** | **122 / 207** | **326 / 404** | **16,983 / 23,320** |
+
+- Every page's SQL meets DBI-1 except Manage audit (F27) and, by server time, the notifications list for admins.
+- The audit statements for the School manager take 7.1 to 9.6 s each; all 11 query families with a p95 estimate above 100 ms read `audit_logs`, and `audit_logs` was read in full 84 times (58.8M rows).
+- The trigger event poll is the largest database cost: 21,336 calls in 7.6 minutes (about 47 a second), mean 5.8 ms, 124 s of database time (F28).
+- Comms writes per active person per minute: typing 3.0 (100% HOT), grants 2.0 (0% HOT), presence 1.0 (0% HOT), admissions 0.4 (100% HOT). At 300 active people this is about 1,900 writes a minute.
+- Comms member counts (DBI-2): mean 3.6 ms, max 5.5 ms for the conversations these accounts see. The largest Harbor department was not measured on its own.
+- The purge preview's notification lookup (step 1.3) takes 2.6 ms on about 275,000 notifications, so it needs no index at this size.
 
 ### Phase 1: integrity and safety
 
@@ -141,8 +169,9 @@ Order: integrity and safety first, because constraints are cheapest to add while
 | 3.2 | F1 | Add keyset paging, `(created_at, id) < (cursor)`, to the four lists that grow without limit: the audit log, the relationship edge list, the trigger run list, and notifications. Comms messages already page by keyset (`seq`); follow that pattern. Other lists keep offset paging. Indexes already exist for three lists (the audit `(created_at, id)` index from step 2.4, `ix_record_trigger_runs_created`, `ix_in_app_notifications_recipient_created`); check each with `EXPLAIN` and add a concurrent index only where the plan still sorts. The relationship edge list needs one. A department-filtered audit page uses the partial department index from step 2.4. | PostgreSQL: `EXPLAIN` shows an index scan with no sort. Page 500 costs the same as page 1. Integration: the cursor never skips or repeats a row while rows are added (DBI-1, DBI-9). |
 | 3.3 | F2 | Run D44 slice 5's measurement first. Then evaluate each department's reader set once and count it for each conversation (C + N in place of C × N). Use a stored count only if the measured result still misses DBI-2, because a stored count can drift. | Integration: the same counts as before for every conversation kind. Statement budget for the conversation list. Measurement on Harbor Large (DBI-2). |
 | 3.4 | F3 | Start from the list in product concurrency step 4.2: the audit listener's redacted-field and link-module reads (`listeners.py:78`, `:102`), the separate department lookup in `readers.py:63`, and readers read once per item in batch update. Then resolve the user's access scope once per request in `access/policy/scope.py`, and pass it to the code that needs it. Nothing is cached across requests. | Statement budgets for each changed route go down and then hold (DBI-8). The existing authorization tests stay green. |
-| 3.5 | F11 | Wake the scheduling worker with `LISTEN` on a work channel, and sleep until the next due `run_at`, with a 30 s safety poll. | Integration: new work runs within 1 s; an idle worker makes at most 2 queries a minute. |
+| 3.5 | F11, F28 | Wake the scheduling worker and the record trigger workers with `LISTEN` on a work channel, and sleep until the next due `run_at`, with a 30 s safety poll. Apply the same to the other background scans that the baseline shows (board event reminders, report schedules). | Integration: new work runs within 1 s, and a trigger event still meets the 2 s target of product concurrency C4; an idle worker makes at most 2 queries a minute. The baseline's 47 trigger polls a second drop accordingly. |
 | 3.6 | F22 | Comms realtime writes (D11). Start from the Phase 0 numbers, scaled to 300 active people. If the grant renewals are a material share of the database writes, drop `ix_comms_realtime_grants_expiry`: the expiry sweep reads a small table, and without that index a renewal can be a HOT update. Set `fillfactor = 80` on `comms_realtime_grants` and `comms_presence` so that the new row versions fit. Do the same for `ix_comms_presence_seen` if the presence sweep (`comms/realtime/presence.py:144`) stays fast without it. Do not move the expiry to one row per person unless a security review approves the change to the Realtime authorization policy (SEC-R6). | Integration: the expiry and presence sweeps still remove every expired row. The HOT share of grant and presence updates goes above 90%. The Realtime authorization tests stay green. |
+| 3.7 | F27 | Make the Manage audit list fast for members. First read the query plan of the member audit statements as `academic.manager@school.test` (count, list, people options, entity type options) on the School Large data, and find what makes them read all of `audit_logs`. Then change the query or its indexes so that a member's page reads only the rows it can show. Keep the visibility rules exactly as they are. | Same rows as before for every account in the baseline, checked with a test. Each audit page for the School manager under 100 ms of SQL at p95 (DBI-1). |
 
 ### Phase 4: server and durability
 
@@ -164,7 +193,7 @@ Order: integrity and safety first, because constraints are cheapest to add while
 
 ## Decisions
 
-Each decision names what it removes. Jay approved D1 to D12 as recommended on 2026-10-31; D13 is open.
+Each decision names what it removes. Jay approved D1 to D12 as recommended on 2026-10-31; D13 and D14 are open.
 
 | ID | Decision | Recommendation | What it removes |
 |---|---|---|---|
@@ -181,6 +210,7 @@ Each decision names what it removes. Jay approved D1 to D12 as recommended on 20
 | D11 | Comms realtime writes | Measure first (Phase 0). If needed, drop the expiry and last-seen indexes and lower the fillfactor (step 3.6). | Nothing that people see. The alternative, one expiry per person, would cut renewals from N writes to 1, but it changes the Realtime authorization policy, which needs a security review. |
 | D12 | Auth audit log retention | 90 days. | Auth's own audit entries older than 90 days. OpenSlate's `security_events` and audit keep their own history. |
 | D13 | Partial indexes and `IS false` (F26) | Open. Recommendation: recreate the 21 partial indexes with `WHERE is_deleted IS FALSE`, concurrently, in one migration; the column is `NOT NULL`, so the meaning does not change, and no application code changes. A catalog test keeps every new partial index in that form. Raw SQL that filters with `= false` or `NOT is_deleted` must then be changed to match; find it first. Deliver it as its own small pull request right after the Phase 0 baseline, so its effect is measured alone. | Nothing that people see. The alternative, changing 378 filters in 116 files to `= false`, gives the same result with a far larger diff. |
+| D14 | When to fix the member audit page (F27) | Open. Recommendation: move step 3.7 out of pull request 3a into its own small pull request right after pull request 1, because the page takes up to 23 s for a department manager in a large organization. | Nothing; it only changes the order. The alternative keeps it in 3a, after Phases 2 and 3b. |
 
 ## Documentation
 
