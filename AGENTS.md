@@ -52,7 +52,7 @@ Wrong: "While backend coverage ran, repeated three Playwright tests to check fla
 
 ## Setup and security
 
-- Require Python `>=3.12,<3.15`, Node `>=24`; use `backend/uv.lock` and `frontend/package-lock.json`.
+- Require Python `>=3.12,<3.16`, Node `>=24`; use `backend/uv.lock` and `frontend/package-lock.json`.
 - Root setup: create owner-only `.env` from `.env.example` for a fresh development instance, generate installation keys with `backend/operations/supabase_keys.py --output <new-private-path>`, then start the owned Supabase development stack with `./scripts/dev.py db`. Keep existing volumes and credentials; this fresh-start path does not import legacy data. Treat connection strings and credentials as secrets.
 - Backend setup: from `backend/`, run `uv sync --locked`, `uv run python operations/provision_database_role.py`, `uv run alembic upgrade head`, `uv run alembic check`, and `uv run python operations/provision_storage.py`; serve with `uv run python -m app --reload`. Start the API before bootstrapping the first administrator invitation so Auth can fetch its email template.
 - Frontend: run `npm ci`, then `npm run dev`. The launcher parses root configuration for `FRONTEND_DEV_PORT`, `BACKEND_BIND_HOST`, `BACKEND_PORT`, and `PUBLIC_ORIGIN`; it passes only the three direct nonsecret values plus the derived exact HMR-origin hostname to Next, never the complete root environment or its secrets. `npm run build` produces the static export consumed by FastAPI.

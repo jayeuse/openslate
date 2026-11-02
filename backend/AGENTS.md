@@ -14,7 +14,7 @@ The deployment profile is one full stack per client (micro–medium SMB, on-prem
 ## Tooling and style
 
 - Every file under `backend/` must contain no more than 500 lines. Migration files under `backend/migrations/` are exempt. Test files under `backend/tests/` treat 500 lines as a review signal, not a limit: keep one behavior area in one file instead of splitting it into parts that repeat imports and fixtures.
-- Require Python `>=3.12,<3.15`; Ruff rules are `E,F,I,B,UP,PT` with line length 100 (deferred `PT` codes are listed in `pyproject.toml`); mypy is strict with Pydantic and SQLAlchemy plugins. Check with `uv run ruff check . && uv run mypy app operations`.
+- Require Python `>=3.12,<3.16`; Ruff rules are `E,F,I,B,UP,PT` with line length 100 (deferred `PT` codes are listed in `pyproject.toml`); mypy is strict with Pydantic and SQLAlchemy plugins. Check with `uv run ruff check . && uv run mypy app operations`.
 - Use plain `sqlalchemy.orm.Session` from `get_db`, `create_engine`, and `db.commit()` in routes/services. Do not refactor to async SQLAlchemy.
 - Prefer typed code: `Mapped[...]` ORM columns, `Annotated[..., Depends(...)]`, `StrEnum`, and typed Pydantic v2 schemas. Responses use `from_attributes=True`; request models use `extra="forbid"` when silently ignored input is unsafe.
 - Keep simple use cases in routers. Do not add generic repositories, a global error envelope, or service-per-feature layers without an explicit need.

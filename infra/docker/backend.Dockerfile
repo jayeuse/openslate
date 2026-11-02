@@ -11,7 +11,7 @@ COPY contracts/ /workspace/contracts/
 RUN npm run build
 
 
-FROM python:3.14-slim AS backend-builder
+FROM python:3.15-slim AS backend-builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -28,7 +28,7 @@ RUN uv sync --frozen --no-dev
 
 COPY backend/ ./
 
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
