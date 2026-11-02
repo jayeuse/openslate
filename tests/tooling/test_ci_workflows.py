@@ -479,7 +479,7 @@ class CiWorkflowContractTests(unittest.TestCase):
 
     def test_unified_server_image_uses_injected_process_configuration(self):
         source = (ROOT / "infra/docker/backend.Dockerfile").read_text()
-        runtime_stage = source.rsplit("FROM python:3.14-slim", 1)[1]
+        runtime_stage = source.rsplit("FROM python:3.15-slim", 1)[1]
 
         self.assertIn("OPENSLATE_ENV_SOURCE=process", runtime_stage)
         self.assertNotIn("COPY .env", runtime_stage)
