@@ -115,8 +115,8 @@ def test_self_profile_rejects_unapproved_fields_and_bounds_without_writes(policy
 def test_self_profile_requires_current_identity_and_browser_csrf(policy_world):
     world = policy_world
     assert world.client.patch(PATH, json=TEXT).status_code == 401
-    world.client.cookies.set("openslate_access", world.access())
-    world.client.cookies.set("openslate_refresh", world.handles[0])
+    world.client.cookies.set("slateops_access", world.access())
+    world.client.cookies.set("slateops_refresh", world.handles[0])
     assert world.client.patch(PATH, json=TEXT).status_code == 401
     world.client.cookies.clear()
     with Session(world.owner) as db:

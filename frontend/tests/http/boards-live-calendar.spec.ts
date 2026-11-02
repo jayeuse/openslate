@@ -68,7 +68,7 @@ async function installSelectedEventApi(
   await browser.route("**/api/workspace", (route) =>
     route.fulfill({
       json: {
-        display_name: "OpenSlate",
+        display_name: "Slate Operations",
         mark: "OS",
         logo_file_id: null,
         revision: 1,
@@ -382,7 +382,7 @@ test.describe("Boards workspace regional dates", () => {
       await browser.route("**/api/workspace", (route) =>
         route.fulfill({
           json: {
-            display_name: "OpenSlate",
+            display_name: "Slate Operations",
             mark: "OS",
             logo_file_id: null,
             revision: 1,
@@ -727,7 +727,7 @@ async function installArchivedEventPurge(
     route.fulfill({ json: authMeBody({ id: authorId, role, access: [] }) }),
   );
   const workspace = {
-    display_name: "OpenSlate",
+    display_name: "Slate Operations",
     mark: "OS",
     logo_file_id: null,
     revision: 1,

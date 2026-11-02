@@ -274,7 +274,9 @@ test("the phone drawer has 44px rows with visible descriptions and the active in
   await page
     .getByRole("button", { name: "Open navigation", exact: true })
     .click();
-  const drawer = page.getByRole("dialog", { name: "OpenSlate navigation" });
+  const drawer = page.getByRole("dialog", {
+    name: "Slate Operations navigation",
+  });
   const navigation = mainNavigation(drawer);
   const access = navigation.getByRole("button", {
     name: "Access",
@@ -330,10 +332,10 @@ const sidebarWidth = (page: Page) =>
     .locator("#primary-sidebar")
     .evaluate((el) => el.getBoundingClientRect().width);
 const storedWidth = (page: Page) =>
-  page.evaluate(() => localStorage.getItem("openslate-sidebar-width"));
+  page.evaluate(() => localStorage.getItem("slateops-sidebar-width"));
 async function seedStoredWidth(page: Page, width: string) {
   await page.addInitScript((value) => {
-    localStorage.setItem("openslate-sidebar-width", value);
+    localStorage.setItem("slateops-sidebar-width", value);
   }, width);
 }
 
@@ -448,7 +450,9 @@ test("on a phone every target in the header, the account menu and the drawer is 
   await header
     .getByRole("button", { name: "Open navigation", exact: true })
     .click();
-  const drawer = page.getByRole("dialog", { name: "OpenSlate navigation" });
+  const drawer = page.getByRole("dialog", {
+    name: "Slate Operations navigation",
+  });
   await expect(
     drawer.getByRole("link", { name: "Your profile, Maya Chen", exact: true }),
   ).toBeVisible();

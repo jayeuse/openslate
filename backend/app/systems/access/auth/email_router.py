@@ -54,7 +54,7 @@ def request_email_change(
 ) -> dict[str, bool]:
     require_completed_identity(identity)
     token = (
-        request.cookies.get("openslate_access")
+        request.cookies.get("slateops_access")
         if identity.cookie_authenticated
         else request.headers.get("authorization", "").partition(" ")[2]
     )
@@ -113,7 +113,7 @@ def complete_email_change(
 ) -> dict[str, bool]:
     # Presence, including an empty credential, is ambiguous and must precede hash consumption.
     if "authorization" in request.headers or any(
-        name in request.cookies for name in ("openslate_access", "openslate_refresh")
+        name in request.cookies for name in ("slateops_access", "slateops_refresh")
     ):
         raise HTTPException(
             409,

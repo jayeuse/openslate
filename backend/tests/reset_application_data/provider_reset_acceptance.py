@@ -39,18 +39,18 @@ pytestmark = pytest.mark.integration
 def _owned_environment() -> tuple[dict[str, str], str, str]:
     values = dict(os.environ)
     if (
-        values.get("OPENSLATE_TEST_RESET_ACCEPTANCE") != "1"
-        or values.get("OPENSLATE_ENV_SOURCE") != "process"
+        values.get("SLATEOPS_TEST_RESET_ACCEPTANCE") != "1"
+        or values.get("SLATEOPS_ENV_SOURCE") != "process"
         or values.get("ENVIRONMENT") != "test"
     ):
         raise RuntimeError("Provider reset acceptance requires its dedicated test environment")
     owner_url = values.get("MIGRATION_DATABASE_URL", "")
     runtime_url = values.get("TEST_DATABASE_URL", "")
-    run_id = values.get("OPENSLATE_FULLSTACK_RUN_ID", "")
+    run_id = values.get("SLATEOPS_FULLSTACK_RUN_ID", "")
     if not owner_url or not runtime_url or not run_id:
         raise RuntimeError("Provider reset acceptance inputs are incomplete")
     _guard_integration_database(runtime_url)
-    assert_provider_instance(values, database_url=runtime_url, expected_user="openslate_runtime")
+    assert_provider_instance(values, database_url=runtime_url, expected_user="slateops_runtime")
     return values, owner_url, run_id
 
 
@@ -213,7 +213,7 @@ def _login_seeded_admin(admin_email: str, password: str, settings: Any) -> tuple
     if response.status_code != 200:
         client.close()
         raise RuntimeError("The seeded administrator could not log in through FastAPI")
-    access = client.cookies.get("openslate_access")
+    access = client.cookies.get("slateops_access")
     if not access:
         client.close()
         raise RuntimeError("FastAPI did not issue the expected browser session cookie")
@@ -228,7 +228,7 @@ def _storage_bytes(
         bucket, separator, object_key = full_key.partition("/")
         if not separator:
             raise RuntimeError("The disposable Storage inventory was invalid")
-        content = objects.download(object_key) if bucket == "openslate-ready" else None
+        content = objects.download(object_key) if bucket == "slateops-ready" else None
         if content is None:
             raise RuntimeError("A listed disposable Storage object could not be read")
         observed.append((full_key, len(content), hashlib.sha256(content).hexdigest()))
@@ -361,7 +361,7 @@ def test_reset_cli_dry_run_confirmation_and_execute_against_fresh_provider() -> 
         if before[1] != (True, True):
             raise RuntimeError("The disposable reset fixture did not bind both Auth identities")
         expected_objects = sorted(
-            zip((f"openslate-ready/{key}" for key in object_keys), content, strict=True)
+            zip((f"slateops-ready/{key}" for key in object_keys), content, strict=True)
         )
         if tuple(key for key, _size, _digest in before[2]) != tuple(
             key for key, _content in expected_objects
@@ -373,8 +373,8 @@ def test_reset_cli_dry_run_confirmation_and_execute_against_fresh_provider() -> 
 
         command_env = dict(values)
         command_env.update(
-            OPENSLATE_ENV_SOURCE="process",
-            OPENSLATE_TEST_RESET_ACCEPTANCE="1",
+            SLATEOPS_ENV_SOURCE="process",
+            SLATEOPS_TEST_RESET_ACCEPTANCE="1",
             ADMIN_EMAIL=admin_email,
         )
         digest = dry_run_digest(command_env)
@@ -410,7 +410,7 @@ def test_reset_cli_dry_run_confirmation_and_execute_against_fresh_provider() -> 
         create_app(),
         base_url=settings.public_origin,
         cookies={
-            "openslate_access": access_token,
+            "slateops_access": access_token,
         },
     )
     try:

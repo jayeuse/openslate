@@ -682,7 +682,7 @@ for (const boundary of ["close", "account"] as const) {
           });
         };
         await page.evaluate(() =>
-          window.dispatchEvent(new Event("openslate:session-recheck")),
+          window.dispatchEvent(new Event("slateops:session-recheck")),
         );
         await session.entered;
         // No cover (PD68): the next account is seen when the check answers.

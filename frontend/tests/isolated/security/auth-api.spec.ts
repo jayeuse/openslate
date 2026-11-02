@@ -348,7 +348,7 @@ test("session status refreshes once before declaring an expired access cookie si
       "/api/auth/refresh",
       "/api/auth/session",
     ]);
-    expect(locks).toEqual(["openslate-auth-refresh"]);
+    expect(locks).toEqual(["slateops-auth-refresh"]);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalNavigator)

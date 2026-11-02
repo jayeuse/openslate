@@ -76,8 +76,8 @@ export function object(value: unknown): Record<string, unknown> {
   return value;
 }
 function fixture(baseURL: string | undefined): OwnedFixture {
-  const path = process.env.OPENSLATE_FULLSTACK_FIXTURE;
-  const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
+  const path = process.env.SLATEOPS_FULLSTACK_FIXTURE;
+  const runId = process.env.SLATEOPS_FULLSTACK_RUN_ID;
   if (
     !path ||
     !runId ||
@@ -151,9 +151,9 @@ export async function api(
         const cookie = document.cookie
           .split(";")
           .map((part) => part.trim())
-          .find((part) => part.startsWith("openslate_csrf="));
+          .find((part) => part.startsWith("slateops_csrf="));
         return cookie
-          ? decodeURIComponent(cookie.slice("openslate_csrf=".length))
+          ? decodeURIComponent(cookie.slice("slateops_csrf=".length))
           : undefined;
       };
       const call = () => {
@@ -200,7 +200,7 @@ export async function api(
           return refresh.ok;
         };
         refreshed = await navigator.locks.request(
-          "openslate-auth-refresh",
+          "slateops-auth-refresh",
           { mode: "exclusive" },
           renew,
         );

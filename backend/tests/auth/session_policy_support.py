@@ -135,7 +135,7 @@ def shared_provider_sessions():
     """
     settings = get_settings()
     assert_provider_instance(
-        dict(os.environ), database_url=settings.database_url, expected_user="openslate_runtime"
+        dict(os.environ), database_url=settings.database_url, expected_user="slateops_runtime"
     )
     email = f"policy-{uuid4().hex}@example.test"
     password = token_urlsafe(32)
@@ -349,8 +349,8 @@ def policy_world(monkeypatch, shared_provider_account):
             world.login_slot = slot
             result = client.post("/api/auth/login", json={"email": email, "password": password})
             assert result.status_code == 200
-            handles.append(client.cookies.get("openslate_refresh"))
-            csrf.append(client.cookies.get("openslate_csrf"))
+            handles.append(client.cookies.get("slateops_refresh"))
+            csrf.append(client.cookies.get("slateops_csrf"))
             client.cookies.clear()
         world.login_slot = 0
         with Session(owner) as db:

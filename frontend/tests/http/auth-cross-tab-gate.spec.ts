@@ -76,7 +76,7 @@ test("MFA gate stays accessible over an alert dialog and keeps it open without a
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       json: {
-        display_name: "OpenSlate",
+        display_name: "Slate Operations",
         mark: "OS",
         logo_file_id: null,
         revision: 1,
@@ -640,7 +640,7 @@ test("another tab's sign-in reloads this tab into the new account with no Leave 
   await otherTab.goto("/openview-print.css");
   const reloaded = page.waitForEvent("load");
   await otherTab.evaluate(() =>
-    new BroadcastChannel("openslate-session").postMessage({
+    new BroadcastChannel("slateops-session").postMessage({
       tabId: "another-tab",
     }),
   );

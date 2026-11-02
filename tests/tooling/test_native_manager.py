@@ -1,4 +1,4 @@
-"""Focused contracts for the Gate 0 native OpenSlate Manager build."""
+"""Focused contracts for the Gate 0 native Slate Operations Manager build."""
 
 from __future__ import annotations
 
@@ -19,25 +19,25 @@ ROOT = Path(__file__).resolve().parents[2]
 MANAGER_ROOT = ROOT / "packaging/manager"
 sys.path.insert(0, str(MANAGER_ROOT))
 
-from openslate_manager import app, config, ui  # noqa: E402
+from slateops_manager import app, config, ui  # noqa: E402
 
 
 class ManagerConfigTests(unittest.TestCase):
     def test_accepts_only_canonical_https_origins_and_public_version(self):
         manager_config = config.parse_public_config(
-            {"origin": "https://openslate.example:8443", "version": "0.1.0"}
+            {"origin": "https://slateops.example:8443", "version": "0.1.0"}
         )
 
-        self.assertEqual(manager_config.origin, "https://openslate.example:8443")
+        self.assertEqual(manager_config.origin, "https://slateops.example:8443")
         self.assertEqual(manager_config.version, "0.1.0")
 
         for origin in (
-            "http://openslate.example",
-            "https://openslate.example/path",
-            "https://user@openslate.example",
-            "https://openslate.example/?query=1",
-            "https://openslate.example/#fragment",
-            "https://openslate.example\x00",
+            "http://slateops.example",
+            "https://slateops.example/path",
+            "https://user@slateops.example",
+            "https://slateops.example/?query=1",
+            "https://slateops.example/#fragment",
+            "https://slateops.example\x00",
         ):
             with self.subTest(origin=origin):
                 with self.assertRaises(config.ManagerConfigError):
@@ -47,7 +47,7 @@ class ManagerConfigTests(unittest.TestCase):
         with self.assertRaises(config.ManagerConfigError):
             config.parse_public_config(
                 {
-                    "origin": "https://openslate.example",
+                    "origin": "https://slateops.example",
                     "version": "0.1.0",
                     "token": "must-not-be-accepted",
                 }
@@ -67,16 +67,16 @@ class ManagerUiBoundaryTests(unittest.TestCase):
                 calls.append(("start", (), {}))
 
         with patch.dict(sys.modules, {"webview": FakeWebview()}):
-            ui.open_manager_window(config.ManagerConfig("https://openslate.example", "0.1.0"))
+            ui.open_manager_window(config.ManagerConfig("https://slateops.example", "0.1.0"))
 
         self.assertEqual(
             calls,
             [
-                ("create_window", ("OpenSlate Manager", "https://openslate.example"), {}),
+                ("create_window", ("Slate Operations Manager", "https://slateops.example"), {}),
                 ("start", (), {}),
             ],
         )
-        self.assertNotIn("subprocess", (MANAGER_ROOT / "openslate_manager/ui.py").read_text())
+        self.assertNotIn("subprocess", (MANAGER_ROOT / "slateops_manager/ui.py").read_text())
 
     def test_cli_has_no_certificate_bypass_or_supervision_options(self):
         parser = app.build_parser()
@@ -106,13 +106,13 @@ class ManagerBuildTests(unittest.TestCase):
 
     def test_installation_includes_public_config_and_third_party_notice(self):
         with tempfile.TemporaryDirectory() as directory:
-            artifact = Path(directory) / "OpenSlate Manager"
+            artifact = Path(directory) / "Slate Operations Manager"
             artifact.mkdir()
 
             build_native_manager.install_public_files(
                 artifact,
                 "win32",
-                config.ManagerConfig("https://openslate.example", "0.1.0"),
+                config.ManagerConfig("https://slateops.example", "0.1.0"),
             )
 
             self.assertTrue((artifact / "manager.json").is_file())
@@ -124,7 +124,7 @@ class ManagerBuildTests(unittest.TestCase):
                 build_native_manager.install_public_files(
                     Path(directory) / "missing-artifact",
                     "win32",
-                    config.ManagerConfig("https://openslate.example", "0.1.0"),
+                    config.ManagerConfig("https://slateops.example", "0.1.0"),
                 )
 
     def test_unsupported_host_is_rejected_before_build(self):
@@ -147,7 +147,7 @@ class ManagerBuildTests(unittest.TestCase):
                 return_value=("win32", "amd64"),
             ):
                 status = build_native_manager.build_manager(
-                    origin="https://openslate.example",
+                    origin="https://slateops.example",
                     version="0.1.0",
                     output_directory=output_directory,
                     run=run,
@@ -173,7 +173,7 @@ class ManagerBuildTests(unittest.TestCase):
                 return_value=("win32", "amd64"),
             ):
                 status = build_native_manager.build_manager(
-                    origin="https://openslate.example",
+                    origin="https://slateops.example",
                     version="0.1.0",
                     output_directory=output_directory,
                     run=run,
@@ -191,7 +191,7 @@ class ManagerBuildTests(unittest.TestCase):
 
             with self.assertRaises(build_native_manager.BuildConfigurationError):
                 build_native_manager.build_manager(
-                    origin="https://openslate.example",
+                    origin="https://slateops.example",
                     version="0.1.0",
                     output_directory=output_directory,
                     run=lambda *_args, **_kwargs: self.fail("runner must not execute"),
@@ -221,7 +221,7 @@ class ManagerBuildTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "install failed"),
             ):
                 build_native_manager.build_manager(
-                    origin="https://openslate.example",
+                    origin="https://slateops.example",
                     version="0.1.0",
                     output_directory=output_directory,
                     run=run,
@@ -254,7 +254,7 @@ class ManagerBuildTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "verification failed"),
             ):
                 build_native_manager.build_manager(
-                    origin="https://openslate.example",
+                    origin="https://slateops.example",
                     version="0.1.0",
                     output_directory=output_directory,
                     run=run,
@@ -282,7 +282,7 @@ class ManagerBuildTests(unittest.TestCase):
                     return_value=("win32", "amd64"),
                 ):
                     status = build_native_manager.build_manager(
-                        origin="https://openslate.example",
+                        origin="https://slateops.example",
                         version="0.1.0",
                         output_directory=Path("../dist/native-manager"),
                         run=run,
@@ -304,19 +304,19 @@ class ManagerBuildTests(unittest.TestCase):
             path = Path(directory) / "manager.json"
             build_native_manager.write_public_config(
                 path,
-                config.ManagerConfig("https://openslate.example", "0.1.0"),
+                config.ManagerConfig("https://slateops.example", "0.1.0"),
             )
 
             self.assertEqual(
                 json.loads(path.read_text(encoding="utf-8")),
-                {"origin": "https://openslate.example", "version": "0.1.0"},
+                {"origin": "https://slateops.example", "version": "0.1.0"},
             )
 
     def test_macos_build_retains_only_the_app_bundle(self):
         with tempfile.TemporaryDirectory() as directory:
             output_directory = Path(directory) / "dist"
-            bundle = output_directory / "OpenSlate Manager.app"
-            duplicate = output_directory / "OpenSlate Manager"
+            bundle = output_directory / "Slate Operations Manager.app"
+            duplicate = output_directory / "Slate Operations Manager"
             bundle.mkdir(parents=True)
             duplicate.mkdir()
             (duplicate / "stale-onedir-file").write_text("temporary", encoding="utf-8")

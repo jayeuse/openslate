@@ -4,7 +4,7 @@
 
 ## Outcome
 
-The database models how OpenSlate is meant to work:
+The database models how Slate Operations is meant to work:
 
 - An administrator designs departments, modules, fields, relationships and record triggers in the Sandbox, and publishes them.
 - Each department has a home (OpenView) where its people inspect records, open dashboards and run reports. OpenView record inspection remains read-only; existing record-write APIs remain available outside that inspector.
@@ -182,7 +182,7 @@ Boards rules (proposed):
 
 1. The board scope decides who sees the board. There is no audience on each post, event or tile.
 2. On the company board, administrators post. On a department or project board, `write` users add posts and events and can archive their own content; the UI exposes that existing author right. Users with `manage` also pin posts, change tiles and change other users' content.
-3. A post with a future `publish_at` stays hidden until that time. A post shows "New" for its first 7 days. OpenSlate does not track who read a post.
+3. A post with a future `publish_at` stays hidden until that time. A post shows "New" for its first 7 days. Slate Operations does not track who read a post.
 4. Each publish of a post adds a revision. Readers can open the earlier versions, like an "Edited" history.
 5. Deleting a published post archives it. Only the lifecycle purge removes a post and its revisions.
 6. Department purge removes its Board and owned content, matching the department Dashboard cascade. Foreign Board references still block source deletion. File-byte deletion keeps its separate existing prerequisite: attached files must already be confirmed purged before this database cascade; the deferred file workflow is not expanded.

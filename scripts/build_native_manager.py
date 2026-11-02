@@ -1,4 +1,4 @@
-"""Build one unsigned, host-native Gate 0 OpenSlate Manager artifact."""
+"""Build one unsigned, host-native Gate 0 Slate Operations Manager artifact."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER_ROOT = ROOT / "packaging/manager"
 NOTICE = MANAGER_ROOT / "THIRD_PARTY_NOTICES.md"
-APP_NAME = "OpenSlate Manager"
+APP_NAME = "Slate Operations Manager"
 SUPPORTED_ARCHITECTURES = {
     "darwin": frozenset({"arm64", "x86_64"}),
     "win32": frozenset({"amd64", "arm64"}),
@@ -97,7 +97,7 @@ def build_command(
 def write_public_config(path: Path, manager_config: object) -> None:
     """Write only the validated public manager configuration."""
 
-    from openslate_manager.config import ManagerConfig
+    from slateops_manager.config import ManagerConfig
 
     if not isinstance(manager_config, ManagerConfig):
         raise TypeError("manager_config must be a ManagerConfig")
@@ -180,7 +180,7 @@ def build_manager(
     """Build and validate one unsigned host-native artifact without launching it."""
 
     sys.path.insert(0, str(MANAGER_ROOT))
-    from openslate_manager.config import parse_public_config
+    from slateops_manager.config import parse_public_config
 
     canonical_output_directory = resolve_output_directory(output_directory)
     system, _machine = validate_host_platform()
@@ -190,7 +190,7 @@ def build_manager(
             f"Output directory must not already exist: {canonical_output_directory}"
         )
     canonical_output_directory.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="openslate-manager-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="slateops-manager-") as temporary:
         temporary_directory = Path(temporary)
         command = build_command(
             source_root=ROOT,
@@ -223,8 +223,10 @@ def build_manager(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--origin", required=True, help="Canonical HTTPS OpenSlate origin")
-    parser.add_argument("--version", required=True, help="Public OpenSlate Manager release version")
+    parser.add_argument("--origin", required=True, help="Canonical HTTPS Slate Operations origin")
+    parser.add_argument(
+        "--version", required=True, help="Public Slate Operations Manager release version"
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,

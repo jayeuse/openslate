@@ -243,7 +243,7 @@ def test_database_excludes_second_unresolved_claim_independently_of_service(
 
 def test_runtime_grants_allow_metadata_and_deny_schema_creation(integration_db: Session) -> None:
     connection = integration_db.connection()
-    assert connection.scalar(text("SELECT current_user")) == "openslate_runtime"
+    assert connection.scalar(text("SELECT current_user")) == "slateops_runtime"
     for table in ("backup_policies", "backup_runs", "update_statuses"):
         assert (
             connection.scalar(

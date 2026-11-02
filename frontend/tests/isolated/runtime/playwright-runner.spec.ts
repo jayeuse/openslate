@@ -24,7 +24,7 @@ function createRunnerFixture(): {
   frontend: string;
   runner: string;
 } {
-  const root = mkdtempSync(resolve(tmpdir(), "openslate-playwright-runner-"));
+  const root = mkdtempSync(resolve(tmpdir(), "slateops-playwright-runner-"));
   const frontend = resolve(root, "frontend");
   const runner = resolve(frontend, "tooling", "run-playwright.mjs");
   const cli = resolve(

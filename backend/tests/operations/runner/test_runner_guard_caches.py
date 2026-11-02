@@ -7,12 +7,12 @@ import pytest
 
 from tests import conftest, postgres_runtime
 
-URL = "postgresql://openslate_runtime:synthetic@127.0.0.1:55432/postgres"
+URL = "postgresql://slateops_runtime:synthetic@127.0.0.1:55432/postgres"
 
 
 def _key(manifest: Path) -> tuple[object, ...]:
-    values = {"OPENSLATE_TEST_DATABASE_MANIFEST": str(manifest)}
-    return postgres_runtime._ownership_key(URL, "openslate_runtime", values)
+    values = {"SLATEOPS_TEST_DATABASE_MANIFEST": str(manifest)}
+    return postgres_runtime._ownership_key(URL, "slateops_runtime", values)
 
 
 def test_the_ownership_key_changes_with_the_manifest_file_not_only_its_contents(

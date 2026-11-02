@@ -40,9 +40,9 @@ def _login_response() -> httpx.Response:
         200,
         json={"authenticated": True, "setup_required": False},
         headers=[
-            ("set-cookie", f"openslate_access={ACCESS}; Path=/; HttpOnly"),
-            ("set-cookie", f"openslate_refresh={REFRESH}; Path=/api/auth; HttpOnly"),
-            ("set-cookie", f"openslate_csrf={CSRF}; Path=/"),
+            ("set-cookie", f"slateops_access={ACCESS}; Path=/; HttpOnly"),
+            ("set-cookie", f"slateops_refresh={REFRESH}; Path=/api/auth; HttpOnly"),
+            ("set-cookie", f"slateops_csrf={CSRF}; Path=/"),
             ("X-Request-ID", REQUEST_ID),
         ],
     )
@@ -83,8 +83,8 @@ def test_login_and_mutation_use_ui_cookie_csrf_origin_and_private_request_journa
         assert request.headers["origin"] == ORIGIN
         assert request.headers["x-csrf-token"] == CSRF
         cookie = request.headers["cookie"]
-        assert f"openslate_access={ACCESS}" in cookie
-        assert f"openslate_csrf={CSRF}" in cookie
+        assert f"slateops_access={ACCESS}" in cookie
+        assert f"slateops_csrf={CSRF}" in cookie
         return httpx.Response(200, json={"id": "record-1"}, headers={"X-Request-ID": REQUEST_ID})
 
     with _client(tmp_path, httpx.MockTransport(handler)) as client:
@@ -184,13 +184,13 @@ def test_refresh_uses_refresh_cookie_csrf_and_updates_the_private_actor_session(
         if request.url.path == "/api/auth/refresh":
             assert request.headers["origin"] == ORIGIN
             assert request.headers["x-csrf-token"] == CSRF
-            assert f"openslate_refresh={REFRESH}" in request.headers["cookie"]
+            assert f"slateops_refresh={REFRESH}" in request.headers["cookie"]
             return httpx.Response(
                 200,
                 json={"authenticated": True, "setup_required": False},
                 headers=[
-                    ("set-cookie", "openslate_access=renewed-access; Path=/; HttpOnly"),
-                    ("set-cookie", "openslate_csrf=renewed-csrf; Path=/"),
+                    ("set-cookie", "slateops_access=renewed-access; Path=/; HttpOnly"),
+                    ("set-cookie", "slateops_csrf=renewed-csrf; Path=/"),
                     ("X-Request-ID", REQUEST_ID),
                 ],
             )
@@ -688,9 +688,9 @@ def test_a_session_that_expired_while_idle_signs_in_again_once(
                 200,
                 json={"authenticated": True, "setup_required": False},
                 headers=[
-                    ("set-cookie", f"openslate_access={next(logins)}; Path=/; HttpOnly"),
-                    ("set-cookie", f"openslate_refresh={REFRESH}; Path=/api/auth; HttpOnly"),
-                    ("set-cookie", f"openslate_csrf={CSRF}; Path=/"),
+                    ("set-cookie", f"slateops_access={next(logins)}; Path=/; HttpOnly"),
+                    ("set-cookie", f"slateops_refresh={REFRESH}; Path=/api/auth; HttpOnly"),
+                    ("set-cookie", f"slateops_csrf={CSRF}; Path=/"),
                     ("X-Request-ID", REQUEST_ID),
                 ],
             )

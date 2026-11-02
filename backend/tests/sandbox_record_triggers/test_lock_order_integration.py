@@ -42,7 +42,7 @@ def test_a_trigger_run_and_a_link_to_its_record_both_commit() -> None:
     database_url = os.getenv("MIGRATION_DATABASE_URL")
     if database_url is None:
         pytest.skip("requires the disposable PostgreSQL integration database")
-    assert_runner_database_url(database_url, allowed_roles=frozenset({"openslate_owner"}))
+    assert_runner_database_url(database_url, allowed_roles=frozenset({"slateops_owner"}))
     engine = create_engine(database_url, pool_size=4, max_overflow=0)
     worker_engine = create_engine(database_url, pool_size=1, max_overflow=0)
     cleanup: tuple[UUID, UUID, UUID] | None = None

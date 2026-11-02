@@ -2,7 +2,7 @@
 
 ## Summary
 
-OpenSlate is pre-release software in development. It has no released version, and no organization runs it yet.
+Slate Operations is pre-release software in development. It has no released version, and no organization runs it yet.
 Only the latest commit on the `main` branch gets security fixes.
 
 **Report a vulnerability privately:**
@@ -10,7 +10,7 @@ Only the latest commit on the `main` branch gets security fixes.
 
 Do not put vulnerability details in a public issue, pull request, commit, or comment.
 
-One person maintains OpenSlate. The maintainer acknowledges each report within 7 days, usually sooner.
+One person maintains Slate Operations. The maintainer acknowledges each report within 7 days, usually sooner.
 If you get no reply in 14 days, open a public issue with the title "Security report waiting". Do not add details.
 The maintainer coordinates disclosure with you. The disclosure window is up to 90 days from your report.
 There is no bug bounty. The maintainer credits you in the advisory unless you ask otherwise.
@@ -78,12 +78,12 @@ Examples of in-scope problems: a login or session bypass; access to a module or 
 |---|---|
 | Behavior that needs `ENVIRONMENT=development` with a loopback bind | Development removes some limits on purpose. See `docs/architecture/14-security-architecture.md`. |
 | Attacks from another process or user on the developer's own machine | Development trusts the local host. |
-| Malware detection in uploaded files | Content scanning is not a feature of OpenSlate. |
+| Malware detection in uploaded files | Content scanning is not a feature of Slate Operations. |
 | Attacks that need the installation owner or host access | That person already controls the installation. An administrator of one organization who reaches another organization's data is in scope. |
 | Infrastructure that the operator changes or runs: host, Docker, network, TLS certificates | The operator owns these. A flaw in the shipped default configuration is in scope. |
 | Problems in Supabase, PostgreSQL, or another upstream project | Report them to that project. |
-| Scanner output, missing headers, or best-practice advice without a shown effect | Show the effect on OpenSlate. |
-| Unsigned OpenSlate Manager builds from CI | They are development artifacts, not supported installers. |
+| Scanner output, missing headers, or best-practice advice without a shown effect | Show the effect on Slate Operations. |
+| Unsigned Slate Operations Manager builds from CI | They are development artifacts, not supported installers. |
 | Server operation on Windows or macOS | These are not supported server targets yet. |
 | Older commits, forks, and modified code | Only `main` is supported. |
 | Denial of service by volume | Report it only if one small request causes large damage. |
@@ -115,12 +115,12 @@ See [API contracts](docs/architecture/07-api-architecture.md) and
 
 ## Good faith
 
-OpenSlate has no open-source license. All rights are reserved, and you can read the code on GitHub.
+Slate Operations has no open-source license. All rights are reserved, and you can read the code on GitHub.
 The maintainer gives you one more permission: you can run your own copy on systems that you control, only to find and report vulnerabilities under this policy.
-This permission does not let you use OpenSlate for other purposes, give copies to other persons, or run it for an organization.
+This permission does not let you use Slate Operations for other purposes, give copies to other persons, or run it for an organization.
 
 The maintainer will not take legal action against you for good-faith research that follows this policy.
-This promise covers only the maintainer. It does not cover a client organization that runs OpenSlate.
+This promise covers only the maintainer. It does not cover a client organization that runs Slate Operations.
 You need the operator's permission to test an installation that someone else runs.
 If you are not sure, ask in a private report before you continue.
 
@@ -224,7 +224,7 @@ last-reviewed: 2026-10-17
 | File allowlist, archive bounds, parser subprocess limits | `backend/app/systems/platform/files/` |
 | Private bucket; downloads as attachments with `nosniff` | `docs/architecture/14-security-architecture.md` |
 | `AuditSession` for every application mutation; no bulk or raw ORM changes | `docs/architecture/10-audit-and-history.md` |
-| Organization isolation: `org_id` on organization tables; membership of the bound organization (`resolve_membership`, `get_current_membership`, `bound_membership_join`); row-level security on `openslate.org_id` | `backend/app/common/dependencies/auth.py`, `backend/app/core/database/organization_scope.py`, migration `f5a100021193`, `backend/tests/access/test_membership_join_guard.py` |
+| Organization isolation: `org_id` on organization tables; membership of the bound organization (`resolve_membership`, `get_current_membership`, `bound_membership_join`); row-level security on `slateops.org_id` | `backend/app/common/dependencies/auth.py`, `backend/app/core/database/organization_scope.py`, migration `f5a100021193`, `backend/tests/access/test_membership_join_guard.py` |
 | Comms ordinary content uses current organization/conversation authority; report-bound moderation is bodyless/report-only; privileged export never grants ordinary private readability | `backend/app/systems/comms/access.py`, `backend/app/systems/comms/moderation/{router,schemas}.py`, `backend/app/systems/comms/jobs/{protected,export_service,exports}.py` |
 | Realtime tokens: five-minute ES256 `purpose: realtime`, bound to the local account and organization; not application/Auth/Storage content credentials | `backend/app/systems/platform/realtime/`, `backend/operations/provision_database_role.py` |
 | Private topic joins: current membership plus expiring FastAPI grants projection for `org:<org>:conversation:<id>`; own `org:<org>:user:<id>` and organization `presence`; no arbitrary suffixes. Content revocation is immediate; existing ID-only subscriptions are bounded by token expiry | `backend/app/systems/comms/realtime/grants.py`, migrations `071607de0f40`, `8410bb7874ff` |

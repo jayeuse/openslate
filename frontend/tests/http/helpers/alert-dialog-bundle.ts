@@ -27,7 +27,7 @@ export function alertDialogFixtureBundle() {
 
 async function compileFixture() {
   const directory = await mkdtemp(
-    path.join(tmpdir(), "openslate-alert-dialog-"),
+    path.join(tmpdir(), "slateops-alert-dialog-"),
   );
   const loader = path.join(directory, "typescript-loader.cjs");
   await writeFile(

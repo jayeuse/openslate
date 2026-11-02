@@ -18,7 +18,7 @@ const WorkspaceInteractionSuspendedContext = createContext(false);
 const WorkspaceSignOutContext = createContext<(() => Promise<void>) | null>(
   null,
 );
-const WORKSPACE_SNAPSHOT_KEY = "openslate.sample.v2";
+const WORKSPACE_SNAPSHOT_KEY = "slateops.sample.v2";
 const sessionClearListeners = new Map<string, Set<() => void>>();
 
 export function WorkspaceSignOutProvider({

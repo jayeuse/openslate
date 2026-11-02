@@ -171,8 +171,8 @@ class NotificationServer:
                 200,
                 json={"authenticated": True},
                 headers=[
-                    ("Set-Cookie", f"openslate_access=fixture-{actor_id}; Path=/; HttpOnly"),
-                    ("Set-Cookie", "openslate_csrf=fixture-csrf; Path=/"),
+                    ("Set-Cookie", f"slateops_access=fixture-{actor_id}; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture-csrf; Path=/"),
                 ],
             )
         self.requests.append((actor_id, method, path))

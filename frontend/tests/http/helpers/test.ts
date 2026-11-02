@@ -36,8 +36,8 @@ type MembershipBody = {
  */
 export const defaultOrganization = {
   org_id: "00000000-0000-4000-8000-000000000102",
-  name: "OpenSlate",
-  slug: "openslate",
+  name: "Slate Operations",
+  slug: "slateops",
 } as const;
 
 /** The `/api/auth/me` body: one account and its group access rows. */
@@ -89,7 +89,7 @@ export function authMeBody(
       : organization && {
           ...organization,
           access: [...access],
-          // A journey's administrator installed OpenSlate: it owns both levels.
+          // A journey's administrator installed Slate Operations: it owns both levels.
           owner: role === "admin",
         };
   return {
@@ -569,6 +569,6 @@ export async function quietEventSource(page: Page): Promise<void> {
 /** Asks the auth gate to verify the current session again, as a focus or retry does. */
 export async function recheckSession(page: Page): Promise<void> {
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
+    window.dispatchEvent(new Event("slateops:session-recheck")),
   );
 }

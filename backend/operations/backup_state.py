@@ -74,7 +74,7 @@ def admit(command: Command) -> InstanceTarget:
     settings = get_settings()
     if settings.environment != "production":
         raise service.BackupStateError("backup_production_required")
-    target = instance_target_for_process(settings.database_url, "openslate_runtime")
+    target = instance_target_for_process(settings.database_url, "slateops_runtime")
     if (
         target is None
         or target.instance_id != command.installation_id
@@ -89,7 +89,7 @@ def admit(command: Command) -> InstanceTarget:
 def coordinated_session(engine: Engine, target: InstanceTarget) -> Iterator[AuditSession]:
     """Retain one physical connection and commit the claim before same-session unlock."""
     with engine.connect() as connection:
-        assert_instance_target(connection, target, expected_user="openslate_runtime")
+        assert_instance_target(connection, target, expected_user="slateops_runtime")
         connection.rollback()
         acquired = connection.scalar(
             text("SELECT pg_try_advisory_lock(:key)"), {"key": _RESET_ADVISORY_LOCK_KEY}

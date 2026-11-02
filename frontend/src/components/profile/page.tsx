@@ -106,7 +106,7 @@ function ProfileContent() {
  */
 function useProfileTitle(name: string) {
   useEffect(() => {
-    const title = `${name} | OpenSlate`;
+    const title = `${name} | Slate Operations`;
     const apply = () => {
       if (window.location.pathname !== "/profile") return;
       const prefix = /^\(\d+\+?\) /.exec(document.title)?.[0] ?? "";

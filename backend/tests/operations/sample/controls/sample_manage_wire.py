@@ -109,8 +109,8 @@ def _manage_run(tmp_path, pack_key, problem=None):
                 200,
                 headers=[
                     *headers,
-                    ("Set-Cookie", f"openslate_access={session}; Path=/; HttpOnly"),
-                    ("Set-Cookie", "openslate_csrf=c; Path=/"),
+                    ("Set-Cookie", f"slateops_access={session}; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=c; Path=/"),
                 ],
                 json={"authenticated": True},
             )
@@ -119,7 +119,7 @@ def _manage_run(tmp_path, pack_key, problem=None):
             for part in request.headers.get("cookie", "").split("; ")
             if "=" in part
         )
-        session = cookies.get("openslate_access")
+        session = cookies.get("slateops_access")
         actor = sessions.get(session)
         if path == "/api/auth/session":
             return httpx.Response(

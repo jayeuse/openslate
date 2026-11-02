@@ -9,7 +9,7 @@ type ReadableStorage = Pick<Storage, "getItem">;
 type WritableStorage = Pick<Storage, "setItem">;
 
 export function hiddenCalendarsKey(viewerId: string, boardId: string): string {
-  return `openslate.boards.calendar.hidden.${viewerId}.${boardId}`;
+  return `slateops.boards.calendar.hidden.${viewerId}.${boardId}`;
 }
 
 export function browserStorage(): Storage {

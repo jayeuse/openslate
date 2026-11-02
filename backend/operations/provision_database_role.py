@@ -1,4 +1,4 @@
-"""Create and validate OpenSlate's cluster roles from a bootstrap connection."""
+"""Create and validate Slate Operations' cluster roles from a bootstrap connection."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from app.core.config.instance import (
     test_manifest_authorizes_process,
 )
 
-OWNER_ROLE = "openslate_owner"
-PRIVILEGE_ROLE = "openslate_app"
-RUNTIME_ROLE = "openslate_runtime"
+OWNER_ROLE = "slateops_owner"
+PRIVILEGE_ROLE = "slateops_app"
+RUNTIME_ROLE = "slateops_runtime"
 LOCAL_ENVIRONMENTS = frozenset({"development", "dev", "local", "test"})
 MEMBERSHIP_OPTION_COLUMNS = frozenset({"inherit_option", "set_option"})
 # A transaction left idle (a bug, or a lost client) releases its locks after this limit.
@@ -66,10 +66,10 @@ def _assert_same_database(bootstrap: URL, owner: URL, *connections: URL) -> str:
     values = (bootstrap, owner, *connections)
     database = bootstrap.database
     if not database or any(url.database != database for url in values[1:]):
-        raise SystemExit("OpenSlate database URLs must name one database")
+        raise SystemExit("Slate Operations database URLs must name one database")
     endpoint = (bootstrap.host, bootstrap.port)
     if any((url.host, url.port) != endpoint for url in values[1:]):
-        raise SystemExit("OpenSlate database URLs must use one endpoint")
+        raise SystemExit("Slate Operations database URLs must use one endpoint")
     if bootstrap.username in {OWNER_ROLE, RUNTIME_ROLE}:
         raise SystemExit("DATABASE_BOOTSTRAP_URL must use a distinct cluster-admin login")
     return database
@@ -208,21 +208,21 @@ def _provision_session_liveness_policy(cursor: object) -> None:
     cursor.execute(  # type: ignore[attr-defined]
         """
         SELECT polcmd, polpermissive,
-               polroles = ARRAY['openslate_app'::regrole::oid],
+               polroles = ARRAY['slateops_app'::regrole::oid],
                pg_get_expr(polqual, polrelid), polwithcheck IS NULL
           FROM pg_catalog.pg_policy
          WHERE polrelid = 'auth.sessions'::regclass
-           AND polname = 'openslate_session_liveness'
+           AND polname = 'slateops_session_liveness'
         """
     )
     existing = cursor.fetchone()  # type: ignore[attr-defined]
     if existing is None:
         cursor.execute(  # type: ignore[attr-defined]
-            "CREATE POLICY openslate_session_liveness ON auth.sessions "
-            "FOR SELECT TO openslate_app USING (true)"
+            "CREATE POLICY slateops_session_liveness ON auth.sessions "
+            "FOR SELECT TO slateops_app USING (true)"
         )
     elif existing != ("r", True, True, "true", True):
-        raise RuntimeError("Existing OpenSlate provider session policy is unsafe")
+        raise RuntimeError("Existing Slate Operations provider session policy is unsafe")
 
 
 REALTIME_JOIN_FUNCTION = "public.can_join_realtime_topic(text)"
@@ -235,8 +235,8 @@ REALTIME_WRITE_EXPRESSION = (
 REALTIME_UNGRANTED = "anon, service_role, postgres"
 # Policy name -> (pg_policy.polcmd, USING expression, WITH CHECK expression).
 REALTIME_POLICIES = {
-    "openslate_realtime_member_read": ("r", REALTIME_JOIN_EXPRESSION, None),
-    "openslate_realtime_member_write": ("a", None, REALTIME_WRITE_EXPRESSION),
+    "slateops_realtime_member_read": ("r", REALTIME_JOIN_EXPRESSION, None),
+    "slateops_realtime_member_write": ("a", None, REALTIME_WRITE_EXPRESSION),
 }
 
 
@@ -298,16 +298,16 @@ def _provision_realtime_channel_policies(cursor: object) -> None:
     existing = {row[0]: tuple(row[1:]) for row in cursor.fetchall()}  # type: ignore[attr-defined]
     # Policies are permissive and combine with OR: any other one would widen access.
     if set(existing) - set(REALTIME_POLICIES):
-        raise RuntimeError("realtime.messages has policies that OpenSlate does not manage")
+        raise RuntimeError("realtime.messages has policies that Slate Operations does not manage")
     legacy_write = ("a", True, True, None, REALTIME_JOIN_EXPRESSION)
     for name, (command, using, check) in REALTIME_POLICIES.items():
         expected = (command, True, True, using, check)
         if (
             name in existing
             and existing[name] != expected
-            and not (name == "openslate_realtime_member_write" and existing[name] == legacy_write)
+            and not (name == "slateops_realtime_member_write" and existing[name] == legacy_write)
         ):
-            raise RuntimeError("Existing OpenSlate Realtime channel policy is unsafe")
+            raise RuntimeError("Existing Slate Operations Realtime channel policy is unsafe")
     for name, (command, using, check) in REALTIME_POLICIES.items():
         if name not in existing:
             clause = f"USING ({using})" if using else f"WITH CHECK ({check})"
@@ -315,7 +315,7 @@ def _provision_realtime_channel_policies(cursor: object) -> None:
             cursor.execute(  # type: ignore[attr-defined]
                 f"CREATE POLICY {name} ON realtime.messages FOR {verb} TO authenticated {clause}"
             )
-        elif name == "openslate_realtime_member_write" and existing[name] == legacy_write:
+        elif name == "slateops_realtime_member_write" and existing[name] == legacy_write:
             cursor.execute(  # type: ignore[attr-defined]
                 f"ALTER POLICY {name} ON realtime.messages WITH CHECK ({check})"
             )
@@ -428,17 +428,17 @@ def provision(
             )
             cursor.execute(
                 """
-                SELECT has_schema_privilege('openslate_owner', 'public', 'CREATE'),
-                       has_database_privilege('openslate_runtime', current_database(), 'CONNECT'),
-                       has_schema_privilege('openslate_runtime', 'auth', 'USAGE')
-                       AND has_column_privilege('openslate_runtime','auth.sessions','id','SELECT')
+                SELECT has_schema_privilege('slateops_owner', 'public', 'CREATE'),
+                       has_database_privilege('slateops_runtime', current_database(), 'CONNECT'),
+                       has_schema_privilege('slateops_runtime', 'auth', 'USAGE')
+                       AND has_column_privilege('slateops_runtime','auth.sessions','id','SELECT')
                        AND has_column_privilege(
-                           'openslate_runtime','auth.sessions','user_id','SELECT')
-                       AND NOT has_table_privilege('openslate_runtime','auth.sessions','SELECT')
+                           'slateops_runtime','auth.sessions','user_id','SELECT')
+                       AND NOT has_table_privilege('slateops_runtime','auth.sessions','SELECT')
                        AND NOT has_table_privilege(
-                           'openslate_runtime','auth.sessions','INSERT,UPDATE,DELETE')
+                           'slateops_runtime','auth.sessions','INSERT,UPDATE,DELETE')
                        AND NOT has_table_privilege(
-                           'openslate_runtime','auth.users','SELECT,INSERT,UPDATE,DELETE')
+                           'slateops_runtime','auth.users','SELECT,INSERT,UPDATE,DELETE')
                 """
             )
             if cursor.fetchone() != (True, True, True):
@@ -473,7 +473,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         settings.database_url,
         instance_target=target,
     )
-    print("Provisioned OpenSlate PostgreSQL roles")
+    print("Provisioned Slate Operations PostgreSQL roles")
 
 
 if __name__ == "__main__":

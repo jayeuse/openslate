@@ -13889,7 +13889,7 @@
             "$ref": "#/components/schemas/DesignDocument"
           },
           "kind": {
-            "const": "openslate-sandbox",
+            "const": "slateops-sandbox",
             "title": "Kind",
             "type": "string"
           },
@@ -18256,7 +18256,7 @@
             "$ref": "#/components/schemas/DesignDocument"
           },
           "kind": {
-            "const": "openslate-sandbox",
+            "const": "slateops-sandbox",
             "title": "Kind",
             "type": "string"
           },
@@ -25163,7 +25163,7 @@
     }
   },
   "info": {
-    "title": "OpenSlate API",
+    "title": "Slate Operations API",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",
@@ -53347,7 +53347,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-OpenSlate-Server-Key",
+            "name": "X-SlateOps-Server-Key",
             "required": false,
             "schema": {
               "anyOf": [
@@ -53358,7 +53358,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Openslate-Server-Key"
+              "title": "X-Slateops-Server-Key"
             }
           }
         ],

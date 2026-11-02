@@ -14,7 +14,7 @@ const closedOptionId = "00000000-0000-4000-8000-000000000042";
 
 function fixture(): SandboxDocumentV4 {
   return {
-    kind: "openslate-sandbox",
+    kind: "slateops-sandbox",
     schemaVersion: 4,
     design: {
       departments: [{ id: "operations", name: "Operations", closed: false }],

@@ -136,7 +136,10 @@ test("Logo a direct Comms visit loads the organization brand", async ({
     }),
   ).toBeVisible();
   await expect(
-    header(page).getByRole("img", { name: "OpenSlate mark: OS", exact: true }),
+    header(page).getByRole("img", {
+      name: "Slate Operations mark: OS",
+      exact: true,
+    }),
   ).toHaveCount(0);
 });
 
@@ -166,7 +169,10 @@ test("Logo warm workspace cache shows the organization brand in Comms and on ret
     }),
   ).toBeVisible();
   await expect(
-    header(page).getByRole("img", { name: "OpenSlate mark: OS", exact: true }),
+    header(page).getByRole("img", {
+      name: "Slate Operations mark: OS",
+      exact: true,
+    }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Manage", exact: true }).click();
   await page.getByRole("link", { name: "Organization", exact: true }).click();

@@ -35,8 +35,8 @@ def _resend(monkeypatch):
         None,
         profile.email,
         {
-            "openslate_user_id": str(profile.id),
-            "openslate_invitation_operation_id": str(membership.provider_invitation_operation_id),
+            "slateops_user_id": str(profile.id),
+            "slateops_invitation_operation_id": str(membership.provider_invitation_operation_id),
         },
     )
     client = Mock()

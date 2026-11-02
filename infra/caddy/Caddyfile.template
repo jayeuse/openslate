@@ -30,10 +30,10 @@ https://{{PUBLIC_HOST}}:{{HTTPS_PORT}} {
             header_regexp Upgrade `(?i)^websocket$`
             # The optional root gateway can map a different host port. Production
             # and native renderers use the listener port unless that mapping is supplied.
-            expression `{http.request.header.Origin} == "https://{{PUBLIC_HOST}}:{$OPENSLATE_REALTIME_PUBLIC_PORT:{{HTTPS_PORT}}}" || ({$OPENSLATE_REALTIME_PUBLIC_PORT:{{HTTPS_PORT}}} == 443 && {http.request.header.Origin} == "https://{{PUBLIC_HOST}}")`
+            expression `{http.request.header.Origin} == "https://{{PUBLIC_HOST}}:{$SLATEOPS_REALTIME_PUBLIC_PORT:{{HTTPS_PORT}}}" || ({$SLATEOPS_REALTIME_PUBLIC_PORT:{{HTTPS_PORT}}} == 443 && {http.request.header.Origin} == "https://{{PUBLIC_HOST}}")`
         }
         handle @socket {
-            reverse_proxy {$OPENSLATE_REALTIME_UPSTREAM:api-gw:8000} {
+            reverse_proxy {$SLATEOPS_REALTIME_UPSTREAM:api-gw:8000} {
                 header_up apikey {$SUPABASE_PUBLISHABLE_KEY}
                 header_up -Authorization
                 header_up -Cookie

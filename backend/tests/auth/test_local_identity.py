@@ -73,9 +73,9 @@ def test_browser_session_cookies_reach_all_api_routes_and_origin_is_exact(
     cookie_headers = response.headers.getlist("set-cookie")
 
     assert any(
-        "openslate_access=access" in header and "Path=/" in header for header in cookie_headers
+        "slateops_access=access" in header and "Path=/" in header for header in cookie_headers
     )
-    assert any("openslate_csrf=csrf" in header and "Path=/" in header for header in cookie_headers)
+    assert any("slateops_csrf=csrf" in header and "Path=/" in header for header in cookie_headers)
     _require_browser_origin(_request("http://frontend.test"))
     with pytest.raises(HTTPException):
         _require_browser_origin(_request("http://untrusted.test"))
@@ -120,18 +120,18 @@ def test_registered_logout_returns_204_clears_cookies_and_revokes_session(
             "/api/auth/logout",
             headers={
                 "Origin": "http://frontend.test",
-                "Cookie": "openslate_access=access; openslate_csrf=csrf",
+                "Cookie": "slateops_access=access; slateops_csrf=csrf",
                 "X-CSRF-Token": "csrf",
             },
         )
 
     assert response.status_code == 204
     cookie_headers = response.headers.get_list("set-cookie")
-    assert any('openslate_access=""' in header and "Path=/" in header for header in cookie_headers)
+    assert any('slateops_access=""' in header and "Path=/" in header for header in cookie_headers)
     assert any(
-        'openslate_refresh=""' in header and "Path=/api/auth" in header for header in cookie_headers
+        'slateops_refresh=""' in header and "Path=/api/auth" in header for header in cookie_headers
     )
-    assert any('openslate_csrf=""' in header and "Path=/" in header for header in cookie_headers)
+    assert any('slateops_csrf=""' in header and "Path=/" in header for header in cookie_headers)
     assert session.revoked_at is not None
     db.commit.assert_called_once()
     application.dependency_overrides.clear()
@@ -146,7 +146,7 @@ def test_any_authorization_header_with_refresh_cookie_is_rejected(authorization:
             "path": "/api/auth/session",
             "headers": [
                 (b"authorization", authorization.encode()),
-                (b"cookie", b"openslate_refresh=refresh-token"),
+                (b"cookie", b"slateops_refresh=refresh-token"),
             ],
             "client": ("127.0.0.1", 50000),
             "scheme": "https",

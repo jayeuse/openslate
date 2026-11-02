@@ -327,7 +327,7 @@ async def cohort(room, count, metrics, result, save):
                     pass
             traces = [
                 json.loads(line)
-                for line in Path(os.environ["OPENSLATE_COMMS_TELEMETRY"]).read_text().splitlines()
+                for line in Path(os.environ["SLATEOPS_COMMS_TELEMETRY"]).read_text().splitlines()
             ]
             commits = {row["sample"]: row["commit_ns"] for row in traces if "commit_ns" in row}
             for marker, seq in sent:
@@ -402,7 +402,7 @@ async def cohort(room, count, metrics, result, save):
 @pytest.mark.parametrize("native_room", [300], indirect=True)
 def test_d20_actual_three_hundred_socket_capacity(native_room):
     room, metrics = native_room, Metrics()
-    identity = os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+    identity = os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     path = REPOSITORY_ROOT / "backend/test-results/s20" / identity / "capacity.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     result = {

@@ -189,7 +189,7 @@ test("S06 correction tomorrow mute uses organization midnight rather than device
     route.fulfill({
       json: wireWorkspace({
         id: defaultOrganization.org_id,
-        display_name: "OpenSlate",
+        display_name: "Slate Operations",
         locale: "en-US",
         timezone: "Asia/Manila",
         currency: "USD",

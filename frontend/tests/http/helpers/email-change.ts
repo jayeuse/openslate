@@ -128,7 +128,7 @@ export async function installEmailChangeApi(
         headers: admit
           ? {
               "set-cookie":
-                "openslate_access=owned-http-session; Path=/; HttpOnly; SameSite=Lax",
+                "slateops_access=owned-http-session; Path=/; HttpOnly; SameSite=Lax",
             }
           : {},
       })
@@ -141,7 +141,7 @@ export async function installEmailChangeApi(
 export async function observeEmailSecretExposure(page: Page) {
   await page.addInitScript(() => {
     const state = { exposed: false };
-    Object.assign(window, { openslateEmailSecrets: state });
+    Object.assign(window, { slateopsEmailSecrets: state });
     const send = window.fetch.bind(window);
     window.fetch = (...args) => {
       const target = args[0];
@@ -165,8 +165,8 @@ export async function observeEmailSecretExposure(page: Page) {
 export async function expectNoEmailSecrets(page: Page) {
   const safe = await page.evaluate(() => {
     const state = (
-      window as unknown as { openslateEmailSecrets: { exposed: boolean } }
-    ).openslateEmailSecrets;
+      window as unknown as { slateopsEmailSecrets: { exposed: boolean } }
+    ).slateopsEmailSecrets;
     const values = [
       window.location.href,
       document.body.innerHTML,

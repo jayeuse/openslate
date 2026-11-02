@@ -3,7 +3,7 @@
 // for a save that may have completed. It has no schema code, so the workspace
 // shell can load it without the editors' journal (draft-journal-storage.ts).
 
-export const ACCESS_DRAFT_STORAGE_PREFIX = "openslate.access.draft.v1.";
+export const ACCESS_DRAFT_STORAGE_PREFIX = "slateops.access.draft.v1.";
 
 /** Keys whose save began in this document; draft-journal-storage writes them. */
 export const submissionsBegunInDocument = new Set<string>();

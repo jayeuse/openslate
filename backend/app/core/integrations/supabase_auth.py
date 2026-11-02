@@ -158,8 +158,8 @@ class SupabaseAuthClient:
             json={
                 "email": email,
                 "app_metadata": {
-                    "openslate_user_id": str(local_user_id),
-                    "openslate_invitation_operation_id": str(operation_id),
+                    "slateops_user_id": str(local_user_id),
+                    "slateops_invitation_operation_id": str(operation_id),
                 },
             },
         )
@@ -190,8 +190,8 @@ class SupabaseAuthClient:
                 user = _provider_user(raw_user)
                 if (
                     user.email == email
-                    and user.app_metadata.get("openslate_user_id") == str(local_user_id)
-                    and user.app_metadata.get("openslate_invitation_operation_id")
+                    and user.app_metadata.get("slateops_user_id") == str(local_user_id)
+                    and user.app_metadata.get("slateops_invitation_operation_id")
                     == str(operation_id)
                 ):
                     if matched is not None and matched.id != user.id:

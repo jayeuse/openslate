@@ -137,7 +137,7 @@ def test_export_mount_refuses_before_claim_or_service_mutation(tmp_path: Path, f
         if item["Config"]["Labels"]["com.docker.compose.service"] == "api"
     )
     mount = next(
-        item for item in api["Mounts"] if item["Destination"] == "/var/lib/openslate/backup-exports"
+        item for item in api["Mounts"] if item["Destination"] == "/var/lib/slateops/backup-exports"
     )
     if fault == "writable":
         mount["RW"] = True

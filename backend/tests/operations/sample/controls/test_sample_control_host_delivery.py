@@ -80,7 +80,7 @@ class HostWire(MfaServer):
                 body,
                 headers=[
                     (
-                        "X-OpenSlate-Instance",
+                        "X-SlateOps-Instance",
                         "f" * 64 if self.host_fault == "wrong_instance" else "e" * 64,
                     )
                 ],

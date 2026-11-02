@@ -24,8 +24,8 @@ class _RunnerPostgres:
 
     def urls(self) -> dict[str, str]:
         return {
-            "DATABASE_URL": "postgresql+psycopg://runtime@127.0.0.1/openslate",
-            "MIGRATION_DATABASE_URL": "postgresql+psycopg://owner@127.0.0.1/openslate",
+            "DATABASE_URL": "postgresql+psycopg://runtime@127.0.0.1/slateops",
+            "MIGRATION_DATABASE_URL": "postgresql+psycopg://owner@127.0.0.1/slateops",
         }
 
     def write_manifest(self) -> Path:
@@ -275,8 +275,8 @@ def test_partial_supabase_startup_cleans_only_its_labeled_volume_and_network(
                         {
                             "Name": runtime.volume,
                             "Labels": {
-                                "openslate.test.run": runtime.run_id,
-                                "openslate.test.worktree": runtime.worktree,
+                                "slateops.test.run": runtime.run_id,
+                                "slateops.test.worktree": runtime.worktree,
                                 "com.docker.compose.project": runtime.project,
                                 "com.docker.compose.volume": "supabase-db-data",
                             },
@@ -295,8 +295,8 @@ def test_partial_supabase_startup_cleans_only_its_labeled_volume_and_network(
                         {
                             "Name": runtime.network,
                             "Labels": {
-                                "openslate.test.run": runtime.run_id,
-                                "openslate.test.worktree": runtime.worktree,
+                                "slateops.test.run": runtime.run_id,
+                                "slateops.test.worktree": runtime.worktree,
                                 "com.docker.compose.project": runtime.project,
                                 "com.docker.compose.network": "provider",
                             },

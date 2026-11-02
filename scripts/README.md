@@ -1,6 +1,6 @@
 # Command layout
 
-OpenSlate uses names that describe who owns each command:
+Slate Operations uses names that describe who owns each command:
 
 | Location | Owner and purpose | Normal entry point |
 | --- | --- | --- |

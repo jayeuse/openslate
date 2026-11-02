@@ -100,7 +100,7 @@ function nonce() {
 }
 
 function createSet(context: CommsContext) {
-  const key = `openslate-connections:v1:${context.user_id}:${context.org_id}`;
+  const key = `slateops-connections:v1:${context.user_id}:${context.org_id}`;
   const locks =
     typeof navigator.locks?.request === "function" ? navigator.locks : null;
   const mode = locks ? ("shared" as const) : ("per-tab" as const);

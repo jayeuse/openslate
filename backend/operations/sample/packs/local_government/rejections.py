@@ -22,8 +22,8 @@ FORBIDDEN = "Forbidden"
 HIDDEN_MODULE = "Module not found"
 HIDDEN = "Record not found"
 BAD_CREDENTIALS = "Invalid authentication credentials"
-INVALID_OPTION_KEY = "openslate:local-government:invalid-select-option"
-INVALID_FIELD_KEY = "openslate:local-government:unknown-field"
+INVALID_OPTION_KEY = "slateops:local-government:invalid-select-option"
+INVALID_FIELD_KEY = "slateops:local-government:unknown-field"
 _FRONT_DESK = "internal_bplo_03"
 
 ACTIVITY_CASES = (

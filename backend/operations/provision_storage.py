@@ -1,4 +1,4 @@
-"""Create and verify the private OpenSlate Storage buckets and their limits."""
+"""Create and verify the private Slate Operations Storage buckets and their limits."""
 
 import argparse
 import sys
@@ -17,8 +17,8 @@ from app.core.config.settings import DOTENV_PATH
 IMAGES = ["image/png", "image/jpeg"]
 # D17/D18: organization files up to 10 MiB; account avatars up to 2 MiB, images only.
 BUCKETS: dict[str, dict[str, object]] = {
-    "openslate-ready": {"file_size_limit": 10 * 1024 * 1024, "allowed_mime_types": None},
-    "openslate-avatars": {"file_size_limit": 2 * 1024 * 1024, "allowed_mime_types": IMAGES},
+    "slateops-ready": {"file_size_limit": 10 * 1024 * 1024, "allowed_mime_types": None},
+    "slateops-avatars": {"file_size_limit": 2 * 1024 * 1024, "allowed_mime_types": IMAGES},
 }
 
 
@@ -40,7 +40,7 @@ def provision_storage(
     values: Mapping[str, str], *, transport: httpx.BaseTransport | None = None,
 ) -> None:
     assert_provider_instance(
-        values, database_url=values["DATABASE_URL"], expected_user="openslate_runtime",
+        values, database_url=values["DATABASE_URL"], expected_user="slateops_runtime",
     )
     try:
         with httpx.Client(
@@ -70,7 +70,7 @@ def provision_storage(
                     or any(body.get(name) != value for name, value in limits.items())
                 ):
                     raise StorageProvisionError(
-                        "The OpenSlate buckets must exist, be private, and carry their limits"
+                        "The application buckets must exist, be private, and carry their limits"
                     )
     except httpx.HTTPError:
         raise StorageProvisionError("Storage initialization is unavailable") from None
@@ -90,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise
     except Exception:
         raise SystemExit("Unable to initialize private Storage buckets") from None
-    print("The OpenSlate Storage buckets are private and ready")
+    print("The Slate Operations Storage buckets are private and ready")
 
 
 if __name__ == "__main__":

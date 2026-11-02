@@ -137,7 +137,7 @@ def _request_id(response: httpx.Response) -> str | None:
 
 
 class SampleClient:
-    """A per-actor browser-cookie client for authenticated OpenSlate API calls.
+    """A per-actor browser-cookie client for authenticated Slate Operations API calls.
 
     With an organization ID, every request acts in that organization (``X-Org``),
     as the browser does; without one, the server uses the session's organization.
@@ -440,7 +440,7 @@ class SampleClient:
     def _access_expires_at(self) -> float | None:
         """Read the access token expiry only to schedule a refresh; the API verifies it."""
         try:
-            token = self._client.cookies.get("openslate_access")
+            token = self._client.cookies.get("slateops_access")
         except httpx.CookieConflict:
             return None
         parts = token.split(".") if token else []
@@ -457,7 +457,7 @@ class SampleClient:
 
     def _csrf_cookie(self) -> str | None:
         try:
-            return self._client.cookies.get("openslate_csrf")
+            return self._client.cookies.get("slateops_csrf")
         except httpx.CookieConflict:
             raise SampleAuthenticationError(
                 "Authenticated write refused because CSRF is ambiguous"

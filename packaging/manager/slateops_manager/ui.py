@@ -11,5 +11,5 @@ def open_manager_window(config: ManagerConfig) -> None:
     # Import here so configuration validation and packaging checks do not need a display.
     import webview
 
-    webview.create_window("OpenSlate Manager", config.origin)
+    webview.create_window("Slate Operations Manager", config.origin)
     webview.start()

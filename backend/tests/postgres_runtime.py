@@ -24,7 +24,7 @@ from tests import supabase_runtime as _supabase_runtime
 POSTGRES_DATABASE = "postgres"
 POSTGRES_NETWORK_ALIAS = "db"
 POSTGRES_CONTAINER_PORT = 5432
-_DATABASE_ROLES = frozenset({"openslate_owner", "openslate_runtime"})
+_DATABASE_ROLES = frozenset({"slateops_owner", "slateops_runtime"})
 
 
 def postgres_network_name(run_id: str) -> str:
@@ -116,8 +116,8 @@ OwnershipCache = dict[tuple[object, ...], object]
 _OWNERSHIP_INPUTS = (
     "ENVIRONMENT",
     "E2E_ALLOW_MUTATIONS",
-    "OPENSLATE_FULLSTACK_RUN_ID",
-    "OPENSLATE_TEST_DATABASE_MANIFEST",
+    "SLATEOPS_FULLSTACK_RUN_ID",
+    "SLATEOPS_TEST_DATABASE_MANIFEST",
     "SUPABASE_URL",
     "SUPABASE_AUTH_ISSUER",
     "SUPABASE_STORAGE_URL",
@@ -130,7 +130,7 @@ def _ownership_key(database_url: str, user: str, values: Mapping[str, str]) -> t
     The manifest counts by contents, mode, and inode, so a replaced or re-permissioned
     file is a new verdict even with the same bytes.
     """
-    path = Path(values.get("OPENSLATE_TEST_DATABASE_MANIFEST", ""))
+    path = Path(values.get("SLATEOPS_TEST_DATABASE_MANIFEST", ""))
     try:
         details = path.lstat()
         identity: tuple[int, int] | None = (details.st_mode, details.st_ino)
@@ -158,7 +158,7 @@ def assert_runner_database_url(
     """
     values = os.environ if environment is None else environment
     try:
-        run_id = values.get("OPENSLATE_FULLSTACK_RUN_ID", "")
+        run_id = values.get("SLATEOPS_FULLSTACK_RUN_ID", "")
         parsed = urlsplit(database_url)
         allowed = (
             values.get("ENVIRONMENT") == "test"

@@ -210,7 +210,7 @@ def export_audit_logs(
         content=content,
         media_type="text/csv",
         headers={
-            "Content-Disposition": 'attachment; filename="openslate-audit.csv"',
+            "Content-Disposition": 'attachment; filename="slateops-audit.csv"',
             "Cache-Control": "no-store",
             "X-Audit-Export-Count": str(len(rows)),
         },
@@ -314,7 +314,7 @@ def get_security_event(
 def ingest_security_event(
     payload: SecurityEventIngestRequest,
     db: Annotated[Session, Depends(get_db)],
-    server_key: Annotated[str | None, Header(alias="X-OpenSlate-Server-Key")] = None,
+    server_key: Annotated[str | None, Header(alias="X-SlateOps-Server-Key")] = None,
 ) -> SecurityEventResponse:
     configured_key = get_settings().security_event_server_key
     expected_key = configured_key.get_secret_value() if configured_key is not None else ""

@@ -8,7 +8,7 @@ import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/
 
 function document(): SandboxDocumentV4 {
   return {
-    kind: "openslate-sandbox",
+    kind: "slateops-sandbox",
     schemaVersion: 4,
     design: { departments: [], modules: [], relationships: [], layout: {} },
     triggers: [

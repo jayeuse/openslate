@@ -43,10 +43,10 @@ def test_native_default_off_is_no_fetch_and_enabled_edit_projects_controlled_pla
         for index, role in ((0, "admin"), (1, "member")):
             create_member(db, org, role, user=db.get(User, room.people[index].id))
         db.commit()
-    directory = Path("test-results/s25/native") / os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+    directory = Path("test-results/s25/native") / os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     directory.mkdir(parents=True, exist_ok=True)
     journal = directory / "requests.jsonl"
-    fetches = Path(os.environ["OPENSLATE_COMMS_TELEMETRY"]).with_name("preview-fetches.jsonl")
+    fetches = Path(os.environ["SLATEOPS_COMMS_TELEMETRY"]).with_name("preview-fetches.jsonl")
     with ExitStack() as stack:
         clients = {}
         for name, org in (("primary", room.org), ("partner", room.other_org)):
@@ -147,7 +147,7 @@ def test_native_default_off_is_no_fetch_and_enabled_edit_projects_controlled_pla
                     "url": url,
                     "title": "Owned preview fixture",
                     "description": "Controlled parsed metadata",
-                    "site_name": "OpenSlate test",
+                    "site_name": "Slate Operations test",
                 }
             ]
             assert len(fetches.read_text().splitlines()) == number

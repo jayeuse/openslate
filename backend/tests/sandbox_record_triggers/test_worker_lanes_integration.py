@@ -73,8 +73,8 @@ def engines() -> Iterator[tuple[Engine, Engine]]:
     # The runner always provides both; a missing one fails here instead of skipping.
     owner_url = os.environ["MIGRATION_DATABASE_URL"]
     runtime_url = os.environ["TEST_DATABASE_URL"]
-    assert_runner_database_url(owner_url, allowed_roles=frozenset({"openslate_owner"}))
-    assert_runner_database_url(runtime_url, allowed_roles=frozenset({"openslate_runtime"}))
+    assert_runner_database_url(owner_url, allowed_roles=frozenset({"slateops_owner"}))
+    assert_runner_database_url(runtime_url, allowed_roles=frozenset({"slateops_runtime"}))
     owner = create_engine(owner_url, pool_size=2, max_overflow=0)
     runtime = create_engine(runtime_url, pool_size=LANES + 2, max_overflow=0)
     try:
@@ -406,10 +406,10 @@ def test_stop_joins_every_lane_and_returns_claims_it_did_not_run(
         monkeypatch.setattr(worker, "_run_claim", hold)
         worker.start()
         busy.wait()
-        assert sum(t.name.startswith("openslate-triggers-") for t in threading.enumerate()) == 4
+        assert sum(t.name.startswith("slateops-triggers-") for t in threading.enumerate()) == 4
         assert worker.stop()
         assert worker.running is False
-        assert not any(t.name.startswith("openslate-triggers-") for t in threading.enumerate())
+        assert not any(t.name.startswith("slateops-triggers-") for t in threading.enumerate())
 
     with owner.connect() as connection:
         rows = connection.execute(

@@ -402,7 +402,7 @@ test("My calendar's hidden calendars are kept apart from every board's own", () 
     setItem: (key: string, value: string) => void values.set(key, value),
   };
   const mine = myCalendarHiddenKey(authorId);
-  expect(mine).toBe(`openslate.boards.calendar.hidden.${authorId}.my-calendar`);
+  expect(mine).toBe(`slateops.boards.calendar.hidden.${authorId}.my-calendar`);
   writeHiddenCalendars(() => storage, mine, [`board:${salesId}`, "my-due"]);
   expect(
     readHiddenCalendars(() => storage, hiddenCalendarsKey(authorId, salesId)),

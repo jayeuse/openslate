@@ -29,8 +29,8 @@ def test_admin_invite_has_server_owned_marker_and_email_action_is_explicit() -> 
                     "id": str(provider_user_id),
                     "email": "person@example.test",
                     "app_metadata": {
-                        "openslate_user_id": str(local_user_id),
-                        "openslate_invitation_operation_id": str(operation_id),
+                        "slateops_user_id": str(local_user_id),
+                        "slateops_invitation_operation_id": str(operation_id),
                     },
                 },
             )
@@ -53,7 +53,7 @@ def test_admin_invite_has_server_owned_marker_and_email_action_is_explicit() -> 
         "person@example.test", local_user_id, operation_id
     )
     assert created.id == provider_user_id
-    assert created.app_metadata["openslate_user_id"] == str(local_user_id)
+    assert created.app_metadata["slateops_user_id"] == str(local_user_id)
     assert client.admin_send_invitation("person@example.test").id == provider_user_id
     verified = client.verify_email_action("a" * 64, "invite")
     assert verified.user_id == provider_user_id
@@ -208,16 +208,16 @@ def test_admin_reconciliation_filters_exact_email_and_operation_marker() -> None
                         "id": str(uuid4()),
                         "email": "other@example.test",
                         "app_metadata": {
-                            "openslate_user_id": str(local_user_id),
-                            "openslate_invitation_operation_id": str(operation_id),
+                            "slateops_user_id": str(local_user_id),
+                            "slateops_invitation_operation_id": str(operation_id),
                         },
                     },
                     {
                         "id": str(provider_user_id),
                         "email": "person@example.test",
                         "app_metadata": {
-                            "openslate_user_id": str(local_user_id),
-                            "openslate_invitation_operation_id": str(operation_id),
+                            "slateops_user_id": str(local_user_id),
+                            "slateops_invitation_operation_id": str(operation_id),
                         },
                     },
                 ]

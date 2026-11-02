@@ -75,7 +75,7 @@ class AccountServer:
             for part in request.headers.get("cookie", "").split("; ")
             if "=" in part
         )
-        return cookies.get("openslate_access")
+        return cookies.get("slateops_access")
 
     def response(self, status=200, body=None, headers=()):
         return httpx.Response(
@@ -99,9 +99,9 @@ class AccountServer:
                 headers=[
                     (
                         "Set-Cookie",
-                        f"openslate_access={self.access_token(session)}; Path=/; HttpOnly",
+                        f"slateops_access={self.access_token(session)}; Path=/; HttpOnly",
                     ),
-                    ("Set-Cookie", "openslate_csrf=fixture-csrf; Path=/"),
+                    ("Set-Cookie", "slateops_csrf=fixture-csrf; Path=/"),
                 ],
             )
         session = self.session_id(request)
@@ -155,7 +155,7 @@ class AccountServer:
             ended = path.rsplit("/", 1)[-1]
             self.sessions.remove(ended)
             return self.response(
-                204, headers=[("Set-Cookie", "openslate_access=; Max-Age=0; Path=/")]
+                204, headers=[("Set-Cookie", "slateops_access=; Max-Age=0; Path=/")]
             )
         if path == "/api/auth/sessions/revoke-others":
             self.sessions.intersection_update({session})

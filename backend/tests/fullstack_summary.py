@@ -18,7 +18,7 @@ def summary_path(backend: Path, frontend: Path, *, batch: str | None, backend_on
     if batch:
         return backend / "test-results/batches/summary.json"
     if backend_only:
-        override = os.environ.get("OPENSLATE_COVERAGE_OUTPUT")
+        override = os.environ.get("SLATEOPS_COVERAGE_OUTPUT")
         return (
             Path(override) / "summary.json"
             if override

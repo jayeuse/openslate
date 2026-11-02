@@ -65,8 +65,8 @@ def _provider() -> Mock:
             None,
             email,
             {
-                "openslate_user_id": str(local_id),
-                "openslate_invitation_operation_id": str(operation_id),
+                "slateops_user_id": str(local_id),
+                "slateops_invitation_operation_id": str(operation_id),
             },
         )
 

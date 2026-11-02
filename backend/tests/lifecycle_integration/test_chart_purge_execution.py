@@ -94,7 +94,7 @@ def _closed_scope(world, target):
 
 def _plan(world, target, identifier):
     with AuditSession(world.runtime) as db:
-        assert db.connection().scalar(text("SELECT current_user")) == "openslate_runtime"
+        assert db.connection().scalar(text("SELECT current_user")) == "slateops_runtime"
         plan = plan_lifecycle(db, target, identifier, "purge", world.actors["admin"])
         assert not plan.blockers
         assert set(plan.scope_ids["charts"]) == set(world.charts)

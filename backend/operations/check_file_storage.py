@@ -36,13 +36,13 @@ from app.core.observability import configure_observability_logging, log_event
 from app.systems.platform.files.supabase_storage import bucket_for
 from operations.storage.listing import list_bucket
 
-BUCKETS = ("openslate-ready", "openslate-avatars")
+BUCKETS = ("slateops-ready", "slateops-avatars")
 # Their objects may or may not exist yet; file reconciliation owns them, not this check.
 _IN_PROGRESS = frozenset({"uploading", "deleting"})
 _REPORTED = 100
 
 _ORGANIZATIONS = text("SELECT id FROM public.organizations ORDER BY id")
-_SCOPE = text("SELECT set_config('openslate.org_id', :org, true)")
+_SCOPE = text("SELECT set_config('slateops.org_id', :org, true)")
 _FILES = text(
     "SELECT id, object_key, state, actual_size FROM public.files "
     "WHERE org_id IS NOT DISTINCT FROM CAST(:org AS uuid) ORDER BY id"
@@ -159,7 +159,7 @@ def report(
 
 def _storage_client(values: Mapping[str, str]) -> httpx.Client:
     assert_provider_instance(
-        values, database_url=values["DATABASE_URL"], expected_user="openslate_runtime"
+        values, database_url=values["DATABASE_URL"], expected_user="slateops_runtime"
     )
     key = values["SUPABASE_SECRET_KEY"]
     return httpx.Client(

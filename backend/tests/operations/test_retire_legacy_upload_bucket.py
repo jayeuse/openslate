@@ -31,7 +31,7 @@ class Provider:
         path, method = request.url.path, request.method
         self.requests.append((method, path))
         assert request.headers["apikey"] == "synthetic-secret"
-        assert "openslate-ready" not in str(request.url)
+        assert "slateops-ready" not in str(request.url)
         if self.fault == "unavailable":
             raise httpx.ConnectError("synthetic outage", request=request)
         if path == BUCKET and method == "GET":

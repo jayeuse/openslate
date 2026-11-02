@@ -1,4 +1,4 @@
-"""Guarded provider recovery for an active OpenSlate administrator."""
+"""Guarded provider recovery for an active Slate Operations administrator."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass

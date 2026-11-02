@@ -13,7 +13,7 @@ from operations.reset.models import ResetError
 from operations.sample.packs.interface import OrganizationPack
 
 # The fresh-install name; population renames the organization to the pack's name.
-_INITIAL_NAME = "OpenSlate"
+_INITIAL_NAME = "Slate Operations"
 _USAGE_STATEMENT = """
 SELECT o.id,
        (SELECT count(*) FROM public.memberships m JOIN public.users u ON u.id = m.user_id
@@ -165,7 +165,7 @@ def create_sample_organization(
 
     def owner_connection() -> Any:
         connection = connect(database_url)
-        assert_psycopg_target(connection, target, expected_user="openslate_owner")
+        assert_psycopg_target(connection, target, expected_user="slateops_owner")
         connection.rollback()
         return connection
 

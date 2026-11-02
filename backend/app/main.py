@@ -103,16 +103,16 @@ from app.systems.sandbox.test_runs.router import router as sandbox_test_runs_rou
 @asynccontextmanager
 async def application_lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_observability_logging()
-    target = instance_target_for_process(get_settings().database_url, "openslate_runtime")
+    target = instance_target_for_process(get_settings().database_url, "slateops_runtime")
     if target is not None:
         settings = get_settings()
-        assert_database_url(settings.database_url, target, expected_user="openslate_runtime")
+        assert_database_url(settings.database_url, target, expected_user="slateops_runtime")
         with get_engine().connect() as connection:
-            assert_instance_target(connection, target, expected_user="openslate_runtime")
+            assert_instance_target(connection, target, expected_user="slateops_runtime")
         assert_provider_instance(
             environment_inputs(DOTENV_PATH),
             database_url=settings.database_url,
-            expected_user="openslate_runtime",
+            expected_user="slateops_runtime",
         )
     app.state.events_listener.start()
     invalidation_publisher = getattr(app.state, "invalidation_publisher", None)
@@ -262,8 +262,8 @@ def create_app() -> FastAPI:
     def health(response: Response) -> dict[str, str]:
         identity = instance_identity_for_process()
         if identity is not None:
-            response.headers["X-OpenSlate-Instance"] = identity
-        return {"status": "ok", "service": "openslate-api"}
+            response.headers["X-SlateOps-Instance"] = identity
+        return {"status": "ok", "service": "slateops-api"}
 
     @app.get("/api/ready", tags=["system"])
     def ready() -> JSONResponse:

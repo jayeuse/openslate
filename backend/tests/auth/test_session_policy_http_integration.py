@@ -232,7 +232,7 @@ def test_expired_effective_session_never_reaches_provider_rotation(policy_world,
             json={"code": "123456"},
         )
     else:
-        world.client.cookies.set("openslate_refresh", world.handles[0])
+        world.client.cookies.set("slateops_refresh", world.handles[0])
         result = world.client.post("/api/auth/refresh", headers={"X-CSRF-Token": world.csrf[0]})
         world.client.cookies.clear()
     assert result.status_code == 401
@@ -443,8 +443,8 @@ def test_invitation_completion_starts_current_role_episode_and_replay_preserves_
         "email": email,
         "email_confirmed_at": "2026-01-01T00:00:00Z",
         "app_metadata": {
-            "openslate_user_id": str(world.target_id),
-            "openslate_invitation_operation_id": str(operation),
+            "slateops_user_id": str(world.target_id),
+            "slateops_invitation_operation_id": str(operation),
         },
     }
 

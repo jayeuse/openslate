@@ -24,7 +24,7 @@ const currentUserAgent =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 const workspaceSettings = {
   id: "44444444-4444-4444-8444-444444444444",
-  display_name: "OpenSlate test workspace",
+  display_name: "Slate Operations test workspace",
   legal_name: null,
   description: null,
   contact_email: null,
@@ -854,7 +854,7 @@ test("current-session revocation clears owned drafts and attachment URLs through
   );
   const persistedComms = await page.evaluate(() =>
     Object.keys(sessionStorage).filter((key) =>
-      key.startsWith("openslate.sample.draft-text.v2."),
+      key.startsWith("slateops.sample.draft-text.v2."),
     ),
   );
   expect(persistedComms.length).toBeGreaterThan(0);

@@ -185,7 +185,7 @@ for (const viewport of [
     await page.addInitScript(() => {
       for (const panel of ["module", "field"])
         window.localStorage.setItem(
-          `openslate:advanced:sandbox.${panel}`,
+          `slateops:advanced:sandbox.${panel}`,
           "open",
         );
     });

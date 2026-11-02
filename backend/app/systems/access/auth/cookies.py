@@ -18,7 +18,7 @@ def _browser_cookie_secure() -> bool:
 
 def set_browser_access(response: Response, access: str) -> None:
     response.set_cookie(
-        "openslate_access",
+        "slateops_access",
         access,
         httponly=True,
         secure=_browser_cookie_secure(),
@@ -31,10 +31,10 @@ def set_browser_session(response: Response, access: str, refresh: str | None, cs
     secure = _browser_cookie_secure()
     set_browser_access(response, access)
     if refresh is None:
-        response.delete_cookie("openslate_refresh", path="/api/auth", secure=secure)
+        response.delete_cookie("slateops_refresh", path="/api/auth", secure=secure)
     else:
         response.set_cookie(
-            "openslate_refresh",
+            "slateops_refresh",
             refresh,
             httponly=True,
             secure=secure,
@@ -42,15 +42,15 @@ def set_browser_session(response: Response, access: str, refresh: str | None, cs
             path="/api/auth",
         )
     response.set_cookie(
-        "openslate_csrf", csrf, httponly=False, secure=secure, samesite="lax", path="/"
+        "slateops_csrf", csrf, httponly=False, secure=secure, samesite="lax", path="/"
     )
 
 
 def clear_browser_session(response: Response) -> None:
     secure = _browser_cookie_secure()
-    response.delete_cookie("openslate_access", path="/", secure=secure)
-    response.delete_cookie("openslate_refresh", path="/api/auth", secure=secure)
-    response.delete_cookie("openslate_csrf", path="/", secure=secure)
+    response.delete_cookie("slateops_access", path="/", secure=secure)
+    response.delete_cookie("slateops_refresh", path="/api/auth", secure=secure)
+    response.delete_cookie("slateops_csrf", path="/", secure=secure)
 
 
 def cleared_auth_error() -> JSONResponse:

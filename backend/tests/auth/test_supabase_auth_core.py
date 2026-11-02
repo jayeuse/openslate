@@ -352,7 +352,7 @@ def test_api_dependency_requires_bound_provider_and_rejects_mixed_credentials(
         mixed = browser.get(
             "/protected",
             headers={"Authorization": f"Bearer {access}"},
-            cookies={"openslate_access": access},
+            cookies={"slateops_access": access},
         )
         assert mixed.status_code == 401
 

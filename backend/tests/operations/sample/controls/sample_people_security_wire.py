@@ -126,7 +126,7 @@ class PeopleWire:
             for part in request.headers.get("cookie", "").split("; ")
             if "=" in part
         )
-        return self.sessions.get(cookies.get("openslate_access"))
+        return self.sessions.get(cookies.get("slateops_access"))
 
     def event(self, request, response, operation, outcome, revoke, count):
         return {
@@ -178,8 +178,8 @@ class PeopleWire:
             return self.response(
                 {"authenticated": True, "setup_required": False},
                 headers=[
-                    ("Set-Cookie", f"openslate_access={session}; Path=/; HttpOnly"),
-                    ("Set-Cookie", "openslate_csrf=owned-csrf; Path=/"),
+                    ("Set-Cookie", f"slateops_access={session}; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=owned-csrf; Path=/"),
                 ],
             )
         actor = self.identity(request)

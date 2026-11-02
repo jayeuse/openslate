@@ -70,7 +70,7 @@ def test_route_evidence_contains_templates_without_identifiers_or_payloads(tmp_p
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
-            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"})
+            return httpx.Response(200, headers={"Set-Cookie": "slateops_csrf=fixture; Path=/"})
         return httpx.Response(200, json={"id": record_id})
 
     with SampleClient(
@@ -198,7 +198,7 @@ def test_new_control_routes_require_actual_success_after_denial(tmp_path, route,
 
     def handler(request):
         if request.url.path == "/api/auth/login":
-            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"})
+            return httpx.Response(200, headers={"Set-Cookie": "slateops_csrf=fixture; Path=/"})
         return httpx.Response(status, json={"detail": "fixture"})
 
     with SampleClient(

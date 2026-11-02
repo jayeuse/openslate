@@ -192,8 +192,8 @@ def test_activity_uses_the_link_writer_client_for_writes_reconciliation_and_mapp
                     200,
                     json={"authenticated": True},
                     headers=[
-                        ("set-cookie", "openslate_access=opaque; Path=/"),
-                        ("set-cookie", "openslate_csrf=csrf; Path=/"),
+                        ("set-cookie", "slateops_access=opaque; Path=/"),
+                        ("set-cookie", "slateops_csrf=csrf; Path=/"),
                     ],
                 )
             if request.url.path == "/api/records" and request.method == "POST":

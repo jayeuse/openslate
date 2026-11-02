@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a secret-free Caddyfile for OpenSlate's single-origin gateway."""
+"""Render a secret-free Caddyfile for Slate Operations' single-origin gateway."""
 
 from __future__ import annotations
 

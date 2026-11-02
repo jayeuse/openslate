@@ -17,7 +17,7 @@ const descriptions: Record<Permission, string> = {
   default:
     "Browser permission has not been granted. Enable it to see desktop alerts.",
   granted:
-    "Browser permission granted. Desktop alerts follow your preferences while OpenSlate is open.",
+    "Browser permission granted. Desktop alerts follow your preferences while Slate Operations is open.",
   denied:
     "Browser permission denied. Change site permissions for future alerts; you can still save preferences.",
   unavailable:

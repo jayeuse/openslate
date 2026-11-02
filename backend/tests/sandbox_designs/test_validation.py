@@ -10,7 +10,7 @@ from tests.sandbox_designs.fixtures import sample_document
 
 def test_document_validation_reports_unknown_module_reference() -> None:
     document = {
-        "kind": "openslate-sandbox",
+        "kind": "slateops-sandbox",
         "schemaVersion": 4,
         "design": {
             "departments": [{"id": "department-1", "name": "Operations", "closed": False}],

@@ -393,7 +393,7 @@ test.describe("Boards workspace regional activity", () => {
     await page.route("**/api/workspace", (route) =>
       route.fulfill({
         json: {
-          display_name: "OpenSlate",
+          display_name: "Slate Operations",
           mark: "OS",
           logo_file_id: null,
           revision: 1,
@@ -482,7 +482,7 @@ test.describe("Boards workspace regional activity", () => {
         try {
           await route.fulfill({
             json: {
-              display_name: "OpenSlate",
+              display_name: "Slate Operations",
               mark: "OS",
               logo_file_id: null,
               revision: 1,
@@ -501,7 +501,7 @@ test.describe("Boards workspace regional activity", () => {
       }
       await route.fulfill({
         json: {
-          display_name: "OpenSlate",
+          display_name: "Slate Operations",
           mark: "OS",
           logo_file_id: null,
           revision: 1,
@@ -555,7 +555,7 @@ test.describe("Boards workspace regional activity", () => {
         ? route.fulfill({ status: 503, json: { detail: "Unavailable" } })
         : route.fulfill({
             json: {
-              display_name: "OpenSlate",
+              display_name: "Slate Operations",
               mark: "OS",
               logo_file_id: null,
               revision: 1,

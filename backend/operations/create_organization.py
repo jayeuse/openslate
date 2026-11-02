@@ -114,7 +114,7 @@ def provision(
         db.flush()
         scope_session(db, org.id)
         document, digest, size = canonical_document(Document(
-            kind="openslate-sandbox", schema_version=4, design=DesignDocument(),
+            kind="slateops-sandbox", schema_version=4, design=DesignDocument(),
         ))
         db.add(SandboxDocument(
             org_id=org.id, document=document, content_hash=digest, byte_count=size
@@ -151,7 +151,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             raise ValueError("Organization creation requires --confirm")
         assert_provider_instance(
             environment_inputs(DOTENV_PATH), database_url=settings.database_url,
-            expected_user="openslate_runtime",
+            expected_user="slateops_runtime",
         )
         invitation = (
             InvitationCreate(email=args.email, username=args.username) if args.email else None

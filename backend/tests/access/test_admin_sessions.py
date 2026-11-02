@@ -355,12 +355,12 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(
         csrf_denied = client.delete(
             f"/api/users/{target_id}/sessions/{uuid7()}",
             headers={"Origin": "http://frontend.test"},
-            cookies={"openslate_access": "access-token"},
+            cookies={"slateops_access": "access-token"},
         )
         bulk_csrf_denied = client.delete(
             "/api/auth/admin-sessions",
             headers={"Origin": "http://frontend.test"},
-            cookies={"openslate_access": "access-token"},
+            cookies={"slateops_access": "access-token"},
         )
 
     assert csrf_denied.status_code == 401

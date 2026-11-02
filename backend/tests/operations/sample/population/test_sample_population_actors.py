@@ -92,8 +92,8 @@ def _isolated_workflow(tmp_path, monkeypatch, missing=None, *, complete=False):
                     200,
                     json={"authenticated": True},
                     headers=[
-                        ("set-cookie", "openslate_access=opaque; Path=/"),
-                        ("set-cookie", "openslate_csrf=csrf; Path=/"),
+                        ("set-cookie", "slateops_access=opaque; Path=/"),
+                        ("set-cookie", "slateops_csrf=csrf; Path=/"),
                     ],
                 )
             if request.url.path == "/api/auth/me":

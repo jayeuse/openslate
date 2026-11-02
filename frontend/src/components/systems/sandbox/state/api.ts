@@ -81,7 +81,7 @@ type VersionMetadataUpdate =
   | { label: string; note?: string | null }
   | { label?: undefined; note: string | null };
 
-const defaultExportFilename = "openslate-sandbox.json";
+const defaultExportFilename = "slateops-sandbox.json";
 export const SANDBOX_REQUEST_BODY_LIMIT_BYTES = 5 * 1024 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

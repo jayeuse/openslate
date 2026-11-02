@@ -62,7 +62,7 @@ def test_reconcile_binds_existing_marked_provider_user_and_delivers_invitation(
 
         login = browser.post("/api/auth/login", json={"email": email, "password": password})
         assert login.status_code == 200
-        csrf = browser.cookies.get("openslate_csrf")
+        csrf = browser.cookies.get("slateops_csrf")
         assert csrf is not None
         repaired = browser.post(
             f"/api/auth/invitations/{local_id}/reconcile", headers={"X-CSRF-Token": csrf}

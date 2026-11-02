@@ -48,7 +48,7 @@ for (const row of calls())
     const original = Object.getOwnPropertyDescriptor(globalThis, "document");
     Object.defineProperty(globalThis, "document", {
       configurable: true,
-      value: { cookie: "openslate_csrf=synthetic-csrf" },
+      value: { cookie: "slateops_csrf=synthetic-csrf" },
     });
     try {
       await expect(call.invoke()).resolves.toEqual(row.expected);

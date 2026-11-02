@@ -200,7 +200,7 @@ def _audit_csv(
         response.headers.get("Content-Type", "").lower().replace(" ", "")
         != "text/csv;charset=utf-8"
         or response.headers.get("Content-Disposition")
-        != 'attachment; filename="openslate-audit.csv"'
+        != 'attachment; filename="slateops-audit.csv"'
         or "no-store" not in response.headers.get("Cache-Control", "").lower().split(",")
     ):
         raise SamplePhaseActionError("Audit CSV download headers are invalid", step=step)

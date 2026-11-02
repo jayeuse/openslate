@@ -108,7 +108,7 @@ def execute_host_control(
             for step, path in (("host_health", "/api/health"), ("host_readiness", "/api/ready")):
                 response = run.request(action.actor_key, step, "GET", path, client=acting)
                 require(
-                    response.headers.get("X-OpenSlate-Instance")
+                    response.headers.get("X-SlateOps-Instance")
                     == run.capture["production_api_identity"],
                     "host_https",
                 )

@@ -103,7 +103,7 @@ PACK = OrganizationPack(
         currency_symbol="₱",
         currency_code="PHP",
         email_domain=people.INTERNAL_DOMAIN,
-        uuid_namespace="openslate:silangan-fmcg:v1",
+        uuid_namespace="slateops:silangan-fmcg:v1",
         span="one quarter of route-to-market distribution, from purchase order to collection",
         sampling_scope=(
             "store visits, orders, invoices and collections are about a 1:50 sample of the "

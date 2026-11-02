@@ -4,8 +4,8 @@ Creates a new disposable stack, serves the static frontend export from FastAPI b
 the Caddy gateway, seeds Harbor Small once through the sample-data seeder, signs in
 once per role and runs ``frontend/tests/fullstack/smoke``. It belongs to the release
 gate (``scripts/prepush.py --release``), not to every push. Secrets and raw output stay
-in a private temporary directory; OPENSLATE_TEST_PROGRESS=1 shows one line per finished
-test, and OPENSLATE_E2E_HEADED=1 opens a visible browser. The summary holds only timings
+in a private temporary directory; SLATEOPS_TEST_PROGRESS=1 shows one line per finished
+test, and SLATEOPS_E2E_HEADED=1 opens a visible browser. The summary holds only timings
 and outcomes.
 
 ``--seed-only --packs harbor,school`` seeds each listed pack at Small, one after the
@@ -239,8 +239,8 @@ def gateway_root_certificate(caddy: DisposableCaddy, private: Path) -> Path:
 
 
 # Passwords travel only in a child process's environment; the private files hold none.
-SEED_PASSWORD_ENV = "OPENSLATE_SMOKE_ADMIN_PASSWORD"
-FIXTURE_PASSWORDS_ENV = "OPENSLATE_SMOKE_PASSWORDS"
+SEED_PASSWORD_ENV = "SLATEOPS_SMOKE_ADMIN_PASSWORD"
+FIXTURE_PASSWORDS_ENV = "SLATEOPS_SMOKE_PASSWORDS"
 
 
 def _write_private(path: Path, value: object) -> Path:
@@ -261,8 +261,8 @@ def main(argv: Sequence[str] = ()) -> int:
                 print(f"Test port {port} unavailable: {error.strerror or 'cannot bind'}.")
                 return 1
     run_id = uuid4().hex
-    private = Path(tempfile.mkdtemp(prefix="openslate-smoke-"))
-    base_env = {"PATH": os.environ["PATH"], "OPENSLATE_ENV_SOURCE": "process"}
+    private = Path(tempfile.mkdtemp(prefix="slateops-smoke-"))
+    base_env = {"PATH": os.environ["PATH"], "SLATEOPS_ENV_SOURCE": "process"}
     browser_cache = Path.home() / ("Library/Caches" if sys.platform == "darwin" else ".cache")
     if sys.platform == "linux":
         browser_cache = Path(os.environ.get("XDG_CACHE_HOME", browser_cache))
@@ -323,8 +323,8 @@ def main(argv: Sequence[str] = ()) -> int:
             **provider_env,
             "ENVIRONMENT": "test",
             "E2E_ALLOW_MUTATIONS": "true",
-            "OPENSLATE_FULLSTACK_RUN_ID": run_id,
-            "OPENSLATE_TEST_DATABASE_MANIFEST": str(manifest),
+            "SLATEOPS_FULLSTACK_RUN_ID": run_id,
+            "SLATEOPS_TEST_DATABASE_MANIFEST": str(manifest),
         }
         timed("schema and Storage (overlaps frontend build)")
         provision = [sys.executable, "operations/provision_database_role.py", "--confirm"]
@@ -457,11 +457,11 @@ def main(argv: Sequence[str] = ()) -> int:
                 {
                     **base_env,
                     "BASE_URL": WEB,
-                    "OPENSLATE_FULLSTACK_SUITE": "smoke",
-                    "OPENSLATE_FULLSTACK_FIXTURE": str(fixture),
+                    "SLATEOPS_FULLSTACK_SUITE": "smoke",
+                    "SLATEOPS_FULLSTACK_FIXTURE": str(fixture),
                     FIXTURE_PASSWORDS_ENV: json.dumps(passwords),
-                    "OPENSLATE_FULLSTACK_RUN_ID": run_id,
-                    "OPENSLATE_SMOKE_STATE_DIR": str(private / "smoke-state"),
+                    "SLATEOPS_FULLSTACK_RUN_ID": run_id,
+                    "SLATEOPS_SMOKE_STATE_DIR": str(private / "smoke-state"),
                     "E2E_ALLOW_MUTATIONS": "true",
                     "PLAYWRIGHT_NO_COPY_PROMPT": "1",
                 },

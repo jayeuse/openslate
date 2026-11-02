@@ -109,7 +109,7 @@ def _digest(path: Path) -> str:
 
 def _bundle_fixture(tmp_path: Path, config_path: Path) -> Path:
     raw_config = json.loads(config_path.read_text(encoding="utf-8"))
-    bundle = tmp_path / "snapshot-source" / "openslate-supabase-backup-test" / "bundle"
+    bundle = tmp_path / "snapshot-source" / "slateops-supabase-backup-test" / "bundle"
     (bundle / "volumes").mkdir(parents=True)
     (bundle / "private").mkdir()
     (bundle / "compose").mkdir()
@@ -280,7 +280,7 @@ def test_restore_cleanup_failure_does_not_publish_a_pending_marker(
     original_rmtree = shutil.rmtree
 
     def fail_operation_cleanup(path: str | Path, *args: Any, **kwargs: Any) -> None:
-        if Path(path).name.startswith("openslate-supabase-restore-") and target.exists():
+        if Path(path).name.startswith("slateops-supabase-restore-") and target.exists():
             raise OSError("restore staging cleanup failed")
         original_rmtree(path, *args, **kwargs)
 

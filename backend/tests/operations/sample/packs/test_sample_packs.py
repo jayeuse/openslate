@@ -168,7 +168,7 @@ _TINY_PACK = OrganizationPack(
         "Europe/London",
         "£",
         "northside.example",
-        "openslate:tiny-office:v1",
+        "slateops:tiny-office:v1",
         span="one working week",
         sampling_scope="complete request roster",
     ),

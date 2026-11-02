@@ -1103,7 +1103,7 @@ async function installViewsApi(
       { kind: "value"; value: string } | { kind: "unspecified" } | null;
   }[] = [];
   const workspace = {
-    display_name: "OpenSlate",
+    display_name: "Slate Operations",
     mark: "OS",
     logo_file_id: null,
     revision: 1,
@@ -4960,8 +4960,8 @@ for (const layout of ["table"] as const) {
         }),
       );
       await page.addInitScript(() => {
-        localStorage.setItem("openslate-text-size", "125");
-        localStorage.setItem("openslate-density", "spacious");
+        localStorage.setItem("slateops-text-size", "125");
+        localStorage.setItem("slateops-density", "spacious");
       });
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(

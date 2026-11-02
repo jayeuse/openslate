@@ -10,8 +10,8 @@ type Fixture = Readonly<{
 }>;
 
 function fixture(expectedBaseURL: string | undefined): Fixture {
-  const location = process.env.OPENSLATE_FULLSTACK_FIXTURE;
-  const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
+  const location = process.env.SLATEOPS_FULLSTACK_FIXTURE;
+  const runId = process.env.SLATEOPS_FULLSTACK_RUN_ID;
   if (!location || !runId) throw new Error("full-stack fixture is unavailable");
   const value = JSON.parse(readFileSync(location, "utf8")) as Fixture;
   if (value.runId !== runId || value.baseURL !== expectedBaseURL)
@@ -149,10 +149,10 @@ async function seedPublishedSupplier(
     const csrfCookie = document.cookie
       .split(";")
       .map((segment) => segment.trim())
-      .find((segment) => segment.startsWith("openslate_csrf="));
+      .find((segment) => segment.startsWith("slateops_csrf="));
     if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
     const csrfToken = decodeURIComponent(
-      csrfCookie.slice("openslate_csrf=".length),
+      csrfCookie.slice("slateops_csrf=".length),
     );
     const response = await fetch("/api/records", {
       method: "POST",
@@ -206,10 +206,10 @@ async function retireSeededSupplier(page: Page, recordId: string) {
     const csrfCookie = document.cookie
       .split(";")
       .map((segment) => segment.trim())
-      .find((segment) => segment.startsWith("openslate_csrf="));
+      .find((segment) => segment.startsWith("slateops_csrf="));
     if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
     const csrfToken = decodeURIComponent(
-      csrfCookie.slice("openslate_csrf=".length),
+      csrfCookie.slice("slateops_csrf=".length),
     );
     const response = await fetch(`/api/records/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -442,10 +442,10 @@ async function permanentlyDeleteReport(
       const csrfCookie = document.cookie
         .split(";")
         .map((segment) => segment.trim())
-        .find((segment) => segment.startsWith("openslate_csrf="));
+        .find((segment) => segment.startsWith("slateops_csrf="));
       if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
       const csrfToken = decodeURIComponent(
-        csrfCookie.slice("openslate_csrf=".length),
+        csrfCookie.slice("slateops_csrf=".length),
       );
       const path = `/api/reports/${encodeURIComponent(id)}`;
       const current = await fetch(path, { credentials: "same-origin" });

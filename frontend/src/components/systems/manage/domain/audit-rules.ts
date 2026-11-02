@@ -413,7 +413,7 @@ export function auditListEntries(
 }
 
 type ChoiceStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-const SHOW_SYSTEM_PREFIX = "openslate:audit:show-system:";
+const SHOW_SYSTEM_PREFIX = "slateops:audit:show-system:";
 
 function choiceStore(storage: ChoiceStore | null | undefined) {
   if (storage !== undefined) return storage;

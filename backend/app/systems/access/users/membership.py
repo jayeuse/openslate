@@ -17,7 +17,7 @@ from app.core.database.organization_scope import bound_organization_column, sess
 from app.systems.access.users.eligibility import is_active_account, is_active_membership
 from app.systems.access.users.models import Membership, PlatformOperator, User
 
-_CACHE_KEY = "openslate.memberships"
+_CACHE_KEY = "slateops.memberships"
 
 
 def organization_required() -> HTTPException:

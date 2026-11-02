@@ -743,8 +743,8 @@ test("large-text phone panel keeps security actions and confirmation reachable",
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => {
-    localStorage.setItem("openslate-text-size", "125");
-    localStorage.setItem("openslate-density", "spacious");
+    localStorage.setItem("slateops-text-size", "125");
+    localStorage.setItem("slateops-density", "spacious");
   });
   await setup(page);
   const sheet = await open(page);

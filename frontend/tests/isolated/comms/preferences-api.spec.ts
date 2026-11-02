@@ -87,7 +87,7 @@ test("preference transports use current actor paths and never require or send If
   const original = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", {
     configurable: true,
-    value: { cookie: "openslate_csrf=preferences-test" },
+    value: { cookie: "slateops_csrf=preferences-test" },
   });
   try {
     for (const row of calls(controller.signal)) {

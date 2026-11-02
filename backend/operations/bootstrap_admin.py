@@ -58,8 +58,8 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="confirm first-administrator provisioning outside development/local environments",
     )
-    parser.add_argument("--name", default="OpenSlate")
-    parser.add_argument("--slug", default="openslate")
+    parser.add_argument("--name", default="Slate Operations")
+    parser.add_argument("--slug", default="slateops")
     parser.add_argument("--provider-user-id", type=UUID,
                         help="explicitly link a surviving confirmed provider identity")
     return parser
@@ -132,7 +132,7 @@ def _is_exact_admin_reservation(db: AuditSession, user: User, invitation: Invita
 
 def _provision(
     settings: Settings, invitation: InvitationCreate, *, provider_user_id: UUID | None = None,
-    name: str = "OpenSlate", slug: str = "openslate",
+    name: str = "Slate Operations", slug: str = "slateops",
 ) -> BootstrapResult:
     # Provider I/O precedes the short serialized installation transaction.
     confirmed_provider = (
@@ -200,16 +200,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         settings = get_settings()
         admin = get_admin_settings()
-        target = instance_target_for_process(settings.database_url, "openslate_runtime")
+        target = instance_target_for_process(settings.database_url, "slateops_runtime")
         if target is not None:
-            assert_database_url(settings.database_url, target, expected_user="openslate_runtime")
+            assert_database_url(settings.database_url, target, expected_user="slateops_runtime")
             with get_engine().connect() as connection:
-                assert_instance_target(connection, target, expected_user="openslate_runtime")
+                assert_instance_target(connection, target, expected_user="slateops_runtime")
         invitation = _invitation(admin.admin_email, admin.admin_username)
         _validate_confirmation(settings, args.confirm)
         assert_provider_instance(
             environment_inputs(DOTENV_PATH), database_url=settings.database_url,
-            expected_user="openslate_runtime",
+            expected_user="slateops_runtime",
         )
         result = _provision(settings, invitation, provider_user_id=args.provider_user_id,
                             name=args.name, slug=args.slug)

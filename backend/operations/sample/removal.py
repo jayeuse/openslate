@@ -67,7 +67,7 @@ def list_domain_accounts(auth: ResetAuth, domains: frozenset[str]) -> tuple[Auth
                 if email.rpartition("@")[2] not in domains:
                     continue
                 metadata = user.get("app_metadata") or {}
-                owner = metadata.get("openslate_user_id") if isinstance(metadata, dict) else None
+                owner = metadata.get("slateops_user_id") if isinstance(metadata, dict) else None
                 accounts[user_id] = AuthAccount(user_id, email, UUID(owner) if owner else None)
         except (ValueError, TypeError, KeyError, AttributeError):
             raise ResetError("The provider Auth inventory is invalid") from None
@@ -109,7 +109,7 @@ def remove_sample_pack(
     auth = ResetAuth(provider_url, secret_key, timeout)
     domains = removal_domains(pack)
     with connect(_validated_database_url(migration_url, target)) as connection:
-        assert_psycopg_target(connection, target, expected_user="openslate_owner")
+        assert_psycopg_target(connection, target, expected_user="slateops_owner")
         plan = build_organization_removal_plan(
             connection,
             slugs=(sample_slug(pack.identity.key), sample_slug(pack.identity.key, partner=True)),

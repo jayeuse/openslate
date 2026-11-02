@@ -1,15 +1,15 @@
 {
   "version": 3,
   "installation_id": "client-a",
-  "project_name": "openslate-client-a",
+  "project_name": "slateops-client-a",
   "deployment": "production",
-  "compose_root": "/opt/openslate/infra/supabase",
-  "provider_env_file": "/protected/openslate/provider.env",
-  "app_env_file": "/protected/openslate/app.env",
-  "caddy_config_file": "/protected/openslate/Caddyfile",
-  "tls_directory": "/protected/openslate/tls",
-  "restic_repository": "/protected/openslate/restic-repository",
-  "restic_password_file": "/protected/openslate/restic-password",
-  "staging_directory": "/protected/openslate/backup-staging",
-  "completion_marker": "/protected/openslate/backup-state/first-backup.json"
+  "compose_root": "/opt/slateops/infra/supabase",
+  "provider_env_file": "/protected/slateops/provider.env",
+  "app_env_file": "/protected/slateops/app.env",
+  "caddy_config_file": "/protected/slateops/Caddyfile",
+  "tls_directory": "/protected/slateops/tls",
+  "restic_repository": "/protected/slateops/restic-repository",
+  "restic_password_file": "/protected/slateops/restic-password",
+  "staging_directory": "/protected/slateops/backup-staging",
+  "completion_marker": "/protected/slateops/backup-state/first-backup.json"
 }

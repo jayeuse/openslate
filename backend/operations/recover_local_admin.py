@@ -56,16 +56,16 @@ def main(argv: list[str] | None = None) -> None:
     add_organization_argument(parser)
     args = parser.parse_args(argv)
     settings = get_settings()
-    target = instance_target_for_process(settings.database_url, "openslate_runtime")
+    target = instance_target_for_process(settings.database_url, "slateops_runtime")
     if target is not None:
-        assert_database_url(settings.database_url, target, expected_user="openslate_runtime")
+        assert_database_url(settings.database_url, target, expected_user="slateops_runtime")
         with get_engine().connect() as connection:
-            assert_instance_target(connection, target, expected_user="openslate_runtime")
+            assert_instance_target(connection, target, expected_user="slateops_runtime")
     try:
         assert_provider_instance(
             environment_inputs(DOTENV_PATH),
             database_url=settings.database_url,
-            expected_user="openslate_runtime",
+            expected_user="slateops_runtime",
         )
         with AuditSession(get_engine()) as db:
             result = recover_local_admin(

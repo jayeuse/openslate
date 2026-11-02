@@ -51,7 +51,7 @@ function createLauncherFixture({
   frontend: string;
   launcher: string;
 } {
-  const root = mkdtempSync(resolve(tmpdir(), "openslate-next-launcher-"));
+  const root = mkdtempSync(resolve(tmpdir(), "slateops-next-launcher-"));
   const frontend = resolve(root, "frontend");
   const launcher = resolve(frontend, "tooling", basename(nextLauncher));
   const capturePath = resolve(root, "next-invocation.json");
@@ -149,19 +149,19 @@ test("development config proxies only API traffic to loopback FastAPI", async ()
   const originalBackendBindHost = process.env.BACKEND_BIND_HOST;
   const originalBackendPort = process.env.BACKEND_PORT;
   const originalNodeEnvironment = process.env.NODE_ENV;
-  const originalDevOriginHost = process.env.OPENSLATE_DEV_ORIGIN_HOST;
+  const originalDevOriginHost = process.env.SLATEOPS_DEV_ORIGIN_HOST;
   let nextConfig: NextConfig;
   try {
     setEnvironment("BACKEND_BIND_HOST", "127.0.0.1");
     setEnvironment("BACKEND_PORT", "8000");
     setEnvironment("NODE_ENV", "production");
-    setEnvironment("OPENSLATE_DEV_ORIGIN_HOST", "localhost");
+    setEnvironment("SLATEOPS_DEV_ORIGIN_HOST", "localhost");
     nextConfig = createNextConfig(PHASE_DEVELOPMENT_SERVER);
   } finally {
     setEnvironment("BACKEND_BIND_HOST", originalBackendBindHost);
     setEnvironment("BACKEND_PORT", originalBackendPort);
     setEnvironment("NODE_ENV", originalNodeEnvironment);
-    setEnvironment("OPENSLATE_DEV_ORIGIN_HOST", originalDevOriginHost);
+    setEnvironment("SLATEOPS_DEV_ORIGIN_HOST", originalDevOriginHost);
   }
 
   expect(nextConfig.output).toBeUndefined();
@@ -181,13 +181,13 @@ test("development config keeps every compiled route for the test runs", () => {
   const environment = {
     BACKEND_BIND_HOST: process.env.BACKEND_BIND_HOST,
     BACKEND_PORT: process.env.BACKEND_PORT,
-    OPENSLATE_DEV_ORIGIN_HOST: process.env.OPENSLATE_DEV_ORIGIN_HOST,
+    SLATEOPS_DEV_ORIGIN_HOST: process.env.SLATEOPS_DEV_ORIGIN_HOST,
   };
   let nextConfig: NextConfig;
   try {
     setEnvironment("BACKEND_BIND_HOST", "127.0.0.1");
     setEnvironment("BACKEND_PORT", "8000");
-    setEnvironment("OPENSLATE_DEV_ORIGIN_HOST", "localhost");
+    setEnvironment("SLATEOPS_DEV_ORIGIN_HOST", "localhost");
     nextConfig = createNextConfig(PHASE_DEVELOPMENT_SERVER);
   } finally {
     for (const [name, value] of Object.entries(environment))
@@ -208,17 +208,17 @@ test("development config keeps every compiled route for the test runs", () => {
 test("development config reaches an IPv6 loopback backend through localhost", async () => {
   const originalBackendBindHost = process.env.BACKEND_BIND_HOST;
   const originalBackendPort = process.env.BACKEND_PORT;
-  const originalDevOriginHost = process.env.OPENSLATE_DEV_ORIGIN_HOST;
+  const originalDevOriginHost = process.env.SLATEOPS_DEV_ORIGIN_HOST;
   let nextConfig: NextConfig;
   try {
     setEnvironment("BACKEND_BIND_HOST", "::1");
     setEnvironment("BACKEND_PORT", "8000");
-    setEnvironment("OPENSLATE_DEV_ORIGIN_HOST", "::1");
+    setEnvironment("SLATEOPS_DEV_ORIGIN_HOST", "::1");
     nextConfig = createNextConfig(PHASE_DEVELOPMENT_SERVER);
   } finally {
     setEnvironment("BACKEND_BIND_HOST", originalBackendBindHost);
     setEnvironment("BACKEND_PORT", originalBackendPort);
-    setEnvironment("OPENSLATE_DEV_ORIGIN_HOST", originalDevOriginHost);
+    setEnvironment("SLATEOPS_DEV_ORIGIN_HOST", originalDevOriginHost);
   }
 
   expect(await nextConfig.rewrites?.()).toEqual([
@@ -232,36 +232,36 @@ test("development config reaches an IPv6 loopback backend through localhost", as
 test("development config allows only the projected LAN browser host", () => {
   const originalBackendBindHost = process.env.BACKEND_BIND_HOST;
   const originalBackendPort = process.env.BACKEND_PORT;
-  const originalDevOriginHost = process.env.OPENSLATE_DEV_ORIGIN_HOST;
+  const originalDevOriginHost = process.env.SLATEOPS_DEV_ORIGIN_HOST;
   try {
     setEnvironment("BACKEND_BIND_HOST", "127.0.0.1");
     setEnvironment("BACKEND_PORT", "8000");
-    setEnvironment("OPENSLATE_DEV_ORIGIN_HOST", "192.168.254.178");
+    setEnvironment("SLATEOPS_DEV_ORIGIN_HOST", "192.168.254.178");
     expect(
       createNextConfig(PHASE_DEVELOPMENT_SERVER).allowedDevOrigins,
     ).toEqual(["192.168.254.178"]);
   } finally {
     setEnvironment("BACKEND_BIND_HOST", originalBackendBindHost);
     setEnvironment("BACKEND_PORT", originalBackendPort);
-    setEnvironment("OPENSLATE_DEV_ORIGIN_HOST", originalDevOriginHost);
+    setEnvironment("SLATEOPS_DEV_ORIGIN_HOST", originalDevOriginHost);
   }
 });
 
 test("development config rejects wildcard dev-origin entries", () => {
   const originalBackendBindHost = process.env.BACKEND_BIND_HOST;
   const originalBackendPort = process.env.BACKEND_PORT;
-  const originalDevOriginHost = process.env.OPENSLATE_DEV_ORIGIN_HOST;
+  const originalDevOriginHost = process.env.SLATEOPS_DEV_ORIGIN_HOST;
   try {
     setEnvironment("BACKEND_BIND_HOST", "127.0.0.1");
     setEnvironment("BACKEND_PORT", "8000");
-    setEnvironment("OPENSLATE_DEV_ORIGIN_HOST", "*.local");
+    setEnvironment("SLATEOPS_DEV_ORIGIN_HOST", "*.local");
     expect(() => createNextConfig(PHASE_DEVELOPMENT_SERVER)).toThrow(
-      "OPENSLATE_DEV_ORIGIN_HOST must be one exact hostname",
+      "SLATEOPS_DEV_ORIGIN_HOST must be one exact hostname",
     );
   } finally {
     setEnvironment("BACKEND_BIND_HOST", originalBackendBindHost);
     setEnvironment("BACKEND_PORT", originalBackendPort);
-    setEnvironment("OPENSLATE_DEV_ORIGIN_HOST", originalDevOriginHost);
+    setEnvironment("SLATEOPS_DEV_ORIGIN_HOST", originalDevOriginHost);
   }
 });
 
@@ -315,7 +315,9 @@ test("development launcher accepts caller host and port overrides", () => {
     ]) {
       const result = invokeFixture(fixture, "dev", {}, [...override, "--help"]);
       expect(result.status).toBe(0);
-      expect(result.stderr).not.toContain("fixed by OpenSlate configuration");
+      expect(result.stderr).not.toContain(
+        "fixed by Slate Operations configuration",
+      );
     }
   } finally {
     fixture.cleanup();
@@ -353,7 +355,7 @@ test("development launcher parses standard root dotenv syntax", () => {
         BACKEND_PORT: "8200",
         FRONTEND_DEV_PORT: "3200",
         NODE_ENV: "development",
-        OPENSLATE_DEV_ORIGIN_HOST: "192.168.254.178",
+        SLATEOPS_DEV_ORIGIN_HOST: "192.168.254.178",
       },
       execArguments: [],
     });
@@ -404,7 +406,7 @@ test("development launcher derives but does not forward a process-level public o
     });
     expect(result.status).toBe(0);
     const invocation = JSON.parse(readFileSync(fixture.capturePath, "utf8"));
-    expect(invocation.environment.OPENSLATE_DEV_ORIGIN_HOST).toBe(
+    expect(invocation.environment.SLATEOPS_DEV_ORIGIN_HOST).toBe(
       "192.168.254.178",
     );
     expect(invocation.environment).not.toHaveProperty("PUBLIC_ORIGIN");

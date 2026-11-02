@@ -31,7 +31,7 @@ try {
       return fallback;
     }
   };
-  const mode = preference("openslate-theme", "system", [
+  const mode = preference("slateops-theme", "system", [
     "light",
     "dark",
     "system",
@@ -43,20 +43,20 @@ try {
         typeof matchMedia === "function" &&
         matchMedia("(prefers-color-scheme: dark)").matches),
   );
-  if (preference("openslate-motion", "system", ["reduced"]) === "reduced")
+  if (preference("slateops-motion", "system", ["reduced"]) === "reduced")
     root.dataset.motion = "reduced";
   else delete root.dataset.motion;
-  root.dataset.textSize = preference("openslate-text-size", "100", [
+  root.dataset.textSize = preference("slateops-text-size", "100", [
     "100",
     "112.5",
     "125",
   ]);
-  root.dataset.density = preference("openslate-density", "default", [
+  root.dataset.density = preference("slateops-density", "default", [
     "default",
     "compact",
     "spacious",
   ]);
-  const theme = preference("openslate-org-theme", "slate", [
+  const theme = preference("slateops-org-theme", "slate", [
     "slate",
     "whiteboard",
     "triplicate",

@@ -78,7 +78,7 @@ type Props = {
 
 /** Each viewer's choice to list automatic saves (S9), per account. */
 function automaticSavesKey(viewerId: string): string {
-  return `openslate:sandbox.history.automatic-saves:${viewerId}`;
+  return `slateops:sandbox.history.automatic-saves:${viewerId}`;
 }
 
 function readShowAutomatic(viewerId: string): boolean {

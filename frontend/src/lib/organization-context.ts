@@ -3,10 +3,10 @@
  * session storage; a tab without one follows the session's active
  * organization, which the server applies when no `X-Org` header is sent.
  */
-const ORGANIZATION_KEY = "openslate-organization";
+const ORGANIZATION_KEY = "slateops-organization";
 // The last organization opened in this browser. Not secret: the signed-out
 // pages ask for its look, so an administrator's change shows at next sign-in.
-const LAST_ORGANIZATION_KEY = "openslate-last-organization";
+const LAST_ORGANIZATION_KEY = "slateops-last-organization";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

@@ -18,7 +18,7 @@ const closedOptionId = "00000000-0000-4000-8000-000000000032";
 
 function documentFixture(): SandboxDocumentV4 {
   return {
-    kind: "openslate-sandbox",
+    kind: "slateops-sandbox",
     schemaVersion: 4,
     design: {
       departments: [{ id: "ops", name: "Operations", closed: false }],
@@ -737,7 +737,7 @@ for (const row of [
 
 test("older format files are refused with one clear message and are not converted", () => {
   const versionOne = {
-    kind: "openslate-sandbox",
+    kind: "slateops-sandbox",
     schemaVersion: 1,
     design: structuredClone(configuredSandboxDesign),
   };

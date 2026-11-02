@@ -51,7 +51,7 @@ class ReferenceRaceWorld:
         self.charts: list[UUID] = []
         with self.runtime.connect() as connection:
             _assert_alembic_head(connection)
-            if connection.scalar(text("SELECT current_user")) != "openslate_runtime":
+            if connection.scalar(text("SELECT current_user")) != "slateops_runtime":
                 raise RuntimeError("Reference requests require the constrained runtime role")
         with self.owner.connect() as connection:
             _assert_alembic_head(connection)

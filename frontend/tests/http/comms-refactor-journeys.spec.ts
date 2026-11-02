@@ -195,7 +195,10 @@ test("Comms binds drafts to the admitted organization while the next organizatio
     await expect(typing).toContainText(typer.display_name);
     await expect.poll(() => serverA.typingRequests).toEqual([orgA.org_id]);
     await page
-      .getByRole("button", { name: "Organization: OpenSlate", exact: true })
+      .getByRole("button", {
+        name: "Organization: Slate Operations",
+        exact: true,
+      })
       .click();
     await page.getByRole("menuitem", { name: /Second organization/ }).click();
     await verification.entered;

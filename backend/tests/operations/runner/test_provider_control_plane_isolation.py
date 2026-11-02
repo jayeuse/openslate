@@ -66,13 +66,13 @@ def test_api_mounts_only_logs_and_the_read_only_finished_export_root() -> None:
     api = production["services"]["api"]
     mounts = api["volumes"]
     assert {mount["target"] for mount in mounts} == {
-        "/var/log/openslate",
-        "/var/lib/openslate/backup-exports",
+        "/var/log/slateops",
+        "/var/lib/slateops/backup-exports",
     }
     export = next(mount for mount in mounts if mount["target"].endswith("/backup-exports"))
     assert export["type"] == "bind" and export["read_only"] is True
-    assert export["source"].startswith("${OPENSLATE_BACKUP_EXPORT_ROOT:")
+    assert export["source"].startswith("${SLATEOPS_BACKUP_EXPORT_ROOT:")
     assert export["bind"]["create_host_path"] is False
-    assert api["environment"]["BACKUP_EXPORT_ROOT"] == "/var/lib/openslate/backup-exports"
+    assert api["environment"]["BACKUP_EXPORT_ROOT"] == "/var/lib/slateops/backup-exports"
     assert api["user"] == "10001:10001" and api["read_only"] is True
     assert api["cap_drop"] == ["ALL"]

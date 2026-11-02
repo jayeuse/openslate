@@ -475,8 +475,8 @@ def test_cached_refresh_cannot_renew_a_deadline_crossed_during_provider_read(pol
         return None
 
     world.hook = latency
-    world.client.cookies.set("openslate_refresh", world.handles[0])
-    world.client.cookies.set("openslate_csrf", world.csrf[0])
+    world.client.cookies.set("slateops_refresh", world.handles[0])
+    world.client.cookies.set("slateops_csrf", world.csrf[0])
     response = world.client.post("/api/auth/refresh", headers={"X-CSRF-Token": world.csrf[0]})
     assert response.status_code == 401
     assert world.sessions()[0].revoked_at is not None

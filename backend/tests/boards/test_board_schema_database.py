@@ -145,7 +145,7 @@ def test_the_runtime_role_can_execute_every_replaced_function(
     rows = integration_owner_db.connection().execute(
         text(
             """
-            SELECT p.proname, has_function_privilege('openslate_app', p.oid, 'EXECUTE')
+            SELECT p.proname, has_function_privilege('slateops_app', p.oid, 'EXECUTE')
               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
              WHERE n.nspname = 'public' AND p.proname = ANY(:names)
             """

@@ -56,7 +56,7 @@ def _assert_link_columns_and_privileges(connection: Connection) -> None:
         for action in TABLE_ACTIONS:
             assert (
                 connection.scalar(
-                    text("SELECT has_table_privilege('openslate_runtime', :table, :action)"),
+                    text("SELECT has_table_privilege('slateops_runtime', :table, :action)"),
                     {"table": f"public.{table}", "action": action},
                 )
                 is True
@@ -65,7 +65,7 @@ def _assert_link_columns_and_privileges(connection: Connection) -> None:
             assert (
                 connection.scalar(
                     text(
-                        "SELECT has_column_privilege('openslate_runtime', :table, 'links', :action)"
+                        "SELECT has_column_privilege('slateops_runtime', :table, 'links', :action)"
                     ),
                     {"table": f"public.{table}", "action": action},
                 )

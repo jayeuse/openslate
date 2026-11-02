@@ -48,8 +48,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function fixture(expectedBaseURL: string | undefined): Fixture {
-  const location = process.env.OPENSLATE_FULLSTACK_FIXTURE;
-  const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
+  const location = process.env.SLATEOPS_FULLSTACK_FIXTURE;
+  const runId = process.env.SLATEOPS_FULLSTACK_RUN_ID;
   if (!location || !runId) throw new Error("full-stack fixture is unavailable");
 
   const parsed: unknown = JSON.parse(readFileSync(location, "utf8"));
@@ -176,11 +176,9 @@ async function restoreSandboxSnapshot(
     const cookie = document.cookie
       .split(";")
       .map((segment) => segment.trim())
-      .find((segment) => segment.startsWith("openslate_csrf="));
+      .find((segment) => segment.startsWith("slateops_csrf="));
     if (!cookie) return { readStatus: currentResponse.status, writeStatus: 0 };
-    const csrfToken = decodeURIComponent(
-      cookie.slice("openslate_csrf=".length),
-    );
+    const csrfToken = decodeURIComponent(cookie.slice("slateops_csrf=".length));
     const writeResponse = await fetch("/api/sandbox/document", {
       method: "PUT",
       credentials: "same-origin",
@@ -383,10 +381,10 @@ async function replaceGroupMembersAsManager(
       const cookie = document.cookie
         .split(";")
         .map((segment) => segment.trim())
-        .find((segment) => segment.startsWith("openslate_csrf="));
+        .find((segment) => segment.startsWith("slateops_csrf="));
       if (!cookie) return { status: 0, detail: null };
       const csrfToken = decodeURIComponent(
-        cookie.slice("openslate_csrf=".length),
+        cookie.slice("slateops_csrf=".length),
       );
       const response = await fetch(
         `/api/access/groups/${encodeURIComponent(id)}/members`,
@@ -529,11 +527,9 @@ async function clearAndDeleteGroup(page: Page, groupId: string): Promise<void> {
     const cookie = document.cookie
       .split(";")
       .map((segment) => segment.trim())
-      .find((segment) => segment.startsWith("openslate_csrf="));
+      .find((segment) => segment.startsWith("slateops_csrf="));
     if (!cookie) return { readStatus: 0, clearStatus: 0, deleteStatus: 0 };
-    const csrfToken = decodeURIComponent(
-      cookie.slice("openslate_csrf=".length),
-    );
+    const csrfToken = decodeURIComponent(cookie.slice("slateops_csrf=".length));
     const path = `/api/access/groups/${encodeURIComponent(id)}`;
     const read = await fetch(path, {
       cache: "no-store",
@@ -590,11 +586,9 @@ async function retirePendingInvite(page: Page, userId: string): Promise<void> {
     const cookie = document.cookie
       .split(";")
       .map((segment) => segment.trim())
-      .find((segment) => segment.startsWith("openslate_csrf="));
+      .find((segment) => segment.startsWith("slateops_csrf="));
     if (!cookie) return { revokeStatus: 0, deleteStatus: 0 };
-    const csrfToken = decodeURIComponent(
-      cookie.slice("openslate_csrf=".length),
-    );
+    const csrfToken = decodeURIComponent(cookie.slice("slateops_csrf=".length));
     const headers = { "X-CSRF-Token": csrfToken };
     const revoke = await fetch(
       `/api/auth/invitations/${encodeURIComponent(id)}`,

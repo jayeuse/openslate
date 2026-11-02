@@ -46,7 +46,7 @@ test("Comms waits for the bound server bootstrap rather than opening an example 
       .filter({ hasText: /could not be loaded|not available|not allowed/i }),
   ).toBeVisible();
   expect(
-    await page.evaluate(() => sessionStorage.getItem("openslate-organization")),
+    await page.evaluate(() => sessionStorage.getItem("slateops-organization")),
   ).toBe(defaultOrganization.org_id);
 });
 

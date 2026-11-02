@@ -146,7 +146,7 @@ class FileWire:
                 200,
                 {},
                 headers={
-                    "Set-Cookie": "openslate_csrf=fixture; Path=/",
+                    "Set-Cookie": "slateops_csrf=fixture; Path=/",
                 },
             )
         self.seen.append(request)

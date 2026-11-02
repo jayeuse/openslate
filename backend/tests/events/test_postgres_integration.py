@@ -191,5 +191,5 @@ def _assert_runtime_settings_target(configured_url: str, runtime_url: str) -> No
 
     configured = make_url(configured_url)
     expected = make_url(runtime_url)
-    if configured != expected or configured.username != "openslate_runtime":
+    if configured != expected or configured.username != "slateops_runtime":
         raise RuntimeError("Event integration requires the runner-owned runtime database")

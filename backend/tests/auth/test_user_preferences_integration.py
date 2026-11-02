@@ -42,7 +42,7 @@ def _login(account):
             client.post("/api/auth/login", json={"email": email, "password": password}).status_code
             == 200
         )
-        csrf = client.cookies.get("openslate_csrf")
+        csrf = client.cookies.get("slateops_csrf")
         assert csrf
         client.headers["X-CSRF-Token"] = csrf
         return client

@@ -107,9 +107,9 @@ export default function RecoveryPage() {
           className="mb-12 inline-flex items-center gap-2 text-sm font-semibold"
         >
           <span className="bg-primary text-primary-foreground grid size-8 place-items-center rounded-md text-xs">
-            OS
+            SO
           </span>
-          OpenSlate
+          Slate Operations
         </a>
         <div className="mb-8">
           <div className="bg-accent text-accent-foreground mb-5 grid size-11 place-items-center rounded-full">
@@ -120,7 +120,7 @@ export default function RecoveryPage() {
           </h1>
           <p className="text-muted-foreground mt-2 text-sm">
             {completingRecovery
-              ? "Choose a strong password for your OpenSlate account."
+              ? "Choose a strong password for your Slate Operations account."
               : "Enter your email to get recovery instructions."}
           </p>
         </div>

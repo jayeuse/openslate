@@ -8,7 +8,7 @@ This plan preserves the original baseline and workstream rationale. "Today", gap
 
 ## 1. Intent
 
-OpenSlate is a self-hosted workspace. One organization owns one installation. The organization can be any type, in any country.
+Slate Operations is a self-hosted workspace. One organization owns one installation. The organization can be any type, in any country.
 
 Before OpenComms starts, the system must meet these five rules:
 
@@ -121,7 +121,7 @@ In Phase C, workstreams with disjoint files can run in parallel.
 
 #### W2a. Organization look on the server
 
-**Today.** The look is stored in `localStorage` (`openslate-org-theme`). Each browser picks its own look.
+**Today.** The look is stored in `localStorage` (`slateops-org-theme`). Each browser picks its own look.
 
 **Backend:**
 
@@ -249,7 +249,7 @@ Pain points and solutions for these actions:
 
 - Pain point: a reset can be abused for account takeover. Solution: A3 requires the acting admin to have a current MFA verification (AAL2), a confirmation dialog, and a recorded event.
 - Pain point: a copyable reset link creates the same takeover risk. Solution: send the reset by email only and show no link.
-- Pain point: OpenSlate has no mailer of its own. Solution: A1 uses the Supabase mailer, and the UI shows a clear state when SMTP is not configured.
+- Pain point: Slate Operations has no mailer of its own. Solution: A1 uses the Supabase mailer, and the UI shows a clear state when SMTP is not configured.
 
 #### W3c. Monitoring
 
@@ -457,7 +457,7 @@ Size: 3–4 days.
 
 ### W7. Organization profile in workspace settings
 
-**Today.** The backend accepts `legal_name`, `description`, `contact_email`, `contact_phone`, `postal_address`, and `logo_file_id`, but the UI does not use them. Each regional list has 3 hard-coded items. The shell shows "OpenSlate" and "OS", not the organization.
+**Today.** The backend accepts `legal_name`, `description`, `contact_email`, `contact_phone`, `postal_address`, and `logo_file_id`, but the UI does not use them. Each regional list has 3 hard-coded items. The shell shows "Slate Operations" and "OS", not the organization.
 
 **Work:**
 

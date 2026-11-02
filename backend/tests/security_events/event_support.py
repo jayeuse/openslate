@@ -1,7 +1,7 @@
 """Owned signed-auth/runtime PostgreSQL setup; event rows remain append-only until teardown.
 
 The actor signs in through the real login route against the fake provider: these tests
-check OpenSlate's security events, not Supabase Auth.
+check Slate Operations' security events, not Supabase Auth.
 """
 
 from dataclasses import dataclass, field
@@ -103,7 +103,7 @@ def event_world(fake_provider_account):
             client.post("/api/auth/login", json={"email": email, "password": password}).status_code
             == 200
         )
-        csrf = client.cookies.get("openslate_csrf")
+        csrf = client.cookies.get("slateops_csrf")
         assert csrf
         client.headers["X-CSRF-Token"] = csrf
         yield EventWorld(client, owner, actor_id, provider_id, email, password)

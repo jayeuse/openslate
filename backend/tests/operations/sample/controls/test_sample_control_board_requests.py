@@ -73,8 +73,8 @@ def test_board_patch_uses_current_revision_and_frontend_body(tmp_path: Path) -> 
             return httpx.Response(
                 200,
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
                 json={"ok": True},
             )
@@ -110,8 +110,8 @@ def test_post_create_uses_frontend_body_and_validates_the_draft_list(tmp_path: P
             return httpx.Response(
                 200,
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
                 json={"ok": True},
             )
@@ -162,8 +162,8 @@ def test_event_create_sends_the_all_day_frontend_shape(tmp_path: Path) -> None:
             return httpx.Response(
                 200,
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
                 json={"ok": True},
             )
@@ -218,8 +218,8 @@ def test_board_create_sends_the_frontend_body_and_maps_the_owned_board(tmp_path:
             return httpx.Response(
                 200,
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
                 json={"ok": True},
             )
@@ -259,8 +259,8 @@ def test_event_record_link_create_and_delete_use_frontend_revision_shapes(
             return httpx.Response(
                 200,
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
                 json={"ok": True},
             )

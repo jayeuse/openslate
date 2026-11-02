@@ -118,7 +118,7 @@ def test_export_row_lock_wait_cannot_admit_a_now_expired_presented_credential(
 
         monkeypatch.setattr(downloads, "prepare_artifact", hold_before_consumption)
     deadline = int(datetime.now(UTC).timestamp()) + 3
-    world.auth.client.cookies.set("openslate_access", world.auth.access(exp=deadline))
+    world.auth.client.cookies.set("slateops_access", world.auth.access(exp=deadline))
     with Session(world.auth.owner) as blocker:
 
         def lock_export():

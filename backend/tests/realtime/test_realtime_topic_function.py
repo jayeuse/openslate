@@ -48,10 +48,10 @@ def test_function_is_owner_bound_and_executable_only_by_realtime_role(integratio
     ).one()
     assert row[0:2] == (True, "s")
     assert dict(value.split("=", 1) for value in row[2])["search_path"] == "pg_catalog, pg_temp"
-    assert row[3:] == ("openslate_owner", "plpgsql")
+    assert row[3:] == ("slateops_owner", "plpgsql")
     privilege = text("SELECT has_function_privilege(:role, :signature, 'EXECUTE')")
     assert connection.scalar(privilege, {"role": "authenticated", "signature": SIGNATURE})
-    for role in ("anon", "service_role", "openslate_runtime"):
+    for role in ("anon", "service_role", "slateops_runtime"):
         assert connection.scalar(privilege, {"role": role, "signature": SIGNATURE}) is False
 
 
@@ -71,8 +71,8 @@ def test_realtime_messages_carry_only_the_membership_policies(integration_owner_
         .all()
     )
     assert [tuple(row) for row in rows] == [
-        ("openslate_realtime_member_read", "r", True, True),
-        ("openslate_realtime_member_write", "a", True, True),
+        ("slateops_realtime_member_read", "r", True, True),
+        ("slateops_realtime_member_write", "a", True, True),
     ]
 
 
@@ -92,15 +92,15 @@ def test_send_owner_has_no_sql_publish_privileges(integration_owner_db):
     connection = integration_owner_db.connection()
     privileges = connection.execute(
         text(
-            "SELECT has_schema_privilege('openslate_owner', 'realtime', 'USAGE'), "
-            "has_function_privilege('openslate_owner', CAST(:routine AS oid), 'EXECUTE')"
+            "SELECT has_schema_privilege('slateops_owner', 'realtime', 'USAGE'), "
+            "has_function_privilege('slateops_owner', CAST(:routine AS oid), 'EXECUTE')"
         ),
         {"routine": _send_oid(connection)},
     ).one()
     assert tuple(privileges) == (False, False)
 
 
-@pytest.mark.parametrize("role", ["openslate_app", "openslate_runtime", "authenticated"])
+@pytest.mark.parametrize("role", ["slateops_app", "slateops_runtime", "authenticated"])
 def test_send_direct_execute_is_denied(integration_owner_db, role: str):
     connection = integration_owner_db.connection()
     assert (
@@ -114,7 +114,7 @@ def test_send_direct_execute_is_denied(integration_owner_db, role: str):
 
 def test_send_runtime_invocation_raises_insufficient_privilege(integration_db):
     connection = integration_db.connection()
-    assert connection.scalar(text("SELECT current_user")) == "openslate_runtime"
+    assert connection.scalar(text("SELECT current_user")) == "slateops_runtime"
     # The provider can swallow insert/RLS errors as warnings. Only a real 42501
     # exception counts as denial; the effective-EXECUTE tests protect the ACL itself.
     with connection.begin_nested() as savepoint:

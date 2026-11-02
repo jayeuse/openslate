@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
-const STORAGE_PREFIX = "openslate:advanced:";
+const STORAGE_PREFIX = "slateops:advanced:";
 
 type OpenStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 

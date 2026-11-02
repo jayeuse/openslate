@@ -276,7 +276,7 @@ def _add_server_image_step(steps: list[Step], lane: str = "server") -> None:
                 "--file",
                 "infra/docker/backend.Dockerfile",
                 "--tag",
-                "openslate-server:ci",
+                "slateops-server:ci",
                 ".",
             ),
             lane=lane,

@@ -42,7 +42,7 @@ def test_history_columns_initialize_null_without_inventing_observation_facts(int
         ).all()
         == [("timestamp with time zone", "YES", None)] * 2
     )
-    assert connection.scalar(text("SELECT current_user")) == "openslate_runtime"
+    assert connection.scalar(text("SELECT current_user")) == "slateops_runtime"
     assert connection.execute(
         text(
             "SELECT last_sign_in_at,last_active_at FROM "

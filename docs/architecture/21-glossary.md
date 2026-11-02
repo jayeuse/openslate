@@ -1,6 +1,6 @@
 # Glossary
 
-> **Scope:** The system dictionary. One meaning for each OpenSlate term, the other names it has in code, routes, and plans, and the word to use in new writing.
+> **Scope:** The system dictionary. One meaning for each Slate Operations term, the other names it has in code, routes, and plans, and the word to use in new writing.
 
 ## How to use this glossary
 
@@ -18,9 +18,9 @@ A **Status** note appears only when the term is not fully implemented. Status wo
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
-| OpenSlate | "Slate" (planned name) | The current product name. A rename to Slate is planned; its timing is not decided. | Customer |
+| Slate Operations | "Slate" (planned name) | The current product name. A rename to Slate is planned; its timing is not decided. | Customer |
 | Organization | `organizations` table, `WorkspaceProfile`, `org_id`, `/api/workspace`, `workspace_*` columns, Manage tab "Organization" | The customer and the one system it owns: its people, departments, records, and settings. One installation holds one or more organizations, and each one sees only its own data. | Customer |
-| Installation | "Supabase Compose installation", "client", "deployment" | One self-hosted copy of OpenSlate with its own Compose project, credentials, and volumes. It holds one or more organizations. See [Supabase Compose installation](#infrastructure-and-identity). | Internal |
+| Installation | "Supabase Compose installation", "client", "deployment" | One self-hosted copy of Slate Operations with its own Compose project, credentials, and volumes. It holds one or more organizations. See [Supabase Compose installation](#infrastructure-and-identity). | Internal |
 | Workspace | `WorkspaceNavigationGroup`, sidebar group | One area in the sidebar: Sandbox, Boards, Access, OpenView, Manage, or Platform. OpenComms and Appearance are links below the groups. Do not use "workspace" for the whole organization in new writing. | Internal |
 | Section | `?section=`, `?view=`, `item`, `ViewTab` | One sub-page inside a workspace, for example Sandbox → Build. The URL key is `section` in most workspaces and `view` in Access and Manage. | Internal |
 | System actor | "runs as the workspace", `actor_label`, empty `performed_by` | A change that no person makes, for example a record trigger or a scheduled report. The audit entry has no user and names the source in `actor_label`. | Internal |
@@ -175,27 +175,27 @@ not a separate permission system or an execution result.
 | --- | --- | --- | --- |
 | Organization look | `OrganizationTheme`, `ORGANIZATION_THEMES`, `workspace_profiles.theme`, "theme" | The theme that the organization uses for everyone: Slate (default), Whiteboard, Triplicate, or Stockroom. A look changes color, type, and materials only; layout, behavior, and words stay the same. | Customer ("look") |
 | Appearance | `/settings/appearance`, `users.appearance` | The personal display settings of one person: color mode, text and display, and motion. | Customer |
-| Color mode | "Theme" (Platform → Account), `openslate-theme` storage key | The personal light or dark choice. Use "color mode"; "theme" means the organization look. | Customer |
+| Color mode | "Theme" (Platform → Account), `slateops-theme` storage key | The personal light or dark choice. Use "color mode"; "theme" means the organization look. | Customer |
 
 ## Infrastructure and identity
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
-| Application profile | `User` | OpenSlate's PostgreSQL-backed user record. It is explicitly bound to a Supabase Auth subject; provider email or metadata alone does not create application access. | Internal |
-| Application session | `IdentitySession`, "sign-in session", "device session" | OpenSlate's server-side session state used for application session listing and revocation. FastAPI enforces revocation even if provider sign-out is unavailable. | Customer ("sign-in session") |
+| Application profile | `User` | Slate Operations' PostgreSQL-backed user record. It is explicitly bound to a Supabase Auth subject; provider email or metadata alone does not create application access. | Internal |
+| Application session | `IdentitySession`, "sign-in session", "device session" | Slate Operations' server-side session state used for application session listing and revocation. FastAPI enforces revocation even if provider sign-out is unavailable. | Customer ("sign-in session") |
 | Provider session | `provider_session_id` | The Supabase Auth session under an application session. It is not the application session. | Internal |
-| Session revocation | — | OpenSlate's application-level denial of a previously issued session. It stays authoritative even when provider-side sign-out cannot complete. | Internal |
-| Provider subject | — | The Supabase Auth user identifier explicitly associated with an OpenSlate application profile. | Internal |
-| Authentication | — | Verification of who signed in. Supabase Auth performs provider identity and credential checks; this does not decide what a person may access in OpenSlate. | Internal |
-| Authorization | — | FastAPI's decision about whether a bound, eligible profile may access an application route or resource under current OpenSlate roles, groups, and access levels. | Internal |
-| Application schema | — | OpenSlate-owned tables and types managed by SQLAlchemy models and Alembic migrations. | Internal |
-| Provider schema | — | Supabase-owned database objects, such as Auth or Storage metadata, which OpenSlate's Alembic migrations do not own. | Internal |
-| `DATABASE_BOOTSTRAP_URL` | — | Operator-only Supabase database connection used to provision OpenSlate database roles and grants. | Internal |
-| `MIGRATION_DATABASE_URL` | — | Owner connection used by Alembic for OpenSlate application-schema changes. | Internal |
-| `DATABASE_URL` | — | Constrained `openslate_runtime` connection used by FastAPI and application workers. | Internal |
-| Ready object | — | Immutable private Storage object in `openslate-ready`, written after file-type validation; FastAPI still authorizes each download. | Internal |
-| Supabase Compose installation | — | One self-hosted Supabase and OpenSlate deployment with its own Compose project, credentials, networks, and persistent volumes. It is per client and can hold several organizations; it is not a hosted service. | Internal |
-| Supabase Storage | — | Provider-managed object API and persistent volume for OpenSlate's private file bytes. FastAPI, not the browser, uses its privileged credentials. | Internal |
+| Session revocation | — | Slate Operations' application-level denial of a previously issued session. It stays authoritative even when provider-side sign-out cannot complete. | Internal |
+| Provider subject | — | The Supabase Auth user identifier explicitly associated with an Slate Operations application profile. | Internal |
+| Authentication | — | Verification of who signed in. Supabase Auth performs provider identity and credential checks; this does not decide what a person may access in Slate Operations. | Internal |
+| Authorization | — | FastAPI's decision about whether a bound, eligible profile may access an application route or resource under current Slate Operations roles, groups, and access levels. | Internal |
+| Application schema | — | Application-owned tables and types managed by SQLAlchemy models and Alembic migrations. | Internal |
+| Provider schema | — | Supabase-owned database objects, such as Auth or Storage metadata, which Slate Operations' Alembic migrations do not own. | Internal |
+| `DATABASE_BOOTSTRAP_URL` | — | Operator-only Supabase database connection used to provision Slate Operations database roles and grants. | Internal |
+| `MIGRATION_DATABASE_URL` | — | Owner connection used by Alembic for Slate Operations application-schema changes. | Internal |
+| `DATABASE_URL` | — | Constrained `slateops_runtime` connection used by FastAPI and application workers. | Internal |
+| Ready object | — | Immutable private Storage object in `slateops-ready`, written after file-type validation; FastAPI still authorizes each download. | Internal |
+| Supabase Compose installation | — | One self-hosted Supabase and Slate Operations deployment with its own Compose project, credentials, networks, and persistent volumes. It is per client and can hold several organizations; it is not a hosted service. | Internal |
+| Supabase Storage | — | Provider-managed object API and persistent volume for Slate Operations' private file bytes. FastAPI, not the browser, uses its privileged credentials. | Internal |
 | Supabase Realtime | — | Provider WebSocket service for private OpenComms conversation, own-user and organization-presence topics. Joins use a five-minute purpose-specific FastAPI token and current membership/topic checks; conversation topics additionally require an expiring grant. Other application pages retain SSE. | Internal |
 | Realtime notification | `CommsEvent`, private event envelope | An opaque OpenComms invalidation or transient presence/typing signal, validated for its topic and bound identity. It carries no message body and is not an authoritative content read. | Internal |
 | SSE invalidation | `/api/events`, `platform/events` | Authenticated opaque signal asking a client to refetch authorized application data through FastAPI. It does not include protected row snapshots. | Internal |
@@ -222,10 +222,10 @@ These terms describe how the team fills an installation with realistic organizat
 
 | Term | Also appears as | Meaning |
 | --- | --- | --- |
-| Pre-push gate | `scripts/prepush.py --base <ref>` | The full check set that runs once, right before a push. It selects checks from the changed paths. |
+| Pre-push gate | `scripts/prepush.py --base <ref>` | The full local check set, selected from the changed paths. It runs only on request or when CI is unavailable; CI runs the same checks on every pull request. |
 | Focused test | — | A small test run for the changed files and their direct callers, used while work continues. |
-| Disposable stack | Compose project `openslate-e2e-*` | A temporary Supabase stack that the test runner creates and removes. It is not the development stack. |
-| Development stack | Compose project `openslate-supabase-local-*` | The one owned Supabase stack for daily development in a checkout. Keep it and its volumes. |
+| Disposable stack | Compose project `slateops-e2e-*` | A temporary Supabase stack that the test runner creates and removes. It is not the development stack. |
+| Development stack | Compose project `slateops-supabase-local-*` | The one owned Supabase stack for daily development in a checkout. Keep it and its volumes. |
 | Reset acceptance | `--reset-acceptance-only` | The check that the local application-data reset works on a disposable stack. |
 | `isolated` / `http` / `fullstack` | Playwright projects | Playwright test layers. `isolated` runs without a dev server. `http` runs in a browser against the Next.js dev server. `fullstack` runs against real FastAPI and Supabase through `backend/tests/fullstack_runner.py`. |
 

@@ -241,7 +241,7 @@ test("message reads and ordinary mutations preserve ETags and use only the eight
   );
   Object.defineProperty(globalThis, "document", {
     configurable: true,
-    value: { cookie: "openslate_csrf=owned-test-token" },
+    value: { cookie: "slateops_csrf=owned-test-token" },
   });
   try {
     for (const row of rows) {

@@ -16,7 +16,7 @@ from operations.sample import removal
 
 VALUES = {
     "ENVIRONMENT": "development",
-    "MIGRATION_DATABASE_URL": "postgresql+psycopg://openslate_owner:fixture-only@127.0.0.1:1/x",
+    "MIGRATION_DATABASE_URL": "postgresql+psycopg://slateops_owner:fixture-only@127.0.0.1:1/x",
     "ADMIN_EMAIL": "operator@example.test",
     "SUPABASE_URL": "http://127.0.0.1:58000",
     "SUPABASE_SECRET_KEY": "fixture-only",
@@ -84,7 +84,7 @@ def test_remove_refuses_a_digest_without_execute(
 def test_remove_lists_auth_accounts_of_the_pack_domains_only() -> None:
     accounts = [
         {"id": "0190a000-0000-7000-8000-000000000001", "email": "Admin@School.Test",
-         "app_metadata": {"openslate_user_id": "0190a000-0000-7000-8000-0000000000aa"}},
+         "app_metadata": {"slateops_user_id": "0190a000-0000-7000-8000-0000000000aa"}},
         {"id": "0190a000-0000-7000-8000-000000000002", "email": "admin@harbor.test"},
     ]  # fmt: skip
     auth = Mock()
@@ -92,7 +92,7 @@ def test_remove_lists_auth_accounts_of_the_pack_domains_only() -> None:
 
     listed = removal.list_domain_accounts(auth, frozenset({"school.test"}))
 
-    assert [(str(item.id), item.email, str(item.openslate_user_id)) for item in listed] == [
+    assert [(str(item.id), item.email, str(item.slateops_user_id)) for item in listed] == [
         ("0190a000-0000-7000-8000-000000000001", "admin@school.test",
          "0190a000-0000-7000-8000-0000000000aa"),
     ]  # fmt: skip

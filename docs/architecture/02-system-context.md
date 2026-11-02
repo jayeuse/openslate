@@ -1,6 +1,6 @@
 # System Context
 
-> **Scope:** Actors, Compose services, process boundaries, and trust boundaries for one OpenSlate installation.
+> **Scope:** Actors, Compose services, process boundaries, and trust boundaries for one Slate Operations installation.
 
 The diagram shows the core HTTP, identity and organization-file Storage paths;
 the private Realtime paths are described below.
@@ -11,22 +11,22 @@ flowchart LR
   Browser --> Caddy[Production Caddy ingress]
   Caddy --> API[FastAPI: static UI, API, authorization, and SSE]
   API -->|Email authentication, invitations, recovery, JWKS and provider checks| Auth[Supabase Auth]
-  API -->|OpenSlate data through SQLAlchemy| DB[(Supabase Database: PostgreSQL)]
-  Alembic[Alembic owner connection] -->|OpenSlate schema only| DB
-  API -->|Authorized private object operations| Storage[Supabase Storage: openslate-ready]
+  API -->|Slate Operations data through SQLAlchemy| DB[(Supabase Database: PostgreSQL)]
+  Alembic[Alembic owner connection] -->|Slate Operations schema only| DB
+  API -->|Authorized private object operations| Storage[Supabase Storage: slateops-ready]
   DB -. Opaque invalidation .-> API
   API -->|Authenticated SSE| Browser
   Operator[Local operator] -->|Loopback plus Basic Auth| Studio[Supabase Studio]
   Studio -->|Operator administration| DB
 ```
 
-Each client has a separate self-hosted Compose installation. Supabase owns its Auth, Storage, and other provider schemas and services; OpenSlate uses the same PostgreSQL server for its application schema. Linux is the primary container host, and Windows uses Linux containers through Docker Desktop and WSL2. The Windows path is a selected target whose startup, restart, persistence, and restore acceptance remains pending. macOS remains usable for workstation development but is not a server target.
+Each client has a separate self-hosted Compose installation. Supabase owns its Auth, Storage, and other provider schemas and services; Slate Operations uses the same PostgreSQL server for its application schema. Linux is the primary container host, and Windows uses Linux containers through Docker Desktop and WSL2. The Windows path is a selected target whose startup, restart, persistence, and restore acceptance remains pending. macOS remains usable for workstation development but is not a server target.
 
 In production, Caddy is the public HTTPS ingress with one FastAPI application upstream and a separate Realtime WebSocket route. FastAPI serves the exact static UI export, `/api`, and `/api/events`; production has no Node.js frontend process. The browser does not access application tables or private Storage directly. Content requests pass through FastAPI so it can check local sign-in sessions, organization membership, roles, groups, permissions, file state, and domain-specific authorization before returning data or bytes. Studio replaces the former pgweb console in this Compose topology; it is a separate operator surface, bound to loopback and protected by gateway Basic Auth, with elevated database and provider visibility. It is not part of the application authorization path.
 
-Supabase Auth owns email/password authentication, provider JWT issuance, invitation email, and password recovery. FastAPI verifies the JWT signature, issuer, audience, expiry, subject, and provider session ID against the configured public JWKS. It then resolves the provider subject through an explicit `users.supabase_user_id` binding, checks the local revocable `identity_sessions` row and current local user eligibility, and reads current application authorization state. Provider roles or editable metadata never grant OpenSlate access. Provider session deletion is checked with a narrow read of `auth.sessions`; the `openslate_runtime` role receives only the `id` and `user_id` column reads via the operator-provisioned `openslate_session_liveness` policy for `openslate_app`.
+Supabase Auth owns email/password authentication, provider JWT issuance, invitation email, and password recovery. FastAPI verifies the JWT signature, issuer, audience, expiry, subject, and provider session ID against the configured public JWKS. It then resolves the provider subject through an explicit `users.supabase_user_id` binding, checks the local revocable `identity_sessions` row and current local user eligibility, and reads current application authorization state. Provider roles or editable metadata never grant Slate Operations access. Provider session deletion is checked with a narrow read of `auth.sessions`; the `slateops_runtime` role receives only the `id` and `user_id` column reads via the operator-provisioned `slateops_session_liveness` policy for `slateops_app`.
 
-Browser access tokens and the opaque refresh handle use HttpOnly cookies; state-changing cookie requests require CSRF validation and a permitted Origin. The browser submits email-action token hashes only after an explicit confirmation form. CLI clients use bearer credentials admitted through the same provider and local-session checks. Provider secret keys, database credentials, session-encryption material, Storage keys, and deployment paths stay server-side. Supabase Data API access to OpenSlate application tables is blocked; browser clients do not use a privileged provider key.
+Browser access tokens and the opaque refresh handle use HttpOnly cookies; state-changing cookie requests require CSRF validation and a permitted Origin. The browser submits email-action token hashes only after an explicit confirmation form. CLI clients use bearer credentials admitted through the same provider and local-session checks. Provider secret keys, database credentials, session-encryption material, Storage keys, and deployment paths stay server-side. Supabase Data API access to Slate Operations application tables is blocked; browser clients do not use a privileged provider key.
 
 FastAPI uses direct PostgreSQL connections for application transactions, provider-session liveness and the LISTEN subscriber. Authenticated SSE emits opaque invalidations for other application pages and reauthorizes during the stream. OpenComms uses private Realtime conversation topics backed by FastAPI's expiring access projection, own-user topics and organization presence. Browser subscriptions are read-only; content and presence/typing commands use authorized HTTP routes. Caddy admits the exact-origin `/realtime/v1/websocket` upgrade and injects the gateway key server-side. FastAPI publishes opaque private envelopes through a separate authenticated listener, not the public WebSocket route. See [infrastructure](11-infrastructure.md#events-and-readiness) and [runtime flows](13-runtime-flows.md#opencomms-commands-private-events-and-jobs).
 

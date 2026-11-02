@@ -66,11 +66,11 @@ def test_module_scoped_event_without_its_module_fails_closed_to_administrators(
 
 
 def test_runtime_settings_target_rejects_an_owner_or_different_database() -> None:
-    runtime = "postgresql+psycopg://openslate_runtime:runtime@127.0.0.1:55322/openslate"
+    runtime = "postgresql+psycopg://slateops_runtime:runtime@127.0.0.1:55322/slateops"
 
     with pytest.raises(RuntimeError, match="runner-owned runtime database"):
         _assert_runtime_settings_target(
-            "postgresql+psycopg://openslate_owner:owner@127.0.0.1:55322/openslate",
+            "postgresql+psycopg://slateops_owner:owner@127.0.0.1:55322/slateops",
             runtime,
         )
 

@@ -137,7 +137,7 @@ test("Person card guest DTO omits private keys and nullable member values remain
     bio: null,
   });
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
+    window.dispatchEvent(new Event("slateops:session-recheck")),
   );
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
@@ -333,7 +333,7 @@ test("Person card ignores a late removed target and a late previous-account repl
       email: "second-viewer@example.test",
     });
     await page.evaluate(() =>
-      window.dispatchEvent(new Event("openslate:session-recheck")),
+      window.dispatchEvent(new Event("slateops:session-recheck")),
     );
     await expect(card(page)).toHaveCount(0);
     await expect(

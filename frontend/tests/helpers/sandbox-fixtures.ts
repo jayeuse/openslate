@@ -58,7 +58,7 @@ export function documentSelectField({
 /** Builds a current-format Sandbox document from a Designer fixture. */
 export function sandboxDocumentFromDesign(design: Design): SandboxDocumentV4 {
   const empty: SandboxDocumentV4 = {
-    kind: "openslate-sandbox",
+    kind: "slateops-sandbox",
     schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
     design: { departments: [], modules: [], relationships: [], layout: {} },
     triggers: [],

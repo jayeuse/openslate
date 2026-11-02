@@ -201,7 +201,7 @@ test("the board Kanban keeps its words and structure across looks, framed as the
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       json: {
-        display_name: "OpenSlate",
+        display_name: "Slate Operations",
         mark: "OS",
         logo_file_id: null,
         revision: 1,
@@ -216,7 +216,7 @@ test("the board Kanban keeps its words and structure across looks, framed as the
   );
   // A person who reads at 125% keeps that size on the board (BR66).
   await page.addInitScript(() =>
-    window.localStorage.setItem("openslate-text-size", "125"),
+    window.localStorage.setItem("slateops-text-size", "125"),
   );
   const surface = page.locator('[data-skin="board-surface"]');
   const looks = async () => {

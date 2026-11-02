@@ -59,7 +59,7 @@ def test_create_rejects_stale_documents_full_history_and_invalid_persisted_docum
     assert full_error.value.code == "run_history_full"
 
     invalid = _document_row()
-    invalid.document = {"kind": "openslate-sandbox"}
+    invalid.document = {"kind": "slateops-sandbox"}
     invalid_database = Mock(spec=Session)
     invalid_database.scalar.return_value = invalid
     with pytest.raises(SandboxTestError) as invalid_error:

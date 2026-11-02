@@ -35,8 +35,8 @@ def _login() -> httpx.Response:
         200,
         json={"authenticated": True},
         headers=[
-            ("set-cookie", "openslate_access=opaque; Path=/"),
-            ("set-cookie", "openslate_csrf=csrf; Path=/"),
+            ("set-cookie", "slateops_access=opaque; Path=/"),
+            ("set-cookie", "slateops_csrf=csrf; Path=/"),
         ],
     )
 

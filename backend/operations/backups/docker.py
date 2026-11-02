@@ -35,7 +35,7 @@ def admit_docker(host: Host, values: dict[str, str]) -> None:
     actual_env = by_service["api"].get("Config", {}).get("Env")
     keys = (
         "ENVIRONMENT",
-        "OPENSLATE_INSTANCE_ID",
+        "SLATEOPS_INSTANCE_ID",
         "DATABASE_URL",
         "POSTGRES_HOST",
         "POSTGRES_PORT",

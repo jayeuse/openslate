@@ -17,8 +17,8 @@ from operations.sample.packs.types import RejectionCase
 FORBIDDEN = "Forbidden"
 HIDDEN = "Record not found"
 BAD_CREDENTIALS = "Invalid authentication credentials"
-INVALID_OPTION_KEY = "openslate:clinic:invalid-select-option"
-INVALID_FIELD_KEY = "openslate:clinic:unknown-field"
+INVALID_OPTION_KEY = "slateops:clinic:invalid-select-option"
+INVALID_FIELD_KEY = "slateops:clinic:unknown-field"
 
 ACTIVITY_CASES = (
     RejectionCase(

@@ -295,7 +295,10 @@ test("Comms does not substitute content for unknown or another organization's co
   await createChannel(page);
   const foreignLink = page.url();
   await page
-    .getByRole("button", { name: "Organization: OpenSlate", exact: true })
+    .getByRole("button", {
+      name: "Organization: Slate Operations",
+      exact: true,
+    })
     .click();
   await page.getByRole("menuitem", { name: /Other organization/ }).click();
   await expect(

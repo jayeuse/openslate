@@ -237,10 +237,10 @@ def test_restart_preserves_admitted_ids_and_existing_overlay_labels(tmp_path: Pa
     commands.recreate_on_up = True
     original = {item["Id"] for item in commands.containers}
     for item in commands.containers:
-        item["Config"]["Labels"]["openslate.test.run"] = "owned-extra-overlay"
+        item["Config"]["Labels"]["slateops.test.run"] = "owned-extra-overlay"
     assert execute(config, state, commands)["state"] == "succeeded"
     assert {item["Id"] for item in commands.containers} == original
     assert all(
-        item["Config"]["Labels"]["openslate.test.run"] == "owned-extra-overlay"
+        item["Config"]["Labels"]["slateops.test.run"] == "owned-extra-overlay"
         for item in commands.containers
     )

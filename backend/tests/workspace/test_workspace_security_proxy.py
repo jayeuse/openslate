@@ -92,15 +92,15 @@ def test_workspace_security_resolves_caddy_peer_and_refuses_forged_lockout(
         db.commit()
     base_env = {
         name: os.environ[name]
-        for name in ("PATH", "HOME", "TMPDIR", "OPENSLATE_ENV_SOURCE")
+        for name in ("PATH", "HOME", "TMPDIR", "SLATEOPS_ENV_SOURCE")
         if name in os.environ
     }
     environment = api_environment(
         base_env,
         {"DATABASE_URL": settings.database_url},
         {name: os.environ[name] for name in _PROVIDER_KEYS},
-        run_id=os.environ["OPENSLATE_FULLSTACK_RUN_ID"],
-        database_manifest=Path(os.environ["OPENSLATE_TEST_DATABASE_MANIFEST"]),
+        run_id=os.environ["SLATEOPS_FULLSTACK_RUN_ID"],
+        database_manifest=Path(os.environ["SLATEOPS_TEST_DATABASE_MANIFEST"]),
         private=private,
         public_origin=str(observation["origin"]),
     )
@@ -135,7 +135,7 @@ def test_workspace_security_resolves_caddy_peer_and_refuses_forged_lockout(
                 )
                 gateway = DisposableCaddy(
                     private,
-                    os.environ["OPENSLATE_FULLSTACK_RUN_ID"],
+                    os.environ["SLATEOPS_FULLSTACK_RUN_ID"],
                     base_env,
                     log,
                     native_ipv6=True,
@@ -167,7 +167,7 @@ def test_workspace_security_resolves_caddy_peer_and_refuses_forged_lockout(
                         "/api/auth/login", json={"email": email, "password": password}
                     )
                     assert login.status_code == 200
-                    csrf = client.cookies.get("openslate_csrf")
+                    csrf = client.cookies.get("slateops_csrf")
                     assert csrf
                     client.headers["X-CSRF-Token"] = csrf
                     response = client.get(

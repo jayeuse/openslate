@@ -93,8 +93,8 @@ def _runtime_url() -> str:
         with engine.connect() as connection:
             role = connection.scalar(text("SELECT current_user"))
             connection.rollback()
-        if role != "openslate_runtime":
-            raise RuntimeError("DATABASE_URL must connect as openslate_runtime")
+        if role != "slateops_runtime":
+            raise RuntimeError("DATABASE_URL must connect as slateops_runtime")
     finally:
         engine.dispose()
     return runtime_url

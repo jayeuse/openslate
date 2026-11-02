@@ -79,7 +79,7 @@ PACK = OrganizationPack(
         timezone="Europe/London",
         currency_symbol="£",
         email_domain=people.INTERNAL_DOMAIN,
-        uuid_namespace="openslate:willowmere-school:v1",
+        uuid_namespace="slateops:willowmere-school:v1",
         span="one grading period; 10 teaching weeks",
         sampling_scope="attendance exceptions and school operations; no individual scores",
     ),

@@ -162,7 +162,7 @@ for (const first of ["current", "new"] as const) {
     ).toEqual([{ method: "POST", body: { token_hash: firstProof } }]);
     expect(
       (await context.cookies()).filter(({ name }) =>
-        /^openslate_(access|refresh)$/.test(name),
+        /^slateops_(access|refresh)$/.test(name),
       ),
     ).toEqual([]);
     await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
@@ -211,12 +211,12 @@ for (const credential of ["access", "refresh"] as const) {
     };
     await context.addCookies([
       {
-        name: `openslate_${credential}`,
+        name: `slateops_${credential}`,
         value: "owned-existing-session",
         url: baseURL,
         httpOnly: true,
       },
-      { name: "openslate_csrf", value: "owned-csrf", url: baseURL },
+      { name: "slateops_csrf", value: "owned-csrf", url: baseURL },
     ]);
     await page.goto(
       `${emailChangeLanding}#token_hash=${currentEmailProof}&type=email_change`,
@@ -240,7 +240,7 @@ for (const credential of ["access", "refresh"] as const) {
     await confirm(page).click();
     await expect(partial(page)).toBeVisible();
     expect(api.completions.at(-1)?.headers.cookie ?? "").not.toMatch(
-      /openslate_(access|refresh)=/,
+      /slateops_(access|refresh)=/,
     );
     expect(api.completions.at(-1)?.body).toEqual({
       token_hash: currentEmailProof,
@@ -324,7 +324,7 @@ test("provider-confirmed local conflict is application-incomplete, not rollback 
   await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
   expect(
     (await context.cookies()).filter(({ name }) =>
-      /^openslate_(access|refresh)$/.test(name),
+      /^slateops_(access|refresh)$/.test(name),
     ),
   ).toEqual([]);
   expect(api.completions).toHaveLength(1);

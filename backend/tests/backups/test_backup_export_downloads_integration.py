@@ -28,7 +28,7 @@ def test_cookie_password_admission_is_private_bounded_and_native_get_consumes_on
     cookie = response.headers["set-cookie"]
     assert "HttpOnly" in cookie and "SameSite=strict" in cookie
     assert f"Path={world.path}/content" in cookie and "Domain=" not in cookie
-    handle = world.auth.client.cookies.get("openslate_export_admission")
+    handle = world.auth.client.cookies.get("slateops_export_admission")
     assert handle and handle not in response.text
     row, events = stored_export(world)
     assert row.admission_digest == hashlib.sha256(handle.encode()).hexdigest()
@@ -48,7 +48,7 @@ def test_cookie_password_admission_is_private_bounded_and_native_get_consumes_on
         sent.headers["accept-ranges"] == "none"
         and sent.headers["x-content-type-options"] == "nosniff"
     )
-    assert f"openslate-backup-export-{world.export_id}.tar" in sent.headers["content-disposition"]
+    assert f"slateops-backup-export-{world.export_id}.tar" in sent.headers["content-disposition"]
     row, events = stored_export(world)
     assert (
         row.admission_digest
@@ -202,13 +202,13 @@ def test_preparation_rechecks_authority_and_streams_only_retained_descriptor(
         return value
 
     monkeypatch.setattr(downloads, "prepare_artifact", prepared)
-    cookie = world.auth.client.cookies.get("openslate_export_admission")
-    access_cookie = f"openslate_access={world.auth.access()}"
+    cookie = world.auth.client.cookies.get("slateops_export_admission")
+    access_cookie = f"slateops_access={world.auth.access()}"
     response = world.auth.client.get(
         world.path + "/content",
         headers={
             **world.native_headers,
-            "Cookie": f"{access_cookie}; openslate_export_admission={cookie}",
+            "Cookie": f"{access_cookie}; slateops_export_admission={cookie}",
         },
     )
     assert (

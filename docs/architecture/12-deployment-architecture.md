@@ -17,17 +17,17 @@
 | --- | --- | --- |
 | Development provider stack | Implemented | Pinned Supabase Compose base and development overlay; `scripts/dev.py` and `scripts/environment.py` guard the project, environment, image, and owned database resources. FastAPI and Next development server remain host-run. |
 | Production Compose definition | Implemented artifacts | Provider base plus production overlay define PostgreSQL, Auth, Storage, Studio, metadata/API gateway, the unified FastAPI/static UI image, and Caddy. Per-client paths, secrets, images, and TLS must be supplied by the operator. |
-| Application data and identity | Implemented paths | SQLAlchemy/Alembic own OpenSlate schema. Supabase Auth authenticates; FastAPI resolves the explicitly bound application profile and authorizes requests. Private Storage uses the `openslate-ready` bucket through the server-side API. |
+| Application data and identity | Implemented paths | SQLAlchemy/Alembic own Slate Operations schema. Supabase Auth authenticates; FastAPI resolves the explicitly bound application profile and authorizes requests. Private Storage uses the `slateops-ready` bucket through the server-side API. |
 | Linux server operation | Partially implemented | The Compose path is checked in. A production Compose rehearsal using Linux containers on macOS Docker Desktop exercised TLS, bounded readiness, five-volume restore, target session finalization, authorization, file access, and service restart. Native Linux host installation, boot/reboot, retention, and general customer acceptance remain separate requirements. |
 | Windows server operation | Pending | The intended host uses Docker Desktop/WSL2 with Linux containers. A Windows host has not completed startup, reboot, persistent-volume, or restore acceptance. Linux-container evidence from another operating system does not prove this path. |
 | macOS server | Not a target | macOS remains available for development. It is not a supported customer server target. |
 | Hosted application or managed Supabase deployment | Future, separate target | No registry, hosted service, customer provisioning, DNS/TLS control plane, managed database, or deployment workflow is implemented. A self-hosted installation can hold several organizations, isolated by membership checks and row-level security. It is not a hosted service; the Supabase Cloud target is Phase 3 work. |
-| Native installer or service manager | Development artifacts only | `native-manager.yml` builds unsigned OpenSlate Manager shells for macOS and Windows as 7-day CI artifacts. They are not a supported installer: no signed release, OS service registration, or bundled database runtime is part of the selected Compose-first approach. |
+| Native installer or service manager | Development artifacts only | `native-manager.yml` builds unsigned Slate Operations Manager shells for macOS and Windows as 7-day CI artifacts. They are not a supported installer: no signed release, OS service registration, or bundled database runtime is part of the selected Compose-first approach. |
 | CI deployment | Absent | The GitHub workflows verify code and build the unified server image with `push: false`; they do not publish or deploy it. |
 
 ## Per-client Compose installation
 
-Each client receives an isolated Compose project with its own `OPENSLATE_INSTANCE_ID`, provider and application credentials, named volumes, internal networks, host paths, and public origin. `infra/supabase/compose.yaml` pins the provider services. `compose.dev.yaml` adds loopback development ports and Mailpit. `compose.production.yaml` adds the OpenSlate application and Caddy.
+Each client receives an isolated Compose project with its own `SLATEOPS_INSTANCE_ID`, provider and application credentials, named volumes, internal networks, host paths, and public origin. `infra/supabase/compose.yaml` pins the provider services. `compose.dev.yaml` adds loopback development ports and Mailpit. `compose.production.yaml` adds the Slate Operations application and Caddy.
 
 Development uses the root owner-only `.env` and the wrapper `./scripts/dev.py db`. The wrapper selects the pinned development Compose files, project name, and minimal process environment. FastAPI connects directly to the admitted database runtime role; Alembic uses its owner connection. The host-run Next development server proxies `/api` to FastAPI. Supabase Studio is reached through the loopback gateway and operator authentication; pgweb and the inspector role are no longer part of the topology.
 
@@ -36,8 +36,8 @@ Production uses separate owner-only provider and application environment files. 
 The production path keeps three distinct credentials and schema responsibilities:
 
 - `DATABASE_BOOTSTRAP_URL` uses `supabase_admin` for guarded role provisioning.
-- `MIGRATION_DATABASE_URL` uses `openslate_owner` for application Alembic migrations.
-- `DATABASE_URL` uses `openslate_runtime` for normal application queries, including in-process workers.
+- `MIGRATION_DATABASE_URL` uses `slateops_owner` for application Alembic migrations.
+- `DATABASE_URL` uses `slateops_runtime` for normal application queries, including in-process workers.
 
 A fresh installation explicitly provisions roles, applies the current Alembic head, checks for drift, and creates the private Storage bucket before bootstrapping the first administrator by email invitation. Compose container health alone does not prove these application contracts. `README.md` documents the production app environment, image tags, logs, and Caddy/TLS inputs; [`Configuration`](17-configuration.md) describes their ownership.
 
@@ -49,7 +49,7 @@ Persistent volumes and restart policies alone do not establish safe reboot recov
 
 ## Identity and authorization at deployment
 
-Supabase Auth sends invitation and recovery email through the configured provider SMTP service. OpenSlate retains application profiles, session listing and revocation, invitation eligibility, roles, groups, and resource authorization in its own database. A provider account or provider metadata alone does not grant application access. The production API environment receives only the application runtime values they need; provider bootstrap, Auth private signing material, Studio credentials, and SMTP credentials stay in the provider environment.
+Supabase Auth sends invitation and recovery email through the configured provider SMTP service. Slate Operations retains application profiles, session listing and revocation, invitation eligibility, roles, groups, and resource authorization in its own database. A provider account or provider metadata alone does not grant application access. The production API environment receives only the application runtime values they need; provider bootstrap, Auth private signing material, Studio credentials, and SMTP credentials stay in the provider environment.
 
 This is a per-installation identity and access model. There is no account import, local-password compatibility mode, or seamless session migration in the fresh-start scope. Existing data volumes are not automatically deleted by startup commands.
 
@@ -61,7 +61,7 @@ The Compose files and adapters are implementation artifacts, not a declaration t
 
 1. A fresh isolated provider project, roles, Alembic schema, private bucket, and email invitation.
 2. API and frontend access through the intended Caddy origin, with PostgreSQL and internal provider services unreachable from the client network.
-3. Login, current OpenSlate role/group authorization, session revocation, invitation, recovery, and provider-outage behavior.
+3. Login, current Slate Operations role/group authorization, session revocation, invitation, recovery, and provider-outage behavior.
 4. File-type validation, private ready object, authorized download, and safe behavior on Storage failure.
 5. Reboot recovery with the documented Linux or Windows host/container mode.
 6. Encrypted backup and restore to a new project and instance ID, with application sessions invalidated and the target admitted before ingress opens.
@@ -72,10 +72,10 @@ Windows acceptance is explicitly pending until a Windows host is available. A Li
 
 The version 3 backup command creates an offline encrypted Restic snapshot of a stopped installation. It packages the physical PostgreSQL and Supabase volumes, pinned image and volume manifest, Compose source files, provider environment, and—on production—application environment, Caddy configuration, TLS files, and Caddy data volume. Development backups contain the four provider volumes; production also includes `caddy-data`. Restic verification and restored-manifest integrity are required before a completion marker is published.
 
-Restore requires the full snapshot ID, a new Compose project, a new `OPENSLATE_INSTANCE_ID`, a fresh target directory, and exact interactive confirmation. It refuses existing target resources and validates the source manifest, files, tar archives, image IDs, and matching release Compose files before volume import. Keep ingress closed while the target configuration is rebound. Start only the isolated target database for finalization; the finalizer checks its actual target volumes, internal-only network, pinned image, `cluster_name`, and session postcondition before writing the finalized marker. OpenSlate application sessions are invalidated so users must establish fresh application sessions. Start the remaining provider services, API, and Caddy only through the staged sequence in [`infra/supabase/RESTORE.md`](../../infra/supabase/RESTORE.md).
+Restore requires the full snapshot ID, a new Compose project, a new `SLATEOPS_INSTANCE_ID`, a fresh target directory, and exact interactive confirmation. It refuses existing target resources and validates the source manifest, files, tar archives, image IDs, and matching release Compose files before volume import. Keep ingress closed while the target configuration is rebound. Start only the isolated target database for finalization; the finalizer checks its actual target volumes, internal-only network, pinned image, `cluster_name`, and session postcondition before writing the finalized marker. Slate Operations application sessions are invalidated so users must establish fresh application sessions. Start the remaining provider services, API, and Caddy only through the staged sequence in [`infra/supabase/RESTORE.md`](../../infra/supabase/RESTORE.md).
 
 Do not run restore against an existing client project or use `docker compose down -v` as cleanup. Retention and off-host Restic repository policy remain operator responsibilities; no scheduled backup service is checked in. The guarded five-volume restore has been exercised with a separate target using Linux containers on macOS Docker Desktop. Native Linux host boot/reboot acceptance and Windows restore acceptance remain pending.
 
 ## Hosted deployment remains separate
 
-A future hosted OpenSlate service could run a version of this application, but it needs its own hosting, tenancy, operational ownership, backup, identity, secret delivery, and release decisions. None of those controls follows from deploying a self-hosted Supabase Compose stack. One installation already holds several organizations, but self-serve signup, plans, and the Cloud target are Phase 3 work. No managed Supabase project, hosted deployment trigger, or image publisher is represented as implemented here.
+A future hosted Slate Operations service could run a version of this application, but it needs its own hosting, tenancy, operational ownership, backup, identity, secret delivery, and release decisions. None of those controls follows from deploying a self-hosted Supabase Compose stack. One installation already holds several organizations, but self-serve signup, plans, and the Cloud target are Phase 3 work. No managed Supabase project, hosted deployment trigger, or image publisher is represented as implemented here.

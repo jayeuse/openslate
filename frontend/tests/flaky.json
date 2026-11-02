@@ -1,4 +1,19 @@
 {
   "$comment": "Tests that may pass only on their CI retry (docs/plans/ci-stability.md D1). Each entry: test ('<file> › <describe…> › <title>' as the CI flaky summary prints it), owner, added and expires (ISO dates, at most 14 days apart), and reason. Fix the cause and remove the entry before it expires.",
-  "tests": []
+  "tests": [
+    {
+      "test": "http/access-people.spec.ts › the access panel names the level and its groups, full access for administrators, and the guest limit",
+      "owner": "Claude (found on PR #84)",
+      "added": "2026-11-02",
+      "expires": "2026-11-16",
+      "reason": "First CI attempt saw an empty 'Access by department' list in Ben Cruz's dialog (toHaveCount 1, received 0) and the retry passed. The PR does not touch this spec or the Access panel; it passed in the full local run. Find the race and remove this entry."
+    },
+    {
+      "test": "http/access-security-events.spec.ts › Events a policy refusal conceals a cached feed on revisit until its own fresh Retry",
+      "owner": "Claude (found on PR #84)",
+      "added": "2026-11-02",
+      "expires": "2026-11-16",
+      "reason": "First CI attempt ended on /manage?view=audit&audit=security-events instead of /access?view=security; the retry passed. The same shard passed on the previous CI run of the same code. Find the navigation race and remove this entry."
+    }
+  ]
 }

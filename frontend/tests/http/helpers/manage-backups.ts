@@ -368,13 +368,13 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
   const csrf = "synthetic-export-csrf";
   await page.context().addCookies([
     {
-      name: "openslate_csrf",
+      name: "slateops_csrf",
       value: csrf,
       url: origin,
       sameSite: "Strict",
     },
     {
-      name: "openslate_access",
+      name: "slateops_access",
       value: "synthetic-export-session",
       url: origin,
       httpOnly: true,
@@ -735,7 +735,7 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
         headers: {
           "Cache-Control": "no-store",
           "Set-Cookie":
-            "openslate_export_admission=" +
+            "slateops_export_admission=" +
             handle +
             "; HttpOnly; SameSite=Strict; Path=" +
             path +
@@ -752,7 +752,7 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
   if (target.protocol !== "http:")
     throw new Error("The synthetic native content fixture requires HTTP.");
   const admissionCookie = (value: string | undefined) =>
-    value?.match(/(?:^|;\s*)openslate_export_admission=([^;]+)/)?.[1];
+    value?.match(/(?:^|;\s*)slateops_export_admission=([^;]+)/)?.[1];
   const contentServer = createServer((request, response) => {
     const path = new URL(request.url ?? "/", origin).pathname;
     const id = path.split("/").at(-2)!;
@@ -846,7 +846,7 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
     response.writeHead(200, {
       "Content-Type": "application/octet-stream",
       "Content-Disposition":
-        'attachment; filename="openslate-backup-export-' + id + '.tar"',
+        'attachment; filename="slateops-backup-export-' + id + '.tar"',
       "Content-Length": String(exportFixtureBytes.byteLength),
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",

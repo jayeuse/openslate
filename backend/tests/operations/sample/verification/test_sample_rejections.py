@@ -120,7 +120,7 @@ def test_stale_post_edit_reads_the_published_post_and_sends_its_previous_revisio
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
             return httpx.Response(
-                200, json={}, headers=[("set-cookie", "openslate_csrf=c; Path=/")]
+                200, json={}, headers=[("set-cookie", "slateops_csrf=c; Path=/")]
             )
         if request.method == "GET" and request.url.path == f"/api/boards/{board_id}":
             return httpx.Response(200, json={"id": board_id, "revision": 7})

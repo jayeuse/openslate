@@ -42,7 +42,7 @@ def test_primary_partner_jobs_with_real_password_storage_and_background_executio
         for index, role in ((0, "admin"), (1, "member")):
             create_member(db, org, role, user=db.get(User, room.people[index].id))
         db.commit()
-    directory = Path("test-results/s23/native") / os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+    directory = Path("test-results/s23/native") / os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     directory.mkdir(parents=True, exist_ok=True)
     journal = directory / "requests.jsonl"
 
@@ -157,7 +157,7 @@ def test_native_schedule_timestamp_serialization_preserves_microseconds(native_r
             "edit_json_text": edited.content.decode(),
             "read_json_text": fetched.content.decode(),
         })
-    directory = Path("test-results/s23/timestamps") / os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+    directory = Path("test-results/s23/timestamps") / os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     directory.mkdir(parents=True, exist_ok=True)
     # Owned synthetic request/resource JSON only; never request/response auth headers or secrets.
     (directory / "serialized.json").write_text(json.dumps(evidence, indent=2) + "\n")

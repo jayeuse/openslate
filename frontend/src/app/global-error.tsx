@@ -9,11 +9,11 @@ export default function GlobalError({
   return (
     <html lang="en">
       <head>
-        <title>OpenSlate — Application error</title>
+        <title>Slate Operations — Application error</title>
       </head>
       <body>
         <main>
-          <h1>OpenSlate could not load this page.</h1>
+          <h1>Slate Operations could not load this page.</h1>
           <p>
             Something went wrong while loading the application. Try again or
             return to the homepage.

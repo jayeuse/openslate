@@ -54,8 +54,8 @@ def test_content_sample_uses_owned_bindings_and_real_files_without_cross_org_cat
                 200,
                 json={"authenticated": True},
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
             )
         response = api.request(

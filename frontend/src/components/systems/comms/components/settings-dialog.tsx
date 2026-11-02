@@ -769,7 +769,7 @@ function LoadedCommsSettingsDialog({
     <SettingsAdvanced
       searching={!!search}
       key={`${personal ? "personal" : target.kind}:${search ? "search" : section}`}
-      storageKey={`openslate:comms:advanced:${client?.context.org_id}:${userId}:${personal ? "personal" : target.kind}:${search ? "search" : section}`}
+      storageKey={`slateops:comms:advanced:${client?.context.org_id}:${userId}:${personal ? "personal" : target.kind}:${search ? "search" : section}`}
       count={
         advancedCount +
         (!personal && (section === "permissions" || search)

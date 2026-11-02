@@ -38,8 +38,8 @@ SESSION = {
 }
 USER = {"id": str(USER_ID)}
 MARKERS = {
-    "openslate_user_id": str(LOCAL_ID),
-    "openslate_invitation_operation_id": str(OPERATION_ID),
+    "slateops_user_id": str(LOCAL_ID),
+    "slateops_invitation_operation_id": str(OPERATION_ID),
 }
 PUBLISHABLE, SECRET = "sb_publishable_test", "sb_secret_test"
 TIMEOUT = {"connect": 2.0, "read": 2.0, "write": 2.0, "pool": 2.0}

@@ -222,7 +222,7 @@ test("automatic saves fold into one row per day, and Show lists them as Automati
   expect(
     await page.evaluate(
       (key) => window.localStorage.getItem(key),
-      `openslate:sandbox.history.automatic-saves:${defaultSignedInIdentity.id}`,
+      `slateops:sandbox.history.automatic-saves:${defaultSignedInIdentity.id}`,
     ),
   ).toBe("shown");
   await timeline
@@ -243,7 +243,7 @@ test("a search shows the automatic saves it finds, and each opens its detail", a
   // Another viewer's choice to list them does not apply to this one.
   await page.addInitScript(() =>
     window.localStorage.setItem(
-      "openslate:sandbox.history.automatic-saves:00000000-0000-4000-8000-0000000000ff",
+      "slateops:sandbox.history.automatic-saves:00000000-0000-4000-8000-0000000000ff",
       "shown",
     ),
   );
@@ -449,7 +449,7 @@ test("on a phone, the list opens one version's detail with a back link", async (
 
 test("Delete version sits in Advanced in danger ink", async ({ page }) => {
   await page.addInitScript(() =>
-    window.localStorage.setItem("openslate:advanced:sandbox.version", "open"),
+    window.localStorage.setItem("slateops:advanced:sandbox.version", "open"),
   );
   await openAuthenticatedSandbox(page, configuredSandboxDesign, {
     versions: [
@@ -524,7 +524,7 @@ test("after a delete, Compare preselects the opened version's own pair", async (
     return route.fulfill({ status: 204 });
   });
   await page.addInitScript(() =>
-    window.localStorage.setItem("openslate:advanced:sandbox.version", "open"),
+    window.localStorage.setItem("slateops:advanced:sandbox.version", "open"),
   );
   await page.goto("/sandbox?section=history");
   const { timeline, inspector } = historyRegions(page);

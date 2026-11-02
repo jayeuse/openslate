@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: openslate-mutation
+  group: slateops-mutation
   cancel-in-progress: false
 
 permissions:

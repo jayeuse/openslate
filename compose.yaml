@@ -14,8 +14,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      OPENSLATE_REALTIME_UPSTREAM: host.docker.internal:${SUPABASE_API_PORT:-58000}
-      OPENSLATE_REALTIME_PUBLIC_PORT: ${GATEWAY_PORT:-3448}
+      SLATEOPS_REALTIME_UPSTREAM: host.docker.internal:${SUPABASE_API_PORT:-58000}
+      SLATEOPS_REALTIME_PUBLIC_PORT: ${GATEWAY_PORT:-3448}
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Generate the publishable gateway key}
     volumes:
       - type: bind

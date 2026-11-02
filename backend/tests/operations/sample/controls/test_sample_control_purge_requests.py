@@ -126,7 +126,7 @@ def test_purge_executor_uses_bound_preview_and_proves_disposal_without_private_v
     else:
         assert wire.board["id"] == BOARD_ID and wire.board["revision"] > 7
     purge = next(request for request in wire.seen if request.url.path == wire.path + "/purge")
-    assert "openslate_access=admin" in purge.headers["cookie"]
+    assert "slateops_access=admin" in purge.headers["cookie"]
     assert not any(
         request.method == "DELETE" and "/events/" in request.url.path for request in wire.seen
     )
@@ -254,7 +254,7 @@ def test_board_copy_purge_submits_preview_name_and_rejects_unbound_preview(
         if request.url.path == "/api/auth/login":
             return httpx.Response(
                 200,
-                headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"},
+                headers={"Set-Cookie": "slateops_csrf=fixture; Path=/"},
                 json={"ok": True},
             )
         seen.append(request)

@@ -42,7 +42,7 @@ def test_primary_partner_notification_samples_and_user_topic_delivery(native_roo
     })
     assert response.status_code == 201
     partner_conversation = response.json()["id"]
-    directory = Path("test-results/s21/native") / os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+    directory = Path("test-results/s21/native") / os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     directory.mkdir(parents=True, exist_ok=True)
     journal = directory / "requests.jsonl"
     with ExitStack() as stack:

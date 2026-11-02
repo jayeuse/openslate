@@ -97,8 +97,8 @@ import {
 } from "@/lib/auth-api";
 import { ApiError } from "@/lib/api";
 
-const SIDEBAR_COLLAPSED_KEY = "openslate-sidebar-collapsed";
-const SIDEBAR_WIDTH_KEY = "openslate-sidebar-width";
+const SIDEBAR_COLLAPSED_KEY = "slateops-sidebar-collapsed";
+const SIDEBAR_WIDTH_KEY = "slateops-sidebar-width";
 const SIDEBAR_DEFAULT_WIDTH = 240;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 360;
@@ -516,23 +516,25 @@ export function AppShell({
               finalFocus={() => navigationReturnFocus.current}
               className="flex h-full w-72 max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0"
             >
-              <SheetTitle className="sr-only">OpenSlate navigation</SheetTitle>
+              <SheetTitle className="sr-only">
+                Slate Operations navigation
+              </SheetTitle>
               <div className="flex min-h-15 shrink-0 items-center justify-between gap-1 border-b px-2 py-1">
                 <GuardedWorkspaceLink
                   href={"/openview" as Route}
-                  aria-label={`${brand?.display_name ?? "OpenSlate"} workspace`}
+                  aria-label={`${brand?.display_name ?? "Slate Operations"} workspace`}
                   onAcceptedNavigate={closeMobileNavigation}
                   className="flex size-11 shrink-0 items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
                 >
                   <WorkspaceLogo
                     blob={logoBlob}
-                    name={brand?.display_name ?? "OpenSlate"}
-                    mark={brand?.mark ?? "OS"}
+                    name={brand?.display_name ?? "Slate Operations"}
+                    mark={brand?.mark ?? "SO"}
                     hidden={suspended || brandDenied}
                   />
                 </GuardedWorkspaceLink>
                 <OrganizationMenu
-                  name={brand?.display_name ?? "OpenSlate"}
+                  name={brand?.display_name ?? "Slate Operations"}
                   organizationId={organizationId}
                   onSwitchOrganization={onSwitchOrganization}
                   onAccepted={closeMobileNavigation}
@@ -647,13 +649,13 @@ function AppSidebarHeader({
   failed: boolean;
   onRetry: () => void;
 }) {
-  const name = brand?.display_name ?? "OpenSlate";
+  const name = brand?.display_name ?? "Slate Operations";
   const toggleLabel = collapsed ? "Expand sidebar" : "Collapse sidebar";
   const logo = (
     <WorkspaceLogo
       blob={blob}
       name={name}
-      mark={brand?.mark ?? "OS"}
+      mark={brand?.mark ?? "SO"}
       hidden={concealed}
       // 9px holds a three-letter mark ("HOG") in 24px; the 12px badge size
       // clips it by 2px, and no smaller type token exists (PD65).

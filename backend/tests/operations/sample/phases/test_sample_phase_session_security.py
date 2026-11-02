@@ -72,7 +72,7 @@ def test_real_session_revocation_security_evidence_is_required_and_bound(
         requests.append((request.method, path))
         if path == "/api/auth/login":
             return httpx.Response(
-                200, headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"}, json={"ok": True}
+                200, headers={"Set-Cookie": "slateops_csrf=fixture; Path=/"}, json={"ok": True}
             )
         if not verifying and request.method == "GET" and path == "/api/auth/sessions":
             return httpx.Response(

@@ -61,17 +61,17 @@ def runner_config(tmp_path: Path, *, deployment: str = "production") -> tuple[Pa
     private_file(tmp_path / "tls" / "certificate", "synthetic certificate")
     provider = private_file(
         tmp_path / "provider.env",
-        "OPENSLATE_INSTANCE_ID=client-a\n"
-        f"OPENSLATE_BACKUP_EXPORT_ROOT={tmp_path / 'backup-exports'}\n"
-        f"OPENSLATE_LOG_ROOT={tmp_path / 'logs'}\n",
+        "SLATEOPS_INSTANCE_ID=client-a\n"
+        f"SLATEOPS_BACKUP_EXPORT_ROOT={tmp_path / 'backup-exports'}\n"
+        f"SLATEOPS_LOG_ROOT={tmp_path / 'logs'}\n",
     )
     app = private_file(
         tmp_path / "app.env",
-        "ENVIRONMENT=production\nOPENSLATE_INSTANCE_ID=client-a\n"
+        "ENVIRONMENT=production\nSLATEOPS_INSTANCE_ID=client-a\n"
         "POSTGRES_HOST=db\nPOSTGRES_PORT=5432\nPOSTGRES_DATABASE=postgres\n"
-        "DATABASE_URL=postgresql://openslate_runtime:synthetic@db:5432/postgres\n"
+        "DATABASE_URL=postgresql://slateops_runtime:synthetic@db:5432/postgres\n"
         "PUBLIC_ORIGIN=https://example.invalid\n"
-        "BACKUP_EXPORT_ROOT=/var/lib/openslate/backup-exports\n",
+        "BACKUP_EXPORT_ROOT=/var/lib/slateops/backup-exports\n",
     )
     caddy = private_file(tmp_path / "Caddyfile", "synthetic caddy configuration")
     password = private_file(tmp_path / "password", "synthetic test password")
@@ -193,13 +193,13 @@ class SyntheticCommands:
                 },
                 "Env": [
                     "ENVIRONMENT=production",
-                    "OPENSLATE_INSTANCE_ID=client-a",
+                    "SLATEOPS_INSTANCE_ID=client-a",
                     "POSTGRES_HOST=db",
                     "POSTGRES_PORT=5432",
                     "POSTGRES_DATABASE=postgres",
-                    "DATABASE_URL=postgresql://openslate_runtime:synthetic@db:5432/postgres",
+                    "DATABASE_URL=postgresql://slateops_runtime:synthetic@db:5432/postgres",
                     "PUBLIC_ORIGIN=https://example.invalid",
-                    "BACKUP_EXPORT_ROOT=/var/lib/openslate/backup-exports",
+                    "BACKUP_EXPORT_ROOT=/var/lib/slateops/backup-exports",
                 ],
             },
             "State": {
@@ -220,7 +220,7 @@ class SyntheticCommands:
                     {
                         "Type": "bind",
                         "Source": str(Path(self.config["restic_repository"]).parent / "logs"),
-                        "Destination": "/var/log/openslate",
+                        "Destination": "/var/log/slateops",
                         "RW": True,
                     },
                     {
@@ -228,7 +228,7 @@ class SyntheticCommands:
                         "Source": str(
                             Path(self.config["restic_repository"]).parent / "backup-exports"
                         ),
-                        "Destination": "/var/lib/openslate/backup-exports",
+                        "Destination": "/var/lib/slateops/backup-exports",
                         "RW": False,
                     },
                 ]
@@ -319,7 +319,7 @@ class SyntheticCommands:
                     }
                     if "up" in args and self.recreate_on_up:
                         item["Id"] = hashlib.sha256((item["Id"] + "recreated").encode()).hexdigest()
-                        item["Config"]["Labels"].pop("openslate.test.run", None)
+                        item["Config"]["Labels"].pop("slateops.test.run", None)
             return self.result(args, b"")
         if args[:2] == ["docker", "start"]:
             for item in self.containers:

@@ -212,12 +212,12 @@ def test_global_email_request_does_not_depend_on_organization_policy(
 @pytest.mark.parametrize(
     "credentials",
     [
-        {"Cookie": "openslate_access=foreign"},
-        {"Cookie": "openslate_refresh=foreign"},
-        {"Cookie": "openslate_access="},
+        {"Cookie": "slateops_access=foreign"},
+        {"Cookie": "slateops_refresh=foreign"},
+        {"Cookie": "slateops_access="},
         {"Authorization": "Bearer foreign"},
         {"Authorization": "Basic ambiguous"},
-        {"Cookie": "openslate_access=foreign", "Authorization": "Bearer foreign"},
+        {"Cookie": "slateops_access=foreign", "Authorization": "Bearer foreign"},
     ],
 )
 def test_confirmation_refuses_credentials_before_consuming_hash(email_boundary, credentials):
@@ -256,7 +256,7 @@ def test_final_confirmation_synchronizes_current_email_and_commits_before_cookie
         "setup_required": False,
     }
     assert committed == ["new@example.test"]
-    assert "openslate_access" in browser.cookies
+    assert "slateops_access" in browser.cookies
     assert [(e.event_type, e.outcome.value) for e in state["events"]] == [
         ("identity.email_change_confirmed", "success")
     ]

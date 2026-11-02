@@ -135,7 +135,7 @@ def test_a_followup_waits_for_the_flag_and_stops_if_it_does_not_arrive(
     def handler(request):
         nonlocal parent_id, polls
         if request.url.path == "/api/auth/login":
-            return httpx.Response(200, json={}, headers={"set-cookie": "openslate_csrf=c; Path=/"})
+            return httpx.Response(200, json={}, headers={"set-cookie": "slateops_csrf=c; Path=/"})
         body = json.loads(request.content) if request.content else {}
         if request.method == "POST" and request.url.path == "/api/records":
             if body["module_id"] == dataset.module_ids["updates"]:

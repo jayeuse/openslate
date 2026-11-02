@@ -141,7 +141,7 @@ _provider_instance_module._docker_json = _memoized_docker_json
 
 if os.getenv("TEST_DATABASE_URL") is None and os.getenv("E2E_ALLOW_MUTATIONS") != "true":
     os.environ.update(settings_environment())
-    os.environ["OPENSLATE_ENV_SOURCE"] = "process"
+    os.environ["SLATEOPS_ENV_SOURCE"] = "process"
 
 
 # Live Docker ownership verified by the test fixtures, per process (see _guard_for_test).
@@ -152,9 +152,9 @@ def _guard_integration_database(database_url: str, ownership_cache=None) -> None
     """Allow integration tests to touch only the runner-owned PostgreSQL database."""
 
     if database_url == os.getenv("TEST_DATABASE_URL"):
-        roles = frozenset({"openslate_runtime"})
+        roles = frozenset({"slateops_runtime"})
     elif database_url == os.getenv("MIGRATION_DATABASE_URL"):
-        roles = frozenset({"openslate_owner"})
+        roles = frozenset({"slateops_owner"})
     else:
         assert_runner_database_url(database_url, ownership_cache=ownership_cache)
         return
@@ -232,13 +232,13 @@ def _guard_direct_database_tests(request):
 
 
 def pytest_collection_modifyitems(session, config, items):
-    if os.getenv("OPENSLATE_REQUIRE_DATABASE_TESTS") == "true":
+    if os.getenv("SLATEOPS_REQUIRE_DATABASE_TESTS") == "true":
         _guard_integration_database(os.getenv("TEST_DATABASE_URL", ""))
         _guard_integration_database(os.getenv("MIGRATION_DATABASE_URL", ""))
 
 
 def pytest_sessionfinish(session, exitstatus):
-    if os.getenv("OPENSLATE_REQUIRE_DATABASE_TESTS") == "true":
+    if os.getenv("SLATEOPS_REQUIRE_DATABASE_TESTS") == "true":
         reporter = session.config.pluginmanager.get_plugin("terminalreporter")
         if reporter and reporter.stats.get("skipped"):
             session.exitstatus = pytest.ExitCode.TESTS_FAILED

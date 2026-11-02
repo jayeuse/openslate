@@ -146,9 +146,9 @@ def test_private_claim_reply_over_16k_refuses_valid_json_without_journaling_secr
             for item in commands.containers
             if item["Config"]["Labels"]["com.docker.compose.service"] == "api"
         )
-        logs = next(item for item in api["Mounts"] if item["Destination"] == "/var/log/openslate")
+        logs = next(item for item in api["Mounts"] if item["Destination"] == "/var/log/slateops")
         if log_fault == "volume":
-            logs.update(Type="volume", Name="client-a_openslate-logs")
+            logs.update(Type="volume", Name="client-a_slateops-logs")
         elif log_fault == "readonly":
             logs["RW"] = False
         else:

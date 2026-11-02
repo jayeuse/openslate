@@ -2,7 +2,7 @@
 
 > **Scope:** Static Next.js interface, browser session behavior, and current persistence boundaries.
 
-Next.js 16 and React 19 build the OpenSlate interface as a static export. In
+Next.js 16 and React 19 build the Slate Operations interface as a static export. In
 daily development, `next dev` is the direct browser origin and its
 development-only `/api` proxy reaches loopback FastAPI. Production uses neither
 a Next.js server nor Node.js runtime. The exported browser application contains
@@ -27,7 +27,7 @@ Administrator contacts are a fresh account-scoped projection from `/api/workspac
 `apiFetch()` calls the same-origin `/api` path. In daily development, Next's
 proxy forwards that path to FastAPI; production Caddy forwards the production
 origin to FastAPI. Supabase Auth supplies the access JWT; FastAPI stores it in
-the HttpOnly `openslate_access` cookie. The HttpOnly `openslate_refresh` cookie
+the HttpOnly `slateops_access` cookie. The HttpOnly `slateops_refresh` cookie
 contains an opaque application refresh handle, not the provider refresh token.
 Production sets the `Secure` attribute; relaxed local HTTP development omits it.
 FastAPI stores the handle's digest and the encrypted provider token pair in its

@@ -107,14 +107,14 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         *PROVIDER_KEYS,
         *PROVIDER_OPTIONAL_KEYS,
         "POSTGRES_HOST",
-        "OPENSLATE_INSTANCE_ID",
-        "OPENSLATE_INSTANCE_ROOT",
+        "SLATEOPS_INSTANCE_ID",
+        "SLATEOPS_INSTANCE_ROOT",
         "POSTGRES_PORT",
         "POSTGRES_DATABASE",
         "FRONTEND_DEV_PORT",
         "WEB_ASSETS_ROOT",
         "BACKUP_EXPORT_ROOT",
-        "OPENSLATE_BACKUP_EXPORT_ROOT",
+        "SLATEOPS_BACKUP_EXPORT_ROOT",
         # Optional: API worker processes (default 1).
         "API_WORKERS",
         # Optional: automation worker threads (default 4).
@@ -130,7 +130,7 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "GATEWAY_BIND_HOST",
         "GATEWAY_PORT",
         # Optional: production Caddy/API private network and trusted proxy CIDR.
-        "OPENSLATE_APP_PRIVATE_SUBNET",
+        "SLATEOPS_APP_PRIVATE_SUBNET",
         "BACKEND_URL",
         "DATABASE_BOOTSTRAP_URL",
         "MIGRATION_DATABASE_URL",
@@ -259,7 +259,7 @@ def postgres_host(values: dict[str, str]) -> str:
 
 def compose_environment(values: dict[str, str], *, services: set[str]) -> dict[str, str]:
     """Project only the settings consumed by the selected Compose services."""
-    result = {"OPENSLATE_INSTANCE_ID": instance_id(values)}
+    result = {"SLATEOPS_INSTANCE_ID": instance_id(values)}
     if "caddy" not in services:
         postgres_host(values)
         result.update({name: required(values, name) for name in PROVIDER_KEYS})
@@ -285,15 +285,15 @@ def compose_environment(values: dict[str, str], *, services: set[str]) -> dict[s
 
 def instance_id(values: dict[str, str]) -> str:
     """Validate the Compose namespace shared by the container, network and volume."""
-    value = required(values, "OPENSLATE_INSTANCE_ID")
+    value = required(values, "SLATEOPS_INSTANCE_ID")
     if INSTANCE_ID.fullmatch(value) is None:
-        raise ConfigurationError("OPENSLATE_INSTANCE_ID must be a lowercase Compose identifier")
-    root = Path(absolute_path(values, "OPENSLATE_INSTANCE_ROOT"))
+        raise ConfigurationError("SLATEOPS_INSTANCE_ID must be a lowercase Compose identifier")
+    root = Path(absolute_path(values, "SLATEOPS_INSTANCE_ROOT"))
     for name in ("LOG_DIR",):
         try:
             Path(absolute_path(values, name)).relative_to(root)
         except ValueError:
-            raise ConfigurationError(f"{name} must be inside OPENSLATE_INSTANCE_ROOT") from None
+            raise ConfigurationError(f"{name} must be inside SLATEOPS_INSTANCE_ROOT") from None
     return value
 
 
@@ -413,7 +413,7 @@ def inspect_instance_ownership(
         container = {}
         network_id = ""
     if not owned:
-        raise ConfigurationError("Docker ownership does not match this OpenSlate worktree")
+        raise ConfigurationError("Docker ownership does not match this Slate Operations worktree")
     return {
         "container_id": container["Id"],
         "image": container["Config"]["Image"],
@@ -437,7 +437,7 @@ def _read_instance_attestation(values: dict[str, str]) -> tuple[Path, dict[str, 
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         raise ConfigurationError(
-            "OpenSlate instance attestation is unavailable or invalid"
+            "Slate Operations instance attestation is unavailable or invalid"
         ) from None
     if (
         not isinstance(payload, dict)
@@ -462,7 +462,7 @@ def _read_instance_attestation(values: dict[str, str]) -> tuple[Path, dict[str, 
         or payload["ownership"].get("image") != SUPABASE_DB_IMAGE
         or payload["ownership"].get("working_dir") != str(SUPABASE_COMPOSE_PATH.parent)
     ):
-        raise ConfigurationError("OpenSlate instance attestation is unavailable or invalid")
+        raise ConfigurationError("Slate Operations instance attestation is unavailable or invalid")
     return path, payload
 
 
@@ -493,7 +493,7 @@ def _verify_attested_resources(values: dict[str, str]) -> None:
     except (KeyError, TypeError):
         valid = False
     if not valid:
-        raise ConfigurationError("Docker resources do not match this OpenSlate worktree")
+        raise ConfigurationError("Docker resources do not match this Slate Operations worktree")
 
 
 def _verify_live_instance(values: dict[str, str]) -> dict[str, object]:
@@ -543,7 +543,9 @@ def _preflight_compose_mutation(
     identifiers = _compose_project_containers(values)
     if identifiers:
         if len(identifiers) != 1:
-            raise ConfigurationError("OpenSlate project has ambiguous Supabase database containers")
+            raise ConfigurationError(
+                "Slate Operations project has ambiguous Supabase database containers"
+            )
         if subcommand in {"stop", "restart", "down", "start", "up"}:
             _verify_live_instance(values)
         return
@@ -649,7 +651,7 @@ def write_caddy_config(values: dict[str, str]) -> Path:
 
 def caddy_generator() -> Any:
     """Load the checked-in production gateway generator."""
-    spec = importlib.util.spec_from_file_location("openslate_caddy_config", CADDY_GENERATOR_PATH)
+    spec = importlib.util.spec_from_file_location("slateops_caddy_config", CADDY_GENERATOR_PATH)
     if spec is None or spec.loader is None:
         raise ConfigurationError("Caddy configuration generator is unavailable")
     generator = importlib.util.module_from_spec(spec)
@@ -736,18 +738,18 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
                 "Development PUBLIC_ORIGIN must use a permitted local or LAN IP, "
                 "and FRONTEND_DEV_PORT when BACKEND_BIND_HOST is loopback"
             )
-    database_url(values, "DATABASE_URL", "openslate_runtime")
+    database_url(values, "DATABASE_URL", "slateops_runtime")
     if operations:
-        database_url(values, "MIGRATION_DATABASE_URL", "openslate_owner")
+        database_url(values, "MIGRATION_DATABASE_URL", "slateops_owner")
         database_url(values, "DATABASE_BOOTSTRAP_URL", "supabase_admin")
         if urlsplit(required(values, "DATABASE_BOOTSTRAP_URL")).username in {
-            "openslate_owner",
-            "openslate_runtime",
+            "slateops_owner",
+            "slateops_runtime",
         }:
             raise ConfigurationError("DATABASE_BOOTSTRAP_URL must use a cluster-admin login")
     absolute_path(values, "LOG_DIR")
     instance_id(values)
-    for name in ("WEB_ASSETS_ROOT", "BACKUP_EXPORT_ROOT", "OPENSLATE_BACKUP_EXPORT_ROOT"):
+    for name in ("WEB_ASSETS_ROOT", "BACKUP_EXPORT_ROOT", "SLATEOPS_BACKUP_EXPORT_ROOT"):
         if name in values:
             absolute_path(values, name)
     from pydantic import ValidationError
@@ -880,7 +882,7 @@ def run_compose(arguments: list[str], projected: dict[str, str]) -> int:
             "--project-directory",
             str(compose_files(arguments)[0].parent),
             "--project-name",
-            projected["OPENSLATE_INSTANCE_ID"],
+            projected["SLATEOPS_INSTANCE_ID"],
             *compose_file_arguments,
             *arguments,
         ],

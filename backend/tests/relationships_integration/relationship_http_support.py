@@ -86,8 +86,8 @@ def _preflight(runtime_url: str, owner_url: str) -> None:
     owner_engine = create_engine(owner_url)
     try:
         with runtime_engine.connect() as connection:
-            if connection.scalar(text("SELECT current_user")) != "openslate_runtime":
-                raise RuntimeError("Relationship API tests require the openslate_runtime role")
+            if connection.scalar(text("SELECT current_user")) != "slateops_runtime":
+                raise RuntimeError("Relationship API tests require the slateops_runtime role")
             _assert_alembic_head(connection)
             connection.rollback()
         with owner_engine.connect() as connection:

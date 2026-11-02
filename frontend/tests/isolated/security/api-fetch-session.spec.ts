@@ -36,7 +36,7 @@ test("uses the same-origin API path and includes the CSRF cookie for mutations",
   const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   Object.defineProperty(globalThis, "document", {
     configurable: true,
-    value: { cookie: "openslate_csrf=csrf%20value; other=ignored" },
+    value: { cookie: "slateops_csrf=csrf%20value; other=ignored" },
   });
   globalThis.fetch = async (input, init) => {
     requests.push({ input, init });
@@ -72,7 +72,7 @@ test("retries a rejected API request once after a successful refresh", async () 
   const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   Object.defineProperty(globalThis, "document", {
     configurable: true,
-    value: { cookie: "openslate_csrf=csrf-token" },
+    value: { cookie: "slateops_csrf=csrf-token" },
   });
   globalThis.fetch = async (input, init) => {
     requests.push({ input, init });

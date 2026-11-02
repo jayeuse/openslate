@@ -27,7 +27,7 @@ closed; a completion marker alone does not admit the application.
 
 Before opening ingress, follow the procedure's role/schema, origin/secret,
 session-finalization, readiness, sign-in and private-file authorization checks.
-Application profiles, roles/groups/access, sessions and audit are OpenSlate
+Application profiles, roles/groups/access, sessions and audit are Slate Operations
 data; provider credentials, subjects and Storage objects must remain coherent
 with them. File bytes are in Supabase Storage, not a selectable filesystem
 adapter; there is no scanner recovery stage.

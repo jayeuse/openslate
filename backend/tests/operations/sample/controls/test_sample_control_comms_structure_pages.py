@@ -32,7 +32,7 @@ def test_member_readback_reads_every_page(tmp_path) -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
-            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"})
+            return httpx.Response(200, headers={"Set-Cookie": "slateops_csrf=fixture; Path=/"})
         limit = int(request.url.params.get("limit", "25"))
         offset = int(request.url.params.get("offset", "0"))
         items = members[offset : offset + limit]

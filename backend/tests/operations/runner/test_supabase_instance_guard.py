@@ -9,12 +9,12 @@ from app.core.config import instance
 from app.core.config.instance import InstanceTargetError, load_instance_target
 from tests.operations.runner.instance_attestation import write_attestation
 
-IDENTITY = "openslate-supabase-test"
+IDENTITY = "slateops-supabase-test"
 
 
 def _values() -> dict[str, str]:
     return {
-        "OPENSLATE_INSTANCE_ID": IDENTITY,
+        "SLATEOPS_INSTANCE_ID": IDENTITY,
         "POSTGRES_HOST": "127.0.0.1",
         "POSTGRES_PORT": "55432",
         "POSTGRES_DATABASE": "postgres",
@@ -84,11 +84,11 @@ def test_live_guard_rejects_standalone_postgres_even_with_matching_labels(
 
 def test_production_target_checks_cluster_identity() -> None:
     target = instance.instance_target_for_process(
-        "postgresql+psycopg://openslate_runtime:secret@db:5432/postgres",
-        "openslate_runtime",
+        "postgresql+psycopg://slateops_runtime:secret@db:5432/postgres",
+        "slateops_runtime",
         {
             "ENVIRONMENT": "production",
-            "OPENSLATE_INSTANCE_ID": IDENTITY,
+            "SLATEOPS_INSTANCE_ID": IDENTITY,
             "POSTGRES_HOST": "db",
             "POSTGRES_PORT": "5432",
             "POSTGRES_DATABASE": "postgres",
@@ -99,21 +99,21 @@ def test_production_target_checks_cluster_identity() -> None:
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (
         "postgres",
-        "openslate_runtime",
+        "slateops_runtime",
         "another-customer",
     )
     with pytest.raises(InstanceTargetError):
-        instance.assert_instance_target(connection, target, expected_user="openslate_runtime")
+        instance.assert_instance_target(connection, target, expected_user="slateops_runtime")
 
 
 def test_production_rejects_a_different_database_name() -> None:
     with pytest.raises(InstanceTargetError):
         instance.instance_target_for_process(
-            "postgresql+psycopg://openslate_runtime:secret@db:5432/customer",
-            "openslate_runtime",
+            "postgresql+psycopg://slateops_runtime:secret@db:5432/customer",
+            "slateops_runtime",
             {
                 "ENVIRONMENT": "production",
-                "OPENSLATE_INSTANCE_ID": IDENTITY,
+                "SLATEOPS_INSTANCE_ID": IDENTITY,
                 "POSTGRES_HOST": "db",
                 "POSTGRES_PORT": "5432",
                 "POSTGRES_DATABASE": "customer",

@@ -4,9 +4,9 @@ import pytest
 
 from operations import provision_database_role as provisioner
 
-BOOTSTRAP_URL = "postgresql://postgres:bootstrap@127.0.0.1:55322/openslate"
-OWNER_URL = "postgresql+psycopg://openslate_owner:owner@127.0.0.1:55322/openslate"
-RUNTIME_URL = "postgresql+psycopg://openslate_runtime:runtime@127.0.0.1:55322/openslate"
+BOOTSTRAP_URL = "postgresql://postgres:bootstrap@127.0.0.1:55322/slateops"
+OWNER_URL = "postgresql+psycopg://slateops_owner:owner@127.0.0.1:55322/slateops"
+RUNTIME_URL = "postgresql+psycopg://slateops_runtime:runtime@127.0.0.1:55322/slateops"
 # Realtime has created realtime.messages; the membership function does not exist yet.
 REALTIME_FIRST_RUN = ((True, True), None)
 
@@ -66,7 +66,7 @@ def test_provision_creates_safe_owner_app_and_runtime_roles(
     assert "with inherit true, set false" in statements
     assert "grant select on all tables in schema" not in statements
     assert "alter default privileges" not in statements
-    assert "openslate_inspector" not in statements
+    assert "slateops_inspector" not in statements
 
 
 def test_provision_rotates_existing_managed_login_role_passwords_after_validation(
@@ -106,7 +106,7 @@ def test_provision_limits_only_idle_runtime_transactions_on_every_run(
 
         statements = _statements(cursor)
         assert (
-            "alter role openslate_runtime set idle_in_transaction_session_timeout = '60s'"
+            "alter role slateops_runtime set idle_in_transaction_session_timeout = '60s'"
             in statements
         )
         # Product concurrency fix C11 relies on ordinary lock waits for the runtime role.
@@ -116,7 +116,7 @@ def test_provision_limits_only_idle_runtime_transactions_on_every_run(
 @pytest.mark.parametrize(
     ("bootstrap", "owner", "runtime"),
     [
-        (BOOTSTRAP_URL, OWNER_URL.replace("/openslate", "/other"), RUNTIME_URL),
+        (BOOTSTRAP_URL, OWNER_URL.replace("/slateops", "/other"), RUNTIME_URL),
         (BOOTSTRAP_URL.replace("127.0.0.1", "other-host"), OWNER_URL, RUNTIME_URL),
         (OWNER_URL, OWNER_URL, RUNTIME_URL),
     ],
@@ -147,7 +147,7 @@ def test_provision_fails_closed_for_existing_unsafe_runtime_role(
     ]
     monkeypatch.setattr(provisioner, "connect", MagicMock(return_value=connection))
 
-    with pytest.raises(RuntimeError, match="openslate_runtime role has unsafe attributes"):
+    with pytest.raises(RuntimeError, match="slateops_runtime role has unsafe attributes"):
         provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL)
 
     assert "alter database" not in _statements(cursor)
@@ -218,9 +218,9 @@ def _realtime_cursor(fetchone: list[object], policies: list[tuple[object, ...]])
 
 
 EXPECTED_POLICIES = [
-    ("openslate_realtime_member_read", "r", True, True, provisioner.REALTIME_JOIN_EXPRESSION, None),
+    ("slateops_realtime_member_read", "r", True, True, provisioner.REALTIME_JOIN_EXPRESSION, None),
     (
-        "openslate_realtime_member_write",
+        "slateops_realtime_member_write",
         "a",
         True,
         True,
@@ -239,7 +239,7 @@ def test_realtime_policies_call_a_deny_all_function_until_alembic_replaces_it() 
     assert "create function public.can_join_realtime_topic(topic text)" in statements
     assert "select false" in statements
     assert "security definer" not in statements
-    assert "alter function public.can_join_realtime_topic(text) owner to openslate_owner" in (
+    assert "alter function public.can_join_realtime_topic(text) owner to slateops_owner" in (
         statements
     )
     assert "from public, anon, service_role, postgres" in statements
@@ -247,11 +247,11 @@ def test_realtime_policies_call_a_deny_all_function_until_alembic_replaces_it() 
         statements
     )
     assert (
-        "create policy openslate_realtime_member_read on realtime.messages for select "
+        "create policy slateops_realtime_member_read on realtime.messages for select "
         "to authenticated using (public.can_join_realtime_topic(realtime.topic()))"
     ) in statements
     assert (
-        "create policy openslate_realtime_member_write on realtime.messages for insert "
+        "create policy slateops_realtime_member_write on realtime.messages for insert "
         "to authenticated with check ((public.can_join_realtime_topic(realtime.topic()) and "
         "(realtime.topic() ~~ 'org:%:probe'::text)))"
     ) in statements
@@ -279,7 +279,7 @@ def test_realtime_provisioning_upgrades_only_the_exact_legacy_write_policy() -> 
     cursor = _realtime_cursor([(True, True), (provisioner.OWNER_ROLE,)], EXPECTED_POLICIES)
     provisioner._provision_realtime_channel_policies(cursor)
     statements = _statements(cursor)
-    assert "alter policy openslate_realtime_member_write" in statements
+    assert "alter policy slateops_realtime_member_write" in statements
     assert "org:%:probe" in statements
     altered = [*EXPECTED_POLICIES[:-1], (*EXPECTED_POLICIES[-1][:-1], "true")]
     cursor = _realtime_cursor([(True, True), (provisioner.OWNER_ROLE,)], altered)
@@ -302,7 +302,7 @@ def test_realtime_provisioning_upgrades_only_the_exact_legacy_write_policy() -> 
         ),
         pytest.param(
             [(True, True), (provisioner.OWNER_ROLE,)],
-            [("openslate_realtime_member_read", "r", True, True, "true", None)],
+            [("slateops_realtime_member_read", "r", True, True, "true", None)],
             "unsafe",
             id="altered-policy",
         ),

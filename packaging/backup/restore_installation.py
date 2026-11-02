@@ -396,7 +396,7 @@ def run_restore(
     _private(config.staging_directory, "restore staging directory", directory=True)
     _target_preflight(config, target_project, target_directory, command_runner)
     run_dir = Path(
-        tempfile.mkdtemp(prefix="openslate-supabase-restore-", dir=config.staging_directory)
+        tempfile.mkdtemp(prefix="slateops-supabase-restore-", dir=config.staging_directory)
     )
     run_dir.chmod(0o700)
     try:

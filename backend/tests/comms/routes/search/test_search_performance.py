@@ -84,7 +84,7 @@ def test_search_over_one_hundred_thousand_messages_is_bounded_and_measured(
     path = (
         REPOSITORY_ROOT
         / "backend/test-results/s19"
-        / os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+        / os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
         / "search-100000.json"
     )
     path.parent.mkdir(parents=True, exist_ok=True)

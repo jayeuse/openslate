@@ -33,7 +33,7 @@ FROM python:3.14-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH" \
-    OPENSLATE_ENV_SOURCE=process \
+    SLATEOPS_ENV_SOURCE=process \
     WEB_ASSETS_ROOT=/app/web
 
 WORKDIR /app

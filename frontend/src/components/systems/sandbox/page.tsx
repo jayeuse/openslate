@@ -231,7 +231,7 @@ function publishStatus(
 
 function emptyDocument(): SandboxDocumentV4 {
   return {
-    kind: "openslate-sandbox",
+    kind: "slateops-sandbox",
     schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
     design: { departments: [], modules: [], relationships: [], layout: {} },
     triggers: [],

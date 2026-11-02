@@ -46,7 +46,7 @@ def test_signout_worker_removes_revoked_provider_session_and_preserves_other_ses
             assert target is not None and target.provider_session_id is not None
             provider_session_id = target.provider_session_id
 
-        csrf = current.cookies.get("openslate_csrf")
+        csrf = current.cookies.get("slateops_csrf")
         assert csrf is not None, "The active browser must have CSRF protection"
         response = current.delete(f"/api/auth/sessions/{target_id}", headers={"X-CSRF-Token": csrf})
         assert response.status_code == 204

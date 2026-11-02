@@ -85,14 +85,14 @@ def test_baseline_isolates_application_roles_from_provider_ownership(integration
             """
             SELECT rolname, (rolcanlogin, rolinherit, rolsuper, rolbypassrls)::text
               FROM pg_catalog.pg_roles
-             WHERE rolname IN ('openslate_owner', 'openslate_app', 'openslate_runtime')
+             WHERE rolname IN ('slateops_owner', 'slateops_app', 'slateops_runtime')
             """,
         ).all()
     )
     assert roles == {
-        "openslate_owner": "(t,f,f,f)",
-        "openslate_app": "(f,f,f,f)",
-        "openslate_runtime": "(t,t,f,f)",
+        "slateops_owner": "(t,f,f,f)",
+        "slateops_app": "(f,f,f,f)",
+        "slateops_runtime": "(t,t,f,f)",
     }
     owner = _catalog(
         integration_owner_db,
@@ -105,10 +105,10 @@ def test_baseline_isolates_application_roles_from_provider_ownership(integration
     audit_privileges = _catalog(
         integration_owner_db,
         """
-        SELECT has_table_privilege('openslate_runtime', 'public.audit_logs', 'UPDATE'),
-               has_table_privilege('openslate_runtime', 'public.audit_logs', 'DELETE'),
-               has_table_privilege('openslate_runtime', 'public.security_events', 'UPDATE'),
-               has_table_privilege('openslate_runtime', 'public.security_events', 'DELETE')
+        SELECT has_table_privilege('slateops_runtime', 'public.audit_logs', 'UPDATE'),
+               has_table_privilege('slateops_runtime', 'public.audit_logs', 'DELETE'),
+               has_table_privilege('slateops_runtime', 'public.security_events', 'UPDATE'),
+               has_table_privilege('slateops_runtime', 'public.security_events', 'DELETE')
         """,
     ).one()
     assert audit_privileges == (False, False, False, False)
@@ -117,7 +117,7 @@ def test_baseline_isolates_application_roles_from_provider_ownership(integration
         """
         SELECT count(*)
           FROM pg_catalog.pg_default_acl AS defaults
-         WHERE defaults.defaclrole = 'openslate_owner'::regrole
+         WHERE defaults.defaclrole = 'slateops_owner'::regrole
            AND defaults.defaclobjtype = 'f'
            AND defaults.defaclnamespace = 0
            AND NOT EXISTS (
@@ -133,7 +133,7 @@ def test_baseline_isolates_application_roles_from_provider_ownership(integration
             integration_owner_db,
             "SELECT count(*) FROM pg_catalog.pg_class WHERE relnamespace = 'public'::regnamespace "
             # RLS binds the application role only; test_organization_row_security owns the set.
-            "AND relkind = 'r' AND relforcerowsecurity AND relowner = 'openslate_owner'::regrole",
+            "AND relkind = 'r' AND relforcerowsecurity AND relowner = 'slateops_owner'::regrole",
         ).scalar()
         == 0
     )
@@ -148,7 +148,7 @@ def test_baseline_isolates_application_roles_from_provider_ownership(integration
     assert (
         _catalog(
             integration_owner_db,
-            "SELECT count(*) FROM pg_catalog.pg_proc WHERE proname ILIKE 'openslate_%'",
+            "SELECT count(*) FROM pg_catalog.pg_proc WHERE proname ILIKE 'slateops_%'",
         ).scalar()
         == 0
     )
@@ -174,7 +174,7 @@ def test_provider_api_roles_cannot_read_or_mutate_application_tables(
           FROM pg_catalog.pg_class AS relation
           CROSS JOIN unnest(ARRAY['anon','authenticated','service_role']) AS role_name
          WHERE relation.relnamespace = 'public'::regnamespace
-           AND relation.relowner = 'openslate_owner'::regrole
+           AND relation.relowner = 'slateops_owner'::regrole
            AND relation.relkind IN ('r', 'p')
            AND has_table_privilege(role_name, relation.oid, 'SELECT,INSERT,UPDATE,DELETE')
         """,
@@ -183,11 +183,11 @@ def test_provider_api_roles_cannot_read_or_mutate_application_tables(
     privileges = _catalog(
         integration_db,
         """
-        SELECT has_column_privilege('openslate_runtime','auth.sessions','id','SELECT'),
-               has_column_privilege('openslate_runtime','auth.sessions','user_id','SELECT'),
-               has_table_privilege('openslate_runtime','auth.sessions','SELECT'),
-               has_table_privilege('openslate_runtime','auth.sessions','INSERT,UPDATE,DELETE'),
-               has_table_privilege('openslate_runtime','auth.users','SELECT,INSERT,UPDATE,DELETE')
+        SELECT has_column_privilege('slateops_runtime','auth.sessions','id','SELECT'),
+               has_column_privilege('slateops_runtime','auth.sessions','user_id','SELECT'),
+               has_table_privilege('slateops_runtime','auth.sessions','SELECT'),
+               has_table_privilege('slateops_runtime','auth.sessions','INSERT,UPDATE,DELETE'),
+               has_table_privilege('slateops_runtime','auth.users','SELECT,INSERT,UPDATE,DELETE')
         """,
     ).one()
     assert privileges == (True, True, False, False, False)
@@ -287,15 +287,15 @@ def test_concurrent_failed_logins_replace_a_stale_current_bucket_before_locking_
 def test_postgres_notifications_arrive_only_after_the_publishing_transaction_commits() -> None:
     database_url = os.environ["TEST_DATABASE_URL"].replace("postgresql+psycopg", "postgresql")
     with psycopg.connect(database_url, autocommit=True) as listener:
-        listener.execute("LISTEN openslate_invalidation")
+        listener.execute("LISTEN slateops_invalidation")
         with psycopg.connect(database_url) as sender:
-            sender.execute("SELECT pg_notify(%s, %s)", ("openslate_invalidation", "committed"))
+            sender.execute("SELECT pg_notify(%s, %s)", ("slateops_invalidation", "committed"))
             sender.commit()
         notification = next(listener.notifies(timeout=5))
         assert notification.payload == "committed"
 
         with psycopg.connect(database_url) as sender:
-            sender.execute("SELECT pg_notify(%s, %s)", ("openslate_invalidation", "rolled_back"))
+            sender.execute("SELECT pg_notify(%s, %s)", ("slateops_invalidation", "rolled_back"))
             sender.rollback()
         assert select.select([listener.pgconn.socket], [], [], 0.2) == ([], [], [])
 
@@ -395,11 +395,11 @@ def test_downgrade_then_reupgrade_keeps_audit_and_security_events_non_destructiv
         ("TEST_DATABASE_URL", None),
         (
             "TEST_DATABASE_URL",
-            "postgresql+psycopg://openslate_runtime:wrong@127.0.0.1:55322/openslate",
+            "postgresql+psycopg://slateops_runtime:wrong@127.0.0.1:55322/slateops",
         ),
         (
             "MIGRATION_DATABASE_URL",
-            "postgresql+psycopg://openslate_owner:wrong@127.0.0.1:55322/openslate",
+            "postgresql+psycopg://slateops_owner:wrong@127.0.0.1:55322/slateops",
         ),
     ],
 )
@@ -418,10 +418,10 @@ def test_downgrade_reupgrade_requires_manifest_owned_database_urls(
 def test_downgrade_reupgrade_forces_validated_process_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_url = "postgresql+psycopg://openslate_runtime:runtime@127.0.0.1:55322/openslate"
-    owner_url = "postgresql+psycopg://openslate_owner:owner@127.0.0.1:55322/openslate"
+    runtime_url = "postgresql+psycopg://slateops_runtime:runtime@127.0.0.1:55322/slateops"
+    owner_url = "postgresql+psycopg://slateops_owner:owner@127.0.0.1:55322/slateops"
     guarded: list[str] = []
-    monkeypatch.delenv("OPENSLATE_ENV_SOURCE", raising=False)
+    monkeypatch.delenv("SLATEOPS_ENV_SOURCE", raising=False)
     monkeypatch.setenv("TEST_DATABASE_URL", runtime_url)
     monkeypatch.setenv("MIGRATION_DATABASE_URL", owner_url)
     monkeypatch.setattr(migration_support, "_guard_integration_database", guarded.append)
@@ -429,6 +429,6 @@ def test_downgrade_reupgrade_forces_validated_process_environment(
     environment = guarded_migration_environment()
 
     assert guarded == [runtime_url, owner_url]
-    assert environment["OPENSLATE_ENV_SOURCE"] == "process"
+    assert environment["SLATEOPS_ENV_SOURCE"] == "process"
     assert environment["TEST_DATABASE_URL"] == runtime_url
     assert environment["MIGRATION_DATABASE_URL"] == owner_url

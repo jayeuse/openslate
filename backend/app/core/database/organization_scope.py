@@ -1,6 +1,6 @@
 """Bind each database transaction to one organization for PostgreSQL row-level security.
 
-Row-level security policies read the transaction-local setting ``openslate.org_id``.
+Row-level security policies read the transaction-local setting ``slateops.org_id``.
 A request stores its resolved organization on the session; a background worker
 binds one organization for each pass of its loop, which covers every transaction
 the thread begins, ORM or Core. The setting is applied with
@@ -21,10 +21,10 @@ from sqlalchemy import Connection, Engine, event, literal_column, text
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-ORGANIZATION_SCOPE_KEY = "openslate.org_id"
-_SET_SCOPE = text("SELECT set_config('openslate.org_id', :org_id, true)")
+ORGANIZATION_SCOPE_KEY = "slateops.org_id"
+_SET_SCOPE = text("SELECT set_config('slateops.org_id', :org_id, true)")
 _worker_organization: ContextVar[UUID | None] = ContextVar(
-    "openslate_worker_organization", default=None
+    "slateops_worker_organization", default=None
 )
 
 
@@ -41,7 +41,7 @@ def bound_organization_column() -> ColumnElement[UUID]:
     inside the bound organization in the same statement.
     """
 
-    return literal_column("nullif(current_setting('openslate.org_id', true), '')::uuid")
+    return literal_column("nullif(current_setting('slateops.org_id', true), '')::uuid")
 
 
 def current_worker_organization() -> UUID | None:
@@ -89,7 +89,7 @@ def _apply_worker_scope(connection: Connection) -> None:
     org_id = _worker_organization.get()
     if org_id is not None:
         connection.exec_driver_sql(
-            "SELECT set_config('openslate.org_id', %(org_id)s, true)", {"org_id": str(org_id)}
+            "SELECT set_config('slateops.org_id', %(org_id)s, true)", {"org_id": str(org_id)}
         )
 
 

@@ -8,14 +8,14 @@ FastAPI's [identity dependency](../../backend/app/common/dependencies/auth.py)
 verifies the signature, issuer, audience, expiry, subject, and provider session
 through [`SupabaseAuthClient`](../../backend/app/core/integrations/supabase_auth.py).
 It then requires an explicit `users.supabase_user_id` binding to an eligible
-OpenSlate profile. A provider account or matching email alone never grants
+Slate Operations profile. A provider account or matching email alone never grants
 application access. FastAPI owns the local profile, roles, groups, permissions,
 and domain authorization.
 
 Production browsers use a same-origin Caddy gateway with one FastAPI upstream.
 The [cookie helpers](../../backend/app/systems/access/auth/cookies.py) set
-Secure, HttpOnly cookies in production. `openslate_access` contains the provider
-access JWT; `openslate_refresh` contains an opaque application handle. FastAPI
+Secure, HttpOnly cookies in production. `slateops_access` contains the provider
+access JWT; `slateops_refresh` contains an opaque application handle. FastAPI
 stores the handle digest and encrypted provider token pair in `identity_sessions`,
 along with local expiry and revocation state. A CSRF cookie/token protects
 state-changing browser requests. Session listing, self/admin revocation, and
@@ -42,7 +42,7 @@ headers. Only Caddy and API may join the trusted network; see the
 [proxy boundary](../../infra/supabase/README.md#production-application-overlay).
 
 Supabase Auth owns password credentials and invitation/recovery action tokens;
-OpenSlate retains local login throttling. Lifecycle password challenges
+Slate Operations retains local login throttling. Lifecycle password challenges
 reverify through Supabase Auth and require the result to map back to the same
 eligible local actor. Supabase Database is PostgreSQL. Separate bootstrap,
 application-owner, and constrained-runtime roles isolate provisioning,
@@ -55,12 +55,12 @@ The browser receives no database credentials, and provider user metadata is
 never an authorization source.
 
 File metadata and authorization state remain application-owned. File bytes use
-opaque keys in the private Supabase Storage `openslate-ready` bucket through a
+opaque keys in the private Supabase Storage `slateops-ready` bucket through a
 server-only [Storage client](../../backend/app/systems/platform/files/supabase_storage.py).
 FastAPI authorizes every transfer. Uploads pass a file-extension
 allowlist, and a [bounded parser subprocess](../../backend/app/systems/platform/files/validation_worker.py)
 checks that each file is a real PDF, PNG, JPEG, DOCX, XLSX, or PPTX before the
-Storage write. Downloads are served as attachments with `nosniff`. OpenSlate
+Storage write. Downloads are served as attachments with `nosniff`. Slate Operations
 runs no antivirus scan; type validation is not malware detection. A private
 bucket or privileged Storage key does not replace application authorization.
 

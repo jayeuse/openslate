@@ -18,13 +18,13 @@ from app.systems.comms.realtime.publication import request_events
 
 if (
     os.environ.get("ENVIRONMENT") != "test"
-    or os.environ.get("OPENSLATE_COMMS_NATIVE_API") != "http://127.0.0.1:8008"
+    or os.environ.get("SLATEOPS_COMMS_NATIVE_API") != "http://127.0.0.1:8008"
 ):
     raise RuntimeError("The guarded S20 native runner is required")
 
 app = create_app()
 sample: ContextVar[str | None] = ContextVar("s20_numeric_sample", default=None)
-output = Path(os.environ["OPENSLATE_COMMS_TELEMETRY"])
+output = Path(os.environ["SLATEOPS_COMMS_TELEMETRY"])
 lock = threading.Lock()
 diagnostics = {"pool_timeouts": 0}
 original_checkout = QueuePool._do_get

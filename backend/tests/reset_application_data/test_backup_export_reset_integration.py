@@ -34,7 +34,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def export_reset(request, monkeypatch, tmp_path):
-    monkeypatch.setenv("OPENSLATE_ENV_SOURCE", "process")
+    monkeypatch.setenv("SLATEOPS_ENV_SOURCE", "process")
     owner_url = os.environ["MIGRATION_DATABASE_URL"]
     _guard_integration_database(owner_url)
     engine = create_engine(owner_url)

@@ -146,7 +146,7 @@ PACK = OrganizationPack(
         timezone="Asia/Manila",
         currency_symbol="₱",
         email_domain="harbor-ops.example",
-        uuid_namespace="openslate:harbor-operations:v4",
+        uuid_namespace="slateops:harbor-operations:v4",
         span="365-day history; 90-day outlook",
         sampling_scope="scaled operational records with supporting content",
     ),

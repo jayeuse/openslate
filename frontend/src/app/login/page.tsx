@@ -73,9 +73,9 @@ export default function LoginPage() {
         <div>
           <a href="/" className="flex items-center gap-3">
             <span className="bg-foreground text-background grid size-9 place-items-center rounded-md text-sm font-bold">
-              OS
+              SO
             </span>
-            <span className="font-semibold">OpenSlate</span>
+            <span className="font-semibold">Slate Operations</span>
           </a>
           <div className="mt-32 max-w-md">
             <h1 className="mt-5 text-4xl leading-tight font-semibold tracking-[-0.04em]">
@@ -88,7 +88,7 @@ export default function LoginPage() {
           </div>
         </div>
         <p className="text-sidebar-muted text-xs">
-          Self-hosted by default · OpenSlate
+          Self-hosted by default · Slate Operations
         </p>
       </section>
       <section className="bg-background flex items-center justify-center px-6 py-12">
@@ -98,9 +98,9 @@ export default function LoginPage() {
             className="mb-12 inline-flex items-center gap-2 text-sm font-semibold lg:hidden"
           >
             <span className="bg-foreground text-background grid size-8 place-items-center rounded-md text-xs">
-              OS
+              SO
             </span>
-            OpenSlate
+            Slate Operations
           </a>
           <div className="mb-8">
             <div className="bg-muted text-muted-foreground mb-5 grid size-11 place-items-center rounded-full">
@@ -152,7 +152,7 @@ export default function LoginPage() {
                   }
                 />
                 <p className="text-muted-foreground text-xs">
-                  Use the email and password for your OpenSlate account.
+                  Use the email and password for your Slate Operations account.
                 </p>
                 <a
                   className="text-primary inline-block text-sm font-medium hover:underline"

@@ -168,7 +168,7 @@ def fetch_metadata(url: str, *, deadline: float | None = None) -> dict[str, str]
                 "Host": value.authority,
                 "Accept": "text/html, application/xhtml+xml",
                 "Accept-Encoding": "identity",
-                "User-Agent": "OpenSlate-LinkPreview/1",
+                "User-Agent": "SlateOps-LinkPreview/1",
                 "Connection": "close",
             },
         )

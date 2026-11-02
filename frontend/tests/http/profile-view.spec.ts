@@ -407,11 +407,11 @@ test("the tab names your profile, the person shown, or Profile", async ({
     json: { ...rosa, phone: null, bio: null, role: "member", groups: [] },
   });
   await page.goto("/profile");
-  await expect(page).toHaveTitle("Your profile | OpenSlate");
+  await expect(page).toHaveTitle("Your profile | Slate Operations");
   await page.goto(`/profile?person=${profileUserB}`);
-  await expect(page).toHaveTitle("Rosa Reyes | OpenSlate");
+  await expect(page).toHaveTitle("Rosa Reyes | Slate Operations");
   await page.goto("/profile?person=not-a-person");
-  await expect(page).toHaveTitle("Profile | OpenSlate");
+  await expect(page).toHaveTitle("Profile | Slate Operations");
 });
 
 test("the tab keeps the OpenComms unread count before the person's name", async ({
@@ -427,7 +427,7 @@ test("the tab keeps the OpenComms unread count before the person's name", async 
   await expect(
     page.getByRole("heading", { level: 1, name: "Rosa Reyes", exact: true }),
   ).toBeVisible();
-  await expect(page).toHaveTitle("(3) Rosa Reyes | OpenSlate");
+  await expect(page).toHaveTitle("(3) Rosa Reyes | Slate Operations");
 });
 
 test("an organization switch shows no profile from the previous organization", async ({

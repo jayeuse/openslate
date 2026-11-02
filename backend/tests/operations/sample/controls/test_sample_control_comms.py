@@ -156,12 +156,12 @@ def test_comms_partner_executor_admits_group_member_and_uses_bound_clients(
                 200,
                 json={"authenticated": True},
                 headers=[
-                    ("Set-Cookie", f"openslate_access={actor}; Path=/; HttpOnly"),
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
+                    ("Set-Cookie", f"slateops_access={actor}; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
                 ],
             )
         cookies = dict(piece.split("=", 1) for piece in request.headers["cookie"].split("; "))
-        actor = cookies["openslate_access"]
+        actor = cookies["slateops_access"]
         if (method, path) == ("GET", "/api/auth/me"):
             if org == PARTNER:
                 partner_identity_reads.add(actor)

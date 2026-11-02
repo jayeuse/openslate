@@ -22,7 +22,7 @@ REFRESH_COMMAND = "cd backend && uv run python -m tests.contracts.export_openapi
 def snapshot_environment() -> dict[str, str]:
     """The settings the snapshot is generated with; tests apply the same values."""
 
-    return {**settings_environment(), "OPENSLATE_ENV_SOURCE": "process"}
+    return {**settings_environment(), "SLATEOPS_ENV_SOURCE": "process"}
 
 
 def build_openapi_document() -> dict[str, Any]:

@@ -35,7 +35,7 @@ DB_ALIAS = "db"
 # Test networks use their own /24 per stack, outside Docker's default address pools,
 # so parallel shards do not exhaust them ("all predefined address pools ... subnetted").
 TEST_NETWORK_PREFIX = "10.199"
-NETWORK_LOCK = Path(tempfile.gettempdir()) / "openslate-e2e-networks.lock"
+NETWORK_LOCK = Path(tempfile.gettempdir()) / "slateops-e2e-networks.lock"
 # A stack without the runner API's template port gets TEMPLATE_PORT_BASE + its network
 # block: unique per live stack, below the ephemeral ranges (Linux 32768+, macOS 49152+)
 # and the Kubernetes NodePort range (30000-32767).
@@ -81,7 +81,7 @@ DOCKER_ENV_NAMES = frozenset(
 
 
 def provider_network_name(run_id: str) -> str:
-    return f"openslate-e2e-{run_id}_provider"
+    return f"slateops-e2e-{run_id}_provider"
 
 
 def _available_port() -> int:
@@ -117,7 +117,7 @@ class DisposablePostgres:
             raise ValueError("Invalid disposable Supabase run identity")
         self.private, self.run_id, self.log = private, run_id, log
         self.env = {key: value for key, value in env.items() if key in DOCKER_ENV_NAMES}
-        self.project = f"openslate-e2e-{run_id}"
+        self.project = f"slateops-e2e-{run_id}"
         self.worktree = str(ROOT.resolve())
         self.network = provider_network_name(run_id)
         self.volume = f"{self.project}_supabase-db-data"
@@ -196,7 +196,7 @@ class DisposablePostgres:
         api_url = f"http://127.0.0.1:{self.api_port}"
         values = {
             **self.keys,
-            "OPENSLATE_INSTANCE_ID": self.project,
+            "SLATEOPS_INSTANCE_ID": self.project,
             # Exercise expiry and real provider rotation within the backend gate. Refresh
             # reuses an access token with more than 30 s left (provider_sessions.py), and
             # fresh-token refresh tests must keep that path, so stay well above 30 s.
@@ -211,12 +211,12 @@ class DisposablePostgres:
             "AUTH_TEMPLATE_BASE_URL": (
                 f"http://host.docker.internal:{self.template_port}/api/auth/email-templates"
             ),
-            "SMTP_ADMIN_EMAIL": "noreply@openslate.test",
+            "SMTP_ADMIN_EMAIL": "noreply@slateops.test",
             "SMTP_HOST": "mailpit",
             "SMTP_PORT": "1025",
             "SMTP_USER": "",
             "SMTP_PASS": "",
-            "DASHBOARD_USERNAME": "openslate-e2e",
+            "DASHBOARD_USERNAME": "slateops-e2e",
         }
         lines = []
         for name, value in values.items():
@@ -227,8 +227,8 @@ class DisposablePostgres:
         self.env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self.env_file.chmod(0o600)
         labels = {
-            "openslate.test.run": self.run_id,
-            "openslate.test.worktree": self.worktree,
+            "slateops.test.run": self.run_id,
+            "slateops.test.worktree": self.worktree,
         }
         label_lines = "\n".join(
             f"      {key}: {json.dumps(value)}" for key, value in labels.items()
@@ -247,7 +247,7 @@ class DisposablePostgres:
                         "  - -c",
                         "  - config_file=/etc/postgresql/postgresql.conf",
                         "  - -c",
-                        "  - cluster_name=${OPENSLATE_INSTANCE_ID}",
+                        "  - cluster_name=${SLATEOPS_INSTANCE_ID}",
                         "  - -c",
                         "  - log_min_messages=fatal",
                         "  - -c",
@@ -452,8 +452,8 @@ class DisposablePostgres:
         host = f"127.0.0.1:{self.port}/{DB_NAME}"
         return {
             "DATABASE_BOOTSTRAP_URL": f"postgresql+psycopg://supabase_admin:{self.passwords['bootstrap']}@{host}",
-            "MIGRATION_DATABASE_URL": f"postgresql+psycopg://openslate_owner:{self.passwords['owner']}@{host}",
-            "DATABASE_URL": f"postgresql+psycopg://openslate_runtime:{self.passwords['runtime']}@{host}",
+            "MIGRATION_DATABASE_URL": f"postgresql+psycopg://slateops_owner:{self.passwords['owner']}@{host}",
+            "DATABASE_URL": f"postgresql+psycopg://slateops_runtime:{self.passwords['runtime']}@{host}",
         }
 
     @property
@@ -477,7 +477,7 @@ class DisposablePostgres:
             "REALTIME_TOKEN_SIGNING_KEY": self.keys["REALTIME_TOKEN_SIGNING_KEY"],
             "SMTP_HOST": "mailpit",
             "SMTP_PORT": "1025",
-            "SMTP_ADMIN_EMAIL": "noreply@openslate.test",
+            "SMTP_ADMIN_EMAIL": "noreply@slateops.test",
         }
 
     def _inspect_json(self, arguments: list[str]) -> list[Any]:
@@ -584,7 +584,7 @@ class DisposablePostgres:
 
     def stop(self) -> None:
         """Inspect every resource before removing only this run's containers and volumes."""
-        labels = {"openslate.test.run": self.run_id, "openslate.test.worktree": self.worktree}
+        labels = {"slateops.test.run": self.run_id, "slateops.test.worktree": self.worktree}
         result = self._run(
             [
                 "ps",

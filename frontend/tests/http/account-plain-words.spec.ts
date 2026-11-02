@@ -200,7 +200,7 @@ test("no Profile or shell state shows an internal or retired word", async ({
   await page.goto("/profile");
   await page.getByRole("button", { name: "Open navigation" }).click();
   await expect(
-    page.getByRole("dialog", { name: "OpenSlate navigation" }),
+    page.getByRole("dialog", { name: "Slate Operations navigation" }),
   ).toBeVisible();
   await expectCustomerWords(page, "Drawer");
 });

@@ -61,7 +61,7 @@ def email_change_account(provider_account, provider_mail):
 
 
 def _start_change(primary, mail, email, target, password):
-    primary.headers["X-CSRF-Token"] = primary.cookies.get("openslate_csrf")
+    primary.headers["X-CSRF-Token"] = primary.cookies.get("slateops_csrf")
     response = primary.post(
         "/api/auth/me/email", json={"email": target, "current_password": password}
     )
@@ -202,7 +202,7 @@ def test_native_failed_final_admission_rolls_back_email_event_and_session_withou
 def test_native_final_email_session_requires_its_own_mfa_not_old_cookie_aal2(email_change_account):
     primary, landing, mail, account = email_change_account
     email, password, _, local_id, _ = account
-    primary.headers["X-CSRF-Token"] = primary.cookies.get("openslate_csrf")
+    primary.headers["X-CSRF-Token"] = primary.cookies.get("slateops_csrf")
     enrolled = primary.post("/api/auth/mfa/factors", json={"friendly_name": "Owned email proof"})
     assert enrolled.status_code == 201
     factor_id = enrolled.json()["id"]
@@ -219,7 +219,7 @@ def test_native_final_email_session_requires_its_own_mfa_not_old_cookie_aal2(ema
     status = landing.get("/api/auth/mfa")
     assert status.status_code == 200
     assert status.json()["assurance_level"] == "aal1" and status.json()["required"] is True
-    landing.headers["X-CSRF-Token"] = landing.cookies.get("openslate_csrf")
+    landing.headers["X-CSRF-Token"] = landing.cookies.get("slateops_csrf")
     assert landing.post(verification, json={"code": totp(secret)}).status_code == 200
     self = landing.get("/api/auth/me")
     assert self.status_code == 200
@@ -234,7 +234,7 @@ def test_native_concurrent_out_of_band_admissions_serialize_fresh_email_and_one_
     provider = get_supabase_auth_client()
     target = f"email-out-of-band-{uuid4().hex}@example.test"
     # Provider-only completion establishes an out-of-band CURRENT email; no local admission.
-    access = primary.cookies.get("openslate_access")
+    access = primary.cookies.get("slateops_access")
     provider.request_email_change(access, target)
     current = _email_action(mail, email, "email_change")
     new = _email_action(mail, target, "email_change")
@@ -399,7 +399,7 @@ def test_native_admission_rechecks_after_provider_latency_without_partial_databa
     email, _, provider_id, local_id, owner = account
     provider = get_supabase_auth_client()
     target = f"email-latency-{uuid4().hex}@example.test"
-    provider.request_email_change(primary.cookies.get("openslate_access"), target)
+    provider.request_email_change(primary.cookies.get("slateops_access"), target)
     assert provider.verify_email_change(_email_action(mail, email, "email_change")).tokens is None
     tokens = provider.verify_email_change(_email_action(mail, target, "email_change")).tokens
     assert tokens is not None
@@ -440,7 +440,7 @@ def test_native_confirmed_email_keeps_current_password_and_recovery_equalities(
     assert landing.post("/api/auth/email/complete", json={"token_hash": new}).status_code == 200
     confirmations = _stored_state(owner, local_id)[3]
     replacement = token_urlsafe(32)
-    landing.headers["X-CSRF-Token"] = landing.cookies.get("openslate_csrf")
+    landing.headers["X-CSRF-Token"] = landing.cookies.get("slateops_csrf")
     changed = landing.post(
         "/api/auth/password/change", json={"current_password": password, "password": replacement}
     )

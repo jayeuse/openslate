@@ -40,7 +40,7 @@ def _plan() -> SimpleNamespace:
         organization_snapshot=('{"id":"org-a","invitation_expiry_days":7}',),
         storage_object_keys=("objects/aa/object",),
         alembic_head="head",
-        backup_snapshot=BackupSnapshot("openslate-fixture", ()),
+        backup_snapshot=BackupSnapshot("slateops-fixture", ()),
     )
 
 
@@ -396,9 +396,9 @@ def test_ambiguous_database_commit_does_not_claim_profiles_were_retained(monkeyp
 def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
     monkeypatch, tmp_path
 ) -> None:
-    url = "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres"
+    url = "postgresql+psycopg://slateops_owner:secret@127.0.0.1:55432/postgres"
     target = InstanceTarget(
-        instance_id="openslate-supabase-a1b2c3d4",
+        instance_id="slateops-supabase-a1b2c3d4",
         host="127.0.0.1",
         port=55432,
         database="postgres",
@@ -440,7 +440,7 @@ def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
 
     assert seen_paths == [reset.DOTENV_PATH]
     reset.assert_psycopg_target.assert_called_once_with(
-        connection, target, expected_user="openslate_owner"
+        connection, target, expected_user="slateops_owner"
     )
     storage.delete_and_verify_empty.assert_not_called()
     connection.close.assert_called_once()
@@ -452,7 +452,7 @@ def test_reset_execute_without_a_tty_refuses_before_any_provider_effect(
     values = {
         "ENVIRONMENT": "development",
         "MIGRATION_DATABASE_URL": (
-            "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres"
+            "postgresql+psycopg://slateops_owner:secret@127.0.0.1:55432/postgres"
         ),
         "ADMIN_EMAIL": "admin@example.test",
         "SUPABASE_URL": "http://127.0.0.1:58000",
@@ -461,7 +461,7 @@ def test_reset_execute_without_a_tty_refuses_before_any_provider_effect(
         "BACKEND_PORT": "8000",
     }
     target = InstanceTarget(
-        instance_id="openslate-supabase-a1b2c3d4",
+        instance_id="slateops-supabase-a1b2c3d4",
         host="127.0.0.1",
         port=55432,
         database="postgres",
@@ -494,7 +494,7 @@ def test_reset_refuses_unbound_provider_before_privileged_calls(monkeypatch) -> 
     values = {
         "ENVIRONMENT": "development",
         "MIGRATION_DATABASE_URL": (
-            "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres"
+            "postgresql+psycopg://slateops_owner:secret@127.0.0.1:55432/postgres"
         ),
         "ADMIN_EMAIL": "admin@example.test",
         "BACKEND_BIND_HOST": "127.0.0.1",
@@ -525,7 +525,7 @@ def test_reset_rejects_production_before_target_resolution_or_connection(
     values = {
         "ENVIRONMENT": environment,
         "MIGRATION_DATABASE_URL": (
-            "postgresql+psycopg://openslate_owner:secret@db.example.test:5432/openslate"
+            "postgresql+psycopg://slateops_owner:secret@db.example.test:5432/slateops"
         ),
         "ADMIN_EMAIL": "admin@example.test",
         "FILES_STORAGE_ROOT": str(tmp_path),

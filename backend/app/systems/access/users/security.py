@@ -87,7 +87,7 @@ def presented_actor(db: Session, identity: CurrentIdentity, request: Request) ->
     # signed claims must still match fresh locked local admission below.
     db.rollback()
     token = (
-        request.cookies.get("openslate_access")
+        request.cookies.get("slateops_access")
         or request.headers.get("Authorization", "").partition(" ")[2]
     )
     try:

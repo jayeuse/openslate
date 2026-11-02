@@ -421,7 +421,7 @@ for (const width of widths)
           ).toContainText("Local example connection");
           await expect(
             page.getByLabel("Current organization", { exact: true }),
-          ).toHaveText("OpenSlate");
+          ).toHaveText("Slate Operations");
           if (section === "core") {
             await expect(
               page.getByRole("region", {
@@ -442,7 +442,7 @@ for (const width of widths)
                 .getByRole("button", { name: "Open navigation", exact: true })
                 .click();
             const organization = page.getByRole("button", {
-              name: "Organization: OpenSlate",
+              name: "Organization: Slate Operations",
               exact: true,
             });
             await expect(organization).toBeInViewport();

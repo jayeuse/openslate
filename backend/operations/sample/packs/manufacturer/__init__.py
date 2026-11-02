@@ -116,7 +116,7 @@ PACK = OrganizationPack(
         currency_symbol="$",
         currency_code="USD",
         email_domain=people.INTERNAL_DOMAIN,
-        uuid_namespace="openslate:tillmore-kettle-foods:v1",
+        uuid_namespace="slateops:tillmore-kettle-foods:v1",
         span=(
             "six weeks of plant work at full volume, with one month-end close and the start "
             "of the holiday peak"

@@ -80,8 +80,8 @@ test("confirmed commands mark only the reads they change as stale", async () => 
   seed(accessKeys.userAccess(user.id));
   const organization = {
     orgId: "00000000-0000-4000-8000-000000000102",
-    name: "OpenSlate",
-    slug: "openslate",
+    name: "Slate Operations",
+    slug: "slateops",
     role: "admin" as const,
   };
   queries.setQueryData(authMeOptions().queryKey, {

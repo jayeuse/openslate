@@ -101,7 +101,7 @@ def encode_xlsx(
     try:
         # The owned directory also cleans up interrupted or failed workbook assembly. The
         # archive is written there and its size checked before it is read into memory.
-        with TemporaryDirectory(prefix="openslate-export-") as temporary:
+        with TemporaryDirectory(prefix="slateops-export-") as temporary:
             output = Path(temporary) / "export.xlsx"
             with Workbook(
                 str(output),

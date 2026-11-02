@@ -68,7 +68,7 @@ class TriggerWorker:
             threading.Thread(
                 target=self._run,
                 args=(lane,),
-                name=f"openslate-triggers-{lane}",
+                name=f"slateops-triggers-{lane}",
                 daemon=True,
             )
             for lane in range(self._lanes)

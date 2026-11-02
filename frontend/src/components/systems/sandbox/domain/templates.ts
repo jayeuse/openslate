@@ -409,7 +409,7 @@ function buildTemplate(
   const modules = definition.modules.map(buildModule);
   const relationships = definition.relationships.map(relationship);
   const document: SandboxDocumentV4 = {
-    kind: "openslate-sandbox",
+    kind: "slateops-sandbox",
     schemaVersion: SANDBOX_DOCUMENT_SCHEMA_VERSION,
     design: {
       departments,

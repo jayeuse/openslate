@@ -46,7 +46,7 @@ def _fingerprint(value: str | bytes) -> str:
 def _auth_replay_settings() -> tuple[int, bool, int, bool]:
     """Read only the relevant non-secret settings from this runner-owned Auth container."""
     try:
-        manifest_path = Path(os.environ["OPENSLATE_TEST_DATABASE_MANIFEST"])
+        manifest_path = Path(os.environ["SLATEOPS_TEST_DATABASE_MANIFEST"])
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         auth_id = manifest["ownership"]["service_ids"]["auth"]
     except (OSError, KeyError, TypeError, ValueError):
@@ -192,8 +192,8 @@ def test_old_provider_refresh_replay_revokes_auth_session_and_local_handle_canno
 
         login = browser.post("/api/auth/login", json={"email": email, "password": password})
         assert login.status_code == 200, "Real Supabase email login must succeed"
-        original_access = browser.cookies.get("openslate_access")
-        original_csrf = browser.cookies.get("openslate_csrf")
+        original_access = browser.cookies.get("slateops_access")
+        original_csrf = browser.cookies.get("slateops_csrf")
         assert original_access is not None, "Provider login must set its browser access cookie"
         assert original_csrf is not None, "Provider login must set the browser CSRF cookie"
 

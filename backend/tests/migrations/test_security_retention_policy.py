@@ -50,7 +50,7 @@ def test_capability_catalog_is_zero_argument_owner_bound_and_narrowly_granted(in
     settings = dict(value.split("=", 1) for value in row[4])
     assert settings["search_path"] == "pg_catalog, pg_temp"
     assert settings["TimeZone"] == "UTC"
-    assert row[5:] == ("openslate_owner", "integer")
+    assert row[5:] == ("slateops_owner", "integer")
     assert connection.scalar(text("SELECT to_regprocedure('pg_catalog.gen_random_uuid()')"))
     for role in ("anon", "authenticated", "service_role"):
         assert (
@@ -66,7 +66,7 @@ def test_capability_catalog_is_zero_argument_owner_bound_and_narrowly_granted(in
     assert (
         connection.scalar(
             text(
-                "SELECT has_function_privilege('openslate_runtime', "
+                "SELECT has_function_privilege('slateops_runtime', "
                 "'public.retain_security_events()','EXECUTE')"
             )
         )

@@ -37,7 +37,7 @@ def test_token_sample_uses_the_bound_api_and_never_journals_the_channel_token(
                 200,
                 json={"authenticated": True},
                 headers={
-                    "Set-Cookie": "openslate_csrf=fixture; Path=/",
+                    "Set-Cookie": "slateops_csrf=fixture; Path=/",
                 },
             )
         response = api.request(

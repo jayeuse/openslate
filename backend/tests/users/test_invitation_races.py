@@ -74,8 +74,8 @@ def test_a_delete_that_commits_while_the_invitation_email_is_sent_is_kept(
             None,
             address,
             {
-                "openslate_user_id": str(local_id),
-                "openslate_invitation_operation_id": str(operation),
+                "slateops_user_id": str(local_id),
+                "slateops_invitation_operation_id": str(operation),
             },
         )
     )

@@ -130,7 +130,7 @@ def test_account_without_membership_retains_only_account_flows(policy_world):
     login = world.client.post("/api/auth/login", json={"email": world.email,
                                                      "password": world.password})
     assert login.status_code == 200
-    csrf = world.client.cookies.get("openslate_csrf")
+    csrf = world.client.cookies.get("slateops_csrf")
     me = world.client.get("/api/auth/me")
     assert me.status_code == 200
     assert me.json()["id"] == str(world.actor_id)
@@ -163,7 +163,7 @@ def test_cookie_selection_requires_origin_csrf_and_rejects_mixed_credentials(org
                                                      "password": world.password}).status_code == 200
     payload = {"org_id": str(second)}
     assert world.client.post("/api/auth/session/organization", json=payload).status_code == 401
-    headers = {"X-CSRF-Token": world.client.cookies.get("openslate_csrf")}
+    headers = {"X-CSRF-Token": world.client.cookies.get("slateops_csrf")}
     assert world.client.post("/api/auth/session/organization", headers={
         **headers, "Origin": "https://other.example.test"}, json=payload).status_code == 401
     assert world.client.post("/api/auth/session/organization", headers={
@@ -262,7 +262,7 @@ def test_blocked_saved_organization_preserves_account_flows_but_not_entry(policy
         db.commit()
     try:
         # Session probes use cookies, as the browser does; no auth override.
-        world.client.cookies.set("openslate_access", world.access())
+        world.client.cookies.set("slateops_access", world.access())
         for path in ("/api/auth/me", "/api/auth/session"):
             response = world.client.get(path)
             assert response.status_code == 200
@@ -307,7 +307,7 @@ def test_account_owned_factor_still_requires_aal2_without_an_organization(policy
         db.commit()
     world.factor_status = "verified"
     forget_provider_user(world.provider_id)
-    world.client.cookies.set("openslate_access", world.access())
+    world.client.cookies.set("slateops_access", world.access())
     for path in ("/api/auth/me", "/api/auth/session"):
         denied = world.client.get(path)
         assert denied.status_code == 403 and denied.json()["detail"]["code"] == "mfa_required"

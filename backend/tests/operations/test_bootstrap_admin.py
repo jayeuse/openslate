@@ -31,7 +31,7 @@ def test_bootstrap_invites_once_and_recovers_the_exact_pending_reservation(
     database = MagicMock()
     database.__enter__.return_value = database
     existing = profile if existing_profile else None
-    org = SimpleNamespace(id=uuid7(), slug="openslate")
+    org = SimpleNamespace(id=uuid7(), slug="slateops")
     database.scalar.side_effect = (
         [None, None, existing, existing, org, profile, None] if existing_profile else
         [None, None, None, None, None, None, admin_count, profile, None]
@@ -58,7 +58,7 @@ def test_bootstrap_invites_once_and_recovers_the_exact_pending_reservation(
             org_id=org.id,
             slug=org.slug,
         )
-        invite.assert_called_once_with(database, name="OpenSlate", slug="openslate",
+        invite.assert_called_once_with(database, name="Slate Operations", slug="slateops",
                                        invitation=invitation, provider_user_id=None)
         reconcile.assert_not_called()
     else:

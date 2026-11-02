@@ -753,7 +753,7 @@ test("native export: the explicit anchor hands an attachment to the browser with
   );
   expect(exports.contentRequests).toEqual([]);
   const cookie = (await page.context().cookies()).find(
-    (candidate) => candidate.name === "openslate_export_admission",
+    (candidate) => candidate.name === "slateops_export_admission",
   );
   expect(cookie?.httpOnly).toBe(true);
   expect(cookie?.sameSite).toBe("Strict");
@@ -761,7 +761,7 @@ test("native export: the explicit anchor hands an attachment to the browser with
   const cookieExposed = await page.evaluate(() =>
     document.cookie
       .split(";")
-      .some((part) => part.trim().startsWith("openslate_export_admission=")),
+      .some((part) => part.trim().startsWith("slateops_export_admission=")),
   );
   expect(cookieExposed).toBe(false);
   const [download] = await Promise.all([
@@ -770,7 +770,7 @@ test("native export: the explicit anchor hands an attachment to the browser with
   ]);
   expect(await download.failure()).toBeNull();
   expect(download.suggestedFilename()).toBe(
-    "openslate-backup-export-" + operation.id + ".tar",
+    "slateops-backup-export-" + operation.id + ".tar",
   );
   const bytes = await readFile(await download.path());
   expect(bytes.byteLength).toBe(exportFixtureBytes.byteLength);

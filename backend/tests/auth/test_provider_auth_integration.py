@@ -62,11 +62,11 @@ def test_browser_session_requires_binding_and_supports_refresh_csrf_and_revocati
         assert login.json() == {"authenticated": True, "setup_required": False}
         assert client.get("/api/auth/me").status_code == 200
         assert client.get("/api/access/groups").status_code == 403
-        csrf = client.cookies.get("openslate_csrf")
+        csrf = client.cookies.get("slateops_csrf")
         assert csrf
         cookie_headers = login.headers.get_list("set-cookie")
         assert any(
-            "openslate_access=" in value and "HttpOnly" in value and "Secure" in value
+            "slateops_access=" in value and "HttpOnly" in value and "Secure" in value
             for value in cookie_headers
         )
         # Cookie mutations require the independently held CSRF value.
@@ -77,7 +77,7 @@ def test_browser_session_requires_binding_and_supports_refresh_csrf_and_revocati
         assert sessions.status_code == 200
         active = [item for item in sessions.json() if item["current"]]
         assert len(active) == 1
-        stale_cookie = client.cookies.get("openslate_access")
+        stale_cookie = client.cookies.get("slateops_access")
         revoked = client.delete(f"/api/auth/sessions/{active[0]['id']}")
         assert revoked.status_code == 204
         # An already issued provider JWT cannot bypass backend revocation.
@@ -143,7 +143,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
         }
         assert "no-store" in initial.headers["Cache-Control"]
         assert client.patch(path, json={"theme": "dark"}).status_code == 401
-        csrf = client.cookies.get("openslate_csrf")
+        csrf = client.cookies.get("slateops_csrf")
         assert csrf is not None
         client.headers["X-CSRF-Token"] = csrf
         for target in (other_id, uuid7()):
@@ -299,7 +299,7 @@ def test_own_session_inventory_returns_active_sessions_newest_first_with_user_ag
     settings = get_settings()
     client = TestClient(create_app(), base_url=settings.public_origin)
     client.headers["Origin"] = settings.public_origin
-    client.headers["User-Agent"] = "OpenSlate test browser/1.0"
+    client.headers["User-Agent"] = "Slate Operations test browser/1.0"
     try:
         login = client.post("/api/auth/login", json={"email": email, "password": password})
         assert login.status_code == 200
@@ -354,7 +354,7 @@ def test_own_session_inventory_returns_active_sessions_newest_first_with_user_ag
         assert expired_id not in {UUID(item["id"]) for item in sessions}
         assert {item["id"]: item["user_agent"] for item in sessions} == {
             str(newest_id): "Newest active browser/2.0",
-            str(current_id): "OpenSlate test browser/1.0",
+            str(current_id): "Slate Operations test browser/1.0",
             str(oldest_id): "Old active browser/3.0",
         }
 
@@ -384,8 +384,8 @@ def test_browser_logout_revokes_local_session_during_provider_outage(
     try:
         login = client.post("/api/auth/login", json={"email": email, "password": password})
         assert login.status_code == 200
-        csrf = client.cookies.get("openslate_csrf")
-        access = client.cookies.get("openslate_access")
+        csrf = client.cookies.get("slateops_csrf")
+        access = client.cookies.get("slateops_access")
         assert csrf and access
         client.headers["X-CSRF-Token"] = csrf
         active = client.get("/api/auth/sessions")
@@ -405,10 +405,10 @@ def test_browser_logout_revokes_local_session_during_provider_outage(
 
         assert logged_out.status_code == 204
         assert any(
-            'openslate_access=""' in header for header in logged_out.headers.get_list("set-cookie")
+            'slateops_access=""' in header for header in logged_out.headers.get_list("set-cookie")
         )
         assert any(
-            'openslate_refresh=""' in header for header in logged_out.headers.get_list("set-cookie")
+            'slateops_refresh=""' in header for header in logged_out.headers.get_list("set-cookie")
         )
         with Session(owner) as db:
             session = db.get(IdentitySession, session_id)

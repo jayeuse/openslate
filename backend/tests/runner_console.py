@@ -1,7 +1,7 @@
 """Run test commands for the disposable-stack runners; the full output stays in the private log.
 
 Runs are quiet by default, because drawing thousands of result lines slowed the machine.
-OPENSLATE_TEST_PROGRESS=1 shows one line per finished test (the private log can hold
+SLATEOPS_TEST_PROGRESS=1 shows one line per finished test (the private log can hold
 provider credentials, so nothing else is shown). Runners also turn SIGTERM and SIGHUP into
 an interrupt, so a stopped run still removes its disposable stack.
 """
@@ -50,7 +50,7 @@ def run_streamed(
     capture: bool = False,
     shown: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run like subprocess.run(check=True); with OPENSLATE_TEST_PROGRESS=1, show results.
+    """Run like subprocess.run(check=True); with SLATEOPS_TEST_PROGRESS=1, show results.
 
     `shown` collects the test-result lines either way; they hold no other output.
     """
@@ -71,7 +71,7 @@ def run_streamed(
         start_new_session=True,
     )
     assert process.stdout is not None
-    echo = os.environ.get("OPENSLATE_TEST_PROGRESS") == "1"
+    echo = os.environ.get("SLATEOPS_TEST_PROGRESS") == "1"
     try:
         for line in process.stdout:
             log.write(line)
@@ -156,7 +156,7 @@ def playwright_results(lines: list[str]) -> list[dict[str, str | None]]:
 
 def e2e_browser_flags() -> list[str]:
     """List each test in the private log; open a visible browser only on request, never in CI."""
-    headed = not os.environ.get("CI") and os.environ.get("OPENSLATE_E2E_HEADED") == "1"
+    headed = not os.environ.get("CI") and os.environ.get("SLATEOPS_E2E_HEADED") == "1"
     return ["--reporter=list", *(["--headed"] if headed else [])]
 
 

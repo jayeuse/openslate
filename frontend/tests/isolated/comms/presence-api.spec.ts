@@ -294,7 +294,7 @@ test("heartbeat and typing keep shared CSRF cancellation and actor-free mutation
   const original = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", {
     configurable: true,
-    value: { cookie: "openslate_csrf=presence-test" },
+    value: { cookie: "slateops_csrf=presence-test" },
   });
   const mock = installFetch((input) =>
     String(input).endsWith("/typing")

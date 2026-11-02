@@ -22,8 +22,8 @@ from operations.sample.packs.types import RejectionCase
 FORBIDDEN = "Forbidden"
 HIDDEN = "Record not found"
 BAD_CREDENTIALS = "Invalid authentication credentials"
-INVALID_OPTION_KEY = "openslate:manufacturer:invalid-select-option"
-INVALID_FIELD_KEY = "openslate:manufacturer:unknown-field"
+INVALID_OPTION_KEY = "slateops:manufacturer:invalid-select-option"
+INVALID_FIELD_KEY = "slateops:manufacturer:unknown-field"
 _CS_DESK = "internal_sales_04"
 
 ACTIVITY_CASES = (

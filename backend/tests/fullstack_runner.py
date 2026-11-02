@@ -137,9 +137,9 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member"), com
     from app.systems.access.users.models import UserStatus
     from tests.conftest import create_member, create_organization
 
-    target = instance_target_for_process(owner_url, "openslate_owner", database_environment)
+    target = instance_target_for_process(owner_url, "slateops_owner", database_environment)
     assert_provider_instance(
-        database_environment, database_url=owner_url, expected_user="openslate_owner"
+        database_environment, database_url=owner_url, expected_user="slateops_owner"
     )
     engine = create_engine(owner_url)
     identities = {}
@@ -147,7 +147,7 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member"), com
         with Session(engine) as db:
             if target is None:
                 raise RuntimeError("Disposable seed target identity is unavailable")
-            assert_instance_target(db.connection(), target, expected_user="openslate_owner")
+            assert_instance_target(db.connection(), target, expected_user="slateops_owner")
             if db.scalar(text("SELECT count(*) FROM public.users")) != 0:
                 raise RuntimeError("refusing to seed a nonempty database")
             organization = create_organization(
@@ -187,7 +187,7 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member"), com
                 # Same empty Sandbox document as operations/create_organization.py, so the
                 # journey can publish its own department into the primary organization.
                 document, digest, size = canonical_document(
-                    Document(kind="openslate-sandbox", schema_version=4, design=DesignDocument())
+                    Document(kind="slateops-sandbox", schema_version=4, design=DesignDocument())
                 )
                 db.add(
                     SandboxDocument(
@@ -302,7 +302,7 @@ def main(arguments=()):
                 print(f"Test port {port} unavailable: {error.strerror or 'cannot bind'}.")
                 return 1
     run_id = uuid4().hex
-    private = Path(tempfile.mkdtemp(prefix="openslate-p5-"))
+    private = Path(tempfile.mkdtemp(prefix="slateops-p5-"))
     processes = []
     stage = "prepare"
     stage_seconds: dict[str, float] = {}
@@ -313,9 +313,9 @@ def main(arguments=()):
     browser_lines: list[str] = []
     failure_type = failure_message = None
     result_path = summary_path(BACKEND, FRONTEND, batch=batch, backend_only=backend_only)
-    base_env = {"PATH": os.environ["PATH"], "OPENSLATE_ENV_SOURCE": "process"}
+    base_env = {"PATH": os.environ["PATH"], "SLATEOPS_ENV_SOURCE": "process"}
     if reset_only:
-        base_env["OPENSLATE_TEST_RESET_ACCEPTANCE"] = "1"
+        base_env["SLATEOPS_TEST_RESET_ACCEPTANCE"] = "1"
     # Browser binaries remain in the installer's cache while runtime HOME is private.
     browser_cache = Path.home() / ("Library/Caches" if sys.platform == "darwin" else ".cache")
     if sys.platform == "linux":
@@ -355,10 +355,10 @@ def main(arguments=()):
             **provider_env,
             "ENVIRONMENT": "test",
             "E2E_ALLOW_MUTATIONS": "true",
-            "OPENSLATE_FULLSTACK_RUN_ID": run_id,
-            "OPENSLATE_TEST_DATABASE_MANIFEST": str(database_manifest),
+            "SLATEOPS_FULLSTACK_RUN_ID": run_id,
+            "SLATEOPS_TEST_DATABASE_MANIFEST": str(database_manifest),
         }
-        if instance_target_for_process(owner_url, "openslate_owner", migration_env) is None:
+        if instance_target_for_process(owner_url, "slateops_owner", migration_env) is None:
             raise RuntimeError("Disposable PostgreSQL target identity is unavailable")
         timed("database role bootstrap")
         run(
@@ -372,7 +372,7 @@ def main(arguments=()):
         if realtime_only:
             timed("Realtime forward migration roundtrip")
             run(
-                [sys.executable, "-m", "alembic", "downgrade", "8464b72e2cd5"],
+                [sys.executable, "-m", "alembic", "downgrade", "base"],
                 BACKEND,
                 migration_env,
             )
@@ -403,19 +403,19 @@ def main(arguments=()):
         gateway_env = {
             **base_env,
             "SUPABASE_PUBLISHABLE_KEY": provider_env["SUPABASE_PUBLISHABLE_KEY"],
-            "OPENSLATE_REALTIME_UPSTREAM": (f"{gateway_host}:{postgres.api_port}"),
+            "SLATEOPS_REALTIME_UPSTREAM": (f"{gateway_host}:{postgres.api_port}"),
         }
         if realtime_only:
             timed("same-origin Realtime gateway")
             caddy = DisposableCaddy(private, run_id, gateway_env, log)
             caddy.start()
-            api_env["OPENSLATE_TEST_REALTIME_GATEWAY"] = WEB
+            api_env["SLATEOPS_TEST_REALTIME_GATEWAY"] = WEB
         if comms_native:
             timed("native Comms API and same-origin gateway")
             if arguments in (("--comms-jobs-only",), ("--comms-previews-only",)):
                 api_env["E2E_BACKGROUND_WORKERS"] = "true"
-            api_env["OPENSLATE_COMMS_NATIVE_API"] = API
-            api_env["OPENSLATE_COMMS_TELEMETRY"] = str(private / "comms-metrics.jsonl")
+            api_env["SLATEOPS_COMMS_NATIVE_API"] = API
+            api_env["SLATEOPS_COMMS_TELEMETRY"] = str(private / "comms-metrics.jsonl")
             processes.append(
                 subprocess.Popen(
                     [
@@ -443,7 +443,7 @@ def main(arguments=()):
             wait_for(API + "/api/ready", processes[-1])
             caddy = DisposableCaddy(private, run_id, gateway_env, log)
             caddy.start()
-            api_env["OPENSLATE_TEST_REALTIME_GATEWAY"] = WEB
+            api_env["SLATEOPS_TEST_REALTIME_GATEWAY"] = WEB
         if not acceptance_only and not browser_only:
             timed("backend batch" if batch else "backend regression and coverage gate")
             execute = run_backend_batches if batch else run_backend_coverage
@@ -529,8 +529,8 @@ def main(arguments=()):
             test_env = {
                 **base_env,
                 "BASE_URL": WEB,
-                "OPENSLATE_FULLSTACK_FIXTURE": str(fixture),
-                "OPENSLATE_FULLSTACK_RUN_ID": run_id,
+                "SLATEOPS_FULLSTACK_FIXTURE": str(fixture),
+                "SLATEOPS_FULLSTACK_RUN_ID": run_id,
                 "E2E_ALLOW_MUTATIONS": "true",
                 "PLAYWRIGHT_NO_COPY_PROMPT": "1",
             }

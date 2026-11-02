@@ -21,7 +21,7 @@
         <add name="HTTP_X_FORWARDED_PROTO" />
       </allowedServerVariables>
       <rules>
-        <rule name="OpenSlate SSE" stopProcessing="true">
+        <rule name="Slate Operations SSE" stopProcessing="true">
           <match url="^api/events$" />
           <action type="Rewrite" url="http://127.0.0.1:&lt;BACKEND_PORT&gt;/{R:0}" />
           <serverVariables>
@@ -32,7 +32,7 @@
             <set name="HTTP_X_FORWARDED_PROTO" value="https" />
           </serverVariables>
         </rule>
-        <rule name="OpenSlate API" stopProcessing="true">
+        <rule name="Slate Operations API" stopProcessing="true">
           <match url="^api(?:/.*)?$" />
           <action type="Rewrite" url="http://127.0.0.1:&lt;BACKEND_PORT&gt;/{R:0}" />
           <serverVariables>
@@ -43,7 +43,7 @@
             <set name="HTTP_X_FORWARDED_PROTO" value="https" />
           </serverVariables>
         </rule>
-        <rule name="OpenSlate UI" stopProcessing="true">
+        <rule name="Slate Operations UI" stopProcessing="true">
           <match url=".*" />
           <action type="Rewrite" url="http://127.0.0.1:&lt;BACKEND_PORT&gt;/{R:0}" />
           <serverVariables>

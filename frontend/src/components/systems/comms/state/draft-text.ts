@@ -9,7 +9,7 @@ import {
   type SetStateAction,
 } from "react";
 
-export const COMMS_DRAFT_TEXT_PREFIX = "openslate.sample.draft-text.v2.";
+export const COMMS_DRAFT_TEXT_PREFIX = "slateops.sample.draft-text.v2.";
 
 export type CommsDraftTextSnapshot = {
   value: string;

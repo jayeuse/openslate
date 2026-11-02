@@ -22,8 +22,8 @@ type ActionType = "invite" | "recovery";
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
 function fixture(): Fixture {
-  const location = process.env.OPENSLATE_FULLSTACK_FIXTURE;
-  const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
+  const location = process.env.SLATEOPS_FULLSTACK_FIXTURE;
+  const runId = process.env.SLATEOPS_FULLSTACK_RUN_ID;
   if (!location || !runId) throw new Error("full-stack fixture is unavailable");
   const parsed: unknown = JSON.parse(readFileSync(location, "utf8"));
   if (
@@ -226,7 +226,7 @@ test("the same-origin gateway authenticates, serves the session, and revokes it 
   await page.getByRole("button", { name: "Sign in" }).click();
 
   await expect(page).toHaveURL(/\/(openview|sandbox)$/);
-  await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(async () => {
@@ -396,19 +396,19 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByLabel("Email", { exact: true }).fill(fullstack.admin.email);
   await page.getByLabel("Password").fill(fullstack.admin.password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();
 
   const invitation = await page.evaluate(
     async ({ email, username }) => {
       const csrfCookie = document.cookie
         .split(";")
         .map((segment) => segment.trim())
-        .find((segment) => segment.startsWith("openslate_csrf="));
+        .find((segment) => segment.startsWith("slateops_csrf="));
       if (!csrfCookie) return { httpStatus: 0 };
       let csrfToken: string;
       try {
         csrfToken = decodeURIComponent(
-          csrfCookie.slice("openslate_csrf=".length),
+          csrfCookie.slice("slateops_csrf=".length),
         );
       } catch {
         return { httpStatus: 0 };
@@ -488,7 +488,7 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password").fill(invitationPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();
   const invitedIdentityResponse = await page.request.get("/api/auth/me");
   expect(invitedIdentityResponse.status()).toBe(200);
   const invitedIdentity = (await invitedIdentityResponse.json()) as {
@@ -555,7 +555,7 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password").fill(replacementPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();
   const recoveredIdentityResponse = await page.request.get("/api/auth/me");
   expect(recoveredIdentityResponse.status()).toBe(200);
   const recoveredIdentity = (await recoveredIdentityResponse.json()) as {

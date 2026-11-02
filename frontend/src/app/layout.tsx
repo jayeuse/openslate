@@ -76,8 +76,8 @@ const MartianMono = localFont({
 
 export const metadata: Metadata = {
   title: {
-    default: "OpenSlate",
-    template: "%s | OpenSlate",
+    default: "Slate Operations",
+    template: "%s | Slate Operations",
   },
   description: "A focused workspace for departments, modules, and records.",
 };

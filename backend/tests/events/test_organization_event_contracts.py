@@ -46,7 +46,7 @@ class EventWorld:
     def principal(self, *, other=False, explicit=True):
         client = self.client_b if other else self.client_a
         return events_router.EventPrincipal(
-            client.cookies["openslate_access"], "127.0.0.1",
+            client.cookies["slateops_access"], "127.0.0.1",
             (self.b_id if other else self.a_id) if explicit else None,
         )
 
@@ -85,7 +85,7 @@ def event_world(fake_provider_account, other_account):
             client.headers["Origin"] = get_settings().public_origin
             login = client.post("/api/auth/login", json={"email": email, "password": password})
             assert login.status_code == 200, login.text
-            client.headers["X-CSRF-Token"] = client.cookies["openslate_csrf"]
+            client.headers["X-CSRF-Token"] = client.cookies["slateops_csrf"]
             client.headers["X-Org"] = str(org_id)
         yield EventWorld(owner, a_id, b_id, admin_a, shared_b, foreign_id, *clients)
     finally:

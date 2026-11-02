@@ -49,8 +49,8 @@ def fixture() -> dict[str, str]:
         SMTP_USER="",
         SMTP_PASS="",
         DATABASE_BOOTSTRAP_URL="postgresql+psycopg://supabase_admin:database-secret@127.0.0.1:55432/postgres",
-        MIGRATION_DATABASE_URL="postgresql+psycopg://openslate_owner:owner-secret@127.0.0.1:55432/postgres",
-        DATABASE_URL="postgresql+psycopg://openslate_runtime:runtime-secret@127.0.0.1:55432/postgres",
+        MIGRATION_DATABASE_URL="postgresql+psycopg://slateops_owner:owner-secret@127.0.0.1:55432/postgres",
+        DATABASE_URL="postgresql+psycopg://slateops_runtime:runtime-secret@127.0.0.1:55432/postgres",
         SUPABASE_SESSION_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
         PUBLICATION_SIGNING_KEY="a" * 64,
         REALTIME_TOKEN_SIGNING_KEY=REALTIME_SIGNING_KEY,
@@ -230,7 +230,7 @@ class SupabaseEnvironmentTests(unittest.TestCase):
         values = fixture()
         projected = environment.compose_environment(values, services={"db"})
         self.assertEqual(projected["POSTGRES_PASSWORD"], "database-secret")
-        self.assertEqual(projected["OPENSLATE_INSTANCE_ID"], values["OPENSLATE_INSTANCE_ID"])
+        self.assertEqual(projected["SLATEOPS_INSTANCE_ID"], values["SLATEOPS_INSTANCE_ID"])
         for name in (
             "DATABASE_URL",
             "MIGRATION_DATABASE_URL",
@@ -248,7 +248,7 @@ class SupabaseEnvironmentTests(unittest.TestCase):
         self.assertEqual(
             environment.compose_environment(values, services={"caddy"}),
             {
-                "OPENSLATE_INSTANCE_ID": values["OPENSLATE_INSTANCE_ID"],
+                "SLATEOPS_INSTANCE_ID": values["SLATEOPS_INSTANCE_ID"],
                 "GATEWAY_BIND_HOST": "127.0.0.1",
                 "GATEWAY_PORT": "3548",
                 "SUPABASE_API_PORT": "58123",
@@ -403,9 +403,9 @@ class SupabaseEnvironmentTests(unittest.TestCase):
         values = fixture()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            path = root / ".agent-runtime/instances/openslate.json"
+            path = root / ".agent-runtime/instances/slateops.json"
             path.parent.mkdir(parents=True)
-            path.write_text(json.dumps({"ownership": {"volume": "openslate_postgres-data"}}))
+            path.write_text(json.dumps({"ownership": {"volume": "slateops_postgres-data"}}))
             path.chmod(0o600)
             with patch.object(environment, "ROOT", root):
                 with self.assertRaises(environment.ConfigurationError):
@@ -414,13 +414,13 @@ class SupabaseEnvironmentTests(unittest.TestCase):
     def test_new_attestation_is_private_versioned_and_bound_to_provider(self) -> None:
         values = fixture()
         ownership: dict[str, object] = {
-            "compose_project": "openslate",
+            "compose_project": "slateops",
             "container_id": "a" * 64,
             "image": environment.SUPABASE_DB_IMAGE,
             "working_dir": str(environment.SUPABASE_COMPOSE_PATH.parent),
-            "network": "openslate_provider",
+            "network": "slateops_provider",
             "network_id": "b" * 64,
-            "volume": "openslate_supabase-db-data",
+            "volume": "slateops_supabase-db-data",
             "host_port": 55432,
             "container_port": 5432,
         }
@@ -435,7 +435,7 @@ class SupabaseEnvironmentTests(unittest.TestCase):
 
     def test_docker_inspection_binds_pinned_database_container_and_volume(self) -> None:
         values = fixture()
-        identity = values["OPENSLATE_INSTANCE_ID"]
+        identity = values["SLATEOPS_INSTANCE_ID"]
         container = {
             "Id": "a" * 64,
             "State": {"Running": True},
@@ -490,7 +490,7 @@ class SupabaseEnvironmentTests(unittest.TestCase):
                     environment.inspect_instance_ownership(values)
 
     def test_existing_unattested_provider_data_blocks_start(self) -> None:
-        values = {**fixture(), "OPENSLATE_INSTANCE_ID": "supabase-guard-test"}
+        values = {**fixture(), "SLATEOPS_INSTANCE_ID": "supabase-guard-test"}
         with (
             patch.object(environment, "_compose_project_containers", return_value=[]),
             patch.object(
@@ -513,7 +513,7 @@ class SupabaseEnvironmentTests(unittest.TestCase):
                 environment._preflight_compose_mutation(values, "up", ["up", "-d"])
 
     def test_legacy_project_data_is_rejected_before_new_start(self) -> None:
-        values = {**fixture(), "OPENSLATE_INSTANCE_ID": "supabase-guard-test"}
+        values = {**fixture(), "SLATEOPS_INSTANCE_ID": "supabase-guard-test"}
         with patch.object(
             environment, "_docker_output", return_value="supabase-guard-test_postgres-data\n"
         ):
@@ -546,7 +546,7 @@ class SupabaseEnvironmentTests(unittest.TestCase):
             patch.object(environment, "_reject_legacy_resources"),
             patch.object(environment, "_compose_project_containers", return_value=[]),
             patch.object(
-                environment, "_docker_output", side_effect=["openslate_supabase-db-data\n", ""]
+                environment, "_docker_output", side_effect=["slateops_supabase-db-data\n", ""]
             ),
             patch.object(environment, "_verify_attested_resources") as verify,
         ):

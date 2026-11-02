@@ -12,9 +12,9 @@ export default function SetupPage() {
       <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
         <a href="/" className="flex items-center gap-3">
           <span className="bg-foreground text-background grid size-9 place-items-center rounded-md text-sm font-bold">
-            OS
+            SO
           </span>
-          <span className="text-sm font-semibold">OpenSlate</span>
+          <span className="text-sm font-semibold">Slate Operations</span>
         </a>
         <Button asChild variant="ghost">
           <a href="/login">Back to sign in</a>
@@ -28,7 +28,7 @@ export default function SetupPage() {
           Provision the administrator before you enter.
         </h1>
         <p className="text-muted-foreground mt-5 max-w-2xl text-lg leading-8">
-          For security, OpenSlate does not expose an unauthenticated
+          For security, Slate Operations does not expose an unauthenticated
           administrator-creation endpoint. Create the first administrator during
           deployment, then return here to sign in.
         </p>

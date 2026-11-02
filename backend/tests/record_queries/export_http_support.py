@@ -149,7 +149,7 @@ def export_world(fake_provider_account) -> Iterator[ExportWorld]:
     try:
         login = client.post("/api/auth/login", json={"email": email, "password": password})
         assert login.status_code == 200
-        client.headers["X-CSRF-Token"] = client.cookies["openslate_csrf"]
+        client.headers["X-CSRF-Token"] = client.cookies["slateops_csrf"]
         with Session(owner) as db:
             session_id = db.scalar(
                 select(IdentitySession.id).where(IdentitySession.user_id == actor_id)

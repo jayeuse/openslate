@@ -87,7 +87,7 @@ def test_password_change_retains_current_and_revokes_other_provider_sessions(pro
         assert set(before_wrong_password) == {current_session_id, other_session_id}
         assert all(state == (True, False) for state in before_wrong_password.values())
 
-        csrf = current.cookies.get("openslate_csrf")
+        csrf = current.cookies.get("slateops_csrf")
         assert csrf is not None, "Browser login must provide its CSRF token"
         weak = current.post(
             "/api/auth/password/change",
@@ -194,7 +194,7 @@ def test_an_account_disabled_after_the_provider_grant_keeps_its_password(
     try:
         login = browser.post("/api/auth/login", json={"email": email, "password": old_password})
         assert login.status_code == 200, login.text
-        csrf = browser.cookies.get("openslate_csrf")
+        csrf = browser.cookies.get("slateops_csrf")
         assert csrf is not None
         monkeypatch.setattr(auth_router, "get_supabase_auth_client", DisableAfterGrant)
 
@@ -251,7 +251,7 @@ def test_a_disable_after_the_password_change_locks_the_profile_waits_for_the_cha
     try:
         login = browser.post("/api/auth/login", json={"email": email, "password": old_password})
         assert login.status_code == 200, login.text
-        csrf = browser.cookies.get("openslate_csrf")
+        csrf = browser.cookies.get("slateops_csrf")
         assert csrf is not None
         monkeypatch.setattr(auth_router, "get_supabase_auth_client", HoldAfterProviderUpdate)
         change_thread, change_result = start(

@@ -19,7 +19,7 @@ def test_container_image_path_does_not_replace_host_manifest_identity(
     disposable_target, monkeypatch, alter
 ):
     host_url, _facts = disposable_target
-    path = Path(os.environ["OPENSLATE_TEST_DATABASE_MANIFEST"])
+    path = Path(os.environ["SLATEOPS_TEST_DATABASE_MANIFEST"])
     manifest = json.loads(path.read_text())
     runtime_url = container_runtime_database_url(host_url)
     manifest["container_runtime"] = {
@@ -32,9 +32,9 @@ def test_container_image_path_does_not_replace_host_manifest_identity(
         name: os.environ[name]
         for name in (
             "ENVIRONMENT",
-            "OPENSLATE_TEST_DATABASE_MANIFEST",
+            "SLATEOPS_TEST_DATABASE_MANIFEST",
             "E2E_ALLOW_MUTATIONS",
-            "OPENSLATE_FULLSTACK_RUN_ID",
+            "SLATEOPS_FULLSTACK_RUN_ID",
             "SUPABASE_URL",
             "SUPABASE_AUTH_ISSUER",
             "SUPABASE_STORAGE_URL",
@@ -65,9 +65,9 @@ def test_container_image_path_does_not_replace_host_manifest_identity(
     path.write_text(json.dumps(manifest))
     if alter is not None:
         with pytest.raises(InstanceTargetError):
-            instance_target_for_process(runtime_url, "openslate_runtime", process)
+            instance_target_for_process(runtime_url, "slateops_runtime", process)
     else:
-        target = instance_target_for_process(runtime_url, "openslate_runtime", process)
+        target = instance_target_for_process(runtime_url, "slateops_runtime", process)
         assert target is not None
         assert (target.host, target.port, target.database) == ("db", 5432, "postgres")
         assert target.cluster_name == manifest["ownership"]["cluster_name"]

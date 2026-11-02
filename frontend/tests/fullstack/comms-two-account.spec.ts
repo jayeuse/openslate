@@ -74,7 +74,7 @@ test("real invited accounts complete the Comms journey without crossing organiza
         expect(state.organization_id).toBe(account.orgId);
         expect(
           await account.page.evaluate(() =>
-            /(?:^|;\s*)openslate_(?:access|refresh)=/u.test(document.cookie),
+            /(?:^|;\s*)slateops_(?:access|refresh)=/u.test(document.cookie),
           ),
         ).toBe(false);
         // The shell event stream (one per account and organization) must open.

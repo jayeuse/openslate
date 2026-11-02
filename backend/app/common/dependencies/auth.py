@@ -142,8 +142,8 @@ def _resolve_identity(
     *,
     allow_aal1: bool,
 ) -> CurrentIdentity:
-    cookie_token = request.cookies.get("openslate_access")
-    refresh_cookie = request.cookies.get("openslate_refresh")
+    cookie_token = request.cookies.get("slateops_access")
+    refresh_cookie = request.cookies.get("slateops_refresh")
     bearer_token = bearer.credentials if bearer is not None else None
     if request.headers.get("authorization") and (cookie_token or refresh_cookie):
         raise _unauthorized()

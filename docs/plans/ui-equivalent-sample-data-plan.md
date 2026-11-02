@@ -290,7 +290,7 @@ Each pack sets its own module counts so that its Standard run falls in the 5,000
 
 ### Organization packs
 
-OpenSlate serves any organization, so sample data is not limited to a business. A pack is one complete organization: its departments, modules, fields, relationships and automations; its people, groups and access; the vocabulary and copy for records, Board posts, events and OpenView; status paths for record history; its named scenario; and its country, locale, currency and time zone. A run uses one pack (`--organization <key>`), because one installation holds one organization. Changing packs needs a guarded reset.
+Slate Operations serves any organization, so sample data is not limited to a business. A pack is one complete organization: its departments, modules, fields, relationships and automations; its people, groups and access; the vocabulary and copy for records, Board posts, events and OpenView; status paths for record history; its named scenario; and its country, locale, currency and time zone. A run uses one pack (`--organization <key>`), because one installation holds one organization. Changing packs needs a guarded reset.
 
 | Pack | Organization |
 | --- | --- |

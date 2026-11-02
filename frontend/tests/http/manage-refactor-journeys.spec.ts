@@ -784,8 +784,8 @@ test("Organization Larger text reflows at 1024 and phone widths with all setting
   page,
 }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("openslate-text-size", "125");
-    localStorage.setItem("openslate-density", "spacious");
+    localStorage.setItem("slateops-text-size", "125");
+    localStorage.setItem("slateops-density", "spacious");
   });
   for (const width of [1024, 390]) {
     await page.setViewportSize({ width, height: 844 });

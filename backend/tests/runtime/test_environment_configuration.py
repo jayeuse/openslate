@@ -20,18 +20,18 @@ from tests.config_support import settings_values
 
 def test_dotenv_reader_uses_one_file_for_expansion(tmp_path: Path) -> None:
     environment = tmp_path / ".env"
-    environment.write_text("ROOT=/srv/openslate\nLOG_DIR=${ROOT}/logs\n", encoding="utf-8")
+    environment.write_text("ROOT=/srv/slateops\nLOG_DIR=${ROOT}/logs\n", encoding="utf-8")
 
     assert read_environment(environment) == {
-        "ROOT": "/srv/openslate",
-        "LOG_DIR": "/srv/openslate/logs",
+        "ROOT": "/srv/slateops",
+        "LOG_DIR": "/srv/slateops/logs",
     }
     values = environment_inputs(environment, process={"LOG_DIR": "/mounted/logs"})
-    assert values["LOG_DIR"] == "/srv/openslate/logs"
+    assert values["LOG_DIR"] == "/srv/slateops/logs"
     assert environment_inputs(
         tmp_path / "not-read.env",
-        process={"OPENSLATE_ENV_SOURCE": "process", "LOG_DIR": "/injected/logs"},
-    ) == {"OPENSLATE_ENV_SOURCE": "process", "LOG_DIR": "/injected/logs"}
+        process={"SLATEOPS_ENV_SOURCE": "process", "LOG_DIR": "/injected/logs"},
+    ) == {"SLATEOPS_ENV_SOURCE": "process", "LOG_DIR": "/injected/logs"}
 
 
 @pytest.mark.parametrize(
@@ -63,8 +63,8 @@ def test_dotenv_reader_rejects_ambiguous_or_external_resolution(
 def test_dotenv_reader_rejects_unreadable_and_unsupported_source_selector(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="unavailable"):
         read_environment(tmp_path / "missing.env")
-    with pytest.raises(ConfigurationError, match="OPENSLATE_ENV_SOURCE"):
-        environment_inputs(tmp_path / "missing.env", process={"OPENSLATE_ENV_SOURCE": "shell"})
+    with pytest.raises(ConfigurationError, match="SLATEOPS_ENV_SOURCE"):
+        environment_inputs(tmp_path / "missing.env", process={"SLATEOPS_ENV_SOURCE": "shell"})
 
 
 def test_operation_loaders_read_canonical_values_and_report_missing_names(
@@ -73,13 +73,13 @@ def test_operation_loaders_read_canonical_values_and_report_missing_names(
     environment = tmp_path / ".env"
     environment.write_text(
         "ADMIN_EMAIL=admin@example.test\nADMIN_USERNAME=admin\n"
-        "ENVIRONMENT=test\nDATABASE_URL=postgresql+psycopg://openslate_runtime:pass@127.0.0.1/db\n"
-        "MIGRATION_DATABASE_URL=postgresql+psycopg://openslate_owner:pass@127.0.0.1/db\n"
+        "ENVIRONMENT=test\nDATABASE_URL=postgresql+psycopg://slateops_runtime:pass@127.0.0.1/db\n"
+        "MIGRATION_DATABASE_URL=postgresql+psycopg://slateops_owner:pass@127.0.0.1/db\n"
         "DATABASE_BOOTSTRAP_URL=postgresql+psycopg://postgres:pass@127.0.0.1/db\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(settings_module, "DOTENV_PATH", environment)
-    monkeypatch.delenv("OPENSLATE_ENV_SOURCE", raising=False)
+    monkeypatch.delenv("SLATEOPS_ENV_SOURCE", raising=False)
 
     assert get_admin_settings().admin_username == "admin"
     assert get_provision_settings().environment == "test"
@@ -190,7 +190,7 @@ def test_missing_local_admin_values_cannot_be_filled_from_the_shell(
     environment = tmp_path / ".env"
     environment.write_text("ADMIN_EMAIL=local@example.test\n", encoding="utf-8")
     monkeypatch.setattr(settings_module, "DOTENV_PATH", environment)
-    monkeypatch.delenv("OPENSLATE_ENV_SOURCE", raising=False)
+    monkeypatch.delenv("SLATEOPS_ENV_SOURCE", raising=False)
     monkeypatch.setenv("ADMIN_USERNAME", "stale-user")
     monkeypatch.setenv("ADMIN_PASSWORD", "stale-private-password")
 
@@ -209,7 +209,7 @@ def test_migration_requires_its_owner_url_without_runtime_fallback(
     )
     monkeypatch.setattr(settings_module, "DOTENV_PATH", environment)
     monkeypatch.delenv("MIGRATION_DATABASE_URL", raising=False)
-    monkeypatch.delenv("OPENSLATE_ENV_SOURCE", raising=False)
+    monkeypatch.delenv("SLATEOPS_ENV_SOURCE", raising=False)
 
     with pytest.raises(ConfigurationError) as error:
         get_migration_settings()

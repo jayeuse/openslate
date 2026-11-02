@@ -157,8 +157,8 @@ for (const row of rows) {
           : [];
         const organization = {
           org_id: "00000000-0000-4000-8000-000000000102",
-          name: "OpenSlate",
-          slug: "openslate",
+          name: "Slate Operations",
+          slug: "slateops",
           role: row.role,
         };
         return Response.json({

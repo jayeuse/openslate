@@ -38,7 +38,7 @@ def test_primary_partner_direct_candidates_use_real_policy_and_bounded_public_dt
             create_member(db, org, role, user=db.get(User, room.people[index].id))
         db.commit()
     directory = (
-        Path("test-results/direct-candidates/native") / os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+        Path("test-results/direct-candidates/native") / os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     )
     directory.mkdir(parents=True, exist_ok=True)
     journal = directory / "requests.jsonl"

@@ -70,7 +70,7 @@ def encode(
         return bounded_bytes(output.getvalue())
     if format != "xlsx":
         raise ValueError("Unknown export format")
-    with tempfile.TemporaryDirectory(prefix="openslate-comms-export-") as directory:
+    with tempfile.TemporaryDirectory(prefix="slateops-comms-export-") as directory:
         path = Path(directory) / "export.xlsx"
         with Workbook(
             str(path),

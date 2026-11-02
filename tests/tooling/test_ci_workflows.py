@@ -383,7 +383,7 @@ class CiWorkflowContractTests(unittest.TestCase):
             "docker/build-push-action",
             "frontend.Dockerfile",
             "NEXT_PUBLIC_",
-            "openslate-frontend",
+            "slateops-frontend",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source)
@@ -427,7 +427,7 @@ class CiWorkflowContractTests(unittest.TestCase):
             with self.subTest(result=result):
                 self.assertIn(f'test "${result}" = "success"', source)
         self.assertIn("run_server_image", source)
-        self.assertIn("scope=openslate-server", source)
+        self.assertIn("scope=slateops-server", source)
         self.assertIn("Build unified FastAPI server image", source)
 
     def test_backend_coverage_shards_combine_before_the_gate(self):
@@ -481,7 +481,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         source = (ROOT / "infra/docker/backend.Dockerfile").read_text()
         runtime_stage = source.rsplit("FROM python:3.14-slim", 1)[1]
 
-        self.assertIn("OPENSLATE_ENV_SOURCE=process", runtime_stage)
+        self.assertIn("SLATEOPS_ENV_SOURCE=process", runtime_stage)
         self.assertNotIn("COPY .env", runtime_stage)
 
 

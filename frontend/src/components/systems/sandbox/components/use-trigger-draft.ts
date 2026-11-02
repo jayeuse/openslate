@@ -68,7 +68,7 @@ type DraftStorage = Pick<
 >;
 
 export const TRIGGER_DRAFT_STORAGE_PREFIX =
-  "openslate.sandbox.trigger-draft.v1.";
+  "slateops.sandbox.trigger-draft.v1.";
 const MAX_STORED_LENGTH = 1_048_576;
 
 function encode(value: string): string {

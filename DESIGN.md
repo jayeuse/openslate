@@ -1,5 +1,5 @@
 ---
-name: OpenSlate
+name: Slate Operations
 description: A slate each organization themes. Four looks, one layout, the same words.
 colors:
   ground: "#f7f8fa"
@@ -265,13 +265,13 @@ components:
     padding: "2px 8px"
 ---
 
-# Design System: OpenSlate
+# Design System: Slate Operations
 
 ## Overview
 
 **Creative North Star: "The Themeable Slate"**
 
-OpenSlate has no fixed identity. It is a slate that each organization themes. The owner picks one look for the whole organization in Manage > Organization > Organization look, and each person then picks System (the device's color mode), Light, or Dark. There are four looks, each with a light and a dark mode: **Slate** (the default), **Whiteboard**, **Triplicate**, and **Stockroom**. A look changes color, type, materials, shapes, and motion. It never changes layout, behavior, or words. The Sandbox is where the looks differ most: the owner's own departments and modules, drawn large as an ERD-style canvas, in the look the owner chose.
+The product name is **Slate Operations**; the short form **Slate Ops** appears only where space is tight, such as the mobile header. The name sets no visual identity: "Slate" is also the default look. Slate Operations has no fixed identity. It is a slate that each organization themes. The owner picks one look for the whole organization in Manage > Organization > Organization look, and each person then picks System (the device's color mode), Light, or Dark. There are four looks, each with a light and a dark mode: **Slate** (the default), **Whiteboard**, **Triplicate**, and **Stockroom**. A look changes color, type, materials, shapes, and motion. It never changes layout, behavior, or words. The Sandbox is where the looks differ most: the owner's own departments and modules, drawn large as an ERD-style canvas, in the look the owner chose.
 
 The system is built as a token contract plus a short list of named skin places. `frontend/src/app/globals.css` defines the contract and the Slate values on `:root` and `.dark`. Each other look lives in `frontend/src/app/themes/<look>.css`. It overrides the same token names on `:root[data-theme="<look>"]` and adds a few rules on the skin places. `[data-theme-preview="<look>"]` scopes a look's tokens to one element, for the look picker. The frontmatter above mirrors Slate light only, as a machine-readable default. The stylesheets are normative for every look and mode. When the two disagree, the stylesheets win.
 
@@ -294,7 +294,7 @@ Density is calm and practical: 14px body text, 36px buttons, hairline rules, and
 | Triplicate      | `themes/triplicate.css`           | Archivo (width axis) / Geist Mono       | 2px                 | The carbon-copy business form. The page is ruled paper; the top bar is a printed header with a double rule. Navy printed structure, ballpoint blue for what people typed, condensed tracked labels, perforated card headers and dialog tops, rubber-stamp chips, numbered ledger rows, double-ruled notices. On the canvas: each department is a tinted carbon copy, modules share their department's paper, field names are in ballpoint blue, dashed carbon relationships with solid handoffs. Dark is carbon paper. |
 | Stockroom       | `themes/stockroom.css`            | Archivo (width axis) / Martian Mono     | 2px                 | Steel shelving and kraft boxes. A flat wall-colored page, a painted steel sidebar, a top bar on a steel rail, stencilled uppercase page titles, a heavy shelf rule under card headers, label-maker tape chips, steel table-head bands, steel-topped dialogs. On the canvas: steel uprights on the frame and on each department bay, kraft module boxes with a white paper end label and a steel shelf lip.                                                                                                     |
 
-The workspace stores the organization look; each account stores its color mode, motion, and keyboard shortcut preferences. Text size and page density stay device-local. Browser storage caches the look under `openslate-org-theme`, color mode under `openslate-theme`, and reduced motion under `openslate-motion`; `public/theme-init.js` applies them before paint, then the server preferences reconcile them through `lib/appearance-preferences.ts`.
+The workspace stores the organization look; each account stores its color mode, motion, and keyboard shortcut preferences. Text size and page density stay device-local. Browser storage caches the look under `slateops-org-theme`, color mode under `slateops-theme`, and reduced motion under `slateops-motion`; `public/theme-init.js` applies them before paint, then the server preferences reconcile them through `lib/appearance-preferences.ts`.
 
 ### Named Rules
 
@@ -535,7 +535,7 @@ Wrong: Stockroom renders the string "SANDBOX" or "Shelf: Sandbox".
 
 ## Layout
 
-The app shell is the same in every look. A resizable sidebar holds the workspaces and their sections: 240px by default, 220px to 360px, collapsible to a 3.5rem rail (56px at 100% text) that scales with the text size, like the width. The resize separator keeps its keyboard control (arrows, Home and End for the ends) and draws a 4px handle on hover and focus; a double-click resets the default. The sidebar shows from 1024px; below 1024px it is a 288px drawer. A sticky 56px header row holds the breadcrumbs: Workspace › workspace › section. Phones drop the Workspace root so the crumbs that change stay readable. Each route sets its own browser title (`Sandbox | OpenSlate`).
+The app shell is the same in every look. A resizable sidebar holds the workspaces and their sections: 240px by default, 220px to 360px, collapsible to a 3.5rem rail (56px at 100% text) that scales with the text size, like the width. The resize separator keeps its keyboard control (arrows, Home and End for the ends) and draws a 4px handle on hover and focus; a double-click resets the default. The sidebar shows from 1024px; below 1024px it is a 288px drawer. A sticky 56px header row holds the breadcrumbs: Workspace › workspace › section. Phones drop the Workspace root so the crumbs that change stay readable. Each route sets its own browser title (`Sandbox | Slate Operations`).
 
 The main region pads 16px on phones and 20px by 28px from 640px up. Manage uses a tighter 12px vertical pad; OpenComms and Access fill the full height. Profile and Account settings set their own frame: Profile cancels the padding so its band spans the content area, and Account settings keeps a 12px vertical pad from 1280px, as Manage does. The shell has no branch for either. `PageHeader` stacks the title, description, and actions on phones and puts the actions on the right from 640px up, with 28px below.
 
@@ -667,7 +667,7 @@ Wrong: wrapping the page body in a `ViewTransition` so every sidebar click slide
 
 ### Reduce motion setting
 
-Appearance has a **Reduce motion** switch saved to the person's account and cached as `openslate-motion` in the browser. On, it sets `data-motion="reduced"` on `<html>` before first paint (`public/theme-init.js`), and every reduced-motion rule answers to that attribute as well as to the device's `prefers-reduced-motion`: the Tailwind `motion-reduce:` variant is redefined in `globals.css` to cover both, and each hand-written reduced rule has a `[data-motion="reduced"]` twin. Off, OpenSlate follows the device setting; when the device already asks for reduced motion, the page says so.
+Appearance has a **Reduce motion** switch saved to the person's account and cached as `slateops-motion` in the browser. On, it sets `data-motion="reduced"` on `<html>` before first paint (`public/theme-init.js`), and every reduced-motion rule answers to that attribute as well as to the device's `prefers-reduced-motion`: the Tailwind `motion-reduce:` variant is redefined in `globals.css` to cover both, and each hand-written reduced rule has a `[data-motion="reduced"]` twin. Off, Slate Operations follows the device setting; when the device already asks for reduced motion, the page says so.
 
 **The Signal Not Travel Rule.** Reduced motion stops glides, height changes, and signatures, but keeps the color and state changes that say something changed.
 
@@ -847,7 +847,7 @@ The top bar (`data-skin="topbar"`) and sidebar carry the look's frame. Whiteboar
 An unread count is a number, at most "99+", and the control's accessible name carries it.
 
 - **Shell:** the notification bell and the OpenComms sidebar link show a fully round count pill: `--action` fill, `--action-ink` text, 12px tabular figures, 16px tall. The pill is `aria-hidden`; the control's name says "Notifications, 3 unread" or "OpenComms, 3 unread". The collapsed sidebar rail shows an 8px action dot with a sidebar-colored ring instead.
-- **Tab title:** on every signed-in page, the OpenComms unread count prefixes the title ("(3) Sandbox | OpenSlate", "(99+) " at most), and the prefix goes when the count clears.
+- **Tab title:** on every signed-in page, the OpenComms unread count prefixes the title ("(3) Sandbox | Slate Operations", "(99+) " at most), and the prefix goes when the count clears.
 - **Conversation rows:** a secondary chip at the end of the row, with its own name ("3 unread", "1 mention"). A mention count takes the unread count's place; a muted row shows no unread count but still shows mentions. Unread rows are at weight 600; read rows are muted at weight 500.
 
 ### Sample data note

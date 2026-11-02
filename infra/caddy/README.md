@@ -1,4 +1,4 @@
-# OpenSlate production gateway contract
+# Slate Operations production gateway contract
 
 Caddy is the HTTPS gateway for production-level testing and Windows/macOS
 installations. It is not part of ordinary local development. It is the only

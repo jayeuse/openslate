@@ -227,12 +227,12 @@ desktop app's terminal slowed the whole machine, so speed comes first:
 
 - The backend runners (`tests.fullstack_runner`, `tests.parallel_coverage`,
   `tests.smoke_runner`) show stage names and the final result. Set
-  `OPENSLATE_TEST_PROGRESS=1` to also show one line per finished test (progress, outcome,
+  `SLATEOPS_TEST_PROGRESS=1` to also show one line per finished test (progress, outcome,
   test ID). Parallel coverage puts the shard name in front of each line, for example
   `[2/3]`. The full output stays in the private run log, because it can contain stack
   credentials.
 - The frontend suite uses the Playwright `line` reporter.
-- The full-stack acceptance and smoke suites run headless. Set `OPENSLATE_E2E_HEADED=1` to
+- The full-stack acceptance and smoke suites run headless. Set `SLATEOPS_E2E_HEADED=1` to
   watch them in a visible browser; CI always runs them headless. Add `--headed` to
   `npm test` to watch the `http` project.
 

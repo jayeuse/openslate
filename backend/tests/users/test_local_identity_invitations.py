@@ -89,8 +89,8 @@ def _initial_invitation(monkeypatch: pytest.MonkeyPatch):
             None,
             email,
             {
-                "openslate_user_id": str(local_id),
-                "openslate_invitation_operation_id": str(operation_id),
+                "slateops_user_id": str(local_id),
+                "slateops_invitation_operation_id": str(operation_id),
             },
         )
         provider_id.append(user.id)
@@ -205,8 +205,8 @@ def _provider(sent_to: list[str], *, email: str | None = None, operation: str | 
 
     def create(address: str, local_id: object, operation_id: object) -> ProviderUser:
         marker = {
-            "openslate_user_id": str(local_id),
-            "openslate_invitation_operation_id": operation or str(operation_id),
+            "slateops_user_id": str(local_id),
+            "slateops_invitation_operation_id": operation or str(operation_id),
         }
         return ProviderUser(PROVIDER_ID, None, email or address, marker)
 

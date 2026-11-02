@@ -1,4 +1,4 @@
-"""Safely reset local OpenSlate application data: remove every organization, keep one operator.
+"""Safely reset local application data: remove every organization, keep one operator.
 
 The reset recreates no organization; run ``operations/create_organization.py`` afterwards.
 """
@@ -187,7 +187,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _print_plan(plan: ResetPlan) -> None:
     print("Dry run: no application data was changed.")
-    print("target=guarded local OpenSlate PostgreSQL, Supabase Auth and Storage")
+    print("target=guarded local Slate Operations PostgreSQL, Supabase Auth and Storage")
     print(f"admin_email={plan.sample_email}")
     print(f"admin_id={plan.preserved_admin_id}")
     print(f"organizations_to_delete={plan.counts['organizations']}")
@@ -226,13 +226,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         provider_url, secret_key, timeout, backend_host, backend_port = (
             required_storage_environment(values)
         )
-        target = instance_target_for_process(migration_url, "openslate_owner")
+        target = instance_target_for_process(migration_url, "slateops_owner")
         runner_manifest_authorized = target is None
         validate_local_database_url(
             migration_url, target, runner_manifest_authorized=runner_manifest_authorized
         )
         assert_provider_instance(
-            values, database_url=migration_url, expected_user="openslate_owner"
+            values, database_url=migration_url, expected_user="slateops_owner"
         )
         connection = connect(
             _psycopg_database_url(
@@ -242,7 +242,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         )
         if target is not None:
-            assert_psycopg_target(connection, target, expected_user="openslate_owner")
+            assert_psycopg_target(connection, target, expected_user="slateops_owner")
         storage = ResetStorage(provider_url, secret_key, timeout)
         auth = ResetAuth(provider_url, secret_key, timeout)
         storage_keys = storage.list_object_keys()

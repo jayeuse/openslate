@@ -1,4 +1,4 @@
-# Outpatient clinic reference model for OpenSlate simulation
+# Outpatient clinic reference model for Slate Operations simulation
 
 Model the clinic as 7 departments and 27 modules. Clinical statuses use the FHIR R4 codes. Billing uses the X12 claim adjustment reason codes (CARC) for denials, plus payer-specific states such as PhilHealth "return to hospital". Run one quarter (October to December, which includes the Northern Hemisphere flu season). Clinical records are a sampled slice of real traffic; operational records are full volume. The total is 6,178 records.
 
@@ -41,7 +41,7 @@ Tags: **[judgment]** means my own practitioner judgment, not a source. **[summar
 | Operations & Supply | Purchasing, receiving, equipment, facilities | Operations Manager / Purchasing Officer, Storekeeper, Biomedical Technician (contract), Maintenance Staff |
 | Quality & Compliance | Incidents, infection control, credentialing, privacy | Quality & Compliance Officer (also Data Protection Officer) / Infection Prevention Nurse, Credentialing Specialist, HR Officer |
 
-The Practice Administrator and the IT administrator are the OpenSlate admins.
+The Practice Administrator and the IT administrator are the Slate Operations admins.
 
 ## 3. Core processes
 
@@ -392,11 +392,11 @@ The groups below apply these rules module by module.
 | Quality | Incident Report, Infection Control Audit, Staff Credential | None | Temperature Log, Maintenance Work Order | Clinical patient modules |
 | Guest: external surveyor or auditor | None | None | Staff Credential, Infection Control Audit | Everything else |
 
-Every group can write Incident Reports, so any staff member can file one. Access is set per module only. OpenSlate cannot limit Front Desk to patient payments inside the Payment module, so a written procedure covers that.
+Every group can write Incident Reports, so any staff member can file one. Access is set per module only. Slate Operations cannot limit Front Desk to patient payments inside the Payment module, so a written procedure covers that.
 
 **Separation of duties:**
 - The person who requests a purchase cannot approve the PO, because only Operations can write Purchase Orders.
-- The MT who runs a test is not the one who validates it, as with Bahmni's lab-in-charge [16]. OpenSlate conditions cannot check "different user", so the data shows this through the Performed by and Validated by fields.
+- The MT who runs a test is not the one who validates it, as with Bahmni's lab-in-charge [16]. Slate Operations conditions cannot check "different user", so the data shows this through the Performed by and Validated by fields.
 - The prescriber is not the dispenser.
 - Revenue Cycle posts payments, and only the Billing Manager approves write-offs [judgment].
 

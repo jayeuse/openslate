@@ -1,16 +1,16 @@
-# OpenSlate Architecture
+# Slate Operations Architecture
 
-> **Scope:** Reading guide and source-backed map of the OpenSlate architecture documents.
+> **Scope:** Reading guide and source-backed map of the Slate Operations architecture documents.
 > **Audience:** Developers and operators working in this repository.
 > **Related documents:** [System overview](01-system-overview.md), [Runtime flows](13-runtime-flows.md), [Glossary](21-glossary.md)
 
-OpenSlate is a self-hosted application installed separately for each client. The selected Compose topology uses self-hosted Supabase Database (PostgreSQL), Auth, Storage, and Studio. FastAPI remains the application API and authorization authority; it serves the statically exported Next.js UI, accesses application data through SQLAlchemy, and mediates private file operations. Caddy is part of the production overlay. Full production acceptance is still in progress, and Windows runtime acceptance remains pending.
+Slate Operations is a self-hosted application installed separately for each client. The selected Compose topology uses self-hosted Supabase Database (PostgreSQL), Auth, Storage, and Studio. FastAPI remains the application API and authorization authority; it serves the statically exported Next.js UI, accesses application data through SQLAlchemy, and mediates private file operations. Caddy is part of the production overlay. Full production acceptance is still in progress, and Windows runtime acceptance remains pending.
 
 The intended server platforms are Linux and Windows running Linux containers through Docker Desktop and WSL2. macOS remains available for workstation development but is not a supported server target. Existing application data is not imported into the fresh Supabase installation. Supabase Realtime is a future integration; authenticated SSE remains the current invalidation transport.
 
 ## Purpose and accuracy
 
-These documents describe the source-backed system and distinguish implemented application behavior from deployment paths that still need acceptance. Use source paths and symbols to trace contracts. Supabase provider schemas and services are owned by Supabase; Alembic owns the OpenSlate application schema only.
+These documents describe the source-backed system and distinguish implemented application behavior from deployment paths that still need acceptance. Use source paths and symbols to trace contracts. Supabase provider schemas and services are owned by Supabase; Alembic owns the Slate Operations application schema only.
 
 Capability and deployment status should remain explicit: **Implemented**, **Partially Implemented**, **Planned / Documented Only**, **Absent**, or **Unknown**. Do not treat checked-in Compose wiring as proof that production TLS, Windows startup and restart, or a complete release has been accepted. Read [Self-hosted Supabase](../../infra/supabase/README.md) for the operator topology and [its implementation plan](../../infra/supabase/PLAN.md) for scope and acceptance criteria.
 
@@ -24,14 +24,14 @@ flowchart LR
     API -->|Password login, email actions, JWT keys and provider checks| Auth[Supabase Auth]
     API -->|Constrained SQLAlchemy role| DB[(Supabase Database: PostgreSQL)]
     Alembic[Alembic: application schema only] -->|Owner connection| DB
-    API -->|Authorized private object operations| Storage[Supabase Storage: openslate-ready]
+    API -->|Authorized private object operations| Storage[Supabase Storage: slateops-ready]
     DB -. Opaque invalidations .-> API
     API -->|Authenticated SSE| Browser
     Operator[Local operator] -->|Loopback and Basic Auth| Studio[Supabase Studio]
     Studio -->|Operator administration| DB
 ```
 
-Supabase Auth establishes provider identity. FastAPI verifies the provider token and session, resolves its subject to an explicitly bound OpenSlate user, checks the local revocable session, then applies OpenSlate roles, groups, permissions, and domain rules. Provider metadata does not grant application roles. The browser does not write application rows or access Storage objects directly. OpenSlate file downloads and uploads pass through FastAPI authorization and file-type validation. Supabase Studio replaces the prior pgweb console in this stack and has broader operator privileges than the old read-only inspector, so it remains loopback-bound and password protected.
+Supabase Auth establishes provider identity. FastAPI verifies the provider token and session, resolves its subject to an explicitly bound Slate Operations user, checks the local revocable session, then applies Slate Operations roles, groups, permissions, and domain rules. Provider metadata does not grant application roles. The browser does not write application rows or access Storage objects directly. Slate Operations file downloads and uploads pass through FastAPI authorization and file-type validation. Supabase Studio replaces the prior pgweb console in this stack and has broader operator privileges than the old read-only inspector, so it remains loopback-bound and password protected.
 
 ## Recommended reading order
 
@@ -80,11 +80,11 @@ Supabase Auth establishes provider identity. FastAPI verifies the provider token
 ## Observed architectural principles
 
 - FastAPI is the canonical application data API; browsers never access application tables directly.
-- Supabase Database is PostgreSQL. Alembic exclusively owns OpenSlate application schema evolution; Supabase owns provider schemas and initialization.
+- Supabase Database is PostgreSQL. Alembic exclusively owns Slate Operations application schema evolution; Supabase owns provider schemas and initialization.
 - Supabase Auth authenticates. FastAPI owns explicit provider-subject binding, revocable application sessions, and all application authorization decisions.
-- Application roles and group access, Board groups, and report-run eligibility remain OpenSlate data; Auth metadata is never an authorization source. The Workspace profile stores shared settings, not an access policy. Server-backed Views and Reports are shared with module readers; each retained Report run records its eligible readers and still checks current module access when read.
+- Application roles and group access, Board groups, and report-run eligibility remain Slate Operations data; Auth metadata is never an authorization source. The Workspace profile stores shared settings, not an access policy. Server-backed Views and Reports are shared with module readers; each retained Report run records its eligible readers and still checks current module access when read.
 - Normal domain mutations use audited ORM sessions and explicit commits. Provider Auth and Storage operations are separate service boundaries.
-- Private file bytes live in the Supabase Storage `openslate-ready` bucket; FastAPI authorizes each operation and validates each upload's file type. There is no antivirus scan.
+- Private file bytes live in the Supabase Storage `slateops-ready` bucket; FastAPI authorizes each operation and validates each upload's file type. There is no antivirus scan.
 - Close/reopen is the default hierarchical lifecycle; purge is explicit and enabled in new-installation examples. Existing installations retain their required `LIFECYCLE_PURGE_ENABLED` value.
 - Authenticated SSE carries private invalidation events, never row snapshots. OpenComms also uses private Supabase Realtime topics for opaque invalidations, presence and typing; message content still loads through FastAPI.
 - Supabase Studio is an operator-only database console that replaces pgweb in the Compose topology; it is more privileged than the former read-only inspector.
@@ -112,7 +112,7 @@ Supabase Auth establishes provider identity. FastAPI verifies the provider token
 - Native server installers, managed hosted control plane, and cross-organization tenancy
 - Customer backup destination, retention schedule, monitoring, and alerting operations
 
-OpenSlate stores private file bytes in Supabase Storage. Validation, authorization, upload, download, reconciliation, and cleanup continue through the FastAPI file-service boundary. See [storage](11-infrastructure.md#storage).
+Slate Operations stores private file bytes in Supabase Storage. Validation, authorization, upload, download, reconciliation, and cleanup continue through the FastAPI file-service boundary. See [storage](11-infrastructure.md#storage).
 
 ## Structure choice
 
