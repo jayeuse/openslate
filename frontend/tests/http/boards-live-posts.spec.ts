@@ -208,7 +208,7 @@ async function installPostBrowserApi(page: Page) {
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        display_name: "OpenSlate",
+        display_name: "Slate Operations",
         mark: "OS",
         logo_file_id: null,
         revision: 1,
@@ -660,7 +660,7 @@ test.describe("Boards workspace regional post dates", () => {
     await page.route("**/api/workspace", (route) =>
       route.fulfill({
         json: {
-          display_name: "OpenSlate",
+          display_name: "Slate Operations",
           mark: "OS",
           logo_file_id: null,
           revision: 1,

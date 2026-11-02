@@ -1,8 +1,8 @@
 # Infrastructure
 
-> **Scope:** Per-client self-hosted Supabase services, the OpenSlate application boundary, and current operating limits.
+> **Scope:** Per-client self-hosted Supabase services, the Slate Operations application boundary, and current operating limits.
 
-OpenSlate uses Supabase as a self-hosted service stack for each installation. Supabase Database is PostgreSQL, so this replaces the standalone PostgreSQL container and pgweb workflow while keeping PostgreSQL, SQLAlchemy, and Alembic. It does not migrate existing data or make OpenSlate a multi-tenant hosted service. Each client has a separate Compose project, credentials, networks, and persistent volumes.
+Slate Operations uses Supabase as a self-hosted service stack for each installation. Supabase Database is PostgreSQL, so this replaces the standalone PostgreSQL container and pgweb workflow while keeping PostgreSQL, SQLAlchemy, and Alembic. It does not migrate existing data or make Slate Operations a multi-tenant hosted service. Each client has a separate Compose project, credentials, networks, and persistent volumes.
 
 The checked-in stack is defined by [`infra/supabase/compose.yaml`](../../infra/supabase/compose.yaml), with a [`development overlay`](../../infra/supabase/compose.dev.yaml) and a [`production application overlay`](../../infra/supabase/compose.production.yaml). The upstream images are digest-pinned. Supabase Realtime runs for private organization channels (gateway route `/realtime/v1/websocket` only). Functions, Analytics, and Supavisor are not started. The selected release and operating contract are described in [`infra/supabase/README.md`](../../infra/supabase/README.md).
 
@@ -28,7 +28,7 @@ The stack has no pgweb service or `openslate_inspector` login. Supabase Studio r
 
 ## Database and application authority
 
-PostgreSQL remains the relational engine. Provider initialization owns Supabase schemas and roles; [`backend/migrations/env.py`](../../backend/migrations/env.py) and Alembic own only OpenSlate application schema. A fresh Supabase baseline and explicit migration-scope checks keep provider objects outside application migration ownership.
+PostgreSQL remains the relational engine. Provider initialization owns Supabase schemas and roles; [`backend/migrations/env.py`](../../backend/migrations/env.py) and Alembic own only Slate Operations application schema. A fresh Supabase baseline and explicit migration-scope checks keep provider objects outside application migration ownership.
 
 The application database uses three separate connections:
 
@@ -40,7 +40,7 @@ The role provisioner, [`backend/operations/provision_database_role.py`](../../ba
 
 ## Authentication and authorization
 
-Supabase Auth answers who signed in. OpenSlate keeps its own application user, invitation eligibility, identity session, role, group, and permission state in PostgreSQL. A Supabase user ID is explicitly bound to an OpenSlate profile; matching email alone does not create application access. The FastAPI authentication dependency verifies the provider credential and session, resolves the bound active profile, and evaluates current OpenSlate authorization for each request.
+Supabase Auth answers who signed in. Slate Operations keeps its own application user, invitation eligibility, identity session, role, group, and permission state in PostgreSQL. A Supabase user ID is explicitly bound to an Slate Operations profile; matching email alone does not create application access. The FastAPI authentication dependency verifies the provider credential and session, resolves the bound active profile, and evaluates current Slate Operations authorization for each request.
 
 Provider roles and user metadata do not grant application permissions. Workspace capabilities, roles, groups, Board groups, Report audiences, and account lifecycle rules remain backend decisions. The browser never receives the Supabase secret key or direct credentials for application tables. Relevant code is in [`supabase_auth.py`](../../backend/app/core/integrations/supabase_auth.py), [`provider_sessions.py`](../../backend/app/systems/access/identity/provider_sessions.py), and the Access authorization modules.
 

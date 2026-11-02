@@ -1,7 +1,7 @@
 [project]
 name = "openslate-backend"
 version = "0.1.0"
-description = "OpenSlate FastAPI backend"
+description = "Slate Operations FastAPI backend"
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "alembic>=1.20.0",

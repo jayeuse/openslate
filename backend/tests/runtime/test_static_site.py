@@ -19,12 +19,14 @@ def _write_export(root: Path) -> None:
         "<!doctype html><html><head><style>.page{color:red}</style>"
         "<script>window.openslateBoot=true;</script>"
         '<script src="/_next/static/app-123.js"></script></head>'
-        '<body><main class="page">OpenSlate</main></body></html>'
+        '<body><main class="page">Slate Operations</main></body></html>'
     )
     (root / "index.html").write_text(document, encoding="utf-8")
-    (root / "sandbox.html").write_text(document.replace("OpenSlate", "Sandbox"), encoding="utf-8")
+    (root / "sandbox.html").write_text(
+        document.replace("Slate Operations", "Sandbox"), encoding="utf-8"
+    )
     (root / "_not-found.html").write_text(
-        document.replace("OpenSlate", "Internal Next route"), encoding="utf-8"
+        document.replace("Slate Operations", "Internal Next route"), encoding="utf-8"
     )
     (root / "404.html").write_text("<html><body>Missing</body></html>", encoding="utf-8")
     (root / "favicon.ico").write_bytes(b"ico")

@@ -32,13 +32,13 @@ def _profile(session: Session) -> WorkspaceProfile:
 
 def test_explicit_organization_persists_neutral_profile(integration_owner_db: Session) -> None:
     profile = WorkspaceProfile(
-        slug=f"neutral-{uuid7()}", display_name="OpenSlate", timezone="UTC", locale="en-US",
+        slug=f"neutral-{uuid7()}", display_name="Slate Operations", timezone="UTC", locale="en-US",
     )
     integration_owner_db.add(profile)
     integration_owner_db.flush()
     integration_owner_db.refresh(profile)
 
-    assert profile.display_name == "OpenSlate"
+    assert profile.display_name == "Slate Operations"
     assert profile.timezone == "UTC"
     assert profile.locale == "en-US"
     assert profile.revision == 1

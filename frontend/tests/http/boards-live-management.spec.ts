@@ -80,7 +80,7 @@ function purgeRow(entityType: string, entityId: string) {
 async function installArchivedBoard(page: Page) {
   await installOpenViewEventSource(page);
   const workspace = {
-    display_name: "OpenSlate",
+    display_name: "Slate Operations",
     mark: "OS",
     logo_file_id: null,
     revision: 1,

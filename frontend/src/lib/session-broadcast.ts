@@ -1,5 +1,5 @@
 // Session cookies are shared by every tab of a browser. When this tab signs in
-// or out, it tells the browser's other OpenSlate tabs, which then cover their
+// or out, it tells the browser's other Slate Operations tabs, which then cover their
 // workspace and check who is signed in before they show it again.
 const CHANNEL = "openslate-session";
 // Created on first use, not at import: UI primitives import this module, and

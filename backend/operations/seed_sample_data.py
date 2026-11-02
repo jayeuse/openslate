@@ -155,7 +155,7 @@ def _environment_values() -> tuple[dict[str, str], InstanceTarget, str, str, str
     )
     target = instance_target_for_process(migration_url, "openslate_owner", process=values)
     if target is None:
-        raise InstanceTargetError("The local OpenSlate database target is unavailable")
+        raise InstanceTargetError("The local Slate Operations database target is unavailable")
     validate_local_database_url(migration_url, target)
     assert_provider_instance(values, database_url=migration_url, expected_user="openslate_owner")
 

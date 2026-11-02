@@ -161,20 +161,20 @@ class CaddyGatewayTests(unittest.TestCase):
     def test_custom_tls_paths_are_quoted_as_single_caddy_tokens(self) -> None:
         rendered = self.render(
             tls_mode="custom",
-            cert_file=Path('/srv/Open Slate/cert#1"issuer.pem'),
-            key_file=Path("/srv/Open Slate/private\\key.pem"),
+            cert_file=Path('/srv/Slate Operations/cert#1"issuer.pem'),
+            key_file=Path("/srv/Slate Operations/private\\key.pem"),
         )
 
         self.assertIn(
-            'tls "/srv/Open Slate/cert#1\\"issuer.pem" "/srv/Open Slate/private\\\\key.pem"',
+            'tls "/srv/Slate Operations/cert#1\\"issuer.pem" "/srv/Slate Operations/private\\\\key.pem"',
             rendered,
         )
 
     def test_unicode_absolute_certificate_paths_support_native_and_windows_styles(self) -> None:
         native_path = (
-            Path(r"C:\OpenSlate\证书\certificate.pem")
+            Path(r"C:\Slate Operations\证书\certificate.pem")
             if os.name == "nt"
-            else Path("/srv/Open Slate/证书/certificate.pem")
+            else Path("/srv/Slate Operations/证书/certificate.pem")
         )
         native = self.render(
             tls_mode="custom",
@@ -183,12 +183,12 @@ class CaddyGatewayTests(unittest.TestCase):
         )
         windows = self.render(
             tls_mode="custom",
-            cert_file=Path(r"C:\Open Slate\证书\certificate.pem"),
-            key_file=Path(r"C:\Open Slate\证书\private key.pem"),
+            cert_file=Path(r"C:\Slate Operations\证书\certificate.pem"),
+            key_file=Path(r"C:\Slate Operations\证书\private key.pem"),
         )
 
         self.assertIn("证书", native)
-        self.assertIn('tls "C:\\\\Open Slate\\\\证书\\\\certificate.pem"', windows)
+        self.assertIn('tls "C:\\\\Slate Operations\\\\证书\\\\certificate.pem"', windows)
 
     def test_ipv6_host_and_listener_are_rendered_without_template_injection(self) -> None:
         rendered = self.render(public_host="::1", listen_address="::")
@@ -288,7 +288,7 @@ class CaddyGatewayTests(unittest.TestCase):
             "HTTP_X_FORWARDED_PROTO",
         ):
             self.assertIn(f'<add name="{variable}" />', iis)
-        self.assertLess(iis.index('name="OpenSlate SSE"'), iis.index('name="OpenSlate API"'))
+        self.assertLess(iis.index('name="Slate Operations SSE"'), iis.index('name="Slate Operations API"'))
         self.assertIn("127.0.0.1:&lt;BACKEND_PORT&gt;", iis)
         self.assertNotIn("FRONTEND_PORT", nginx + iis)
 

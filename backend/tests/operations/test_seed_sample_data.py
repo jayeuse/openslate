@@ -38,7 +38,7 @@ from operations.seed_sample_data import (
 
 def _workspace(**changes: object) -> dict[str, object]:
     return {
-        "display_name": "OpenSlate",
+        "display_name": "Slate Operations",
         "legal_name": None,
         "description": None,
         "contact_email": None,

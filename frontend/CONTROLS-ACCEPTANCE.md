@@ -163,7 +163,7 @@ Selected file contents remain in tab memory for actual local previews/downloads;
 - 93. Search messages in a channel
 - 94. Mention a user in a message
 - 95. Reference a record in a message
-- 96. Allow OpenSlate to post a system message in a channel
+- 96. Allow Slate Operations to post a system message in a channel
 - 97. Attach a file to a message
 - 98. Attach a record link to a message
 

@@ -76,7 +76,7 @@ def _validated_database_url(
         return url.set(drivername="postgresql").render_as_string(hide_password=False)
     except Exception:
         raise ResetError(
-            "MIGRATION_DATABASE_URL must target the local OpenSlate owner database"
+            "MIGRATION_DATABASE_URL must target the local Slate Operations owner database"
         ) from None
 
 
@@ -91,7 +91,7 @@ def validate_local_database_url(
         _validated_database_url(url, target, runner_manifest_authorized=runner_manifest_authorized)
     except InstanceTargetError:
         raise ResetError(
-            "MIGRATION_DATABASE_URL does not target the owned OpenSlate instance"
+            "MIGRATION_DATABASE_URL does not target the owned Slate Operations instance"
         ) from None
 
 

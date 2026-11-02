@@ -18,7 +18,7 @@ function member(
   const organization = role
     ? {
         orgId: "00000000-0000-4000-8000-000000000102",
-        name: "OpenSlate",
+        name: "Slate Operations",
         slug: "openslate",
         role,
       }

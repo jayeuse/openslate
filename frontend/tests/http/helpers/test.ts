@@ -36,7 +36,7 @@ type MembershipBody = {
  */
 export const defaultOrganization = {
   org_id: "00000000-0000-4000-8000-000000000102",
-  name: "OpenSlate",
+  name: "Slate Operations",
   slug: "openslate",
 } as const;
 
@@ -89,7 +89,7 @@ export function authMeBody(
       : organization && {
           ...organization,
           access: [...access],
-          // A journey's administrator installed OpenSlate: it owns both levels.
+          // A journey's administrator installed Slate Operations: it owns both levels.
           owner: role === "admin",
         };
   return {

@@ -1,6 +1,6 @@
 @AGENTS.md
 
-# Claude Code in OpenSlate
+# Claude Code in Slate Operations
 
 Everything in `AGENTS.md` above applies. This section only covers where Claude Code differs from the Codex setup, and how Claude does design work here.
 

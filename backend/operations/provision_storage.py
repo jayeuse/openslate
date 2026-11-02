@@ -1,4 +1,4 @@
-"""Create and verify the private OpenSlate Storage buckets and their limits."""
+"""Create and verify the private Slate Operations Storage buckets and their limits."""
 
 import argparse
 import sys
@@ -70,7 +70,7 @@ def provision_storage(
                     or any(body.get(name) != value for name, value in limits.items())
                 ):
                     raise StorageProvisionError(
-                        "The OpenSlate buckets must exist, be private, and carry their limits"
+                        "The application buckets must exist, be private, and carry their limits"
                     )
     except httpx.HTTPError:
         raise StorageProvisionError("Storage initialization is unavailable") from None
@@ -90,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise
     except Exception:
         raise SystemExit("Unable to initialize private Storage buckets") from None
-    print("The OpenSlate Storage buckets are private and ready")
+    print("The Slate Operations Storage buckets are private and ready")
 
 
 if __name__ == "__main__":

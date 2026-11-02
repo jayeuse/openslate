@@ -1,4 +1,4 @@
-# Commercial HVAC/R sales and field service: reference model for OpenSlate simulation
+# Commercial HVAC/R sales and field service: reference model for Slate Operations simulation
 
 **Equipment choice: commercial HVAC and refrigeration (HVAC/R).** I chose it for three reasons:
 - It has the best published maintenance task lists (ASHRAE/ACCA Standard 180 [16][17]).
@@ -167,7 +167,7 @@ Type codes: T Text, LT Long text, N Number, I Integer, D Date, DT Date/Time, CB 
 | 33 | Invoice ↔ Payment | N–N | One check can pay many invoices; partial payments |
 | 34 | Invoice → Collection Activity; Invoice → Credit Note | 1–N each | Dunning trail; adjustments |
 
-Note on 26: a transfer has two locations (from and to). If OpenSlate cannot link two relationships to the same module, keep only the "to" link and add a "From Location" Select.
+Note on 26: a transfer has two locations (from and to). If Slate Operations cannot link two relationships to the same module, keep only the "to" link and add a "From Location" Select.
 
 ## 6. Automations (12)
 
@@ -187,7 +187,7 @@ Note on 26: a transfer has two locations (from and to). If OpenSlate cannot link
 | 12 | Schedule: weekly, Thursday 14:00 | none | Create Purchase Order (Stock replenishment, Draft, "Weekly stock – main distributor") |
 
 Two assumptions to check:
-- Rule 10 needs the simulator to update Days Past Due, because OpenSlate has no formula type.
+- Rule 10 needs the simulator to update Days Past Due, because Slate Operations has no formula type.
 - Rule 12 assumes a schedule rule creates one record per run.
 
 Supplier Bills that fail three-way match should go to On hold – variance. Add that as a 13th rule if the cap allows.
@@ -322,7 +322,7 @@ The model names and fault codes below are invented. Refrigerant designations are
 - Whoever bills does not approve their own credits. Credit notes over 1,000 go to the controller (rule 11).
 - Only certified technicians write refrigerant records [22].
 
-Limit: OpenSlate grants access per module, not per field. It cannot stop a Sales writer from changing Payment Terms on a Customer Account. If that matters, move credit fields into a Finance-owned module.
+Limit: Slate Operations grants access per module, not per field. It cannot stop a Sales writer from changing Payment Terms on a Customer Account. If that matters, move credit fields into a Finance-owned module.
 
 **Planned refusals:**
 1. A field tech opens INV-104233 to change the labor amount. Finance is hidden (404).

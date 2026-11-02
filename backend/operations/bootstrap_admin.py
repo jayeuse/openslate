@@ -58,7 +58,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="confirm first-administrator provisioning outside development/local environments",
     )
-    parser.add_argument("--name", default="OpenSlate")
+    parser.add_argument("--name", default="Slate Operations")
     parser.add_argument("--slug", default="openslate")
     parser.add_argument("--provider-user-id", type=UUID,
                         help="explicitly link a surviving confirmed provider identity")
@@ -132,7 +132,7 @@ def _is_exact_admin_reservation(db: AuditSession, user: User, invitation: Invita
 
 def _provision(
     settings: Settings, invitation: InvitationCreate, *, provider_user_id: UUID | None = None,
-    name: str = "OpenSlate", slug: str = "openslate",
+    name: str = "Slate Operations", slug: str = "openslate",
 ) -> BootstrapResult:
     # Provider I/O precedes the short serialized installation transaction.
     confirmed_provider = (

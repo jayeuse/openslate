@@ -42,7 +42,7 @@ def main():
             body = (
                 b"<title>Owned preview fixture</title>"
                 b"<meta name='description' content='Controlled parsed metadata'>"
-                b"<meta property='og:site_name' content='OpenSlate test'>"
+                b"<meta property='og:site_name' content='Slate Operations test'>"
                 b"<script>never-visible-script</script><img src='http://127.0.0.1/'>"
             )
             return io.BytesIO(

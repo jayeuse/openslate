@@ -1,4 +1,4 @@
-"""Run the standalone OpenSlate Manager."""
+"""Run the standalone Slate Operations Manager."""
 
 from __future__ import annotations
 

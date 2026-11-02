@@ -184,9 +184,9 @@ export default function AuthSetupPage() {
           className="mb-12 inline-flex items-center gap-2 text-sm font-semibold"
         >
           <span className="bg-primary text-primary-foreground grid size-8 place-items-center rounded-md text-xs">
-            OS
+            SO
           </span>
-          OpenSlate
+          Slate Operations
         </a>
         <div className="mb-8">
           <div className="bg-accent text-accent-foreground mb-5 grid size-11 place-items-center rounded-full">
@@ -200,7 +200,7 @@ export default function AuthSetupPage() {
           <p className="text-muted-foreground mt-2 text-sm">
             {account.status === "signed-in"
               ? "You are signed in. Join an organization that invited this account."
-              : "Finish setting up your invited OpenSlate account."}
+              : "Finish setting up your invited Slate Operations account."}
           </p>
         </div>
         {account.status === "signed-in" ? (

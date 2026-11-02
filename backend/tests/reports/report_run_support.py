@@ -96,7 +96,7 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
     org_id = None
     try:
         # Report runs are the subject, not Supabase Auth: the three actors sign in against
-        # the fake provider, and OpenSlate's real admission issues their sessions.
+        # the fake provider, and Slate Operations' real admission issues their sessions.
         fake = install_fake_provider(
             resources.enter_context(pytest.MonkeyPatch.context()), real_session_pool(request.config)
         )

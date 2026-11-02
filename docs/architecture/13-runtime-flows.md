@@ -9,16 +9,16 @@
 3. From `backend/`, `uv run python operations/provision_database_role.py` provisions `openslate_owner` and `openslate_runtime` using `DATABASE_BOOTSTRAP_URL`. Alembic then applies application schema with `uv run alembic upgrade head`; `uv run alembic check` verifies model/schema alignment.
 4. `uv run python operations/provision_storage.py` creates and verifies the private `openslate-ready` and `openslate-avatars` buckets. It requires the admitted runtime database and server-only Supabase credentials.
 5. Start FastAPI with `uv run python -m app --reload`, then the frontend with `npm run dev`. The API must serve the Auth email-template route before an invitation is sent. HTTP `/api` requests use the development proxy to loopback FastAPI; the frontend launcher separately proxies the exact-origin Realtime WebSocket upgrade to the provider gateway.
-6. With the API running, `uv run python operations/bootstrap_admin.py` reserves the first administrator profile and sends a Supabase Auth invitation. The recipient sets a password through the OpenSlate invite page.
+6. With the API running, `uv run python operations/bootstrap_admin.py` reserves the first administrator profile and sends a Supabase Auth invitation. The recipient sets a password through the Slate Operations invite page.
 
 The checked-in development commands and production sequence are in [`infra/supabase/README.md`](../../infra/supabase/README.md). API readiness reports Database, Auth, Storage, and SMTP configuration components. Schema checks, actual email delivery, and restore verification remain separate operations.
 
 ## Sign-in and application authorization
 
 1. The browser submits an email and password to FastAPI's `/api/auth/login` endpoint. FastAPI applies its durable login budget and asks the configured Supabase Auth instance to verify the password.
-2. FastAPI verifies the returned provider token against the configured issuer, audience, expiry, subject, and session ID. It checks provider session liveness and requires an exact Supabase-user-ID binding to an active, eligible OpenSlate profile.
+2. FastAPI verifies the returned provider token against the configured issuer, audience, expiry, subject, and session ID. It checks provider session liveness and requires an exact Supabase-user-ID binding to an active, eligible Slate Operations profile.
 3. FastAPI creates its own revocable application session. The provider access token is returned in an HttpOnly cookie; a separate opaque refresh handle and CSRF value support the local session contract. Encrypted provider refresh credentials remain server-side in PostgreSQL.
-4. Each protected request rechecks the local application session, provider identity/session, current profile eligibility, and current OpenSlate policy. FastAPI takes the organization from the `X-Org` header, else from the session's active organization. It requires an eligible membership there and binds the transaction to that organization. Capabilities, roles, groups, and resource-specific grants are evaluated by FastAPI. Supabase Auth metadata never supplies an OpenSlate permission.
+4. Each protected request rechecks the local application session, provider identity/session, current profile eligibility, and current Slate Operations policy. FastAPI takes the organization from the `X-Org` header, else from the session's active organization. It requires an eligible membership there and binds the transaction to that organization. Capabilities, roles, groups, and resource-specific grants are evaluated by FastAPI. Supabase Auth metadata never supplies an Slate Operations permission.
 5. Mutations require the existing CSRF and origin checks. Logout, account changes, recovery, and administrator revocation invalidate local application sessions; provider sign-out is a separate provider action.
 
 The provider adapter and session boundary live in [`supabase_auth.py`](../../backend/app/core/integrations/supabase_auth.py), [`provider_login.py`](../../backend/app/systems/access/identity/provider_login.py), [`provider_sessions.py`](../../backend/app/systems/access/identity/provider_sessions.py), and [`auth.py`](../../backend/app/common/dependencies/auth.py).
@@ -32,10 +32,10 @@ see the [API purpose boundary](07-api-architecture.md#ordinary-private-reads-ver
 
 ## Invitation and password recovery
 
-1. An authorized administrator sets an email, profile identity, role, groups, and invitation operation in OpenSlate. FastAPI reserves the pending application profile before calling the Supabase Auth admin API, then commits the exact provider-user binding.
+1. An authorized administrator sets an email, profile identity, role, groups, and invitation operation in Slate Operations. FastAPI reserves the pending application profile before calling the Supabase Auth admin API, then commits the exact provider-user binding.
 2. Supabase Auth sends invitation and recovery email through the configured provider SMTP server. It fetches the versioned HTML templates from the internal FastAPI template route; the development overlay routes mail to Mailpit.
-3. The email link opens an OpenSlate confirmation page with the one-time `token_hash` in the URL fragment. A browser preview GET does not exchange it. Only an explicit user submission sends the token hash to FastAPI.
-4. FastAPI verifies the provider action, checks the exact bound profile and operation state, and sets the password through Auth. Invitation completion activates the pending profile. Recovery revokes OpenSlate application sessions and changes the provider password without issuing an application session.
+3. The email link opens an Slate Operations confirmation page with the one-time `token_hash` in the URL fragment. A browser preview GET does not exchange it. Only an explicit user submission sends the token hash to FastAPI.
+4. FastAPI verifies the provider action, checks the exact bound profile and operation state, and sets the password through Auth. Invitation completion activates the pending profile. Recovery revokes Slate Operations application sessions and changes the provider password without issuing an application session.
 
 FastAPI does not keep local password hashes, a local invitation/recovery token store, or a local SMTP outbox. Auth delivery and profile authorization remain separate operations.
 

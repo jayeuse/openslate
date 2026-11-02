@@ -2,7 +2,7 @@
 
 > **Scope:** Static Next.js interface, browser session behavior, and current persistence boundaries.
 
-Next.js 16 and React 19 build the OpenSlate interface as a static export. In
+Next.js 16 and React 19 build the Slate Operations interface as a static export. In
 daily development, `next dev` is the direct browser origin and its
 development-only `/api` proxy reaches loopback FastAPI. Production uses neither
 a Next.js server nor Node.js runtime. The exported browser application contains

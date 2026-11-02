@@ -1,4 +1,4 @@
-"""Safely reset local OpenSlate application data: remove every organization, keep one operator.
+"""Safely reset local application data: remove every organization, keep one operator.
 
 The reset recreates no organization; run ``operations/create_organization.py`` afterwards.
 """
@@ -187,7 +187,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _print_plan(plan: ResetPlan) -> None:
     print("Dry run: no application data was changed.")
-    print("target=guarded local OpenSlate PostgreSQL, Supabase Auth and Storage")
+    print("target=guarded local Slate Operations PostgreSQL, Supabase Auth and Storage")
     print(f"admin_email={plan.sample_email}")
     print(f"admin_id={plan.preserved_admin_id}")
     print(f"organizations_to_delete={plan.counts['organizations']}")

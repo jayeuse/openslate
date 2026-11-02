@@ -299,7 +299,7 @@ def test_own_session_inventory_returns_active_sessions_newest_first_with_user_ag
     settings = get_settings()
     client = TestClient(create_app(), base_url=settings.public_origin)
     client.headers["Origin"] = settings.public_origin
-    client.headers["User-Agent"] = "OpenSlate test browser/1.0"
+    client.headers["User-Agent"] = "Slate Operations test browser/1.0"
     try:
         login = client.post("/api/auth/login", json={"email": email, "password": password})
         assert login.status_code == 200
@@ -354,7 +354,7 @@ def test_own_session_inventory_returns_active_sessions_newest_first_with_user_ag
         assert expired_id not in {UUID(item["id"]) for item in sessions}
         assert {item["id"]: item["user_agent"] for item in sessions} == {
             str(newest_id): "Newest active browser/2.0",
-            str(current_id): "OpenSlate test browser/1.0",
+            str(current_id): "Slate Operations test browser/1.0",
             str(oldest_id): "Old active browser/3.0",
         }
 

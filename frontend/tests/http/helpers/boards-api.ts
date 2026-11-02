@@ -63,7 +63,7 @@ export async function installBoardApi(
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        display_name: "OpenSlate",
+        display_name: "Slate Operations",
         mark: "OS",
         logo_file_id: null,
         revision: 1,

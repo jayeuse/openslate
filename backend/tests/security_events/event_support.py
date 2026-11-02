@@ -1,7 +1,7 @@
 """Owned signed-auth/runtime PostgreSQL setup; event rows remain append-only until teardown.
 
 The actor signs in through the real login route against the fake provider: these tests
-check OpenSlate's security events, not Supabase Auth.
+check Slate Operations' security events, not Supabase Auth.
 """
 
 from dataclasses import dataclass, field

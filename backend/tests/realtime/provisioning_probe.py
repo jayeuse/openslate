@@ -49,7 +49,7 @@ def main() -> None:
         try:
             provision()
         except RuntimeError as exc:
-            if str(exc) != "Existing OpenSlate Realtime channel policy is unsafe":
+            if str(exc) != "Existing Slate Operations Realtime channel policy is unsafe":
                 raise RuntimeError("Unexpected provisioning refusal") from None
         else:
             raise RuntimeError("An unknown policy was silently replaced")

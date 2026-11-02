@@ -146,7 +146,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Manage local OpenSlate agent task state.")
+    parser = argparse.ArgumentParser(description="Manage local Slate Operations agent task state.")
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="Create runtime files for a task.")

@@ -276,7 +276,7 @@ def verify_records_and_relationships(
 
 def assert_pristine_workspace(workspace: Mapping[str, Any]) -> None:
     expected: dict[str, object] = {
-        "display_name": "OpenSlate",
+        "display_name": "Slate Operations",
         "legal_name": None,
         "description": None,
         "contact_email": None,

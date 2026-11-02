@@ -798,7 +798,7 @@ export function ServerBoardEventEditorForm({
           <Field className="gap-1.5">
             <FieldLabel>External links</FieldLabel>
             <FieldDescription>
-              Up to 20 HTTP or HTTPS links. They open outside OpenSlate.
+              Up to 20 HTTP or HTTPS links. They open outside Slate Operations.
             </FieldDescription>
             <div className="flex flex-col gap-3">
               {draft.links.map((link, index) => (

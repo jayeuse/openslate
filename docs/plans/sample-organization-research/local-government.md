@@ -1,9 +1,9 @@
-# Research brief: data for a simulated small-city government in OpenSlate
+# Research brief: data for a simulated small-city government in Slate Operations
 
 
 **Question:** How does a small city or municipal office that runs on records actually work?
 
-**Decision it informs:** The design of the OpenSlate sample data for this org type: departments, modules, relationships, automations, volumes, content and refusals.
+**Decision it informs:** The design of the Slate Operations sample data for this org type: departments, modules, relationships, automations, volumes, content and refusals.
 
 **Evidence base:** Philippine primary texts were opened and read. They cover RA 11032, the RA 12009 IRR, the Local Government Code, the DBM budget manual, the Family Code, and three city or municipal citizen's charters. Where I only saw a search summary and not the source itself, the claim is marked "(as reported)". Figures marked "(judgment)" are my own estimates.
 
@@ -46,7 +46,7 @@ The year has a fixed rhythm:
 | 8 | City Clerk, Records & Council Secretariat | Document tracking, council measures and sessions, civil registry desk | Secretary to the Sanggunian / City Clerk | Records Officer, Legislative Staff Officer, Registration Officer, Records Clerk |
 
 Four regional notes:
-- **Department 8.** A Philippine city keeps the Secretary to the Sanggunian and the Local Civil Registrar as separate offices [12 §454]. A US City Clerk often holds both council records and vital records, so I merged them for OpenSlate.
+- **Department 8.** A Philippine city keeps the Secretary to the Sanggunian and the Local Civil Registrar as separate offices [12 §454]. A US City Clerk often holds both council records and vital records, so I merged them for Slate Operations.
 - **Executive group.** Mayor, Administrator and Vice-Mayor are *users in an Executive group*, not a data department. The mayor is the Head of Procuring Entity [13], and the vice-mayor approves spending for the council's own funds [13].
 - **US and UK titles.** Business License Specialist, Plans Examiner, Public Works Director, Finance Director/Controller, Purchasing Agent, Fleet Manager, City Clerk.
 - **UK.** 311 work is handled by the council's highways or streetscene team.
@@ -398,7 +398,7 @@ Public finance separates four roles: authorization, recording, custody, and reco
 7. A council secretariat clerk opens a Civil Registry Entry. They have no access, so the record is hidden (404). This protects personal data under RA 10173 (cited in [17]).
 8. An OBO evaluator tries to edit a Plantilla Position salary grade. They have no write on HR.
 
-**Gap for the parent.** OpenSlate access is set per module. It cannot stop "approver = preparer" inside one module. Conditions compare fields to literals, not to other fields. So:
+**Gap for the parent.** Slate Operations access is set per module. It cannot stop "approver = preparer" inside one module. Conditions compare fields to literals, not to other fields. So:
 - Build refusals only across module or department boundaries.
 - Put each certifying signature in the module owned by the certifying office, as the design above does.
 - Detect any self-approval inside a module through audit review, not permissions.

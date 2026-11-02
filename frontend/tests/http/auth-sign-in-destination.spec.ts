@@ -168,7 +168,7 @@ test("a first sign-in with nothing published opens the Sandbox", async ({
 });
 
 // Session cookies are shared by every tab, so a sign-in tells this browser's
-// other OpenSlate tabs to recheck who is signed in.
+// other Slate Operations tabs to recheck who is signed in.
 test("a sign-in tells the browser's other tabs that the account changed", async ({
   page,
   context,

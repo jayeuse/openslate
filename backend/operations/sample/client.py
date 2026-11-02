@@ -137,7 +137,7 @@ def _request_id(response: httpx.Response) -> str | None:
 
 
 class SampleClient:
-    """A per-actor browser-cookie client for authenticated OpenSlate API calls.
+    """A per-actor browser-cookie client for authenticated Slate Operations API calls.
 
     With an organization ID, every request acts in that organization (``X-Org``),
     as the browser does; without one, the server uses the session's organization.

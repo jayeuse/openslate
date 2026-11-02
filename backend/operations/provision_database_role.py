@@ -1,4 +1,4 @@
-"""Create and validate OpenSlate's cluster roles from a bootstrap connection."""
+"""Create and validate Slate Operations' cluster roles from a bootstrap connection."""
 
 from __future__ import annotations
 
@@ -66,10 +66,10 @@ def _assert_same_database(bootstrap: URL, owner: URL, *connections: URL) -> str:
     values = (bootstrap, owner, *connections)
     database = bootstrap.database
     if not database or any(url.database != database for url in values[1:]):
-        raise SystemExit("OpenSlate database URLs must name one database")
+        raise SystemExit("Slate Operations database URLs must name one database")
     endpoint = (bootstrap.host, bootstrap.port)
     if any((url.host, url.port) != endpoint for url in values[1:]):
-        raise SystemExit("OpenSlate database URLs must use one endpoint")
+        raise SystemExit("Slate Operations database URLs must use one endpoint")
     if bootstrap.username in {OWNER_ROLE, RUNTIME_ROLE}:
         raise SystemExit("DATABASE_BOOTSTRAP_URL must use a distinct cluster-admin login")
     return database
@@ -222,7 +222,7 @@ def _provision_session_liveness_policy(cursor: object) -> None:
             "FOR SELECT TO openslate_app USING (true)"
         )
     elif existing != ("r", True, True, "true", True):
-        raise RuntimeError("Existing OpenSlate provider session policy is unsafe")
+        raise RuntimeError("Existing Slate Operations provider session policy is unsafe")
 
 
 REALTIME_JOIN_FUNCTION = "public.can_join_realtime_topic(text)"
@@ -298,7 +298,7 @@ def _provision_realtime_channel_policies(cursor: object) -> None:
     existing = {row[0]: tuple(row[1:]) for row in cursor.fetchall()}  # type: ignore[attr-defined]
     # Policies are permissive and combine with OR: any other one would widen access.
     if set(existing) - set(REALTIME_POLICIES):
-        raise RuntimeError("realtime.messages has policies that OpenSlate does not manage")
+        raise RuntimeError("realtime.messages has policies that Slate Operations does not manage")
     legacy_write = ("a", True, True, None, REALTIME_JOIN_EXPRESSION)
     for name, (command, using, check) in REALTIME_POLICIES.items():
         expected = (command, True, True, using, check)
@@ -307,7 +307,7 @@ def _provision_realtime_channel_policies(cursor: object) -> None:
             and existing[name] != expected
             and not (name == "openslate_realtime_member_write" and existing[name] == legacy_write)
         ):
-            raise RuntimeError("Existing OpenSlate Realtime channel policy is unsafe")
+            raise RuntimeError("Existing Slate Operations Realtime channel policy is unsafe")
     for name, (command, using, check) in REALTIME_POLICIES.items():
         if name not in existing:
             clause = f"USING ({using})" if using else f"WITH CHECK ({check})"
@@ -473,7 +473,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         settings.database_url,
         instance_target=target,
     )
-    print("Provisioned OpenSlate PostgreSQL roles")
+    print("Provisioned Slate Operations PostgreSQL roles")
 
 
 if __name__ == "__main__":

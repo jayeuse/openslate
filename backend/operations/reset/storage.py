@@ -49,7 +49,7 @@ def require_api_stopped(backend_host: str, backend_port: str) -> None:
 
 
 class ResetStorage:
-    """Inventory and delete every object in only OpenSlate's private bucket."""
+    """Inventory and delete every object in only Slate Operations' private bucket."""
 
     def __init__(
         self,

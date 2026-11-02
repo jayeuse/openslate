@@ -11,16 +11,16 @@ async function signIn(page: Page) {
 }
 
 const routeTitles = [
-  ["/sandbox", "Sandbox | OpenSlate"],
-  ["/boards", "Boards | OpenSlate"],
-  ["/comms", "OpenComms | OpenSlate"],
-  ["/access", "Access | OpenSlate"],
-  ["/openview", "OpenView | OpenSlate"],
-  ["/manage", "Manage | OpenSlate"],
-  ["/platform", "Platform | OpenSlate"],
-  ["/profile", "Your profile | OpenSlate"],
-  ["/settings", "Account settings | OpenSlate"],
-  ["/setup", "Setup guide | OpenSlate"],
+  ["/sandbox", "Sandbox | Slate Operations"],
+  ["/boards", "Boards | Slate Operations"],
+  ["/comms", "OpenComms | Slate Operations"],
+  ["/access", "Access | Slate Operations"],
+  ["/openview", "OpenView | Slate Operations"],
+  ["/manage", "Manage | Slate Operations"],
+  ["/platform", "Platform | Slate Operations"],
+  ["/profile", "Your profile | Slate Operations"],
+  ["/settings", "Account settings | Slate Operations"],
+  ["/setup", "Setup guide | Slate Operations"],
 ] as const;
 
 // The titles are static page metadata, so one journey visits every route;
@@ -33,7 +33,7 @@ test("every route names itself in the browser tab", async ({ page }) => {
   }
   await signedOut(page);
   await page.goto("/login");
-  await expect(page, "/login").toHaveTitle("Sign in | OpenSlate");
+  await expect(page, "/login").toHaveTitle("Sign in | Slate Operations");
 });
 
 test("the breadcrumb names the workspace and its open section, and a phone shows only the current page", async ({

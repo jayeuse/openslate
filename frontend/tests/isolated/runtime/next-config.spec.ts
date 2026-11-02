@@ -315,7 +315,9 @@ test("development launcher accepts caller host and port overrides", () => {
     ]) {
       const result = invokeFixture(fixture, "dev", {}, [...override, "--help"]);
       expect(result.status).toBe(0);
-      expect(result.stderr).not.toContain("fixed by OpenSlate configuration");
+      expect(result.stderr).not.toContain(
+        "fixed by Slate Operations configuration",
+      );
     }
   } finally {
     fixture.cleanup();

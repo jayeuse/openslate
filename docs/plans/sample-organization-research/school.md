@@ -1,8 +1,8 @@
-# Research brief: simulated private K-12 school for OpenSlate
+# Research brief: simulated private K-12 school for Slate Operations
 
 **Answer.** Model an 834-student K–12 day school with 110 staff, 8 departments and 28 modules. The simulated span is one grading period: 2 weeks before classes start, about 10 teaching weeks (48 class days) and 1 report-card week. This gives **6,436 records**. Two design choices keep the record count inside the budget, and both match how real schools record data:
 
-1. **Attendance is stored as exceptions.** Only absence episodes and late arrivals become records. This is "negative attendance": the teacher marks only the students who are absent. Ed-Fi names it as a recognized practice [3]. DepEd SF2 works the same way, where a blank cell means present [9]. Caveat: Ed-Fi recommends that a SIS store both present and absent events [3]. The simulation should present OpenSlate as the school's operations workspace, not as the official attendance record.
+1. **Attendance is stored as exceptions.** Only absence episodes and late arrivals become records. This is "negative attendance": the teacher marks only the students who are absent. Ed-Fi names it as a recognized practice [3]. DepEd SF2 works the same way, where a blank cell means present [9]. Caveat: Ed-Fi recommends that a SIS store both present and absent events [3]. The simulation should present Slate Operations as the school's operations workspace, not as the official attendance record.
 2. **Per-student gradebook scores are not stored.** OneRoster separates LineItems (assessments) from Results (one score per student per item) [2]. For this school, Results would be about 37,000 rows per grading period (10 graded items per section). The design stores these instead: Assessments (the LineItems), grade posting per section, report-card batches, and exceptions (Academic Alerts, Grade Change Requests). Real schools already handle report cards by exception, through deficiency notices and grade-change forms.
 
 All names are invented. Anything without a citation is my own judgment from practice.
@@ -409,7 +409,7 @@ Note style: "C/O headache since 2nd period. T 37.2. Rested 20 min, RTC."
 - School nurse records are FERPA education records, not HIPAA records [24][27].
 - UK GDPR treats health data as special category data, which needs extra protection [25].
 
-OpenSlate grants access per module, not per record. The groups are therefore:
+Slate Operations grants access per module, not per record. The groups are therefore:
 - **Teachers:**
   - Read: Student, and Health Alert (allergy and asthma instructions only).
   - Write: Attendance Exception, Assessment, Academic Alert, Grade Change Request, Behavior Incident, Parent Contact Log.

@@ -13,7 +13,7 @@ test("ordinary conversations show current organization in the collapsed-shell an
     ).toBeEnabled();
     await expect(
       page.getByLabel("Current organization", { exact: true }),
-    ).toHaveText("OpenSlate");
+    ).toHaveText("Slate Operations");
     await expect(
       page.getByLabel("Current organization", { exact: true }),
     ).toBeInViewport();

@@ -1,4 +1,4 @@
-# Reference manufacturer for the OpenSlate simulation: shelf-stable sauces and condiments plant
+# Reference manufacturer for the Slate Operations simulation: shelf-stable sauces and condiments plant
 
 **Why this plant.**
 - **Clean traceability.** A batch kettle process gives a clear chain from batch to lot to pallet to shipment.
@@ -46,7 +46,7 @@
 | Maintenance & Engineering | Preventive maintenance, breakdown repair, spares, utilities | Maintenance Manager | Maintenance Planner, Mechanic, Electrician/Controls Tech |
 | Finance & Admin | Payables and receivables, costing, payroll, HR | Controller | Cost Accountant, AP Clerk, AR Clerk, HR Generalist |
 
-The Plant Manager and an ERP/IT admin are the OpenSlate admins.
+The Plant Manager and an ERP/IT admin are the Slate Operations admins.
 
 ## 3. Core processes
 
@@ -393,7 +393,7 @@ The fill temperatures and metal-detector test sizes above are examples only. A r
 - QA approves suppliers [11].
 - Only QA makes a document effective [18].
 
-OpenSlate grants apply to a whole module, not to single fields. That is why each separated duty has its own module.
+Slate Operations grants apply to a whole module, not to single fields. That is why each separated duty has its own module.
 
 **Refused actions.**
 1. The L2 filler operator (read only on Finished Goods Lots) tries to set lot A6289L2B to Released. Denied.

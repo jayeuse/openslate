@@ -1,4 +1,4 @@
-# OpenSlate Frontend
+# Slate Operations Frontend
 
 Sandbox, Boards, Access, OpenView, Manage, Platform, and OpenComms use authorized FastAPI adapters for their implemented data and actions. FastAPI owns application authorization and durable state; browser drafts and cached reads do not replace those decisions. OpenComms also receives private Supabase Realtime notifications, which carry ids and transient typing/presence signals only; message content loads through HTTP. Sign-in, session validation/refresh, logout, and invitation/recovery actions use the same-origin API.
 

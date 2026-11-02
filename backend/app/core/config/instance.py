@@ -1,4 +1,4 @@
-"""Fail-closed ownership checks for one locally isolated OpenSlate instance."""
+"""Fail-closed ownership checks for one locally isolated Slate Operations instance."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def load_instance_target(process: Mapping[str, str] | None = None) -> InstanceTa
         values = process
     instance_id = _required(values, "OPENSLATE_INSTANCE_ID")
     if _IDENTITY.fullmatch(instance_id) is None:
-        raise InstanceTargetError("OpenSlate instance identity is invalid")
+        raise InstanceTargetError("Slate Operations instance identity is invalid")
     path = REPOSITORY_ROOT / ".agent-runtime" / "instances" / f"{instance_id}.json"
     try:
         metadata = path.lstat()
@@ -72,24 +72,24 @@ def load_instance_target(process: Mapping[str, str] | None = None) -> InstanceTa
             raise ValueError
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
-        raise InstanceTargetError("OpenSlate instance attestation is unavailable") from None
+        raise InstanceTargetError("Slate Operations instance attestation is unavailable") from None
     if not isinstance(payload, dict):
-        raise InstanceTargetError("OpenSlate instance attestation is invalid")
+        raise InstanceTargetError("Slate Operations instance attestation is invalid")
     postgres = payload.get("postgres")
     compose = payload.get("compose")
     if not isinstance(postgres, dict) or not isinstance(compose, dict):
-        raise InstanceTargetError("OpenSlate instance attestation is invalid")
+        raise InstanceTargetError("Slate Operations instance attestation is invalid")
     ownership = payload.get("ownership")
     if not isinstance(ownership, dict):
-        raise InstanceTargetError("OpenSlate instance attestation is invalid")
+        raise InstanceTargetError("Slate Operations instance attestation is invalid")
     try:
         host = _required(values, "POSTGRES_HOST")
         port = int(_required(values, "POSTGRES_PORT"))
         database = _required(values, "POSTGRES_DATABASE")
     except ValueError:
-        raise InstanceTargetError("OpenSlate instance target is invalid") from None
+        raise InstanceTargetError("Slate Operations instance target is invalid") from None
     if not 1 <= port <= 65535 or database != "postgres":
-        raise InstanceTargetError("OpenSlate instance target is invalid")
+        raise InstanceTargetError("Slate Operations instance target is invalid")
     expected_volume = f"{instance_id}_supabase-db-data"
     expected_network = f"{instance_id}_provider"
     container_id = ownership.get("container_id")
@@ -121,7 +121,7 @@ def load_instance_target(process: Mapping[str, str] | None = None) -> InstanceTa
         or not isinstance(image, str)
         or image != SUPABASE_DB_IMAGE
     ):
-        raise InstanceTargetError("OpenSlate instance ownership attestation does not match")
+        raise InstanceTargetError("Slate Operations instance ownership attestation does not match")
     return InstanceTarget(instance_id, host, port, database, path, instance_id)
 
 
@@ -184,7 +184,7 @@ def instance_target_for_process(
     if environment in {"production", "prod"}:
         target = _configured_production_target(values)
     else:
-        raise InstanceTargetError("OpenSlate database environment is unsupported")
+        raise InstanceTargetError("Slate Operations database environment is unsupported")
     assert_database_url(database_url, target, expected_user=expected_user)
     return target
 
@@ -193,15 +193,15 @@ def _configured_production_target(values: Mapping[str, str]) -> InstanceTarget:
     """Keep production config explicit without requiring local Docker access."""
     instance_id = _required(values, "OPENSLATE_INSTANCE_ID")
     if _IDENTITY.fullmatch(instance_id) is None:
-        raise InstanceTargetError("OpenSlate instance identity is invalid")
+        raise InstanceTargetError("Slate Operations instance identity is invalid")
     host = _required(values, "POSTGRES_HOST")
     database = _required(values, "POSTGRES_DATABASE")
     try:
         port = int(_required(values, "POSTGRES_PORT"))
     except ValueError:
-        raise InstanceTargetError("OpenSlate instance target is invalid") from None
+        raise InstanceTargetError("Slate Operations instance target is invalid") from None
     if not 1 <= port <= 65535 or database != "postgres":
-        raise InstanceTargetError("OpenSlate instance target is invalid")
+        raise InstanceTargetError("Slate Operations instance target is invalid")
     return InstanceTarget(instance_id, host, port, database, None, instance_id)
 
 
@@ -242,7 +242,7 @@ def assert_live_docker_ownership(target: InstanceTarget) -> None:
     """Re-inspect container, network and volume immediately before local DB work."""
     path = target.attestation_path
     if path is None or target.cluster_name != target.instance_id:
-        raise InstanceTargetError("Local OpenSlate instance attestation is unavailable")
+        raise InstanceTargetError("Local Slate Operations instance attestation is unavailable")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         ownership = payload["ownership"]
@@ -290,7 +290,9 @@ def assert_live_docker_ownership(target: InstanceTarget) -> None:
     except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         owned = False
     if not owned:
-        raise InstanceTargetError("Live Docker ownership does not match this OpenSlate worktree")
+        raise InstanceTargetError(
+            "Live Docker ownership does not match this Slate Operations worktree"
+        )
 
 
 def instance_identity_for_process(process: Mapping[str, str] | None = None) -> str | None:
@@ -307,7 +309,7 @@ def instance_identity_for_process(process: Mapping[str, str] | None = None) -> s
     if not identity:
         return None
     if _IDENTITY.fullmatch(identity) is None and re.fullmatch(r"[a-f0-9]{32}", identity) is None:
-        raise InstanceTargetError("OpenSlate instance identity is invalid")
+        raise InstanceTargetError("Slate Operations instance identity is invalid")
     worktree = str(REPOSITORY_ROOT.resolve())
     return hashlib.sha256(f"{identity}\0{worktree}".encode()).hexdigest()
 
@@ -333,7 +335,7 @@ def assert_local_backend_url(value: str, *, expected_port: int) -> None:
     except (ValueError, UnicodeError):
         valid = False
     if not valid:
-        raise InstanceTargetError("BACKEND_URL does not target this local OpenSlate API")
+        raise InstanceTargetError("BACKEND_URL does not target this local Slate Operations API")
 
 
 def assert_database_url(value: str, target: InstanceTarget, *, expected_user: str | None) -> None:
@@ -355,7 +357,9 @@ def assert_database_url(value: str, target: InstanceTarget, *, expected_user: st
     except Exception:
         matches = False
     if not matches:
-        raise InstanceTargetError("Database target does not match the owned OpenSlate instance")
+        raise InstanceTargetError(
+            "Database target does not match the owned Slate Operations instance"
+        )
 
 
 def assert_instance_target(
@@ -371,7 +375,9 @@ def assert_instance_target(
         or (target.cluster_name is not None and cluster_name != target.cluster_name)
         or (expected_user is not None and user != expected_user)
     ):
-        raise InstanceTargetError("Connected database does not match the owned OpenSlate instance")
+        raise InstanceTargetError(
+            "Connected database does not match the owned Slate Operations instance"
+        )
 
 
 def assert_psycopg_target(
@@ -391,7 +397,9 @@ def assert_psycopg_target(
         or (target.cluster_name is not None and row[2] != target.cluster_name)
         or (expected_user is not None and row[1] != expected_user)
     ):
-        raise InstanceTargetError("Connected database does not match the owned OpenSlate instance")
+        raise InstanceTargetError(
+            "Connected database does not match the owned Slate Operations instance"
+        )
 
 
 @contextmanager
@@ -426,5 +434,5 @@ def migration_advisory_lock(connection: Connection) -> Iterator[None]:
 def _required(values: Mapping[str, str], name: str) -> str:
     value = values.get(name, "").strip()
     if not value:
-        raise InstanceTargetError(f"Missing OpenSlate instance configuration: {name}")
+        raise InstanceTargetError(f"Missing Slate Operations instance configuration: {name}")
     return value

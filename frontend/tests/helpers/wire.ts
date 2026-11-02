@@ -97,12 +97,12 @@ export function wireRecord<Data extends Record<string, unknown>>({
 }
 
 /**
- * The organization as `/api/workspace` returns it: "OpenSlate" with no
+ * The organization as `/api/workspace` returns it: "Slate Operations" with no
  * contact details, a Monday week and the Slate theme by default.
  */
 export function wireWorkspace({
   id,
-  display_name = "OpenSlate",
+  display_name = "Slate Operations",
   legal_name = null,
   description = null,
   contact_email = null,

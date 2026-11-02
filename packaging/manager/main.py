@@ -1,4 +1,4 @@
-"""PyInstaller entrypoint for the OpenSlate Manager package."""
+"""PyInstaller entrypoint for the Slate Operations Manager package."""
 
 from __future__ import annotations
 

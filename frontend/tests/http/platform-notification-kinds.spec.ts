@@ -451,7 +451,10 @@ test("Comms inbox opens a current-organization message through the shell's unsav
     `/comms?conversation=${id(730)}&message=${id(720)}`,
   );
   await page
-    .getByRole("button", { name: "Organization: OpenSlate", exact: true })
+    .getByRole("button", {
+      name: "Organization: Slate Operations",
+      exact: true,
+    })
     .click();
   await page.getByRole("menuitem", { name: /Second organization/ }).click();
   await expect(
@@ -567,7 +570,10 @@ test("Comms metadata completed after organization and account changes cannot pop
   state.hold = null;
   state.title = "Second organization channel";
   await page
-    .getByRole("button", { name: "Organization: OpenSlate", exact: true })
+    .getByRole("button", {
+      name: "Organization: Slate Operations",
+      exact: true,
+    })
     .click();
   await page.getByRole("menuitem", { name: /Second organization/ }).click();
   await expect(

@@ -58,7 +58,7 @@ def test_bootstrap_invites_once_and_recovers_the_exact_pending_reservation(
             org_id=org.id,
             slug=org.slug,
         )
-        invite.assert_called_once_with(database, name="OpenSlate", slug="openslate",
+        invite.assert_called_once_with(database, name="Slate Operations", slug="openslate",
                                        invitation=invitation, provider_user_id=None)
         reconcile.assert_not_called()
     else:

@@ -1,4 +1,4 @@
-"""Build one unsigned, host-native Gate 0 OpenSlate Manager artifact."""
+"""Build one unsigned, host-native Gate 0 Slate Operations Manager artifact."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER_ROOT = ROOT / "packaging/manager"
 NOTICE = MANAGER_ROOT / "THIRD_PARTY_NOTICES.md"
-APP_NAME = "OpenSlate Manager"
+APP_NAME = "Slate Operations Manager"
 SUPPORTED_ARCHITECTURES = {
     "darwin": frozenset({"arm64", "x86_64"}),
     "win32": frozenset({"amd64", "arm64"}),
@@ -223,8 +223,8 @@ def build_manager(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--origin", required=True, help="Canonical HTTPS OpenSlate origin")
-    parser.add_argument("--version", required=True, help="Public OpenSlate Manager release version")
+    parser.add_argument("--origin", required=True, help="Canonical HTTPS Slate Operations origin")
+    parser.add_argument("--version", required=True, help="Public Slate Operations Manager release version")
     parser.add_argument(
         "--output-dir",
         type=Path,

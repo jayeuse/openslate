@@ -30,7 +30,7 @@ def _schemas_module() -> ModuleType:
 def _profile(revision: int = 3) -> WorkspaceProfile:
     return WorkspaceProfile(
         id=uuid7(),
-        display_name="OpenSlate",
+        display_name="Slate Operations",
         legal_name=None,
         description=None,
         contact_email="operations@example.com",
@@ -200,7 +200,7 @@ def test_get_workspace_returns_existing_singleton_without_creating_it(
     after = datetime.now(UTC).date()
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.json()["display_name"] == "OpenSlate"
+    assert response.json()["display_name"] == "Slate Operations"
     assert response.json()["revision"] == 3
     assert response.json()["today"] in {before.isoformat(), after.isoformat()}
     assert response.json()["purge_enabled"] is purge_enabled
@@ -232,7 +232,7 @@ def test_workspace_patch_rejects_stale_revision_without_writing(
 
     assert response.status_code == status.HTTP_409_CONFLICT
     assert response.json()["detail"]["code"] == "stale_revision"
-    assert profile.display_name == "OpenSlate"
+    assert profile.display_name == "Slate Operations"
     assert profile.currency == "PHP"
     assert database.commit_count == 0
 
@@ -287,7 +287,7 @@ def test_workspace_patch_uses_exact_admin_and_increments_revision(
         "/api/workspace",
         json={
             "revision": 3,
-            "display_name": "OpenSlate Operations",
+            "display_name": "Slate Operations Operations",
             "locale": "en-GB",
             "currency": " sgD ",
             "week_start": "sunday",
@@ -297,7 +297,7 @@ def test_workspace_patch_uses_exact_admin_and_increments_revision(
     )
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.json()["display_name"] == "OpenSlate Operations"
+    assert response.json()["display_name"] == "Slate Operations Operations"
     assert response.json()["locale"] == "en-GB"
     assert response.json()["currency"] == "SGD"
     assert response.json()["week_start"] == "sunday"
@@ -382,7 +382,7 @@ def test_workspace_model_redacts_contact_fields_from_audit_snapshots() -> None:
     from app.systems.manage.workspace.models import WorkspaceProfile
 
     profile = WorkspaceProfile(
-        display_name="OpenSlate",
+        display_name="Slate Operations",
         contact_email="operations@example.com",
         contact_phone="123",
         postal_address="A private address",

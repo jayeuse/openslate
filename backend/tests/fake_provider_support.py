@@ -1,7 +1,7 @@
 """In-process Supabase Auth fake for integration tests whose subject is not the provider.
 
-Workspace, export, report, audit and security-event journeys check OpenSlate behavior.
-They sign in through OpenSlate's real ``/api/auth/login`` (or ``admit_provider_session``)
+Workspace, export, report, audit and security-event journeys check Slate Operations behavior.
+They sign in through Slate Operations' real ``/api/auth/login`` (or ``admit_provider_session``)
 against this fake instead of creating, password-hashing and deleting a GoTrue user per
 test. Real provider semantics keep their own acceptance tests
 (``tests/auth/test_provider_*``, ``test_email_change_integration``,
@@ -296,7 +296,7 @@ def install_fake_provider(
 ) -> FakeProvider:
     """Route the shared provider client to a new fake; ``monkeypatch`` undoes it.
 
-    Pass ``real_session_pool(config)`` whenever OpenSlate will admit a session.
+    Pass ``real_session_pool(config)`` whenever Slate Operations will admit a session.
     """
 
     fake = FakeProvider(pool)

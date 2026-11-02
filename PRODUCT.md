@@ -8,7 +8,7 @@ adaptive
 
 ## Users
 
-OpenSlate is for any organization that runs on people, records, and repeated
+Slate Operations is for any organization that runs on people, records, and repeated
 work: businesses, schools, nonprofits, clubs, cooperatives, and public
 offices. Owners, administrators, and operators know how their organization
 works but may not be technical; they shape the system. Staff, members, and
@@ -22,7 +22,7 @@ industry as the audience.
 
 ## Product Purpose
 
-OpenSlate gives an organization one system of its own in place of work that is
+Slate Operations gives an organization one system of its own in place of work that is
 otherwise split across spreadsheets and disconnected tools. It exists to reduce
 inconsistent and duplicate data, repeated manual verification, and the effort
 required to keep records trustworthy.
@@ -32,7 +32,7 @@ works, then give its people a clear, dependable place to do that work.
 
 ## Positioning
 
-OpenSlate lets an organization build its own system without code, centered on
+Slate Operations lets an organization build its own system without code, centered on
 a visual Sandbox. Instead of only configuring tables or drawing static
 relationships, people lay out their organization and how work moves through it
 spatially, then use a simulation interface to see how data moves through the
@@ -63,7 +63,7 @@ using it:
 - Where the line cannot move (print, a social image, a slide), use one fixed
   word chosen for that audience.
 - A plain outcome line follows it, so "draw" is not read as a diagram tool:
-  OpenSlate turns the drawing into one system the organization's people use
+  Slate Operations turns the drawing into one system the organization's people use
   every day.
 
 ## Operating Context
@@ -94,8 +94,9 @@ and never create operational records. Simulation is not production automation.
   delivered as an installable desktop application and native mobile
   experiences, adapting its interaction language to each platform. The exact
   packaging, mobile stack, and delivery sequence remain open decisions.
-- OpenSlate is the current product name. A rename to Slate is planned, but its
-  timing and migration are not yet decided.
+- The product name is Slate Operations (renamed from Slate Operations on
+  2026-11-02). The machine identifier stem is `slateops`; the rename of
+  identifiers and stored data follows `docs/plans/rebrand-slate-operations.md`.
 - The product must stay approachable for people with low technical knowledge;
   no-code flexibility must not expose avoidable implementation complexity.
 - The product must not assume one country, language, currency, timezone, or
@@ -106,9 +107,11 @@ and never create operational records. Simulation is not production automation.
 
 ## Brand Commitments
 
-The current name is OpenSlate, with Slate as the planned future name. Product
-language should feel clear, direct, and familiar to non-technical people in
-any kind of organization. The interface should be innovative and intuitive
+The name is **Slate Operations**. Use the full name in prose, page titles,
+email, and errors. Use the short form **Slate Ops** only where space is tight,
+such as the mobile header; never in a sentence. "Slate" alone is the default
+look, not the product. Product language should feel clear, direct, and
+familiar to non-technical people in any kind of organization. The interface should be innovative and intuitive
 without making routine work feel foreign, complex, or difficult to learn.
 
 ## Evidence on Hand

@@ -1,1 +1,1 @@
-"""OpenSlate-local identity capability."""
+"""Application-local identity capability."""

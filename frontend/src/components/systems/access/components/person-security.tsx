@@ -361,8 +361,8 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
             </p>
             {!data.status.smtp_configured ? (
               <p className="mt-3 text-sm">
-                Recovery email is not turned on. Ask the person who set up
-                OpenSlate to turn on email. You can still end sessions in
+                Recovery email is not turned on. Ask the person who set up Slate
+                Operations to turn on email. You can still end sessions in
                 Sessions.
               </p>
             ) : null}

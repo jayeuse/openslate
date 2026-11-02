@@ -1,1 +1,1 @@
-"""OpenSlate backend application."""
+"""Slate Operations backend application."""

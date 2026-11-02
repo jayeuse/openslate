@@ -1,4 +1,4 @@
-"""Focused contracts for the Gate 0 native OpenSlate Manager build."""
+"""Focused contracts for the Gate 0 native Slate Operations Manager build."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ class ManagerUiBoundaryTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
-                ("create_window", ("OpenSlate Manager", "https://openslate.example"), {}),
+                ("create_window", ("Slate Operations Manager", "https://openslate.example"), {}),
                 ("start", (), {}),
             ],
         )
@@ -106,7 +106,7 @@ class ManagerBuildTests(unittest.TestCase):
 
     def test_installation_includes_public_config_and_third_party_notice(self):
         with tempfile.TemporaryDirectory() as directory:
-            artifact = Path(directory) / "OpenSlate Manager"
+            artifact = Path(directory) / "Slate Operations Manager"
             artifact.mkdir()
 
             build_native_manager.install_public_files(
@@ -315,8 +315,8 @@ class ManagerBuildTests(unittest.TestCase):
     def test_macos_build_retains_only_the_app_bundle(self):
         with tempfile.TemporaryDirectory() as directory:
             output_directory = Path(directory) / "dist"
-            bundle = output_directory / "OpenSlate Manager.app"
-            duplicate = output_directory / "OpenSlate Manager"
+            bundle = output_directory / "Slate Operations Manager.app"
+            duplicate = output_directory / "Slate Operations Manager"
             bundle.mkdir(parents=True)
             duplicate.mkdir()
             (duplicate / "stale-onedir-file").write_text("temporary", encoding="utf-8")

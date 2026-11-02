@@ -1,4 +1,4 @@
-# FMCG distributor reference model for OpenSlate simulated data
+# FMCG distributor reference model for Slate Operations simulated data
 
 **Status: complete.** This is based on primary process frameworks (APQC PCF 7.4, the SAP Direct Store Delivery application help, and the Salesforce Consumer Goods data model), regulator pages, and benchmarks from vendors that sell distributor management software (DMS). Nothing I found gives the headcount or outlet count of a typical distributor. I built those from sourced ratios, so they are my judgment. The volumes, status shares, naming, board content and seasonality are also my judgment unless a citation is given.
 
@@ -133,7 +133,7 @@ Process IDs map to the APQC PCF 7.4 [1]. The steps follow the SAP DSD applicatio
 25. **Principal invoice (AP)**: Principal invoice no.* T; Principal* →; PO →; Invoice date* D; Amount (PHP)* N; Match result Sel (3-way matched, Qty variance, Price variance, No GRN); Status* Sel (Received, Matching, On hold – variance, Approved for payment, Paid, Disputed).
 26. **Principal claim**: Claim no.* T; Principal* →; Claim type* Sel (Scheme/promo, BO/expiry return, Price difference/chargeback, Display allowance, Short/damaged delivery, Logistics/freight subsidy) [15][18]; Period D; Claimed (PHP)* N; Approved (PHP) N; Rejection reason Sel; Filed by* Usr; Status* Sel (Draft, Submitted, Under principal review, Approved, Partially approved, Rejected, Settled – credit note, Settled – offset, Written off).
 
-**Modeling gaps in OpenSlate, and how I handled them:**
+**Modeling gaps in Slate Operations, and how I handled them:**
 - There is no formula field type. Days past due, Aging bucket, Expiry band, Variance % and Cash variance must therefore be set by a person or by the generator. They are stored fields.
 - Access is set per department or module, not per record or field. Section 11 works around this.
 
@@ -185,7 +185,7 @@ Each rule sets a field on the record that triggered it, or creates a follow-up r
 11. **Count tolerance.** Threshold crossed: Stock count Variance % crosses 2. Action: Status = Recount required.
 12. **Weekly A-item count.** Schedule: weekly, Monday 07:00. Action: create Stock count (Count type = Cycle A, Status = Scheduled).
 
-The OpenSlate rule model has one limit here. Days past due and Expiry band must be maintained by someone, because there is no formula field. The generator must update them over simulated time so that rules 5–8 fire.
+The Slate Operations rule model has one limit here. Days past due and Expiry band must be maintained by someone, because there is no formula field. The generator must update them over simulated time so that rules 5–8 fire.
 
 ## 7. Volumes
 
@@ -409,7 +409,7 @@ Check trademarks before use; I did not search them.
 
 ## 11. Access, segregation of duties and refusals
 
-**Groups** (OpenSlate levels are read, write and manage; guests are capped at read):
+**Groups** (Slate Operations levels are read, write and manage; guests are capped at read):
 
 | Group | Access |
 |---|---|
@@ -423,7 +423,7 @@ Check trademarks before use; I did not search them.
 | Accounting & Claims | Manage their department. Write Stock adjustment approval (see below). Read everything. |
 | Guests (principal account managers, external auditor) | Read Trade promotion and Product only. |
 
-Principal guests do not get access to Principal claim. OpenSlate cannot limit them to their own principal's rows, so they would see every other principal's claims.
+Principal guests do not get access to Principal claim. Slate Operations cannot limit them to their own principal's rows, so they would see every other principal's claims.
 
 **Segregation-of-duties rules** [24][25][26]:
 - The person who raises a PO does not approve it.
@@ -433,7 +433,7 @@ Principal guests do not get access to Principal claim. OpenSlate cannot limit th
 - Cash custody (van seller, cashier) is separate from AR posting.
 - The person who counts stock does not post the adjustment.
 
-**Gap for the parent to decide:** OpenSlate cannot stop "the raiser approves their own PO" inside one module, because grants are per module. It needs one of two changes:
+**Gap for the parent to decide:** Slate Operations cannot stop "the raiser approves their own PO" inside one module, because grants are per module. It needs one of two changes:
 - Option A: move approval into a separate module that only Accounting can write, such as a "PO approval" or "Adjustment approval" record in Accounting & Claims.
 - Option B: treat same-person approval as a logged policy exception, not a refusal.
 

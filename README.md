@@ -1,8 +1,8 @@
-# OpenSlate
+# Slate Operations
 
-OpenSlate is a self-hosted, single-installation application for each client. Its
+Slate Operations is a self-hosted, single-installation application for each client. Its
 server stack runs with Docker Compose and includes Supabase Database, Auth,
-Storage, Studio, and Realtime alongside the OpenSlate API, static frontend, and
+Storage, Studio, and Realtime alongside the Slate Operations API, static frontend, and
 Caddy. Development uses the same pinned Supabase services with FastAPI and
 Next.js run on the host. Supabase Database is PostgreSQL, so SQLAlchemy and
 Alembic remain the application persistence layer.
@@ -30,12 +30,12 @@ public issue.
 
 - **Database:** Supabase's pinned PostgreSQL distribution. FastAPI accesses
   application tables through synchronous SQLAlchemy connections; Alembic owns
-  only the OpenSlate schema. There is no pgweb service or standalone PostgreSQL
+  only the Slate Operations schema. There is no pgweb service or standalone PostgreSQL
   development stack.
 - **Authentication:** Supabase Auth handles email/password verification,
   invitations, and recovery email. FastAPI verifies provider identity, binds a
-  provider subject to an OpenSlate profile, maintains revocable application
-  sessions, and decides access from OpenSlate roles, groups, and permissions.
+  provider subject to an Slate Operations profile, maintains revocable application
+  sessions, and decides access from Slate Operations roles, groups, and permissions.
   Provider claims and metadata do not grant application permissions.
 - **Files:** Supabase Storage holds file bytes in one private bucket. FastAPI
   checks the file type, decides upload and download authorization, and serves
@@ -174,7 +174,7 @@ Next.js is the daily browser origin and proxies `/api` to the loopback FastAPI
 server only in development. The static production export is served by FastAPI;
 production does not run a Node.js frontend process. After FastAPI is running,
 bootstrap the first administrator. Supabase sends an invitation; complete it
-from the development Mailpit inbox and set the password through OpenSlate:
+from the development Mailpit inbox and set the password through Slate Operations:
 
 ```bash
 # backend/
@@ -238,7 +238,7 @@ uv run python operations/reset_application_data.py
 uv run python operations/reset_application_data.py --execute
 ```
 
-The operation removes selected OpenSlate application records, associated
+The operation removes selected Slate Operations application records, associated
 Supabase Auth accounts, and private Storage objects while preserving the
 configured administrator and that account's installation operator row. It
 removes every organization and creates no new organization. Run
@@ -307,10 +307,10 @@ for test boundaries and the pre-push gate.
   utilities.
 - `backend/app/systems/` groups capabilities under `sandbox`, `access`,
   `manage`, `openview`, `boards`, `platform`, and `comms`.
-- `backend/migrations/` is the Alembic path for the OpenSlate application
+- `backend/migrations/` is the Alembic path for the Slate Operations application
   schema. Supabase-owned Auth and Storage schemas stay provider-managed.
 - `frontend/src/app/` contains App Router routes; reusable primitives live
   under `frontend/src/components/ui/`.
 - `infra/supabase/` contains the pinned self-hosted provider stack and
   development/production overlays. `infra/docker/` contains the unified
-  OpenSlate server image; `infra/caddy/` contains gateway artifacts.
+  Slate Operations server image; `infra/caddy/` contains gateway artifacts.

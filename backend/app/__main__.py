@@ -11,7 +11,7 @@ from app.core.config.development import is_relaxed_development
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Run the OpenSlate API")
+    parser = argparse.ArgumentParser(description="Run the Slate Operations API")
     parser.add_argument(
         "--reload", action="store_true", help="reload source changes for local development"
     )

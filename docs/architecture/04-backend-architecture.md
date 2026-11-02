@@ -14,12 +14,12 @@ verification, middleware, and audit-aware session infrastructure. `app/common/`
 holds shared dependencies and list behavior. `app/systems/<area>/<capability>/`
 owns domain models, schemas, routers, and coordination services.
 
-Alembic evolves only OpenSlate's application schema. [`backend/migrations/env.py`](../../backend/migrations/env.py) limits reflection to application-owned objects through [`application_migration_scope`](../../backend/app/core/database/migration_scope.py); Supabase owns Auth, Storage, and other provider schemas. Fresh installs start from the Supabase application baseline, with the former vanilla PostgreSQL lineage kept outside the active migration graph. See [data architecture](06-data-architecture.md#schema-workflow).
+Alembic evolves only Slate Operations' application schema. [`backend/migrations/env.py`](../../backend/migrations/env.py) limits reflection to application-owned objects through [`application_migration_scope`](../../backend/app/core/database/migration_scope.py); Supabase owns Auth, Storage, and other provider schemas. Fresh installs start from the Supabase application baseline, with the former vanilla PostgreSQL lineage kept outside the active migration graph. See [data architecture](06-data-architecture.md#schema-workflow).
 
 [`SupabaseAuthClient`](../../backend/app/core/integrations/supabase_auth.py)
 verifies email/password credentials and provider JWTs.
 [`login_with_provider`](../../backend/app/systems/access/identity/provider_login.py)
-admits only a provider subject explicitly bound to an eligible OpenSlate
+admits only a provider subject explicitly bound to an eligible Slate Operations
 profile; [`resolve_provider_session`](../../backend/app/systems/access/identity/provider_sessions.py)
 rechecks provider liveness, local expiry, and revocation. `identity_sessions`
 store a digest of the opaque application refresh handle and encrypted provider

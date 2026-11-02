@@ -78,7 +78,7 @@ class EnvironmentSettings(BaseSettings):
 class Settings(EnvironmentSettings):
     """Configuration required to start the FastAPI application process."""
 
-    app_name: ClassVar[str] = "OpenSlate API"
+    app_name: ClassVar[str] = "Slate Operations API"
     environment: str = Field(validation_alias="ENVIRONMENT")
     log_dir: Path = Field(validation_alias="LOG_DIR")
     database_url: str = Field(validation_alias="DATABASE_URL")

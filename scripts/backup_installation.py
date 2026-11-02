@@ -1,4 +1,4 @@
-"""Run the standalone encrypted OpenSlate installation backup operation."""
+"""Run the standalone encrypted Slate Operations installation backup operation."""
 
 from __future__ import annotations
 

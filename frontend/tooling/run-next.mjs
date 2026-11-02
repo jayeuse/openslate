@@ -495,7 +495,7 @@ async function startDevelopmentServer(argumentsToInspect) {
   });
   server.listen(options.port, options.hostname, () => {
     console.log(
-      `> OpenSlate Next development listening on ${options.hostname}:${options.port}`,
+      `> Slate Operations Next development listening on ${options.hostname}:${options.port}`,
     );
   });
 }

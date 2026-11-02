@@ -1,4 +1,4 @@
-"""OpenSlate-local authentication and user administration routes."""
+"""Application-local authentication and user administration routes."""
 
 from typing import Annotated
 from uuid import UUID

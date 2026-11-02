@@ -147,7 +147,7 @@ def test_native_default_off_is_no_fetch_and_enabled_edit_projects_controlled_pla
                     "url": url,
                     "title": "Owned preview fixture",
                     "description": "Controlled parsed metadata",
-                    "site_name": "OpenSlate test",
+                    "site_name": "Slate Operations test",
                 }
             ]
             assert len(fetches.read_text().splitlines()) == number

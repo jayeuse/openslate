@@ -1,6 +1,6 @@
 # One client installation. Render Caddyfile and provision the application roles,
 # schema, and private app environment before up.
-# The base Compose file owns provider services; this overlay adds OpenSlate.
+# The base Compose file owns provider services; this overlay adds Slate Operations.
 services:
   api-gw:
     # Realtime ingress does not grant gateway peers trusted API proxy status.
@@ -14,7 +14,7 @@ services:
     ports: !reset []
 
   api:
-    image: ${OPENSLATE_SERVER_IMAGE:?Set a versioned OpenSlate server image name}
+    image: ${OPENSLATE_SERVER_IMAGE:?Set a versioned Slate Operations server image name}
     build:
       context: ../..
       dockerfile: infra/docker/backend.Dockerfile
@@ -73,7 +73,7 @@ services:
       - app-private
 
   caddy:
-    image: ${OPENSLATE_CADDY_IMAGE:?Set a versioned OpenSlate Caddy image name}
+    image: ${OPENSLATE_CADDY_IMAGE:?Set a versioned Slate Operations Caddy image name}
     build:
       context: ../..
       dockerfile: infra/docker/caddy.Dockerfile
@@ -89,7 +89,7 @@ services:
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Generate the publishable gateway key}
     volumes:
       - type: bind
-        source: ${CADDY_CONFIG_PATH:?Render an OpenSlate production Caddyfile first}
+        source: ${CADDY_CONFIG_PATH:?Render an Slate Operations production Caddyfile first}
         target: /etc/caddy/Caddyfile
         read_only: true
         bind:

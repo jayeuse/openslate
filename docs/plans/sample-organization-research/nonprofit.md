@@ -166,7 +166,7 @@ I assume that "set field" acts on the triggering record and "create record" can 
 11. **Distributions.** Field changed: Status. If Status = Disputed → create a Feedback Cases record (Category = Quality/quantity complaint, Channel = Help desk).
 12. **Schedule, weekly, Friday 15:00** → create a Disbursements record "Weekly payment run" with Status = Draft.
 
-**Model gap.** Conditions compare fields only to fixed values. So OpenSlate cannot express date-relative rules such as "liquidation more than 30 days late" or "report due in 14 days". In the simulation, staff set Overdue by hand, and saved views sort by due date.
+**Model gap.** Conditions compare fields only to fixed values. So Slate Operations cannot express date-relative rules such as "liquidation more than 30 days late" or "report due in 14 days". In the simulation, staff set Overdue by hand, and saved views sort by due date.
 
 ## 7. Volumes: 12 months (Oct 2025 – Sep 2026), 6,007 records
 
@@ -296,7 +296,7 @@ Use Sphere where relevant, for example the minimum of 15 L water per person per 
 | Accountability (Accountability Officer and ED only) | Feedback Cases. |
 | Guests | External auditor: read on Finance and Procurement during fieldwork (Feb–Mar). Funder grant officer: read on Indicators and Indicator Results only. |
 
-**OpenSlate gaps to state in the pack.** OpenSlate has no field-level or record-level access. So:
+**Slate Operations gaps to state in the pack.** Slate Operations has no field-level or record-level access. So:
 
 - A funder guest sees other funders' results.
 - Safeguarding cases must live in a separate module to stay hidden.

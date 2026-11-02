@@ -50,9 +50,12 @@ export default function Home() {
       <header className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-10">
         <a className="flex items-center gap-3" href="/">
           <span className="bg-foreground text-background grid size-9 place-items-center rounded-[var(--radius)] text-sm font-bold">
-            OS
+            SO
           </span>
-          <span className="text-sm font-semibold">OpenSlate</span>
+          <span className="text-sm font-semibold">
+            <span className="sm:hidden">Slate Ops</span>
+            <span className="hidden sm:inline">Slate Operations</span>
+          </span>
         </a>
         <nav
           className={cn(
@@ -77,8 +80,8 @@ export default function Home() {
             Make the next action obvious.
           </h1>
           <p className="text-muted-foreground mt-7 max-w-2xl text-lg leading-8">
-            OpenSlate gives teams a calm, structured place to design their
-            operational data and keep work moving from setup to everyday
+            Slate Operations gives teams a calm, structured place to design
+            their operational data and keep work moving from setup to everyday
             records.
           </p>
           <div
@@ -136,7 +139,7 @@ export default function Home() {
         </div>
       </section>
       <footer className="border-border text-muted-foreground mx-auto flex max-w-7xl flex-col gap-2 border-t px-6 py-6 text-xs sm:flex-row sm:justify-between lg:px-10">
-        <span>OpenSlate</span>
+        <span>Slate Operations</span>
         <span>Self-hosted by default</span>
       </footer>
     </main>

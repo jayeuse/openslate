@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start and inspect OpenSlate's local development dependencies."""
+"""Start and inspect Slate Operations' local development dependencies."""
 
 from __future__ import annotations
 

@@ -226,7 +226,7 @@ test("the same-origin gateway authenticates, serves the session, and revokes it 
   await page.getByRole("button", { name: "Sign in" }).click();
 
   await expect(page).toHaveURL(/\/(openview|sandbox)$/);
-  await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(async () => {
@@ -396,7 +396,7 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByLabel("Email", { exact: true }).fill(fullstack.admin.email);
   await page.getByLabel("Password").fill(fullstack.admin.password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();
 
   const invitation = await page.evaluate(
     async ({ email, username }) => {
@@ -488,7 +488,7 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password").fill(invitationPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();
   const invitedIdentityResponse = await page.request.get("/api/auth/me");
   expect(invitedIdentityResponse.status()).toBe(200);
   const invitedIdentity = (await invitedIdentityResponse.json()) as {
@@ -555,7 +555,7 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password").fill(replacementPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  await expect(page.getByLabel("Slate Operations workspace")).toBeVisible();
   const recoveredIdentityResponse = await page.request.get("/api/auth/me");
   expect(recoveredIdentityResponse.status()).toBe(200);
   const recoveredIdentity = (await recoveredIdentityResponse.json()) as {

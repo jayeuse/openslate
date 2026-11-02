@@ -1,6 +1,6 @@
 # Backend Guide
 
-FastAPI application data API: Python 3.12, synchronous SQLAlchemy 2 + Alembic, and Supabase Auth identity mapped to OpenSlate profiles and revocable application sessions. Supabase Database is PostgreSQL. Run commands from `backend/` (`uv run ...`); the project is not installed as a package.
+FastAPI application data API: Python 3.12, synchronous SQLAlchemy 2 + Alembic, and Supabase Auth identity mapped to Slate Operations profiles and revocable application sessions. Supabase Database is PostgreSQL. Run commands from `backend/` (`uv run ...`); the project is not installed as a package.
 
 The deployment profile is one full stack per client (micro–medium SMB, on-premise first, cloud second). One installation holds several organizations: shared tables with `org_id`, membership-based authorization in the bound organization, and RLS on `openslate.org_id` as a backstop (decision D01, `docs/plans/supabase-foundation.md`). Every organization query runs in a bound transaction (`app/core/database/organization_scope.py`); join `memberships` through `bound_membership_join()` or an explicit `org_id`; workers loop `active_organization_ids()` under `worker_organization()`. Keep the synchronous stack; do not introduce async SQLAlchemy, keyset pagination, or per-organization schemas without an explicit decision.
 
@@ -24,7 +24,7 @@ The deployment profile is one full stack per client (micro–medium SMB, on-prem
 - Domain models inherit `app.core.base_model.BaseModel` (`UUIDv7 id`, timestamps, soft-delete fields, and `performed_by`). Audit/lifecycle support tables inherit `Base` directly and disable audit.
 - Register every ORM model in `app/core/database/model_registry.py`; Alembic autogenerate only sees imported registry models.
 - Schema flow is models → `migrations/AGENTS.md` → `uv run alembic revision --autogenerate` → review → `uv run alembic upgrade head` and `uv run alembic check`.
-- OpenSlate user/profile, revocable session, and rate-limit tables are application-owned models and must be registered like other ORM models. Supabase Auth and Storage schemas remain provider-owned; do not map them as application models or migrate their tables. The runtime's narrow read of provider session identity is an explicit integration exception, not application ownership.
+- Slate Operations user/profile, revocable session, and rate-limit tables are application-owned models and must be registered like other ORM models. Supabase Auth and Storage schemas remain provider-owned; do not map them as application models or migrate their tables. The runtime's narrow read of provider session identity is an explicit integration exception, not application ownership.
 - Soft delete is explicit (`is_deleted`/`deleted_at`); `BaseModel` does not filter automatically. Deleted-aware lists use `execute_standard_list`.
 
 ## Mutations and audit

@@ -196,7 +196,7 @@ def verify_factor(
     except InvalidProviderCredentials:
         rate_limits.record_mfa_failure(user_id, source=source)
         raise
-    # A factor verified through OpenSlate requires AAL2 from every session at once.
+    # A factor verified through Slate Operations requires AAL2 from every session at once.
     forget_provider_user(tokens.user_id)
     try:
         claims = client.verify_access_token(tokens.access_token)

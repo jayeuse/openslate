@@ -434,7 +434,7 @@ test("a save that may have completed is kept inside Access and asked about befor
 
   // So does switching to another organization.
   const organization = page.getByRole("button", {
-    name: "Organization: OpenSlate",
+    name: "Organization: Slate Operations",
     exact: true,
   });
   await organization.click();
@@ -460,7 +460,10 @@ test("after leaving Access, sign-out and an organization switch still ask about 
   // Another workspace page: the Access guard is no longer mounted.
   await page.goto("/boards");
   await expect(
-    page.getByRole("button", { name: "Organization: OpenSlate", exact: true }),
+    page.getByRole("button", {
+      name: "Organization: Slate Operations",
+      exact: true,
+    }),
   ).toBeVisible();
   const leave = page.getByRole("alertdialog", {
     name: "Discard unsaved changes?",
@@ -477,7 +480,7 @@ test("after leaving Access, sign-out and an organization switch still ask about 
   expect(api.sent("POST", "/api/auth/logout")).toHaveLength(0);
 
   const organization = page.getByRole("button", {
-    name: "Organization: OpenSlate",
+    name: "Organization: Slate Operations",
     exact: true,
   });
   await organization.click();

@@ -185,7 +185,7 @@ test("saved weekly Dashboard uses Sunday workspace starts and hides retained dat
         ? { status: 403, json: { detail: "Forbidden" } }
         : {
             json: {
-              display_name: "OpenSlate",
+              display_name: "Slate Operations",
               mark: "OS",
               logo_file_id: null,
               revision: 1,

@@ -59,7 +59,7 @@ const queuedExport = {
   sha256: null,
   failure_code: null,
 };
-// Release links must point at a tagged OpenSlate release.
+// Release links must point at a tagged Slate Operations release.
 const version = {
   release_url: "https://github.com/jayeuse/openslate/releases/tag/v1.2.3",
 };

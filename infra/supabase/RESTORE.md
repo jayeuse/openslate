@@ -1,6 +1,6 @@
 # Offline installation backup and restore
 
-This is a support-operated backup and recovery procedure for a version 3 Supabase installation. Run the commands below from the root of the matching OpenSlate release checkout on a Linux host or WSL2, with the pinned images used by the installation. Windows Docker Desktop acceptance is still pending. A guarded production Compose backup and restore rehearsal passed using Linux containers on macOS Docker Desktop; native Linux host boot/reboot and Windows operation remain unverified. Keep restored public ingress closed until the final admission step; restore markers record operations and do not gate application startup.
+This is a support-operated backup and recovery procedure for a version 3 Supabase installation. Run the commands below from the root of the matching Slate Operations release checkout on a Linux host or WSL2, with the pinned images used by the installation. Windows Docker Desktop acceptance is still pending. A guarded production Compose backup and restore rehearsal passed using Linux containers on macOS Docker Desktop; native Linux host boot/reboot and Windows operation remain unverified. Keep restored public ingress closed until the final admission step; restore markers record operations and do not gate application startup.
 
 The backup is an offline physical set of PostgreSQL, Storage, and other named volumes, plus private configuration and a manifest. Treat the backup and restored private files, and Compose output, as secrets. Use an owner-controlled Restic repository, password file, staging directory, backup config, target parent directory, and target environment files. Never restore into an existing customer project or volume.
 
@@ -65,7 +65,7 @@ uv run python operations/backup_runner.py run \
   --state-directory ABSOLUTE_PRIVATE_RUNNER_STATE
 ```
 
-Configure the installation's Linux/WSL2 host scheduler to invoke this once per minute; OpenSlate installs no scheduler. Daily and Sunday-weekly policies execute at 02:00 in the workspace timezone.
+Configure the installation's Linux/WSL2 host scheduler to invoke this once per minute; Slate Operations installs no scheduler. Daily and Sunday-weekly policies execute at 02:00 in the workspace timezone.
 
 ### Schedule the runner
 
@@ -174,7 +174,7 @@ docker compose --project-name NEW_TARGET_PROJECT --env-file TARGET_PROVIDER_ENV 
   -f infra/supabase/compose.yaml up -d --no-deps db
 ```
 
-Wait for the target `db` health check. Finalization checks the target project's container and volume ownership, verifies that the running DB actually mounts the target project's data and config volumes at PostgreSQL's expected paths, checks its pinned image and internal-only network, requires no published database port, and permits only its DB to run. It connects as the pinned provider's `supabase_admin` role, verifies `current_setting('cluster_name')` equals `NEW_TARGET_INSTANCE_ID`, revokes OpenSlate application sessions, clears their encrypted provider tokens, and verifies the resulting database state before writing `restore-finalized.json`. A missing or mismatched identity, failed SQL, or nonzero session residue leaves the finalized marker absent. Keep ingress closed and investigate any such failure.
+Wait for the target `db` health check. Finalization checks the target project's container and volume ownership, verifies that the running DB actually mounts the target project's data and config volumes at PostgreSQL's expected paths, checks its pinned image and internal-only network, requires no published database port, and permits only its DB to run. It connects as the pinned provider's `supabase_admin` role, verifies `current_setting('cluster_name')` equals `NEW_TARGET_INSTANCE_ID`, revokes Slate Operations application sessions, clears their encrypted provider tokens, and verifies the resulting database state before writing `restore-finalized.json`. A missing or mismatched identity, failed SQL, or nonzero session residue leaves the finalized marker absent. Keep ingress closed and investigate any such failure.
 
 ```sh
 PYTHONPATH=packaging python3 -m backup.restore_installation \

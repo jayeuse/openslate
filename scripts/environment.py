@@ -413,7 +413,7 @@ def inspect_instance_ownership(
         container = {}
         network_id = ""
     if not owned:
-        raise ConfigurationError("Docker ownership does not match this OpenSlate worktree")
+        raise ConfigurationError("Docker ownership does not match this Slate Operations worktree")
     return {
         "container_id": container["Id"],
         "image": container["Config"]["Image"],
@@ -437,7 +437,7 @@ def _read_instance_attestation(values: dict[str, str]) -> tuple[Path, dict[str, 
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         raise ConfigurationError(
-            "OpenSlate instance attestation is unavailable or invalid"
+            "Slate Operations instance attestation is unavailable or invalid"
         ) from None
     if (
         not isinstance(payload, dict)
@@ -462,7 +462,7 @@ def _read_instance_attestation(values: dict[str, str]) -> tuple[Path, dict[str, 
         or payload["ownership"].get("image") != SUPABASE_DB_IMAGE
         or payload["ownership"].get("working_dir") != str(SUPABASE_COMPOSE_PATH.parent)
     ):
-        raise ConfigurationError("OpenSlate instance attestation is unavailable or invalid")
+        raise ConfigurationError("Slate Operations instance attestation is unavailable or invalid")
     return path, payload
 
 
@@ -493,7 +493,7 @@ def _verify_attested_resources(values: dict[str, str]) -> None:
     except (KeyError, TypeError):
         valid = False
     if not valid:
-        raise ConfigurationError("Docker resources do not match this OpenSlate worktree")
+        raise ConfigurationError("Docker resources do not match this Slate Operations worktree")
 
 
 def _verify_live_instance(values: dict[str, str]) -> dict[str, object]:
@@ -543,7 +543,7 @@ def _preflight_compose_mutation(
     identifiers = _compose_project_containers(values)
     if identifiers:
         if len(identifiers) != 1:
-            raise ConfigurationError("OpenSlate project has ambiguous Supabase database containers")
+            raise ConfigurationError("Slate Operations project has ambiguous Supabase database containers")
         if subcommand in {"stop", "restart", "down", "start", "up"}:
             _verify_live_instance(values)
         return
