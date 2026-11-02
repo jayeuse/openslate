@@ -27,6 +27,9 @@ PRIVILEGE_ROLE = "openslate_app"
 RUNTIME_ROLE = "openslate_runtime"
 LOCAL_ENVIRONMENTS = frozenset({"development", "dev", "local", "test"})
 MEMBERSHIP_OPTION_COLUMNS = frozenset({"inherit_option", "set_option"})
+# A transaction left idle (a bug, or a lost client) releases its locks after this limit.
+# The runtime role keeps ordinary lock waits: there is deliberately no role lock_timeout.
+RUNTIME_IDLE_TRANSACTION_TIMEOUT = "60s"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -380,6 +383,10 @@ def provision(
                 cursor,
                 options_supported=options_supported,
                 bootstrap_role=bootstrap.username,
+            )
+            cursor.execute(
+                f"ALTER ROLE {RUNTIME_ROLE} SET idle_in_transaction_session_timeout = "
+                f"'{RUNTIME_IDLE_TRANSACTION_TIMEOUT}'"
             )
 
             # Supabase owns the database and provider schemas. Grant only the

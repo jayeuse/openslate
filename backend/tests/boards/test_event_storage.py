@@ -8,6 +8,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.core.database import Base, model_registry  # noqa: F401
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
@@ -130,6 +131,7 @@ def test_event_series_enforces_temporal_and_recurrence_modes(integration_owner_d
     board.status = "archived"
     all_day.archived = True
     all_day.is_deleted = True
+    all_day.deleted_at = utc_now()
     db.flush()
     assert db.get(BoardEvent, all_day.id) is all_day
     savepoint = db.begin_nested()

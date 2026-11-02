@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.access.identity.mfa_observations import initialize_observation
@@ -111,12 +112,12 @@ def test_pending_membership_unique_slot_excludes_accepted_and_deleted_rows(
     a, b, c = create_organization(db), create_organization(db), create_organization(db)
     user, _ = create_member(db, a)
     deleted = Membership(org_id=b.id, user_id=user.id, role="member",
-                         status="pending", is_deleted=True)
+                         status="pending", is_deleted=True, deleted_at=utc_now())
     live = Membership(org_id=c.id, user_id=user.id, role="member", status="pending")
     db.add_all([deleted, live])
     db.flush()
     savepoint = db.begin_nested()
-    deleted.is_deleted = False
+    deleted.is_deleted, deleted.deleted_at = False, None
     with pytest.raises(IntegrityError) as conflict:
         db.flush()
     savepoint.rollback()
@@ -125,6 +126,6 @@ def test_pending_membership_unique_slot_excludes_accepted_and_deleted_rows(
     assert deleted.is_deleted
     live.status = "active"
     db.flush()
-    deleted.is_deleted = False
+    deleted.is_deleted, deleted.deleted_at = False, None
     db.flush()
     assert deleted.status == "pending" and live.status == "active"

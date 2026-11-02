@@ -188,7 +188,7 @@ def test_resolution_refuses_absent_ambiguous_or_stale_authority(integration_owne
         )
     else:
         values = (
-            {"is_deleted": True} if state == "deleted" else
+            {"is_deleted": True, "deleted_at": utc_now()} if state == "deleted" else
             {"invitation_sent_at": utc_now()} if state == "unaccepted" else
             {"role": "member"} if state == "demoted" else {"status": state}
         )

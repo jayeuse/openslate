@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import GroupMember
 from app.systems.access.users.person_visibility import visible_person_ids
 from app.systems.comms.access import explain_conversation_access, require_conversation_access
@@ -69,9 +70,11 @@ def test_person_and_group_grants_add_read_or_post_and_revocation_is_immediate(po
     db.flush()
     assert_views(db, later, [finance], {finance.id: "read"})
     joined.is_deleted = True
+    joined.deleted_at = utc_now()
     db.flush()
     assert_views(db, later, [finance], {finance.id: "none"})
     staff.is_deleted = True
+    staff.deleted_at = utc_now()
     db.flush()
     assert_views(db, c.actor, [finance], {finance.id: "none"})
     # G4: removing the grant row refuses the channel at once.

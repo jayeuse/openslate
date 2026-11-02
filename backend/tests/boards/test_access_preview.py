@@ -44,6 +44,7 @@ def _user(
         sponsor_user_id=sponsor.id if sponsor is not None else None,
         expires_at=datetime.now(UTC) + timedelta(days=30) if guest else None,
         is_deleted=deleted,
+        deleted_at=datetime.now(UTC) if deleted else None,
         invitation_sent_at=invitation_sent_at,
         invitation_accepted_at=invitation_accepted_at,
     )

@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.users.models import UserStatus
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.exceptions import (
@@ -193,6 +194,7 @@ def test_reopen_legacy_department_only_restores_explicit_root(
     record = lifecycle_graph.source
     for row in (department, module, field, record):
         row.is_deleted = True
+        row.deleted_at = utc_now()
     integration_db.flush()
 
     result = reopen_lifecycle(
@@ -215,6 +217,7 @@ def test_ancestor_reopen_preserves_independent_closures_and_deleted_records(
     source = lifecycle_graph.source
     manually_deleted = lifecycle_graph.deleted_target
     manually_deleted.is_deleted = True
+    manually_deleted.deleted_at = utc_now()
     independent = Module(org_id=module.org_id, department_id=module.department_id,
                          module_name="Independent closure")
     independent_field = Field(
@@ -309,14 +312,17 @@ def test_reopen_rejects_closed_nearest_ancestor_and_names_active_conflict(
     module = lifecycle_graph.module_x
     field = lifecycle_graph.field_same
     module.is_deleted = True
+    module.deleted_at = utc_now()
     department.is_deleted = True
+    department.deleted_at = utc_now()
     field.is_deleted = True
+    field.deleted_at = utc_now()
     integration_db.flush()
 
     with pytest.raises(LifecycleClosedAncestorError, match="Module X"):
         reopen_lifecycle(integration_db, LifecycleTargetType.FIELD, field.id, None)
 
-    department.is_deleted = False
+    department.is_deleted, department.deleted_at = False, None
     active_conflict = Module(
         org_id=department.org_id,
         department_id=department.id,

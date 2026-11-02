@@ -15,6 +15,7 @@ from sqlalchemy import event, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.core.database.session import AuditSession
 from app.core.integrations.supabase_auth import get_supabase_auth_client
@@ -165,6 +166,7 @@ def test_native_failed_final_admission_rolls_back_email_event_and_session_withou
                     role="member",
                     status="disabled",
                     is_deleted=True,
+                    deleted_at=utc_now(),
                 )
                 db.commit()
                 collision_id = collision.id
@@ -340,6 +342,7 @@ def test_native_final_confirmation_rechecks_local_admission_eligibility(email_ch
             user.status = "disabled"
         elif loss == "deleted":
             user.is_deleted = True
+            user.deleted_at = utc_now()
         elif loss == "pending":
             user.status = "pending"
         elif loss == "unbound":

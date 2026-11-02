@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.common.dependencies import get_current_user
+from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.router import router
@@ -106,7 +107,8 @@ def test_implicit_order_keeps_name_ties_and_filters_before_pages(view_list):
     world = view_list
     repeated = [make_view(world, "Match same") for _ in range(2)]
     default = make_view(world, "Match Z default", is_default=True)
-    archived = make_view(world, "Match archived default", is_default=True, is_deleted=True)
+    archived = make_view(world, "Match archived default", is_default=True, is_deleted=True,
+                         deleted_at=utc_now())
     make_view(world, "Other view")
     other_module, _, _ = setup_rows(world.db, "text", [])
     world.db.add(SavedView(org_id=other_module.org_id,

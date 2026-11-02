@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel
 from app.systems.boards.kanban_models import (
     BoardCard,
@@ -88,7 +89,7 @@ def test_record_card_summary_is_computed_for_each_viewer_at_read_time(
     source.record.data = {**source.record.data, str(source.fields["Title"].id): "Renamed"}
     db.commit()
     assert kanban(db, sees).get(f"{root}/{card_id}").json()["record"]["title"] == "Renamed"
-    seen_grant.is_deleted = True
+    seen_grant.is_deleted, seen_grant.deleted_at = True, utc_now()
     db.commit()
     assert kanban(db, sees).get(f"{root}/{card_id}").json()["record"] == {"locked": True}
 

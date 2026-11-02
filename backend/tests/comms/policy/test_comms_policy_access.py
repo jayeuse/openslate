@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import Group
 from app.systems.access.users.membership import organization_membership, remember_membership
 from app.systems.access.users.models import User
@@ -230,6 +231,7 @@ def test_department_roles_alone_decide_department_channels_and_revocation_is_imm
         )
     if grant is not None:
         grant.is_deleted = True
+        grant.deleted_at = utc_now()
         db.flush()
         assert_views(db, c.actor, [department], {department.id: "none"})
         with pytest.raises(HTTPException) as refused:
@@ -259,6 +261,7 @@ def test_department_channel_manager_rows_need_a_current_department_reader(
     assert_views(db, c.actor, [channel], {channel.id: "manage"})
     if not keeps_role:
         role.is_deleted = True
+        role.deleted_at = utc_now()
         db.flush()
     assert_views(db, c.actor, [channel], {channel.id: expected})
     if expected == "none":
@@ -345,6 +348,7 @@ def test_direct_start_policy_and_blocks_do_not_erase_existing_history(policy_cas
     }
     assert require_conversation_access(db, c.actor, direct.id, "read").id == direct.id
     blocked.is_deleted = True
+    blocked.deleted_at = utc_now()
     db.flush()
     assert can_start_direct(db, c.actor, c.peer.id) is True
     guest = c.person("Guest", role="guest")
@@ -388,6 +392,7 @@ def test_committed_membership_changes_replace_cached_positive_decisions(comms_wo
                 else:
                     current.role, current.sponsor_user_id, current.expires_at = "member", None, None
                     current.is_deleted = change == "removed"
+                    current.deleted_at = utc_now() if current.is_deleted else None
                 writer.commit()
             # Do NOT clear caches, expire objects, or replace the actor/session in the test.
             assert_views(reader, actor, [conversation], {conversation.id: expected})

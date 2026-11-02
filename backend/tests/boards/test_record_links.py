@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_router import router as event_router
 from app.systems.boards.models import Board
@@ -103,6 +104,7 @@ def test_board_record_link_uses_live_title_and_requires_source_read(
         assert visible.json()["items"][0]["available"] is True
 
     reader_grant.is_deleted = True
+    reader_grant.deleted_at = utc_now()
     db.commit()
     with board_client(db, board_reader, router, event_router, post_router) as client:
         hidden = client.get(path)
@@ -278,6 +280,7 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
     assert snapshot is not None
     savepoint = db.begin_nested()
     snapshot.is_deleted = True
+    snapshot.deleted_at = utc_now()
     with pytest.raises(IntegrityError):
         db.flush()
     savepoint.rollback()

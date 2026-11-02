@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel
 from tests.conftest import membership_of
 from tests.files.test_library_routes import library_file
@@ -78,6 +79,7 @@ def test_library_creator_labels_omit_ineligible_accounts(guarded_db, actor, inel
         membership.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     elif ineligible == "deleted":
         creator.is_deleted = True
+        creator.deleted_at = utc_now()
     else:
         membership.invitation_sent_at = datetime.now(UTC)
         membership.invitation_accepted_at = None

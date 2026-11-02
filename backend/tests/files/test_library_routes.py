@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel, GroupAccess
 from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
@@ -200,6 +201,7 @@ def test_inactive_library_accounts_cannot_read_or_reserve(guarded_db, state):
         membership_of(db, actor.id).expires_at = datetime.now(UTC) - timedelta(seconds=1)
     else:
         actor.is_deleted = True
+        actor.deleted_at = utc_now()
     db.commit()
     with _client(db, actor, _Store(db)) as client:
         assert client.get(f"/api/files/{file.id}").status_code == 403

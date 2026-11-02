@@ -28,10 +28,9 @@ if __package__ in {None, ""}:
 from app.core.config.environment import environment_inputs
 from app.core.config.provider_instance import assert_provider_instance
 from app.core.config.settings import DOTENV_PATH
+from operations.storage.listing import PAGE_SIZE, StorageListingError, list_bucket
 
 LEGACY_BUCKET = "openslate-quarantine"
-_PAGE_SIZE = 100
-_MAX_FOLDERS = 10_000
 
 
 class RetirementError(RuntimeError):
@@ -59,53 +58,18 @@ def _bucket_exists(client: httpx.Client) -> bool:
 
 def _list_objects(client: httpx.Client) -> tuple[str, ...]:
     """Every object key in the legacy bucket, descending into folders page by page."""
-    folders, seen, objects = [""], set[str](), set[str]()
-    while folders:
-        folder = folders.pop()
-        if folder in seen or len(seen) >= _MAX_FOLDERS:
-            raise RetirementError("The legacy upload bucket inventory is ambiguous")
-        seen.add(folder)
-        offset = 0
-        while True:
-            response = client.post(
-                f"object/list/{LEGACY_BUCKET}",
-                json={
-                    "prefix": folder,
-                    "limit": _PAGE_SIZE,
-                    "offset": offset,
-                    "sortBy": {"column": "name", "order": "asc"},
-                },
-            )
-            entries = _json(response)
-            if (
-                response.status_code != 200
-                or not isinstance(entries, list)
-                or len(entries) > _PAGE_SIZE
-            ):
-                raise RetirementError("The legacy upload bucket inventory is unavailable")
-            for entry in entries:
-                name = entry.get("name") if isinstance(entry, dict) else None
-                if not isinstance(name, str) or not name or "/" in name or name in {".", ".."}:
-                    raise RetirementError("The legacy upload bucket inventory is invalid")
-                key = f"{folder}/{name}" if folder else name
-                if entry.get("id") is None:
-                    folders.append(key)
-                elif key in objects:
-                    raise RetirementError("The legacy upload bucket inventory is ambiguous")
-                else:
-                    objects.add(key)
-            if len(entries) < _PAGE_SIZE:
-                break
-            offset += len(entries)
-    return tuple(sorted(objects))
+    try:
+        return tuple(sorted(list_bucket(client, LEGACY_BUCKET)))
+    except StorageListingError as error:
+        raise RetirementError(str(error)) from None
 
 
 def _delete_objects(client: httpx.Client, keys: Sequence[str]) -> None:
-    for start in range(0, len(keys), _PAGE_SIZE):
+    for start in range(0, len(keys), PAGE_SIZE):
         response = client.request(
             "DELETE",
             f"object/{LEGACY_BUCKET}",
-            json={"prefixes": list(keys[start : start + _PAGE_SIZE])},
+            json={"prefixes": list(keys[start : start + PAGE_SIZE])},
         )
         if response.status_code != 200:
             raise RetirementError("Deleting the legacy upload objects failed")

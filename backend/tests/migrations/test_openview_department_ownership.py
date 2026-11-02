@@ -123,9 +123,9 @@ def _insert_view(
     connection.execute(
         text(
             "INSERT INTO public.saved_views "
-            "(id, org_id, module_id, name, is_default, is_deleted, definition) "
+            "(id, org_id, module_id, name, is_default, is_deleted, deleted_at, definition) "
             "VALUES (:id, (SELECT org_id FROM modules WHERE id=:module_id), "
-            ":module_id, :name, :is_default, :is_deleted, "
+            ":module_id, :name, :is_default, :is_deleted, CASE WHEN :is_deleted THEN now() END, "
             "'{\"version\": 1}'::jsonb)"
         ),
         {

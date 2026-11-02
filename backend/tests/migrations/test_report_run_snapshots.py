@@ -77,8 +77,8 @@ def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
         connection.execute(
             text(
                 "INSERT INTO public.reports "
-                "(id, org_id, module_id, name, recipe, is_deleted) "
-                "VALUES (:id, :org, :module_id, 'Archived report', '{}'::jsonb, true)"
+                "(id, org_id, module_id, name, recipe, is_deleted, deleted_at) "
+                "VALUES (:id, :org, :module_id, 'Archived report', '{}'::jsonb, true, now())"
             ),
             {"id": ids["report"], "org": ids["org"], "module_id": ids["module"]},
         )

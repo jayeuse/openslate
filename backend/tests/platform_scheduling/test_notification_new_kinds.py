@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
 from tests.conftest import membership_of
 from tests.platform_scheduling.support import (
@@ -60,6 +61,7 @@ def test_failed_report_reference_is_visible_without_a_run_and_lost_access_hides_
     assert marked.status_code == 200, marked.text
     assert marked.json()["status"] == "read"
     grant.is_deleted = True
+    grant.deleted_at = utc_now()
     db.commit()
     assert_notice_hidden(client, notice.id)
     assert notification_client(db, None).get("/api/notifications/unread-count").status_code == 401
@@ -107,6 +109,7 @@ def test_invalid_current_source_or_archived_notice_is_hidden_before_all_read_bou
         work_id=work.id if work is not None else None,
         recipient_id=owner.id,
         is_deleted=kind == "access-changed",
+        deleted_at=utc_now() if kind == "access-changed" else None,
     )
     db.add(notice)
     db.commit()

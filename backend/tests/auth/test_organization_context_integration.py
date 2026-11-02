@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import AuditLog
@@ -92,6 +93,7 @@ def test_refused_entry_never_changes_the_selected_organization(organizations, ki
             membership.status = kind
         elif kind == "deleted":
             membership.is_deleted = True
+            membership.deleted_at = utc_now()
         elif kind == "expired":
             membership.expires_at = world.clock - timedelta(seconds=1)
         elif kind == "unaccepted":

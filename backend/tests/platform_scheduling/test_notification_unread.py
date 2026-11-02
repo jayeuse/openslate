@@ -13,6 +13,7 @@ from sqlalchemy import event, select, text
 from sqlalchemy.orm import Session
 
 from app.common.dependencies.auth import get_current_user
+from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
@@ -83,9 +84,11 @@ def test_unread_list_count_and_read_all_agree_and_cover_more_than_one_page(
     hidden = report_notification(db, hidden_report, owner, minute=201)
     notices[0].read_at = datetime(2026, 1, 2, tzinfo=UTC)
     notices[1].is_deleted = True
+    notices[1].deleted_at = utc_now()
     notices[2].subject_id = UUID("00000000-0000-4000-8000-000000000999")
     for grant in db.scalars(select(GroupAccess).where(GroupAccess.module_id == hidden_module.id)):
         grant.is_deleted = True
+        grant.deleted_at = utc_now()
     set_audit_actor(db, owner.id)
     db.commit()
     before = len(_audit_updates(db, [n.id for n in notices]))

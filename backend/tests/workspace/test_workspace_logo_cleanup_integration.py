@@ -12,6 +12,7 @@ from sqlalchemy import inspect, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
 from app.systems.access.users.models import Membership
 from app.systems.manage.workspace import router
@@ -181,7 +182,8 @@ def test_refused_admission_never_deletes_or_changes_the_old_binding(
         before = current(world)
     elif failure == "invalid":
         with Session(world.owner) as db:
-            db.get(File, new).is_deleted = True
+            soft_deleted = db.get(File, new)
+            soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
             db.commit()
     elif failure == "role":
         with Session(world.owner) as db:
@@ -301,7 +303,7 @@ def test_manual_origin_reconciliation_stays_disabled_and_origin_is_private(logo_
 
     monkeypatch.setattr(get_settings(), "lifecycle_purge_enabled", False)
     world = logo_world
-    identity, key = ready_logo(world, is_deleted=True)
+    identity, key = ready_logo(world, is_deleted=True, deleted_at=utc_now())
     with Session(world.owner) as db:
         file = db.get(File, identity)
         file.state, file.operation_id = "deleting", uuid4()

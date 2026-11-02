@@ -4,8 +4,10 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
@@ -47,7 +49,7 @@ def person_world(avatar_world):
         db.flush()
         owned.append((Board, company.id))
         saved = company.is_deleted, company.deleted_at
-        company.is_deleted = True
+        company.is_deleted, company.deleted_at = True, utc_now()
         target = db.get(User, world.target_id)
         target.display_name, target.job_title = "Visible person", "Editor"
         target.phone, target.bio = "Private phone", "Private bio"
@@ -84,9 +86,10 @@ def shared(world, mode):
             ).one()
             membership.role = "admin"
         elif mode == "company":
-            db.scalar(select(Board).where(
+            board = db.scalar(select(Board).where(
                 Board.org_id == world.person_org_id, Board.scope == "company"
-            )).is_deleted = False
+            ))
+            board.is_deleted, board.deleted_at = False, None
         else:
             left = add(Group(org_id=world.person_org_id, name=f"card-left-{uuid4()}"))
             right = left if mode == "group" else add(
@@ -233,9 +236,8 @@ def test_removed_live_group_membership_hides_card_but_not_the_profile_photo(pers
     native_avatar(world, owner_id=world.target_id, bind=True)
     assert card(world).status_code == 200
     with Session(world.owner) as db:
-        db.scalar(
-            select(GroupMember).where(GroupMember.user_id == world.actor_id)
-        ).is_deleted = True
+        member = db.scalar(select(GroupMember).where(GroupMember.user_id == world.actor_id))
+        member.is_deleted, member.deleted_at = True, utc_now()
         db.commit()
     assert card(world).status_code == 404
     # The photo follows the profile rule (PD17): a member sees every member's photo.
@@ -248,7 +250,13 @@ def test_removed_live_group_membership_hides_card_but_not_the_profile_photo(pers
 
 
 @pytest.mark.parametrize(
-    "defect", ["separate_boards", "board_is_deleted", "board_deleted_at", "removed_board_grant"]
+    "defect",
+    [
+        "separate_boards",
+        "board_is_deleted",
+        "half_deleted_board_rejected_then_deleted",
+        "removed_board_grant",
+    ],
 )
 def test_board_visibility_requires_a_shared_live_board(person_world, defect):
     world = person_world
@@ -273,13 +281,20 @@ def test_board_visibility_requires_a_shared_live_board(person_world, defect):
             db.add(separate_grant)
             db.flush()
             world.person_owned.append((BoardGroup, separate_grant.id))
-            grant.is_deleted = True
+            grant.is_deleted, grant.deleted_at = True, utc_now()
         elif defect == "board_is_deleted":
-            board.is_deleted = True
-        elif defect == "board_deleted_at":
+            board.is_deleted, board.deleted_at = True, world.clock
+        elif defect == "half_deleted_board_rejected_then_deleted":
+            # Half of the soft-delete pair alone can no longer be stored.
             board.deleted_at = world.clock
+            with pytest.raises(IntegrityError) as half:
+                db.flush()
+            assert half.value.orig.diag.constraint_name == "ck_boards_deletion_state"
+            db.rollback()
+            board = db.get(Board, grant.board_id)
+            board.is_deleted, board.deleted_at = True, world.clock
         else:
-            grant.is_deleted = True
+            grant.is_deleted, grant.deleted_at = True, utc_now()
         db.commit()
     hidden = card(world)
     assert hidden.status_code == 404
@@ -300,6 +315,7 @@ def test_ineligible_target_is_hidden_even_to_admin(person_world, defect):
             target.status = defect
         elif defect == "deleted":
             target.is_deleted = True
+            target.deleted_at = utc_now()
         else:
             membership = db.scalars(
                 select(Membership).where(Membership.user_id == target.id)

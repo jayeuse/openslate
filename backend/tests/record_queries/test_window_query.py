@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.records.query_schemas import WindowRecordQuery
 from app.systems.sandbox.records.windowing import query_window_records
@@ -398,13 +399,14 @@ def test_calendar_rejects_inactive_or_type_changed_field(query_db: Session) -> N
         to_date=date(2026, 9, 8),
     )
     field.is_deleted = True
+    field.deleted_at = utc_now()
     query_db.flush()
 
     with pytest.raises(HTTPException) as inactive_error:
         query_window_records(query_db, payload, reader=READER)
     assert inactive_error.value.status_code == 409
 
-    field.is_deleted = False
+    field.is_deleted, field.deleted_at = False, None
     field.type = "text"
     query_db.flush()
     with pytest.raises(HTTPException) as changed_error:

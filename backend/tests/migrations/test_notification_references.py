@@ -61,10 +61,13 @@ def _sources(db):
         "next_attempt_at,state,attempt_count,created_at,updated_at) "
         "VALUES(:event_work,:org,'event-reminder',:reminder,:when,:when,:when,'succeeded',0,:when,:when)",
         "INSERT INTO in_app_notifications(id,org_id,work_id,recipient_id,created_at,read_at,"
-        "is_deleted,kind,subject_type,subject_id) VALUES "
-        "(:report_notice,:org,:report_work,:user,:when,NULL,true,'report-run','report_run',:run),"
-        "(:post_notice,:org,:post_work,:user,:when,:when,false,'post-publish','board_post',:post),"
-        "(:event_notice,:org,:event_work,:user,:when,NULL,false,'event-reminder','board_event',:event)",
+        "is_deleted,deleted_at,kind,subject_type,subject_id) VALUES "
+        "(:report_notice,:org,:report_work,:user,:when,NULL,true,:when,'report-run','report_run',"
+        ":run),"
+        "(:post_notice,:org,:post_work,:user,:when,:when,false,NULL,'post-publish','board_post',"
+        ":post),"
+        "(:event_notice,:org,:event_work,:user,:when,NULL,false,NULL,'event-reminder',"
+        "'board_event',:event)",
     )
     parameters = {**ids, "csv": b"", "fingerprint": "a" * 64, "when": WHEN, "day": WHEN.date()}
     for statement in statements:

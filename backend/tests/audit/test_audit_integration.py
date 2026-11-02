@@ -11,6 +11,7 @@ from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.manage.audit.models import AuditAction, AuditLog
@@ -75,6 +76,7 @@ def test_crud_changes_are_audited_with_minimal_snapshots(integration_db: Session
     integration_db.flush()
 
     department.is_deleted = True
+    department.deleted_at = utc_now()
     integration_db.flush()
 
     rows = audit_rows(integration_db, department.id)

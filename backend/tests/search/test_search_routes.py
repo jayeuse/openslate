@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel, GroupMember
 from app.systems.access.users.models import User, UserRole
 from app.systems.boards.event_models import BoardEvent
@@ -192,14 +193,18 @@ def test_record_fallback_titles_and_closed_roots(integration_owner_db: Session) 
     select_field.config = {"options": []}
     _, deleted_field, field_rows = _module(db, ["Hidden closed field"])
     deleted_field.is_deleted = True
+    deleted_field.deleted_at = utc_now()
     _, _, type_rows = _module(db, [True], kind="boolean")
     other_field_module, _, other_rows = _module(db, ["Wrong module title"])
     other_field_module.title_field_id = field.id
     deleted_module, _, _ = _module(db, ["Scarlet root"])
     deleted_module.is_deleted = True
+    deleted_module.deleted_at = utc_now()
     deleted_department, _, _ = _module(db, ["Scarlet root"])
     deleted_department.department.is_deleted = True
+    deleted_department.department.deleted_at = utc_now()
     rows[2].is_deleted = True
+    rows[2].deleted_at = utc_now()
     db.commit()
     api = _client(db, admin)
     fallback_rows = [*rows[:2], *missing_rows, *select_rows, *field_rows, *type_rows, *other_rows]
@@ -243,6 +248,7 @@ def test_people_are_active_established_readers_of_readable_live_modules_only(
     expired.display_name = "Indigo person"
     deleted = add_user(db)
     deleted.is_deleted = True
+    deleted.deleted_at = utc_now()
     deleted.display_name = "Indigo person"
     pending = add_user(db, status="pending")
     pending.display_name = "Indigo person"
@@ -266,9 +272,11 @@ def test_people_are_active_established_readers_of_readable_live_modules_only(
     dead_reader.display_name = "Indigo person"
     dead_access = make_group_access(db, [dead_reader], module.department, module)
     dead_access.is_deleted = True
+    dead_access.deleted_at = utc_now()
     db.commit()
     assert str(dead_reader.id) not in _ids(_search(_client(db, actor), "person", "indigo"))
     module.is_deleted = True
+    module.deleted_at = utc_now()
     db.commit()
     assert _search(_client(db, actor), "person", "indigo")["pagination"]["total"] == 0
 
@@ -306,6 +314,7 @@ def test_posts_search_displayed_publication_and_per_board_expiry_authority(
     _post(db, managed, author, "Copper unpublished", status="draft", published=False)
     deleted = _post(db, managed, author, "Copper deleted")
     deleted.is_deleted = True
+    deleted.deleted_at = utc_now()
     db.commit()
     for user in (reader, visitor):
         result = _search(_client(db, user), "post", "copper")
@@ -335,6 +344,7 @@ def test_posts_search_displayed_publication_and_per_board_expiry_authority(
     removed = make_group_access(db, [revoked], department, level=AccessLevel.MANAGE)
     membership = db.query(GroupMember).filter_by(group_id=removed.group_id).one()
     membership.is_deleted = True
+    membership.deleted_at = utc_now()
     scoped_expired = _post(db, scoped_board, author, "Quartz expired", expired=True)
     db.commit()
     assert _ids(_search(_client(db, department_manager), "post", "quartz")) == {
@@ -373,6 +383,7 @@ def test_events_search_each_visible_live_series_title_details_and_location(
     _event(db, board, author, "Violet archived", archived=True)
     deleted = _event(db, board, author, "Violet deleted")
     deleted.is_deleted = True
+    deleted.deleted_at = utc_now()
     db.commit()
     for user in (reader, visitor):
         result = _search(_client(db, user), "event", "violet")

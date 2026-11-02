@@ -127,8 +127,8 @@ def test_runtime_role_can_use_valid_origin_without_new_table_or_index_grants(mig
         )
         connection.execute(
             text(
-                "UPDATE files SET state='deleting',is_deleted=true,operation_id=:token,"
-                "deletion_origin='logo_replacement' WHERE id=:id"
+                "UPDATE files SET state='deleting',is_deleted=true,deleted_at=now(),"
+                "operation_id=:token,deletion_origin='logo_replacement' WHERE id=:id"
             ),
             {"id": identity, "token": uuid4()},
         )

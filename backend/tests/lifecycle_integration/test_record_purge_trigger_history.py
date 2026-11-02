@@ -446,14 +446,17 @@ def test_structural_purge_history_ownership_follows_records_not_dependencies(
     db = integration_db
     actor, external_module, _, definition = publish_trigger(db)
     department = Department(org_id=external_module.org_id,
-                            department_name=f"History scope {uuid7()}", is_deleted=True)
+                            department_name=f"History scope {uuid7()}", is_deleted=True,
+                            deleted_at=utc_now())
     db.add(department)
     db.flush()
     module = Module(org_id=department.org_id,
-                    department_id=department.id, module_name="History owner", is_deleted=True)
+                    department_id=department.id, module_name="History owner", is_deleted=True,
+                    deleted_at=utc_now())
     db.add(module)
     db.flush()
-    owned = Record(org_id=module.org_id, module_id=module.id, data={}, is_deleted=True)
+    owned = Record(org_id=module.org_id, module_id=module.id, data={}, is_deleted=True,
+                   deleted_at=utc_now())
     external = Record(org_id=external_module.org_id, module_id=external_module.id, data={})
     db.add_all([owned, external])
     db.flush()

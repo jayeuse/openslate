@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.listing import ListQuerySpec, StandardListRequest, execute_standard_list
+from app.core.base_model import utc_now
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import create_organization
 
@@ -31,7 +32,10 @@ def test_standard_list_executes_against_postgresql(integration_db: Session) -> N
         [
             Department(org_id=organization.id, department_name=f"{token} Alpha"),
             Department(org_id=organization.id, department_name=f"{token} Beta"),
-            Department(org_id=organization.id, department_name=f"{token} Deleted", is_deleted=True),
+            Department(
+                org_id=organization.id, department_name=f"{token} Deleted",
+                is_deleted=True, deleted_at=utc_now(),
+            ),
         ]
     )
     integration_db.flush()

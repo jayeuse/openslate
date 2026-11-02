@@ -75,7 +75,7 @@ def test_current_verified_source_queues_safe_export_and_replays_exact_request(
     "changed",
     [
         {"state": "unknown"},
-        {"is_deleted": True},
+        {"is_deleted": True, "deleted_at": "now"},
         {"encrypted_passphrase": None},
         {"claim_id": uuid4()},
         {"state": "preparing"},

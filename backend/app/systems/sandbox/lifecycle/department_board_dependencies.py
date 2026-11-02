@@ -96,6 +96,10 @@ def _state(
     return state
 
 
+# Other purge inventories (notifications about purged records) use the same row state.
+dependency_state = _state
+
+
 def _by_board(db: Session, model: type[Any], board_ids: tuple[UUID, ...]) -> list[Any]:
     if not board_ids:
         return []

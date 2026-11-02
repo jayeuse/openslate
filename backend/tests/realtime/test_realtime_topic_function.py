@@ -160,7 +160,8 @@ def test_join_requires_purpose_topic_prefix_and_a_live_membership(integration_ow
     "revocation",
     [
         "UPDATE public.memberships SET status = 'disabled' WHERE user_id = :user",
-        "UPDATE public.memberships SET is_deleted = true WHERE user_id = :user",
+        "UPDATE public.memberships SET is_deleted = true, deleted_at = now() "
+        "WHERE user_id = :user",
         "UPDATE public.users SET status = 'disabled' WHERE id = :user",
     ],
     ids=["membership-disabled", "membership-deleted", "account-disabled"],

@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import event, select
 
+from app.core.base_model import utc_now
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.record_triggers.models import RecordTriggerEvent
@@ -105,6 +106,7 @@ def test_http_assignments_deduplicate_fields_and_reassignment_but_preserve_archi
         for n in listed.json()["items"]
     )
     world.grant.is_deleted = True
+    world.grant.deleted_at = utc_now()
     db.commit()
     assert reader.get("/api/notifications").json()["items"] == []
     assert reader.get("/api/notifications/unread-count").json() == {"unread_count": 0}

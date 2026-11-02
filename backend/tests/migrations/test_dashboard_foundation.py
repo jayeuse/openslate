@@ -225,10 +225,10 @@ def _insert_widget(
     connection.execute(
         text(
             "INSERT INTO public.dashboard_widgets "
-            "(id, org_id, dashboard_id, position, widget_type, config, is_deleted) "
+            "(id, org_id, dashboard_id, position, widget_type, config, is_deleted, deleted_at) "
             "VALUES (:id, (SELECT org_id FROM dashboards WHERE id=:dashboard_id), "
             ":dashboard_id, :position, :widget_type, "
-            "CAST(:config AS jsonb), :is_deleted)"
+            "CAST(:config AS jsonb), :is_deleted, CASE WHEN :is_deleted THEN now() END)"
         ),
         {
             "id": widget_id,

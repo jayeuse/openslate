@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image
 
+from app.core.base_model import utc_now
 from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import (
@@ -253,6 +254,7 @@ def test_registered_attachment_flow_obeys_parent_and_transfer_contracts(
         assert client.post(path + "/reconcile").status_code == 200
         assert client.post(path + "/archive").json()["is_deleted"] is True
         department.is_deleted = True
+        department.deleted_at = utc_now()
         db.commit()
         assert client.post(path + "/reopen").status_code == 409
 

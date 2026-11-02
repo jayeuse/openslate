@@ -319,7 +319,9 @@ def test_published_list_orders_by_displayed_revision_not_unpublished_draft_times
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("unavailable", ("missing", "is_deleted", "deleted_at"))
+# A half-deleted revision (only one of the two columns set) cannot be stored any more:
+# ck_board_post_revisions_deletion_state rejects it, so "deleted" sets both columns.
+@pytest.mark.parametrize("unavailable", ("missing", "deleted"))
 def test_published_page_refuses_a_displayed_revision_that_becomes_unavailable(
     integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch, unavailable: str
 ) -> None:
@@ -358,14 +360,8 @@ def test_published_page_refuses_a_displayed_revision_that_becomes_unavailable(
         page = execute_list(*args, **kwargs)
         db.delete(revision)
         db.flush()
-        if unavailable != "missing":
-            db.add(
-                BoardPostRevision(
-                    **values,
-                    is_deleted=unavailable == "is_deleted",
-                    deleted_at=datetime.now(UTC) if unavailable == "deleted_at" else None,
-                )
-            )
+        if unavailable == "deleted":
+            db.add(BoardPostRevision(**values, is_deleted=True, deleted_at=datetime.now(UTC)))
             db.flush()
         return page
 

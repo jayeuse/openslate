@@ -52,6 +52,7 @@ def group_page(paging_world):
                 module_id=module_id,
                 level="read",
                 is_deleted=deleted,
+                deleted_at=datetime.now(UTC) if deleted else None,
             )
         )
     world.db.commit()

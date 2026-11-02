@@ -21,6 +21,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+# A migration that cannot get a table lock fails instead of queueing every request behind it.
+MIGRATION_LOCK_TIMEOUT = "5s"
 
 
 def run_migrations_offline() -> None:
@@ -52,16 +54,22 @@ def run_migrations_online() -> None:
         if target is not None:
             assert_instance_target(connection, target, expected_user="openslate_owner")
             connection.rollback()
-        include_name = application_migration_scope(connection, target_metadata)
-        connection.rollback()
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            compare_type=True,
-            include_name=include_name,
-        )
-        with context.begin_transaction():
-            with migration_advisory_lock(connection):
+        # A session lock held for the whole run, so a second run waits through every
+        # autocommit block and then reads the new alembic_version.
+        with migration_advisory_lock(connection):
+            # After the advisory wait, so only waits for table locks are limited. A
+            # session setting, so it still holds after an autocommit block commits.
+            connection.exec_driver_sql(f"SET lock_timeout = '{MIGRATION_LOCK_TIMEOUT}'")
+            connection.commit()
+            include_name = application_migration_scope(connection, target_metadata)
+            connection.rollback()
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                compare_type=True,
+                include_name=include_name,
+            )
+            with context.begin_transaction():
                 context.run_migrations()
 
 

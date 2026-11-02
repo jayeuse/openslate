@@ -268,7 +268,7 @@ def test_runtime_grants_allow_metadata_and_deny_schema_creation(integration_db: 
         {"state": "invented"},
         {"installation_id": ""},
         {"snapshot_id": "a" * 64},
-        {"is_deleted": True},
+        {"is_deleted": True, "deleted_at": NOW},
         {"started_at": NOW, "claim_id": uuid4(), "state": "running"},
     ),
 )

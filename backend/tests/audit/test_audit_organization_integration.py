@@ -106,6 +106,7 @@ def test_mixed_audit_tracks_source_organization_through_update_and_delete(
     db.commit()
     assert row.is_deleted is False
     row.is_deleted = True
+    row.deleted_at = utc_now()
     db.commit()
     identity = row.id
     db.delete(row)

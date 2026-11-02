@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import query_records
@@ -228,6 +229,7 @@ def test_search_fields_must_be_active_and_searchable(query_db):
     module, field, _ = setup_rows(query_db, "text", ["searchable"])
     reference = {"field_id": field.id, "expected_type": "text"}
     field.is_deleted = True
+    field.deleted_at = utc_now()
     query_db.flush()
 
     with pytest.raises(HTTPException) as error:
@@ -398,6 +400,7 @@ def test_archived_field_renames_work_and_changed_type_fails(query_db):
     module, field, _ = setup_rows(query_db, "text", ["kept"])
     payload = request_for(module, field)
     field.is_deleted = True
+    field.deleted_at = utc_now()
     field.name = "Renamed"
     query_db.flush()
     assert query_records(query_db, payload, reader=READER).items[0].data == {str(field.id): "kept"}

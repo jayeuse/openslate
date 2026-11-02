@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies import get_current_user
+from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.main import app as application
 from app.systems.access.policy.models import GroupAccess
@@ -339,6 +340,7 @@ def test_import_rejects_unavailable_fields(world: _World, target: str, placement
             field.module_id = add_module(world.db, add_department(world.db)).id
         elif target == "closed":
             field.is_deleted = True
+            field.deleted_at = utc_now()
         else:
             field.type = FieldType.RELATIONSHIP
             field.config = {}
@@ -370,6 +372,8 @@ def test_import_rejects_schema_changes_in_unmapped_fields_before_writes(world: _
         payload["defaults"] = {}
         digest = _preview(world, payload)["schema_digest"]
         setattr(world.fields["default"], attribute, value)
+        if attribute == "is_deleted":
+            world.fields["default"].deleted_at = utc_now()
         world.db.commit()
         payload.update(mode="import", schema_digest=digest)
         response = world.client.post("/api/records/import", json=payload)
@@ -386,6 +390,7 @@ def test_import_rechecks_user_eligibility_and_typed_defaults(world: _World) -> N
     preview = _preview(world, payload)
     assert preview["valid_count"] == 1
     world.grant.is_deleted = True
+    world.grant.deleted_at = utc_now()
     world.db.commit()
     payload.update(mode="import", schema_digest=preview["schema_digest"])
     response = _preview(world, payload)
@@ -420,6 +425,7 @@ def test_import_is_administrator_only(world: _World, role: str, mode: str) -> No
 
 def test_import_closed_module_and_missing_identity_do_not_write(world: _World) -> None:
     world.module.is_deleted = True
+    world.module.deleted_at = utc_now()
     world.db.commit()
     assert world.client.post("/api/records/import", json=world.payload()).status_code == 409
     world.client.app.dependency_overrides.pop(get_current_user)

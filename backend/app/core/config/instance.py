@@ -396,12 +396,31 @@ def assert_psycopg_target(
 
 @contextmanager
 def migration_advisory_lock(connection: Connection) -> Iterator[None]:
-    """Serialize Alembic until the surrounding migration transaction commits."""
+    """Serialize Alembic for the whole run, including its autocommit blocks.
 
-    connection.exec_driver_sql(
-        "SELECT pg_advisory_xact_lock(hashtext(%s))", (_MIGRATION_LOCK_NAME,)
-    )
-    yield
+    The lock is a session lock: an autocommit block commits the migration transaction,
+    which would end a transaction lock and let a second run read the old
+    ``alembic_version``. Call it outside a transaction and begin the migration
+    transaction inside it; it leaves no transaction open on entry or exit.
+    """
+
+    connection.exec_driver_sql("SELECT pg_advisory_lock(hashtext(%s))", (_MIGRATION_LOCK_NAME,))
+    connection.commit()
+    failed = True
+    try:
+        yield
+        failed = False
+    finally:
+        try:
+            connection.rollback()
+            connection.exec_driver_sql(
+                "SELECT pg_advisory_unlock(hashtext(%s))", (_MIGRATION_LOCK_NAME,)
+            )
+            connection.commit()
+        except Exception:
+            # Closing the failed connection releases the session lock; keep its error.
+            if not failed:
+                raise
 
 
 def _required(values: Mapping[str, str], name: str) -> str:

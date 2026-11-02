@@ -147,44 +147,46 @@ def test_migration_advisory_lock_is_held_for_the_entire_migration_block() -> Non
         assert connection.exec_driver_sql.call_count == 1
 
     calls = [str(call.args[0]) for call in connection.exec_driver_sql.call_args_list]
-    assert len(calls) == 1
-    assert "pg_advisory_xact_lock" in calls[0]
+    assert len(calls) == 2
+    assert "pg_advisory_lock(" in calls[0] and "pg_advisory_unlock(" in calls[1]
 
 
 def test_migration_advisory_lock_preserves_migration_failure() -> None:
     connection = MagicMock()
     failure = RuntimeError("migration failed")
+    connection.exec_driver_sql.side_effect = [None, RuntimeError("connection lost")]
 
     with pytest.raises(RuntimeError) as raised:
         with migration_advisory_lock(connection):
             raise failure
 
     assert raised.value is failure
-    assert connection.exec_driver_sql.call_count == 1
 
 
 @pytest.mark.integration
-def test_migration_lock_remains_held_until_transaction_commit() -> None:
+def test_migration_lock_survives_commits_until_the_block_ends() -> None:
     database_url = os.environ.get("MIGRATION_DATABASE_URL")
     if database_url is None:
         pytest.skip("Use the runner-owned PostgreSQL database for migration lock persistence")
     engine = guarded_create_engine(database_url, poolclass=NullPool)
     try:
         with engine.connect() as first, engine.connect() as second:
-            with first.begin():
-                with migration_advisory_lock(first):
-                    pass
+            with migration_advisory_lock(first):
+                # An autocommit block commits the migration transaction.
+                first.exec_driver_sql("SELECT 1")
+                first.commit()
                 acquired = second.exec_driver_sql(
                     "SELECT pg_try_advisory_xact_lock(hashtext(%s))", ("openslate:alembic",)
                 ).scalar_one()
                 assert acquired is False
                 second.rollback()
+            assert not first.in_transaction()
 
-            with second.begin():
-                acquired = second.exec_driver_sql(
-                    "SELECT pg_try_advisory_xact_lock(hashtext(%s))", ("openslate:alembic",)
-                ).scalar_one()
-                assert acquired is True
+            acquired = second.exec_driver_sql(
+                "SELECT pg_try_advisory_xact_lock(hashtext(%s))", ("openslate:alembic",)
+            ).scalar_one()
+            assert acquired is True
+            second.rollback()
     finally:
         engine.dispose()
 

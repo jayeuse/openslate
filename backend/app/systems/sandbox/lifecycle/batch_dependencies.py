@@ -32,6 +32,9 @@ from app.systems.sandbox.lifecycle.department_board_dependencies import (
     load_department_board_purge_dependencies,
 )
 from app.systems.sandbox.lifecycle.design_sync import binding_identity, owned_binding
+from app.systems.sandbox.lifecycle.notification_dependencies import (
+    load_record_notification_purge_dependencies,
+)
 from app.systems.sandbox.lifecycle.planning_scope import LifecycleScope, row_state
 from app.systems.sandbox.lifecycle.report_dependencies import load_report_purge_dependencies
 from app.systems.sandbox.lifecycle.schemas import (
@@ -125,6 +128,9 @@ def load_purge_dependencies(
         list(db.scalars(select(File).where(or_(*file_filters)).order_by(File.id)))
         if file_filters
         else []
+    )
+    notification_rows, notification_ids = load_record_notification_purge_dependencies(
+        db, record_ids, fingerprint
     )
     record_link_rows, record_link_blockers, record_link_ids, record_link_board_ids = (
         load_board_record_link_purge_dependencies(db, record_ids, fingerprint)
@@ -302,7 +308,7 @@ def load_purge_dependencies(
         if binding_filters
         else []
     )
-    rows = access_rows + board_rows
+    rows = access_rows + board_rows + notification_rows
     rows += record_link_rows + card_rows + source_rows + report_rows + chart_rows
     blockers = board_blockers + record_link_blockers
     blockers += _comms_reference_blockers(db, record_ids, module_ids)
@@ -419,6 +425,9 @@ def load_purge_dependencies(
         {
             "group_access": group_access_ids,
             **department_board_ids,
+            "in_app_notifications": tuple(
+                sorted(set(department_board_ids["in_app_notifications"]) | set(notification_ids))
+            ),
             "boards": tuple(
                 sorted(
                     set(department_board_ids["boards"])

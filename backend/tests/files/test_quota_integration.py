@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.base_model import utc_now
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.access.users.models import Membership, User
@@ -43,6 +44,7 @@ def inventory(db, actor, *, count, size=1, state="awaiting_upload"):
             object_key=f"org/{organization(db).id}/{uuid4().hex}",
             state=state,
             is_deleted=True,
+            deleted_at=utc_now(),
         )
         for _ in range(count)
     ]
@@ -308,6 +310,7 @@ def test_full_pending_uploads_do_not_prevent_confirmed_cleanup(guarded_db, actor
         object_key=uuid4().hex,
         state="ready",
         is_deleted=True,
+        deleted_at=utc_now(),
     )
     db.add(ready)
     db.commit()
@@ -394,7 +397,7 @@ def test_expiration_skips_a_reservation_whose_parent_refuses_and_expires_the_res
     db = guarded_db
     blocked, stale = inventory(db, actor, count=2)
     for row in (blocked, stale):
-        row.is_deleted = False
+        row.is_deleted, row.deleted_at = False, None
         row.created_at = datetime.now(UTC) - timedelta(hours=25)
     db.commit()
     blocked_id, stale_id = blocked.id, stale.id

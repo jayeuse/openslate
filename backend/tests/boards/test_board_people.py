@@ -10,6 +10,7 @@ from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.boards.access_preview_router import router as people_router
@@ -77,7 +78,8 @@ def test_writers_and_managers_list_every_active_reader_and_others_are_refused(
     grant(db, board, [manager], AccessLevel.MANAGE)
     grant(db, board, [reader, guest_reader, disabled, removed], AccessLevel.READ)
     grant(db, board, [guest_writer], AccessLevel.WRITE)
-    membership_of(db, removed.id).is_deleted = True
+    soft_deleted = membership_of(db, removed.id)
+    soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
     _avatar(db, reader)
     db.commit()
 
@@ -138,7 +140,8 @@ def test_every_listed_person_is_an_accepted_assignee_and_no_one_else_is(
         make_group_access(db, [writer], department, level=AccessLevel.WRITE)
         make_group_access(db, [reader, disabled, removed], department)
         make_group_access(db, [guest_reader], department, add_module(db, department))
-    membership_of(db, removed.id).is_deleted = True
+    soft_deleted = membership_of(db, removed.id)
+    soft_deleted.is_deleted, soft_deleted.deleted_at = True, utc_now()
     stage = add_stage(db, board)
     db.commit()
 

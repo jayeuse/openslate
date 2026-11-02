@@ -191,6 +191,7 @@ def primitive_field_graph(integration_db: Session) -> PrimitiveFieldGraph:
         module=module,
         data={"keep": "archived", field_key: {"preserve": True}},
         is_deleted=True,
+        deleted_at=datetime.now(UTC),
     )
     integration_db.add_all([active, archived])
     integration_db.flush()

@@ -112,6 +112,7 @@ def _assert_report_schema(connection: Connection) -> None:
         "reports_pkey": "p",
         "ck_reports_name_nonempty": "c",
         "ck_reports_revision_positive": "c",
+        "ck_reports_deletion_state": "c",
         "fk_reports_module_id_modules": "f",
         "fk_reports_performed_by_users": "f",
         "fk_reports_org_id_organizations": "f",

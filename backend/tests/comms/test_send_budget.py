@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import event, select, text
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
 from app.systems.access.users.membership import organization_membership
 from app.systems.access.users.models import Membership, User
@@ -175,6 +176,7 @@ def test_nineteen_active_plus_two_competitors_admits_one_and_isolates_org_actor(
                         membership = organization_membership(revoker, org.author, fresh=True)
                         assert membership is not None
                         membership.is_deleted = True
+                        membership.deleted_at = utc_now()
                         revoker.commit()
             finally:
                 release.set()
