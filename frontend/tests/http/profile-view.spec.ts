@@ -8,7 +8,14 @@ import {
   profileUserA,
   profileUserB,
 } from "./helpers/profile-api";
-import { defaultOrganization, expect, test, type Page } from "./helpers/test";
+import {
+  defaultOrganization,
+  expect,
+  test,
+  type Page,
+  answeredHeaders,
+  expectAnsweredReference,
+} from "./helpers/test";
 
 // The read-only Profile view (docs/specs/profile-sidebar-relayout.md,
 // PD16–PD20). Which rows show is owned by isolated/shell/profile-api.spec.ts;
@@ -30,7 +37,11 @@ const rosa = {
 async function serveProfile(
   page: Page,
   personId: string,
-  ...responses: { status?: number; json: unknown }[]
+  ...responses: {
+    status?: number;
+    headers?: Record<string, string>;
+    json: unknown;
+  }[]
 ) {
   const reads: string[] = [];
   await page.route(/\/api\/users\/[^/]+\/profile$/, (route) => {
@@ -40,7 +51,7 @@ async function serveProfile(
     const response = responses[Math.min(reads.length, responses.length) - 1]!;
     return route.fulfill({
       status: response.status ?? 200,
-      headers: { "Cache-Control": "private, no-store" },
+      headers: { "Cache-Control": "private, no-store", ...response.headers },
       json: response.json,
     });
   });
@@ -236,11 +247,16 @@ test("a failed profile read keeps Retry, which loads the profile", async ({
   const reads = await serveProfile(
     page,
     profileUserB,
-    { status: 500, json: { detail: "Private server detail" } },
+    {
+      status: 500,
+      headers: answeredHeaders,
+      json: { detail: "Private server detail" },
+    },
     { json: { ...rosa, phone: null, bio: null, role: "member", groups } },
   );
   await page.goto(`/profile?person=${profileUserB}`);
   await expect(main(page)).toContainText("This profile could not load.");
+  await expectAnsweredReference(main(page));
   await expect(main(page)).not.toContainText("Private server detail");
   await main(page).getByRole("button", { name: "Retry", exact: true }).click();
   await expect(

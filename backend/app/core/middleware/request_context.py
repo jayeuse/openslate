@@ -1,4 +1,5 @@
 from contextvars import ContextVar, Token
+from typing import Any
 from uuid import UUID
 
 from fastapi import Request
@@ -36,6 +37,19 @@ def get_request_context(request: Request) -> RequestContext:
     )
     request.state.request_context = context
     return context
+
+
+def error_content(request: Request, detail: Any) -> dict[str, Any]:
+    """An error body whose ``request_id`` equals the response's ``X-Request-ID`` header.
+
+    It reads the context that the request middleware bound and never creates one: a new ID
+    would differ from the header. Outside that pipeline the body keeps only ``detail``.
+    """
+
+    context = getattr(request.state, "request_context", None)
+    if not isinstance(context, RequestContext):
+        return {"detail": detail}
+    return {"detail": detail, "request_id": str(context.request_id)}
 
 
 def bind_request_context(context: RequestContext) -> Token[RequestContext | None]:

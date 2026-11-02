@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { ApiContractError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  ApiContractError,
+  apiFetch,
+  apiRequest,
+  apiContractError,
+} from "@/lib/api";
 import {
   assertLifecyclePurgePreviewFor,
   lifecyclePurgeInputSchema,
@@ -96,7 +101,7 @@ function checkedFile(
   file: BoardAttachmentFile,
   boardId: string,
 ): BoardAttachmentFile {
-  if (file.boardId !== boardId) throw new ApiContractError();
+  if (file.boardId !== boardId) throw apiContractError(file);
   return file;
 }
 
@@ -121,7 +126,7 @@ export async function reserveBoardFile(
       body: JSON.stringify(body),
     }),
   );
-  if (result.boardId !== boardId) throw new ApiContractError();
+  if (result.boardId !== boardId) throw apiContractError(result);
   return checkedFile(result, boardId);
 }
 
@@ -179,7 +184,7 @@ export async function listBoardAttachments(
       (file) => file.boardId !== boardId || file.state !== "ready",
     )
   )
-    throw new ApiContractError();
+    throw apiContractError(page);
   return page;
 }
 
@@ -202,7 +207,7 @@ export async function attachBoardFile(
     }),
   });
   if (result.id !== fileId || result.state !== "ready")
-    throw new ApiContractError();
+    throw apiContractError(result);
   return checkedFile(result, boardId);
 }
 
@@ -224,7 +229,7 @@ export async function detachBoardFile(
     }),
   });
   if (!response.ok) return throwRequestError(response);
-  if (response.status !== 204) throw new ApiContractError();
+  if (response.status !== 204) throw apiContractError(response);
 }
 
 export async function downloadBoardAttachment(
@@ -318,7 +323,7 @@ export async function listUnlinkedBoardFiles(
         file.isDeleted !== (params.deleted === "only"),
     )
   )
-    throw new ApiContractError();
+    throw apiContractError(page);
   return page;
 }
 
@@ -334,7 +339,7 @@ export async function archiveUnlinkedBoardFile(
     { method: "POST", cache: "no-store" },
   );
   if (file.boardId !== boardId || file.id !== fileId || !file.isDeleted)
-    throw new ApiContractError();
+    throw apiContractError(file);
   return file;
 }
 
@@ -381,6 +386,6 @@ export async function purgeBoardFile(
     file.state !== "purged" ||
     file.filename !== input.confirmationName
   )
-    throw new ApiContractError();
+    throw apiContractError(file);
   return file;
 }

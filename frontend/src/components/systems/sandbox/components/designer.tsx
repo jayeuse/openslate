@@ -162,6 +162,7 @@ import {
   type DesignerPane,
   type SandboxViewPreferences,
 } from "../helpers/view-preferences";
+import type { ApiErrorText } from "@/lib/api-errors";
 
 function ResponsiveDesignerTabPanel({
   wide,
@@ -374,7 +375,8 @@ export function Designer({
   /** A done notice (toast). */
   notify: (s: string) => void;
   /** An error notice for a failure with no control to show it beside. */
-  notifyError: (s: string) => void;
+  /** An error notice; `reference` is the failed request's ID (D1.5). */
+  notifyError: (s: string, reference?: string) => void;
   /** A done notice whose Undo undoes the last design change. */
   notifyUndoable: (s: string) => void;
   onStartFromTemplate: () => void;
@@ -452,7 +454,7 @@ export function Designer({
       layout: arrangedLayout(previous),
     }));
     if (!result.ok) {
-      notifyError(result.error);
+      notifyError(result.error, result.reference);
       return;
     }
     setCanvasAction("Canvas automatically arranged.");
@@ -624,9 +626,21 @@ export function Designer({
   const [fieldMappings, setFieldMappings] = useState<
     RelationshipFieldMapping[]
   >([]);
-  const [relationshipError, setRelationshipError] = useState("");
-  const [editorError, setEditorError] = useState("");
-  const [deleteError, setDeleteError] = useState("");
+  // Each message keeps its failed request's reference (D1.6); a design rule's
+  // own refusal has none.
+  const [relationshipFailure, setRelationshipFailure] =
+    useState<ApiErrorText | null>(null);
+  const [editorFailure, setEditorFailure] = useState<ApiErrorText | null>(null);
+  const [deleteFailure, setDeleteFailure] = useState<ApiErrorText | null>(null);
+  const relationshipError = relationshipFailure?.message ?? "";
+  const editorError = editorFailure?.message ?? "";
+  const deleteError = deleteFailure?.message ?? "";
+  const setRelationshipError = (message: string, reference?: string) =>
+    setRelationshipFailure(message ? { message, reference } : null);
+  const setEditorError = (message: string, reference?: string) =>
+    setEditorFailure(message ? { message, reference } : null);
+  const setDeleteError = (message: string, reference?: string) =>
+    setDeleteFailure(message ? { message, reference } : null);
   const [titleFieldError, setTitleFieldError] = useState<{
     moduleId: string;
     message: string;
@@ -875,7 +889,7 @@ export function Designer({
       }
       return previous;
     });
-    if (!result.ok) notifyError(result.error);
+    if (!result.ok) notifyError(result.error, result.reference);
     return result;
   }
   // The Structure outline reads lifecycle state from its deferred inputs; every
@@ -958,7 +972,7 @@ export function Designer({
         ),
       };
     }, `sandbox.design.department:${id}`);
-    if (!result.ok) notifyError(result.error);
+    if (!result.ok) notifyError(result.error, result.reference);
     return result;
   }
   async function renameModule(
@@ -977,7 +991,7 @@ export function Designer({
         ),
       };
     }, `sandbox.design.module:${id}`);
-    if (!result.ok) notifyError(result.error);
+    if (!result.ok) notifyError(result.error, result.reference);
     return result;
   }
   async function moveModule(
@@ -1062,7 +1076,7 @@ export function Designer({
       return previous;
     });
     if (!result.ok) {
-      notifyError(result.error);
+      notifyError(result.error, result.reference);
       return;
     }
     setSelected(
@@ -1190,7 +1204,7 @@ export function Designer({
       };
     });
     if (!result.ok) {
-      setDeleteError(result.error);
+      setDeleteError(result.error, result.reference);
       if (requested) setDeleteTarget(requested);
       return;
     }
@@ -1295,7 +1309,7 @@ export function Designer({
         ],
       }));
       if (!result.ok) {
-        setEditorError(result.error);
+        setEditorError(result.error, result.reference);
         return;
       }
       setSelected(id);
@@ -1324,7 +1338,7 @@ export function Designer({
         ],
       }));
       if (!result.ok) {
-        setEditorError(result.error);
+        setEditorError(result.error, result.reference);
         return;
       }
       setSelected(id);
@@ -1365,7 +1379,7 @@ export function Designer({
         };
       });
       if (!result.ok) {
-        setEditorError(result.error);
+        setEditorError(result.error, result.reference);
         return;
       }
       setEditor("");
@@ -1435,7 +1449,7 @@ export function Designer({
         };
       });
       if (!saved.ok) {
-        setEditorError(saved.error);
+        setEditorError(saved.error, saved.reference);
         return;
       }
       setEditor("");
@@ -1518,7 +1532,7 @@ export function Designer({
         };
       });
       if (!saved.ok) {
-        setRelationshipError(saved.error);
+        setRelationshipError(saved.error, saved.reference);
         return;
       }
       setEditor("");
@@ -1766,14 +1780,22 @@ export function Designer({
               </Alert>
             ) : null}
             {relationshipError ? (
-              <Alert role="alert" variant="destructive">
+              <Alert
+                role="alert"
+                variant="destructive"
+                reference={relationshipFailure?.reference}
+              >
                 {relationshipError}
               </Alert>
             ) : null}
           </>
         )}
         {editorError ? (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={editorFailure?.reference}
+          >
             {editorError}
           </Alert>
         ) : null}
@@ -2654,7 +2676,7 @@ export function Designer({
                                 layout: resetLayout(previous),
                               }));
                               if (!result.ok) {
-                                notifyError(result.error);
+                                notifyError(result.error, result.reference);
                                 return;
                               }
                               setCanvasAction("Canvas layout reset.");
@@ -2914,7 +2936,8 @@ export function Designer({
                             : previous.modules,
                         };
                       }, "sandbox.design.layout");
-                      if (!result.ok) notifyError(result.error);
+                      if (!result.ok)
+                        notifyError(result.error, result.reference);
                       return result;
                     }}
                   />
@@ -3078,7 +3101,12 @@ export function Designer({
             {currentDeleteImpact?.detail}
           </AlertDialogDescription>
           {deleteError ? (
-            <Alert role="alert" variant="destructive" className="mb-4">
+            <Alert
+              role="alert"
+              variant="destructive"
+              className="mb-4"
+              reference={deleteFailure?.reference}
+            >
               {deleteError}
             </Alert>
           ) : null}

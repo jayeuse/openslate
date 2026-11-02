@@ -125,7 +125,8 @@ def test_bindings_database_failure_is_safe_unavailability_not_an_empty_design() 
 
     assert response.status_code == 503
     assert response.json() == {
-        "detail": {"code": "bindings_unavailable", "message": "Sandbox bindings are unavailable"}
+        "detail": {"code": "bindings_unavailable", "message": "Sandbox bindings are unavailable"},
+        "request_id": response.headers["X-Request-ID"],
     }
     assert "private" not in response.text
     database.rollback.assert_called_once()

@@ -60,6 +60,7 @@ import {
   RowOpenButton,
   tintRowClassName,
 } from "./row-open-button";
+import { apiErrorReference } from "@/lib/api-errors";
 
 const sortOptions: readonly { value: GroupSort; label: string }[] = [
   { value: "name", label: "Name" },
@@ -360,6 +361,7 @@ export function GroupsView({ mode }: { mode: "admin" | "manager" }) {
       <ReadError
         className="max-w-lg"
         message="Groups could not be loaded."
+        reference={apiErrorReference(groups.error)}
         retry={() => {
           if (groups.isError) void groups.refetch();
         }}

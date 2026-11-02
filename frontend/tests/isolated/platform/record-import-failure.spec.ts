@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { ApiError } from "../../../src/lib/api";
+import { ApiContractError, ApiError } from "../../../src/lib/api";
 import { importFailure } from "../../../src/components/systems/platform/helpers/record-import-failure";
 
 // A failed CSV read, preview or import shows one message. An admission
@@ -66,10 +66,31 @@ const rows: {
     message: "This module is no longer available. Choose another module.",
     recheckSession: false,
   },
+  // S1-C6 (docs/specs/system-health.md): the server's words never show; the
+  // plain words of the shared message path do.
   {
-    name: "another API error shows its own message",
+    name: "another API error shows plain words, not the server's",
     error: new ApiError(422, "Row 2 has an invalid quantity."),
-    message: "Row 2 has an invalid quantity.",
+    message: "Check the entered values and try again.",
+    recheckSession: false,
+  },
+  {
+    name: "an API error with no plain words of its own shows the fallback",
+    error: new ApiError(500, "psycopg.errors.UndefinedTable at db:5432"),
+    message: fallback,
+    recheckSession: false,
+  },
+  {
+    name: "a rejected response shows plain words",
+    error: new ApiContractError(),
+    message:
+      "The server returned an unexpected response. Refresh and try again.",
+    recheckSession: false,
+  },
+  {
+    name: "a failed connection shows plain words, not the browser's",
+    error: new TypeError("Failed to fetch"),
+    message: "Could not connect. Check your connection and try again.",
     recheckSession: false,
   },
   {

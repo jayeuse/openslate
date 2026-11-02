@@ -17,6 +17,7 @@ import {
 } from "../adapters/report-schedule-api";
 import { reportKeys } from "../adapters/report-queries";
 import { WEEKDAYS, ordinal } from "../domain/report-words";
+import { useErrorText } from "@/lib/use-error-text";
 
 export type ReportScheduleDraft = {
   enabled: boolean;
@@ -188,7 +189,8 @@ export function ReportScheduleControls({
   const draft = edit?.key === baselineKey ? edit.draft : baseline;
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [notice, setNotice] = useState("");
   const [stale, setStale] = useState(false);
   const changed = policySignature(draft) !== policySignature(baseline);
@@ -240,6 +242,7 @@ export function ReportScheduleControls({
               (missing
                 ? "The schedule changed. Reload it before saving."
                 : "The schedule could not be saved. Try again.")),
+        reason,
       );
     } finally {
       savingRef.current = false;
@@ -406,7 +409,11 @@ export function ReportScheduleControls({
         </ScheduleRow>
       ) : null}
       {error ? (
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={errorFailure?.reference}
+        >
           {error}
         </Alert>
       ) : null}

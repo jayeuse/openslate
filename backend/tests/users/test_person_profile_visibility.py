@@ -62,9 +62,8 @@ def test_member_sees_full_profile_and_photo_of_a_member_without_shared_work(pers
     _, key = native_avatar(world, owner_id=world.target_id, bind=True)
     groups = target_groups(world)
     # The person card keeps the shared-work rule (D36); the profile does not (PD17).
-    assert world.client.get(
-        f"/api/users/{world.target_id}/card", headers=world.headers()
-    ).json() == NOT_FOUND
+    card = world.client.get(f"/api/users/{world.target_id}/card", headers=world.headers())
+    assert card.json() == {**NOT_FOUND, "request_id": card.headers["X-Request-ID"]}
     response = profile(world)
     assert response.status_code == 200, response.text
     assert response.json() == {
@@ -113,13 +112,13 @@ def test_guest_without_shared_work_gets_the_same_answer_as_an_unknown_person(per
     native_avatar(world, owner_id=world.target_id, bind=True)
     hidden = profile(world)
     assert hidden.status_code == 404
-    assert hidden.json() == NOT_FOUND
+    assert hidden.json() == {**NOT_FOUND, "request_id": hidden.headers["X-Request-ID"]}
     assert world.client.get(
         f"/api/users/{world.target_id}/avatar", headers=world.headers()
     ).status_code == 404
     unknown = profile(world, uuid4())
     assert unknown.status_code == 404
-    assert unknown.json() == NOT_FOUND
+    assert unknown.json() == {**NOT_FOUND, "request_id": unknown.headers["X-Request-ID"]}
 
 
 @pytest.mark.parametrize(
@@ -164,7 +163,7 @@ def test_a_removed_or_disabled_member_is_not_available_even_to_an_administrator(
     try:
         hidden = profile(world)
         assert hidden.status_code == 404
-        assert hidden.json() == NOT_FOUND
+        assert hidden.json() == {**NOT_FOUND, "request_id": hidden.headers["X-Request-ID"]}
         assert world.client.get(
             f"/api/users/{world.target_id}/avatar", headers=world.headers()
         ).status_code == 404
@@ -210,7 +209,7 @@ def test_a_person_of_another_organization_is_not_available(person_world, second_
     native_avatar(world, owner_id=world.target_id, bind=True)
     foreign = profile(world)
     assert foreign.status_code == 404
-    assert foreign.json() == NOT_FOUND
+    assert foreign.json() == {**NOT_FOUND, "request_id": foreign.headers["X-Request-ID"]}
     assert world.client.get(
         f"/api/users/{world.target_id}/avatar", headers=world.headers()
     ).status_code == 404

@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  ApiError,
+  apiFetch,
+  apiRequest,
+  keepRequestId,
+  apiContractError,
+} from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api-errors";
 
 /**
  * Record-date sources (BR57, BE8): a module's date or datetime field shown
@@ -63,6 +70,24 @@ function refusalMessage(code: string, owner: Owner): string | null {
   }
 }
 
+/**
+ * The words a failed source change shows: the refusal sentence that
+ * `safeError` wrote, else authored copy for the status or the site's own
+ * fallback (S1-C6), never "Request could not be completed".
+ */
+export function calendarSourceErrorMessage(
+  error: unknown,
+  fallback: string,
+): string {
+  // Only a known refusal code carries a sentence; the owner changes its
+  // wording, not whether it has one.
+  return error instanceof ApiError &&
+    error.code !== undefined &&
+    refusalMessage(error.code, "me") !== null
+    ? error.message
+    : apiErrorMessage(error, fallback);
+}
+
 function safeError(error: unknown, owner: Owner): unknown {
   if (!(error instanceof ApiError)) return error;
   const detail = z
@@ -73,13 +98,19 @@ function safeError(error: unknown, owner: Owner): unknown {
     ? refusalMessage(detail.data.code, owner)
     : null;
   if (message)
-    return new ApiError(
-      error.status,
-      message,
-      { code: detail.success ? detail.data.code : undefined },
-      detail.success ? (detail.data.code as ApiError["code"]) : undefined,
+    return keepRequestId(
+      new ApiError(
+        error.status,
+        message,
+        { code: detail.success ? detail.data.code : undefined },
+        detail.success ? (detail.data.code as ApiError["code"]) : undefined,
+      ),
+      error,
     );
-  return new ApiError(error.status, "Request could not be completed");
+  return keepRequestId(
+    new ApiError(error.status, "Request could not be completed"),
+    error,
+  );
 }
 
 function sourcesPath(owner: Owner, boardId?: string): string {
@@ -115,7 +146,7 @@ async function addSource(
       source.moduleId !== body.module_id ||
       source.dateFieldId !== body.date_field_id
     )
-      throw new ApiContractError();
+      throw apiContractError(source);
     return source;
   } catch (error) {
     throw safeError(error, owner);
@@ -128,13 +159,16 @@ async function removeSource(path: string, owner: Owner): Promise<void> {
     cache: "no-store",
   });
   if (response.ok) {
-    if (response.status !== 204) throw new ApiContractError();
+    if (response.status !== 204) throw apiContractError(response);
     return;
   }
   const body: unknown = await response.json().catch(() => null);
   const detail =
     body && typeof body === "object" && "detail" in body ? body.detail : null;
-  throw safeError(new ApiError(response.status, "", detail), owner);
+  throw safeError(
+    keepRequestId(new ApiError(response.status, "", detail), response),
+    owner,
+  );
 }
 
 export function listBoardCalendarSources(

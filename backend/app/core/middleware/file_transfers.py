@@ -9,6 +9,7 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.core.middleware.request_context import error_content
 from app.systems.platform.files import providers
 from app.systems.platform.files.providers import TransferLease
 
@@ -137,7 +138,8 @@ class FileDispatchMiddleware:
         try:
             dispatch = lease.retain_worker()
         except HTTPException as error:
-            await JSONResponse(status_code=error.status_code, content={"detail": error.detail})(
+            content = error_content(Request(scope), error.detail)
+            await JSONResponse(status_code=error.status_code, content=content)(
                 scope, receive, send
             )
             return

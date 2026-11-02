@@ -194,6 +194,7 @@ def test_mail_failure_after_revoke_keeps_committed_effect_and_clears_self_cookie
     assert response.status_code == 503
     assert response.json()["detail"]["local_revocation"] == "committed"
     assert response.json()["detail"]["email_request"] == "unconfirmed"
+    assert response.json()["request_id"] == response.headers["X-Request-ID"]
     if self_target:
         assert any(
             "slateops_access" in cookie and "Max-Age=0" in cookie

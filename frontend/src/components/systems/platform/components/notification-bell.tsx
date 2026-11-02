@@ -29,6 +29,7 @@ import {
   NotificationItems,
   useNotificationCommands,
 } from "./notification-items";
+import { apiErrorReference } from "@/lib/api-errors";
 
 export function NotificationBell({ accountId }: { accountId: string | null }) {
   const client = useQueryClient();
@@ -191,6 +192,11 @@ export function NotificationBell({ accountId }: { accountId: string | null }) {
             role="alert"
             variant="destructive"
             className="flex flex-wrap items-center justify-between gap-3 text-sm"
+            reference={
+              refused
+                ? undefined
+                : apiErrorReference(page.isError ? page.error : count.error)
+            }
           >
             <p className="min-w-0">
               {refused

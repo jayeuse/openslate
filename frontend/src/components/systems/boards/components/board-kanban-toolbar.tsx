@@ -49,6 +49,8 @@ import {
 } from "../domain/kanban";
 import { LabelChip, chartVar, type KanbanPerson } from "./board-kanban-card";
 import { COLOR_NAMES } from "./board-kanban-stage";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 const control = "min-h-11 xl:min-h-8";
 const pick = cn(control, "gap-1.5 px-2.5 font-normal");
@@ -509,7 +511,8 @@ export function KanbanLabelsDialog({
   onRemove: (label: KanbanLabel) => Promise<void>;
 }) {
   const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   const [pending, setPending] = useState(false);
   const run = async (action: () => Promise<void>) => {
     setPending(true);
@@ -518,7 +521,7 @@ export function KanbanLabelsDialog({
       await action();
       return true;
     } catch (failure) {
-      setError(kanbanErrorMessage(failure));
+      setError(kanbanErrorMessage(failure), failure);
       return false;
     } finally {
       setPending(false);
@@ -584,9 +587,12 @@ export function KanbanLabelsDialog({
           </Button>
         </form>
         {error ? (
-          <p role="alert" className="text-danger-text text-sm">
-            {error}
-          </p>
+          <div>
+            <p role="alert" className="text-danger-text text-sm">
+              {error}
+            </p>
+            <ErrorReference id={errorFailure?.reference} />
+          </div>
         ) : null}
       </DialogContent>
     </Dialog>

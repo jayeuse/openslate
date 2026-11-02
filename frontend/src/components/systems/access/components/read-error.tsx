@@ -6,20 +6,24 @@ import { cn } from "@/lib/utils";
 
 /**
  * A failed read: the destructive alert with Retry inside. The message names
- * what did not load; Retry reads it again.
+ * what did not load; Retry reads it again. `reference` is the failed
+ * request's ID; it renders after Retry (D1.4, docs/specs/system-health.md).
  */
 export function ReadError({
   message,
   retry,
+  reference,
   className,
 }: {
   message: string;
   retry: () => void;
+  reference?: string;
   className?: string;
 }) {
   return (
     <Alert
       variant="destructive"
+      reference={reference}
       className={cn("flex flex-wrap items-center gap-x-4 gap-y-2", className)}
     >
       <p className="min-w-0 flex-1">{message}</p>

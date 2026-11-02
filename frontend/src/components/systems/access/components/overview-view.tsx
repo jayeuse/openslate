@@ -59,6 +59,7 @@ import {
   type BlockState,
   type FeedRow,
 } from "./overview-blocks";
+import { apiErrorReference } from "@/lib/api-errors";
 
 /** From 1280px the page is still and the feed shows the rows that fit. */
 const stillQuery = "(min-width: 80rem)";
@@ -133,7 +134,13 @@ function blockState<Data>(
   build: () => Data | null,
 ): BlockState<Data> {
   if (queries.some((query) => query.isError))
-    return { status: "error", retry: retryFailed(queries) };
+    return {
+      status: "error",
+      retry: retryFailed(queries),
+      reference: apiErrorReference(
+        queries.find((query) => query.isError)?.error,
+      ),
+    };
   const data = queries.every((query) => query.data !== undefined)
     ? build()
     : null;

@@ -1,4 +1,10 @@
-import { expect, test, heldResponse, settleReact } from "./helpers/test";
+import {
+  expect,
+  test,
+  heldResponse,
+  settleReact,
+  modalStatus,
+} from "./helpers/test";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
 import type { Page } from "@playwright/test";
 
@@ -89,7 +95,7 @@ test("the first Create channel click after reload survives a held lazy editor lo
     });
     // While the editor code is still held, the first click already shows its
     // dialog, and the workspace stays mounted instead of becoming a skeleton.
-    await expect(editor.getByRole("status")).toHaveText("Loading editor…");
+    await expect(modalStatus(editor)).toHaveText("Loading editor…");
     await expect(
       page.getByRole("complementary", {
         name: "Conversations",

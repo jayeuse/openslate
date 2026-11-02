@@ -23,7 +23,12 @@ export function IdentityFooter({ editor }: { editor: IdentityEditor }) {
       className="bg-card border-border sticky bottom-0 z-10 flex flex-wrap items-center gap-2 rounded-b-[var(--radius)] border-t px-4 py-3 sm:px-6 xl:static"
     >
       {editor.saveError ? (
-        <Alert role="alert" variant="destructive" className="basis-full">
+        <Alert
+          role="alert"
+          variant="destructive"
+          className="basis-full"
+          reference={editor.saveReference}
+        >
           {editor.saveError}
         </Alert>
       ) : null}

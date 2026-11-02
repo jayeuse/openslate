@@ -421,6 +421,9 @@ function ScopedServerBackedBoardPosts({
     mayPost ? null : postingReason(board, guest),
   );
   const authorError = authors.state.error ?? labels.state.error;
+  const authorReference = authors.state.error
+    ? authors.state.reference
+    : labels.state.reference;
   const clearFilters = () => setSelectedAuthor(null);
   const openNew = () => {
     editor.newDraft();
@@ -517,6 +520,9 @@ function ScopedServerBackedBoardPosts({
           rows={rows}
           loading={feed.state.status === "loading"}
           error={feed.state.error ?? authorError}
+          errorReference={
+            feed.state.error ? feed.state.reference : authorReference
+          }
           onRetry={() => {
             if (feed.state.error) feed.retry();
             if (authorError) {

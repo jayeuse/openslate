@@ -157,7 +157,10 @@ def test_cardinality_conflict_with_a_hidden_cross_department_link_reveals_no_rec
         relationship_http_fixture.restore_target(graph.cross_target_id)
 
     assert conflict.status_code == 409
-    assert conflict.json() == {"detail": "Source already has a relationship target"}
+    assert conflict.json() == {
+        "detail": "Source already has a relationship target",
+        "request_id": conflict.headers["X-Request-ID"],
+    }
     assert str(graph.cross_target_id) not in conflict.text
     assert hidden_edge_id not in conflict.text
     assert relationship_http_fixture.active_edge_ids() == {UUID(hidden_edge_id)}

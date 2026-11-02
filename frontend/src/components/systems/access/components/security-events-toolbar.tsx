@@ -271,6 +271,7 @@ export function SecurityEventsToolbar({
             role="alert"
             variant="destructive"
             className="space-y-2 text-sm"
+            reference={people.reference}
           >
             <p>The person list could not load. Try again.</p>
             <Button

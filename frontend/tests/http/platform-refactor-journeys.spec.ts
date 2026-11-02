@@ -6,6 +6,7 @@ import {
   type Locator,
   type Page,
   type Route,
+  serverBanner,
 } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
 import { wireView } from "../helpers/wire";
@@ -646,9 +647,10 @@ test("Leaving waits for the current import receipt and never starts a later batc
 });
 
 // Each outcome leaves the batch unconfirmed: no answer, a 503 that says so,
-// or a receipt that confirms no record for the imported row.
-for (const [failure, answer] of [
-  ["lost response", (route: Route) => route.abort("connectionreset")],
+// or a receipt that confirms no record for the imported row. Only no answer
+// shows the server banner; a 503 proves that something answered (D3.2).
+for (const [failure, answer, banner] of [
+  ["lost response", (route: Route) => route.abort("connectionreset"), 1],
   [
     "unconfirmed 503",
     (route: Route) =>
@@ -661,11 +663,13 @@ for (const [failure, answer] of [
           },
         },
       }),
+    0,
   ],
   [
     "malformed receipt",
     (route: Route, body: ImportRequest) =>
       route.fulfill({ json: { ...importResult(body), created_count: 0 } }),
+    0,
   ],
 ] as const) {
   test(`Import ${failure} stops without retry`, async ({ page }) => {
@@ -688,6 +692,7 @@ for (const [failure, answer] of [
     await expect(page.getByRole("main").getByRole("alert")).toContainText(
       "unconfirmed",
     );
+    await expect(serverBanner(page)).toHaveCount(banner);
     await expect(
       page.getByRole("button", { name: "Preview import", exact: true }),
     ).toBeDisabled();
@@ -941,6 +946,10 @@ for (const outcome of [
     const warning = page.getByRole("main").getByRole("alert");
     await expect(warning).toContainText("unconfirmed");
     await expect(warning).toContainText("100 records are confirmed");
+    // Only the lost response got no answer (D3.2).
+    await expect(serverBanner(page)).toHaveCount(
+      outcome === "lost response" ? 1 : 0,
+    );
     await expect(
       page.getByText("Stopping after the current batch…", { exact: true }),
     ).toHaveCount(0);

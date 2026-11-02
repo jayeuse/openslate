@@ -100,6 +100,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("GET", "/api/auth/me"),
         ("GET", "/api/auth/admin-sessions"),
         ("GET", "/api/auth/mfa"),
+        ("GET", "/api/system/status"),
         ("GET", "/api/auth/session"),
         ("GET", "/api/auth/sessions"),
         ("GET", "/api/backups"),

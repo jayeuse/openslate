@@ -1,5 +1,6 @@
 import { Temporal } from "@js-temporal/polyfill";
 import { ApiError } from "@/lib/api";
+import { errorTextFor, type ApiErrorText } from "@/lib/api-errors";
 import { datetimeInputToUtc, datetimeOffsets } from "@/lib/date-time";
 import type {
   BoardPost,
@@ -30,6 +31,9 @@ export type PostEditorState = {
   recordLinkPending: boolean;
   conflict: boolean;
   error: string | null;
+  /** The failed request behind `error`, kept with the words it set (D1.6);
+   * its reference shows only while `error` still holds those words. */
+  errorText?: ApiErrorText;
   notice: string | null;
   scheduleLocal: string;
   scheduleError: string | null;
@@ -178,6 +182,16 @@ export function isDenial(error: unknown): boolean {
   return error instanceof ApiError && [401, 403, 404].includes(error.status);
 }
 
+function failureText(
+  message: string,
+  error: unknown,
+): Pick<PostEditorState, "error" | "errorText"> {
+  return {
+    error: message,
+    errorText: errorTextFor(message, error) ?? undefined,
+  };
+}
+
 export function editorFailure(
   state: PostEditorState,
   error: unknown,
@@ -193,12 +207,15 @@ export function editorFailure(
       ...state,
       pending: false,
       conflict: true,
-      error: `${error.message}. Your text has been kept; refresh drafts to review the latest version.`,
+      ...failureText(
+        `${error.message}. Your text has been kept; refresh drafts to review the latest version.`,
+        error,
+      ),
     };
   return {
     ...state,
     pending: false,
-    error: "Post request failed. Try again.",
+    ...failureText("Post request failed. Try again.", error),
   };
 }
 

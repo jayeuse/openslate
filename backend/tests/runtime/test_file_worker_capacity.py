@@ -10,6 +10,7 @@ import pytest
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.core.middleware.file_transfers import FileDispatchMiddleware, FileTransferPolicy
+from app.core.middleware.request_context import RequestContext
 from app.main import create_app
 from app.systems.platform.files import providers, service
 from app.systems.platform.files import router as files_router
@@ -230,9 +231,15 @@ def test_a_route_dispatched_after_its_admission_closed_answers_files_busy_and_ne
     async def send(message: dict[str, object]) -> None:
         messages.append(message)
 
-    scope = {"type": "http", "state": {"file_transfer_lease": lease}}
+    # The outer request middleware has already bound this request's context.
+    context = RequestContext()
+    scope = {
+        "type": "http",
+        "state": {"file_transfer_lease": lease, "request_context": context},
+    }
     asyncio.run(FileDispatchMiddleware(route)(scope, receive, send))
 
     assert routed == []
     assert messages[0]["status"] == 503
     assert json.loads(messages[1]["body"])["detail"]["code"] == "files_busy"
+    assert json.loads(messages[1]["body"])["request_id"] == str(context.request_id)

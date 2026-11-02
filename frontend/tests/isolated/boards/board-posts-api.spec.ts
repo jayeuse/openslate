@@ -401,6 +401,27 @@ test("post adapter fails closed on leaked or cross-Board DTOs and inconsistent p
   }
 });
 
+test("a post answer for another post keeps the response's request ID", async () => {
+  // S1-C3, D4.5 (docs/specs/system-health.md): the check runs after the
+  // shared post request wrapper returns, and the reference survives it.
+  const requestId = "019a4c2e-7b1d-7c3e-9f00-4f9c2e1a0b2c";
+  const mock = installFetch(() =>
+    Response.json(
+      { ...mutation, id: authorId },
+      { headers: { "X-Request-ID": requestId } },
+    ),
+  );
+  try {
+    const failure = await archiveBoardPost(boardId, postId, 5, 3).catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(ApiContractError);
+    expect((failure as ApiContractError).requestId).toBe(requestId);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("post link input rejects unsafe and oversized values before fetch", async () => {
   const mock = installFetch(() => jsonResponse(mutation));
   try {

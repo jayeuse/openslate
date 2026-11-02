@@ -13,7 +13,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Route } from "next";
 import { ApiContractError, ApiError } from "@/lib/api";
-import { apiErrorMessage } from "@/lib/api-errors";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
 import {
   ChevronDown,
   ChevronUp,
@@ -195,6 +195,8 @@ type RecordPageState = {
   hasMore: boolean;
   loading: boolean;
   error: string;
+  /** The failed read's request ID, shown as its error reference. */
+  reference?: string;
 };
 
 type GroupedRecordSnapshot = {
@@ -202,6 +204,8 @@ type GroupedRecordSnapshot = {
   page: OpenViewGroupedRecordsResult | null;
   loading: boolean;
   error: string;
+  /** The failed read's request ID, shown as its error reference. */
+  reference?: string;
 };
 
 type PendingNavigation = {
@@ -317,6 +321,7 @@ import {
   useOpenViewDepartmentNames,
   useOpenViewSelectedFields,
 } from "../hooks/use-openview-catalog";
+import { useErrorText } from "@/lib/use-error-text";
 
 function DepartmentName({
   departmentId,
@@ -363,13 +368,16 @@ export default function ServerBackedViewsWorkspace({
     catalog,
     catalogLoading,
     catalogError,
+    catalogReference,
     moduleId,
     moduleWorkspace,
     setModuleWorkspace,
     moduleLoading,
     moduleError,
+    moduleReference,
     metadataLoadingMore,
     metadataError,
+    metadataReference,
     retryMetadata,
     loadMoreModuleMetadata,
     refreshModule,
@@ -410,7 +418,8 @@ export default function ServerBackedViewsWorkspace({
     useState<PendingNavigation>(null);
   const [pendingAction, setPendingAction] = useState("");
   const [notice, setNotice] = useState("");
-  const [actionError, setActionError] = useState("");
+  const [actionErrorFailure, setActionError] = useErrorText();
+  const actionError = actionErrorFailure?.message ?? "";
   const [saveOpen, setSaveOpen] = useState(false);
   // The panel keeps its kind while it closes, so its title does not change
   // during the exit.
@@ -424,12 +433,15 @@ export default function ServerBackedViewsWorkspace({
   // The record sheet header's place for Edit and the record menu.
   const [recordActionsSlot, setRecordActionsSlot] =
     useState<HTMLDivElement | null>(null);
-  const [saveError, setSaveError] = useState("");
+  const [saveErrorFailure, setSaveError] = useErrorText();
+  const saveError = saveErrorFailure?.message ?? "";
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
-  const [archiveError, setArchiveError] = useState("");
+  const [archiveErrorFailure, setArchiveError] = useErrorText();
+  const archiveError = archiveErrorFailure?.message ?? "";
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const [archivedError, setArchivedError] = useState("");
+  const [archivedErrorFailure, setArchivedError] = useErrorText();
+  const archivedError = archivedErrorFailure?.message ?? "";
   const [archivedNotice, setArchivedNotice] = useState("");
   const editRevision = useRef(0);
   const [filterRowKeyState, setFilterRowKeyState] = useState<{
@@ -923,6 +935,7 @@ export default function ServerBackedViewsWorkspace({
           hasMore: previous?.moduleId === moduleId ? previous.hasMore : false,
           loading: false,
           error: apiErrorMessage(error, "Records could not be loaded."),
+          reference: apiErrorReference(error),
         }));
       });
     return () => {
@@ -993,6 +1006,7 @@ export default function ServerBackedViewsWorkspace({
           page: null,
           loading: false,
           error: apiErrorMessage(error, "Grouped records could not be loaded."),
+          reference: apiErrorReference(error),
         });
       });
     return () => {
@@ -1977,6 +1991,7 @@ export default function ServerBackedViewsWorkspace({
         } catch (refreshError) {
           setSaveError(
             `${apiErrorMessage(refreshError, "The latest saved view could not be reloaded.")} Your local edits remain open.`,
+            refreshError,
           );
         }
       } else {
@@ -1985,6 +2000,7 @@ export default function ServerBackedViewsWorkspace({
             error,
             "The view could not be saved. Your edits remain open.",
           ),
+          error,
         );
       }
     } finally {
@@ -2078,6 +2094,7 @@ export default function ServerBackedViewsWorkspace({
     } catch (error) {
       setArchiveError(
         apiErrorMessage(error, "The saved view could not be archived."),
+        error,
       );
     } finally {
       setPendingAction("");
@@ -2113,6 +2130,7 @@ export default function ServerBackedViewsWorkspace({
     } catch (error) {
       setArchivedError(
         apiErrorMessage(error, "The saved view could not be restored."),
+        error,
       );
     } finally {
       setPendingAction("");
@@ -2163,6 +2181,7 @@ export default function ServerBackedViewsWorkspace({
     } catch (error) {
       setActionError(
         apiErrorMessage(error, "The default view could not be changed."),
+        error,
       );
     } finally {
       setPendingAction("");
@@ -2235,6 +2254,7 @@ export default function ServerBackedViewsWorkspace({
           error,
           "The saved view could not be duplicated. Your edits remain open.",
         ),
+        error,
       );
     } finally {
       setPendingAction("");
@@ -2773,7 +2793,10 @@ export default function ServerBackedViewsWorkspace({
         >
           <div className="access-fill flex min-w-0 flex-col gap-3">
             {workspaceCalendar.isError && (
-              <Alert variant="destructive">
+              <Alert
+                variant="destructive"
+                reference={apiErrorReference(workspaceCalendar.error)}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
                     {workspaceCalendar.data
@@ -2818,6 +2841,7 @@ export default function ServerBackedViewsWorkspace({
                 role="alert"
                 variant="destructive"
                 className="flex flex-wrap items-center justify-between gap-3"
+                reference={catalogReference}
               >
                 <span>
                   {catalogError}
@@ -2840,6 +2864,11 @@ export default function ServerBackedViewsWorkspace({
                 role="alert"
                 variant="destructive"
                 className="flex flex-wrap items-center justify-between gap-3"
+                reference={
+                  metadataError
+                    ? metadataReference
+                    : apiErrorReference(selectedFields.error)
+                }
               >
                 <span>{metadataError || fieldMetadataError}</span>
                 <Button
@@ -2859,6 +2888,7 @@ export default function ServerBackedViewsWorkspace({
                 role="alert"
                 variant="destructive"
                 className="flex flex-wrap items-center justify-between gap-3"
+                reference={moduleReference}
               >
                 <span>
                   {moduleError}
@@ -2881,6 +2911,7 @@ export default function ServerBackedViewsWorkspace({
                 role="alert"
                 variant="destructive"
                 className="flex flex-wrap items-center justify-between gap-3"
+                reference={currentRecordPage?.reference}
               >
                 <span>
                   {rowError}{" "}
@@ -2925,7 +2956,11 @@ export default function ServerBackedViewsWorkspace({
             ) : null}
             {notice ? <Alert role="status">{notice}</Alert> : null}
             {actionError ? (
-              <Alert role="alert" variant="destructive">
+              <Alert
+                role="alert"
+                variant="destructive"
+                reference={actionErrorFailure?.reference}
+              >
                 {actionError}
               </Alert>
             ) : null}
@@ -3090,6 +3125,7 @@ export default function ServerBackedViewsWorkspace({
                         range={groupRange}
                         loading={generalGroupLoading}
                         error={generalGroupError}
+                        errorReference={currentGeneralGroupSnapshot?.reference}
                         hasPage={currentGeneralGroupPage !== null}
                         groups={groupOptions}
                         pagination={groupPagination ?? null}
@@ -3613,7 +3649,11 @@ export default function ServerBackedViewsWorkspace({
                   </Alert>
                 ) : null}
                 {saveError ? (
-                  <Alert role="alert" variant="destructive">
+                  <Alert
+                    role="alert"
+                    variant="destructive"
+                    reference={saveErrorFailure?.reference}
+                  >
                     {saveError}
                   </Alert>
                 ) : null}
@@ -3686,7 +3726,11 @@ export default function ServerBackedViewsWorkspace({
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 {archiveError ? (
-                  <Alert role="alert" variant="destructive">
+                  <Alert
+                    role="alert"
+                    variant="destructive"
+                    reference={archiveErrorFailure?.reference}
+                  >
                     {archiveError}
                   </Alert>
                 ) : null}
@@ -3737,7 +3781,11 @@ export default function ServerBackedViewsWorkspace({
                   onClose={() => setArchivedOpen(false)}
                 />
                 {archivedError ? (
-                  <Alert role="alert" variant="destructive">
+                  <Alert
+                    role="alert"
+                    variant="destructive"
+                    reference={archivedErrorFailure?.reference}
+                  >
                     {archivedError}
                   </Alert>
                 ) : null}

@@ -50,6 +50,9 @@ import {
   type RecordCsv,
 } from "../adapters/record-import-api";
 import { useRecordImport } from "../hooks/use-record-import";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 type ImportExportProps = {
   onNavigationGuardChange: (guard: WorkspaceNavigationGuard | null) => void;
@@ -82,10 +85,12 @@ export default function ImportExport({
   const [defaultErrors, setDefaultErrors] = useState<RecordFormErrors>({});
   const [validationPage, setValidationPage] = useState(0);
   const [exportRows, setExportRows] = useState<RecordCsv | null>(null);
-  const [exportError, setExportError] = useState("");
+  const [exportFailure, setExportError] = useErrorText();
+  const exportError = exportFailure?.message ?? "";
   const [preparing, setPreparing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [collectionError, setCollectionError] = useState("");
+  const [collectionFailure, setCollectionError] = useErrorText();
+  const collectionError = collectionFailure?.message ?? "";
   const exportController = useRef<AbortController | null>(null);
   const exportGeneration = useRef(0);
   const busy = importer.operation !== null;
@@ -210,8 +215,8 @@ export default function ImportExport({
           });
         }
       }
-    } catch {
-      setCollectionError("More options could not be loaded. Try again.");
+    } catch (error) {
+      setCollectionError("More options could not be loaded. Try again.", error);
     } finally {
       setLoadingMore(false);
     }
@@ -266,9 +271,15 @@ export default function ImportExport({
             ? "Session access needs to be checked before continuing."
             : error instanceof ApiError && error.status === 403
               ? "Administrator permission is required to export records."
-              : error instanceof Error
+              : // The export adapter words its own refusals; any other
+                // failure takes the shared plain words, never raw text (S1-C6).
+                error instanceof ApiError
                 ? error.message
-                : "The export could not be prepared. Try again.",
+                : apiErrorMessage(
+                    error,
+                    "The export could not be prepared. Try again.",
+                  ),
+          error,
         );
       }
     } finally {
@@ -307,6 +318,13 @@ export default function ImportExport({
           <p role="alert" className="text-destructive text-sm">
             Module options could not be loaded. Your draft has been kept.
           </p>
+          <ErrorReference
+            id={apiErrorReference(
+              [identity, catalog, workspace, exportWorkspace].find(
+                (read) => read.isError,
+              )?.error,
+            )}
+          />
           <Action
             onClick={() => {
               void identity.refetch();
@@ -330,9 +348,12 @@ export default function ImportExport({
         </p>
       ) : null}
       {collectionError ? (
-        <p role="alert" className="text-destructive text-sm">
-          {collectionError}
-        </p>
+        <div>
+          <p role="alert" className="text-destructive text-sm">
+            {collectionError}
+          </p>
+          <ErrorReference id={collectionFailure?.reference} />
+        </div>
       ) : null}
       {!denied && catalog.data?.hasMore ? (
         <Action
@@ -610,9 +631,12 @@ export default function ImportExport({
             </p>
           ) : null}
           {importer.error ? (
-            <p role="alert" className="text-destructive text-sm">
-              {importer.error}
-            </p>
+            <div>
+              <p role="alert" className="text-destructive text-sm">
+                {importer.error}
+              </p>
+              <ErrorReference id={importer.errorReference} />
+            </div>
           ) : null}
           {importer.notice ? (
             <p role="status" className="bg-muted rounded-lg p-3 text-sm">
@@ -712,9 +736,12 @@ export default function ImportExport({
             <Action onClick={clearExport}>Cancel export</Action>
           ) : null}
           {exportError ? (
-            <p role="alert" className="text-destructive text-sm">
-              {exportError}
-            </p>
+            <div>
+              <p role="alert" className="text-destructive text-sm">
+                {exportError}
+              </p>
+              <ErrorReference id={exportFailure?.reference} />
+            </div>
           ) : null}
           {exportRows && !denied && admin ? (
             <div className="space-y-4">

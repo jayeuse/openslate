@@ -8,7 +8,22 @@ FastAPI owns the application HTTP boundary in [`main.py`](../../backend/app/main
 Database operation failures produce a generic `503 Database unavailable`; unexpected
 failures produce a generic `500`. Responses carry a request identifier, while structured
 logs record a bounded reason code instead of exception text or request contents.
-Expected route errors remain route-specific. Invalid Origin or CSRF input is rejected
+Expected route errors remain route-specific.
+
+Every error JSON body is `{"detail": ..., "request_id": ...}`. `detail` keeps its
+route-specific shape, including the 422 validation list and nested `code`/`message`
+objects. `request_id` is a sibling of `detail` and equals the response's `X-Request-ID`
+header. One helper, `error_content` in
+[`request_context.py`](../../backend/app/core/middleware/request_context.py), reads the
+request context that the request middleware bound and never creates a new one. It is used
+by the request middleware's refusals (body size, file capacity, file timeout, database
+unavailable, unexpected failure), the file dispatch middleware, the app-level
+`HTTPException` and `RequestValidationError` handlers in `main.py`, and the two routes
+that return an error response directly (the refused refresh that clears the session
+cookies, and the person security actions). A status that cannot carry a body (for example
+`304`) still has no body. Non-JSON refusals (the plain-text trusted-host `400`, the static
+site's 404 page and its no-body 405, and refusals before the application) carry no body
+ID. `/api/health` and `/api/ready` are not errors and have no `request_id` field. Invalid Origin or CSRF input is rejected
 without refreshing a session.
 
 The provider boundary in

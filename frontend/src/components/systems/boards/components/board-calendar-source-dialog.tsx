@@ -11,16 +11,19 @@ import {
 } from "@/components/ui/dialog-frame";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { NativeSelect } from "@/components/ui/native-select";
-import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   catalogFirstPageOptions,
   fieldsFirstPageOptions,
 } from "../../openview/adapters/openview-queries";
-import type {
-  CalendarSource,
-  CalendarSourceInput,
+import {
+  calendarSourceErrorMessage,
+  type CalendarSource,
+  type CalendarSourceInput,
 } from "../adapters/board-calendar-sources-api";
+import { apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 /**
  * Add record source (BR57): a framed dialog with Module and Date field. The
@@ -40,7 +43,8 @@ export function BoardCalendarSourceDialog({
   const [moduleId, setModuleId] = useState("");
   const [dateFieldId, setDateFieldId] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   const modules = useQuery({ ...catalogFirstPageOptions(), enabled: open });
   const fields = useQuery({
     ...fieldsFirstPageOptions(moduleId),
@@ -71,9 +75,11 @@ export function BoardCalendarSourceDialog({
       onClose();
     } catch (failure) {
       setError(
-        failure instanceof ApiError && failure.message
-          ? failure.message
-          : "The record source was not added. Try again.",
+        calendarSourceErrorMessage(
+          failure,
+          "The record source was not added. Try again.",
+        ),
+        failure,
       );
     } finally {
       setPending(false);
@@ -166,15 +172,23 @@ export function BoardCalendarSourceDialog({
             </NativeSelect>
           </Field>
           {modules.isError || fields.isError ? (
-            <p role="alert" className="text-danger-text text-sm">
-              The modules could not be loaded. Close and try again.
-            </p>
+            <>
+              <p role="alert" className="text-danger-text text-sm">
+                The modules could not be loaded. Close and try again.
+              </p>
+              <ErrorReference
+                id={apiErrorReference(modules.error ?? fields.error)}
+              />
+            </>
           ) : null}
           <DialogFrameFooter>
             {error ? (
-              <p role="alert" className="text-danger-text text-sm">
-                {error}
-              </p>
+              <>
+                <p role="alert" className="text-danger-text text-sm">
+                  {error}
+                </p>
+                <ErrorReference id={errorFailure?.reference} />
+              </>
             ) : null}
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, apiFetchWithMetadata } from "@/lib/api";
+import { apiFetchWithMetadata, apiContractError } from "@/lib/api";
 import * as S from "../contract/schemas";
 import type * as C from "../contract/types";
 import { requestOptions, responseData } from "./structure-contract";
@@ -62,7 +62,7 @@ export async function heartbeatPresence(
       .split(",")
       .some((part) => part.trim() === "no-store")
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return data;
 }
 

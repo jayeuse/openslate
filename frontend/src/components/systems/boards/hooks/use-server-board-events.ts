@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 import { listBoardEventOccurrences } from "../adapters/board-events-api";
 import type { BoardEventOccurrencePage } from "../adapters/board-events-api";
 
@@ -12,6 +14,8 @@ export type CalendarState = {
   data: BoardEventOccurrencePage | null;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
+  /** The failed read's request ID, shown under `error` (D1.6). */
+  reference?: string;
 };
 export type CalendarEvent =
   | { type: "begin"; key: string; sequence: number }
@@ -27,6 +31,7 @@ export type CalendarEvent =
       key: string;
       sequence: number;
       error: string;
+      reference?: string;
       retain: boolean;
     };
 
@@ -41,6 +46,7 @@ export function transitionCalendarState(
       data: null,
       status: "loading",
       error: null,
+      reference: undefined,
     };
   if (event.type === "begin")
     return {
@@ -49,17 +55,25 @@ export function transitionCalendarState(
       data: state.key === event.key ? state.data : null,
       status: "loading",
       error: null,
+      reference: undefined,
     };
   if (state.key !== event.key || state.sequence !== event.sequence)
     return state;
   if (event.type === "resolve")
-    return { ...state, data: event.data, status: "ready", error: null };
+    return {
+      ...state,
+      data: event.data,
+      status: "ready",
+      error: null,
+      reference: undefined,
+    };
   const data = event.retain ? state.data : null;
   return {
     ...state,
     data,
     status: data ? "ready" : "error",
     error: event.error,
+    reference: event.reference,
   };
 }
 
@@ -112,7 +126,8 @@ export function useServerBoardEvents(
   const [state, setState] = useState<CalendarState>(initialState);
   const [retry, setRetry] = useState(0);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const [loadMoreFailure, setLoadMoreFailure] = useErrorText();
+  const loadMoreError = loadMoreFailure?.message ?? null;
   const sequence = useRef(0);
   const loadingMore = useRef(false);
   const normalizedSearch = search.trim();
@@ -120,7 +135,7 @@ export function useServerBoardEvents(
 
   useEffect(() => {
     const request = ++sequence.current;
-    setLoadMoreError(null);
+    setLoadMoreFailure("");
     setIsLoadingMore(false);
     loadingMore.current = false;
     if (!window) {
@@ -165,6 +180,7 @@ export function useServerBoardEvents(
               error instanceof ApiError && error.status < 500
                 ? "Calendar unavailable. Ask a board manager to check your access, or retry."
                 : "Could not refresh this calendar. Try again.",
+            reference: apiErrorReference(error),
             retain: retainOnFailure(error),
           }),
         );
@@ -187,7 +203,7 @@ export function useServerBoardEvents(
     if (!window || !current?.pagination.hasMore || loadingMore.current) return;
     loadingMore.current = true;
     setIsLoadingMore(true);
-    setLoadMoreError(null);
+    setLoadMoreFailure("");
     const request = sequence.current;
     try {
       const next = await listBoardEventOccurrences(boardId, {
@@ -231,10 +247,11 @@ export function useServerBoardEvents(
             ? { ...latest, data: null, status: "error" }
             : latest,
         );
-      setLoadMoreError(
+      setLoadMoreFailure(
         error instanceof ApiError && error.status < 500
           ? "Calendar access changed or the results are unavailable. Refresh and retry."
           : "Could not load more events. Your current calendar is still available; try again.",
+        error,
       );
     } finally {
       loadingMore.current = false;
@@ -251,6 +268,7 @@ export function useServerBoardEvents(
     loadMore: loadNextPage,
     isLoadingMore,
     loadMoreError,
+    loadMoreReference: loadMoreFailure?.reference,
     invalidate: () => {
       const request = ++sequence.current;
       setState((current) =>

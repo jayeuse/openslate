@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test, type Page, modalStatus } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -440,7 +440,7 @@ test("Unscheduled lists undated cards; Add dates opens the card sheet on its sta
   await expect(sheet.getByLabel("Start", { exact: true })).toBeFocused();
   await sheet.getByLabel("Start", { exact: true }).fill("2026-09-28");
   await sheet.getByLabel("Start", { exact: true }).press("Enter");
-  await expect(sheet.getByRole("status")).toHaveText("Start saved.");
+  await expect(modalStatus(sheet)).toHaveText("Start saved.");
   expect(
     api.writes.find((write) => write.path === `/cards/${cards.plan.id}`)?.body,
   ).toEqual({ revision: 1, start_on: "2026-09-28" });

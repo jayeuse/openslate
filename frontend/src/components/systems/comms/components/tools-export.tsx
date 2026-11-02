@@ -18,6 +18,7 @@ import { ConfigurationFrame } from "./configuration-frame";
 import { ToolAdvanced } from "./tool-advanced";
 import { TextField } from "./message-shared";
 import type { CommsToolsDialogProps } from "./tools-dialog";
+import { useErrorText } from "@/lib/use-error-text";
 
 export function ExportTools({
   embedded,
@@ -43,7 +44,8 @@ export function ExportTools({
   const [waitingExport, setWaitingExport] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   // Only an organization admin manages the workspace.
   const allowed = managedDepartmentIds === "all";
   const protectedSelection = selected.some(privateRoom);
@@ -77,6 +79,7 @@ export function ExportTools({
           failure,
           "The export could not be started. Your choices are still here.",
         ),
+        failure,
       );
     } finally {
       setPassword("");
@@ -108,6 +111,7 @@ export function ExportTools({
           failure,
           "The export is unavailable. Start a new export.",
         ),
+        failure,
       );
     } finally {
       setWaitingExport(null);
@@ -159,7 +163,17 @@ export function ExportTools({
           rather than returning a partial file.
         </p>
         {(error || resource.error || !allowed) && (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={
+              error
+                ? errorFailure?.reference
+                : allowed
+                  ? resource.reference
+                  : null
+            }
+          >
             {error ||
               (allowed
                 ? "Exports could not be loaded."

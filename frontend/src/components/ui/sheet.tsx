@@ -1,6 +1,7 @@
 "use client";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import type { DialogContentProps } from "./dialog";
+import { ServerConnectionAnnouncer } from "@/components/server-connection-banner";
+import { useModalSurface, type DialogContentProps } from "./dialog";
 import { cn } from "@/lib/utils";
 export {
   Dialog as Sheet,
@@ -14,8 +15,10 @@ export {
 export function SheetContent({
   className,
   side = "right",
+  children,
   ...props
 }: DialogContentProps & { side?: "left" | "right" }) {
+  const modal = useModalSurface();
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Backdrop className="bg-foreground/20 fixed inset-0 z-50 transition-opacity duration-(--motion-base) ease-(--ease-out) data-ending-style:opacity-0 data-ending-style:duration-(--motion-fast) data-starting-style:opacity-0 motion-reduce:transition-none" />
@@ -29,7 +32,10 @@ export function SheetContent({
           className,
         )}
         {...props}
-      />
+      >
+        {children}
+        {modal ? <ServerConnectionAnnouncer /> : null}
+      </DialogPrimitive.Popup>
     </DialogPrimitive.Portal>
   );
 }

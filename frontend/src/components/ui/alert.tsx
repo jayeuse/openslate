@@ -1,13 +1,20 @@
 import type { HTMLAttributes } from "react";
 
+import { ErrorReference } from "@/components/ui/error-reference";
 import { cn } from "@/lib/utils";
 
 export function Alert({
   className,
   variant = "default",
+  reference,
+  children,
   ...props
 }: HTMLAttributes<HTMLDivElement> & {
   variant?: "default" | "warning" | "destructive" | "success";
+  /** The failed request's full ID. It renders as the error reference, always
+   * the last part of the alert (D1.4, docs/specs/system-health.md); with no
+   * ID it renders nothing. */
+  reference?: string | null;
 }) {
   const styles = {
     default: "border-border bg-card",
@@ -26,6 +33,11 @@ export function Alert({
         className,
       )}
       {...props}
-    />
+    >
+      {children}
+      {reference ? (
+        <ErrorReference id={reference} className="basis-full" />
+      ) : null}
+    </div>
   );
 }

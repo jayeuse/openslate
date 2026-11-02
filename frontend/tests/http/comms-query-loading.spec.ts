@@ -7,6 +7,8 @@ import {
   heldResponse,
   settleReact,
   isSidebarDepartmentRead,
+  answeredHeaders,
+  expectAnsweredReference,
 } from "./helpers/test";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
 import type { Page, Request } from "@playwright/test";
@@ -858,6 +860,7 @@ test("the composer waits neutrally for the open conversation's access and retrie
       if (fail)
         return route.fulfill({
           status: 500,
+          headers: answeredHeaders,
           json: { detail: "Unavailable" },
         });
       check.enter();
@@ -1409,7 +1412,11 @@ test("a failed conversation refresh keeps the list and raises an alert with Retr
     let fail = true;
     await page.route("**/api/comms/threads?**", (route) =>
       fail
-        ? route.fulfill({ status: 500, json: { detail: "Unavailable" } })
+        ? route.fulfill({
+            status: 500,
+            headers: answeredHeaders,
+            json: { detail: "Unavailable" },
+          })
         : route.fallback(),
     );
     api.server.publishAuthorizationChange("structure");
@@ -1417,6 +1424,8 @@ test("a failed conversation refresh keeps the list and raises an alert with Retr
       .getByRole("alert")
       .filter({ hasText: "Showing the last saved conversations." });
     await expect(failure).toBeVisible();
+    // The reference sits after Retry in the same band as the alert.
+    await expectAnsweredReference(failure.locator(".."));
     await expect(
       page.getByRole("button", { name: "Retry", exact: true }),
     ).toBeVisible();

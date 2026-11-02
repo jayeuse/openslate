@@ -50,6 +50,8 @@ import {
 } from "../helpers/person-security-outcome";
 import { useAccessDraftRegistration } from "../state/draft-navigation";
 import type { AccessUser } from "../state/api";
+import { useErrorText } from "@/lib/use-error-text";
+import { apiErrorReference } from "@/lib/api-errors";
 
 type Action = PersonSecurityAction;
 const copies = {
@@ -91,7 +93,8 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
   const [action, setAction] = useState<Action | null>(null);
   // The action whose result and errors show beside its own buttons.
   const [ran, setRan] = useState<Action | null>(null);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [notice, setNotice] = useState("");
   const alive = useRef(false);
   const epoch = useRef(0);
@@ -212,7 +215,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
         );
         const sent = outcome.sent;
         if (outcome.sent) setNotice(outcome.notice);
-        else setError(outcome.error);
+        else setError(outcome.error, caught);
         if (self && partial.local_revocation === "committed") {
           await completeSignOut();
           return;
@@ -222,7 +225,11 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
           if (sent && current(controller, generation)) void refresh();
         } catch {
           if (current(controller, generation))
-            setError(withSessionsReloadFailure);
+            // Adds to the message this outcome set above, if any.
+            setError(
+              withSessionsReloadFailure(sent ? "" : outcome.error),
+              caught,
+            );
         }
         if (
           self &&
@@ -231,7 +238,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
         )
           requestSessionRecheck();
       } else {
-        setError(personSecurityFailure(caught));
+        setError(personSecurityFailure(caught), caught);
         if (caught instanceof ApiError && caught.status === 401)
           requestSessionRecheck();
         else if (!(caught instanceof ApiError && caught.status === 403)) {
@@ -276,7 +283,11 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
         </Alert>
       ) : null}
       {error ? (
-        <Alert variant="destructive" className="mt-3">
+        <Alert
+          variant="destructive"
+          className="mt-3"
+          reference={errorFailure?.reference}
+        >
           <p>{error}</p>
           <Button
             variant="outline"
@@ -305,7 +316,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
         </div>
       </div>
       {query.isError ? (
-        <Alert variant="destructive">
+        <Alert variant="destructive" reference={apiErrorReference(query.error)}>
           <p>
             {data
               ? "Security could not be reloaded. The details below may be out of date."

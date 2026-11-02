@@ -45,6 +45,7 @@ import { GANTT_KEYS_HINT, GanttChart } from "./board-gantt-chart";
 import { GanttToolbar } from "./board-gantt-toolbar";
 import { chartVar } from "./board-kanban-card";
 import { AddStage, KanbanSetup } from "./board-kanban-stage";
+import { apiErrorReference } from "@/lib/api-errors";
 
 /** The Gantt's URL words: zoom, group, and the open card. */
 export type BoardGanttParams = Partial<
@@ -208,7 +209,12 @@ export function ServerBackedBoardGantt({
         {announcement}
       </div>
       {failed && !pending ? (
-        <Alert variant="destructive">
+        <Alert
+          variant="destructive"
+          reference={apiErrorReference(
+            stagesRead.error ?? cardsRead.error ?? labelsRead.error,
+          )}
+        >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>
               {stagesRead.data && cardsRead.data
@@ -343,7 +349,11 @@ export function ServerBackedBoardGantt({
           </Alert>
         ) : null}
         {staging.problems.length > 0 || staging.failure ? (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={staging.failure ? staging.failureReference : undefined}
+          >
             <ul className="flex flex-col gap-0.5">
               {staging.problems.map((problem) => (
                 <li key={problem.cardId}>{problem.text}</li>

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiError } from "@/lib/api";
+import { ApiError, apiContractError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { reportDone } from "@/lib/feedback";
+import { useErrorText } from "@/lib/use-error-text";
 import {
   createBoardEvent,
   readBoardEvent,
@@ -113,7 +114,8 @@ export function useBoardEventEditor({
   const [recordLinkPending, setRecordLinkPending] = useState(false);
   const recordLinkPendingRef = useRef(false);
   const pendingRef = useRef(false);
-  const [editorError, setEditorError] = useState<string | null>(null);
+  const [editorFailure, setEditorError] = useErrorText();
+  const editorError = editorFailure?.message ?? null;
   const [conflict, setConflict] = useState<BoardEventConflict | null>(null);
   const invalidateRef = useRef(invalidate);
   const activeDraft = canEdit && draft?.boardId === boardId ? draft : null;
@@ -157,6 +159,7 @@ export function useBoardEventEditor({
         ) {
           setEditorError(
             "Could not verify the latest event. Your draft is retained; try again.",
+            apiContractError(event),
           );
           return;
         }
@@ -213,6 +216,7 @@ export function useBoardEventEditor({
           invalidateRef.current();
           setEditorError(
             "This event or board is no longer available. The editor was closed.",
+            failure,
           );
         } else {
           setConflict({
@@ -222,6 +226,7 @@ export function useBoardEventEditor({
           });
           setEditorError(
             "Could not check the latest version. Your draft is retained; try again.",
+            failure,
           );
         }
       });
@@ -306,7 +311,10 @@ export function useBoardEventEditor({
       if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
         setDraft(null);
         setConflict(null);
-        setEditorError("Your access changed. The event editor was closed.");
+        setEditorError(
+          "Your access changed. The event editor was closed.",
+          error,
+        );
         onAccessDenied(true);
         invalidate();
       } else {
@@ -324,6 +332,7 @@ export function useBoardEventEditor({
               : error instanceof BoardEventDraftError
                 ? error.message
                 : "Could not save the event. Your draft is still here; try again.",
+          error,
         );
       }
     } finally {
@@ -390,7 +399,10 @@ export function useBoardEventEditor({
       if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
         setDraft(null);
         setConflict(null);
-        setEditorError("Your access changed. The event editor was closed.");
+        setEditorError(
+          "Your access changed. The event editor was closed.",
+          error,
+        );
         onAccessDenied(false);
         invalidate();
       }
@@ -446,6 +458,7 @@ export function useBoardEventEditor({
         setConflict(null);
         setEditorError(
           "This event or board is no longer available. The editor was closed.",
+          error,
         );
         invalidate();
       } else {
@@ -456,6 +469,7 @@ export function useBoardEventEditor({
         });
         setEditorError(
           "Could not check the latest version. Your draft is retained; try again.",
+          error,
         );
       }
     } finally {
@@ -500,6 +514,7 @@ export function useBoardEventEditor({
         error instanceof BoardEventDraftError
           ? error.message
           : "The latest event cannot be used. Your draft is retained.",
+        error,
       );
     }
   }
@@ -547,6 +562,7 @@ export function useBoardEventEditor({
     attachmentPending,
     recordLinkPending,
     editorError,
+    editorReference: editorFailure?.reference,
     setEditorError,
     conflict: activeDraft ? conflict : null,
     saveEvent,

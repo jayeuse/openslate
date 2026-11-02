@@ -3,7 +3,7 @@ import {
   type QueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
-import { ApiContractError, ApiError } from "@/lib/api";
+import { ApiContractError, ApiError, apiContractError } from "@/lib/api";
 import { currentOrganizationId } from "@/lib/organization-context";
 import { getConversation } from "../../comms/adapters/structure-api";
 import {
@@ -431,7 +431,7 @@ export function notificationTitleOptions(item: Notification, userId?: string) {
             if (!run) {
               if (page.items.length === 0)
                 throw new ApiError(404, "Source is unavailable");
-              throw new ApiContractError();
+              throw apiContractError(page);
             }
             title = run.name;
             break;

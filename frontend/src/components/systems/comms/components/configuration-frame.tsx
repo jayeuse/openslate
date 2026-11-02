@@ -29,6 +29,7 @@ import {
   AlertDialogFooter,
 } from "@/components/ui/alert-dialog";
 import { useDiscardGuard } from "../../shared/hooks/use-discard-guard";
+import { useErrorText } from "@/lib/use-error-text";
 
 export interface ConfigurationFrameProps {
   title: string;
@@ -67,7 +68,8 @@ export function ConfigurationFrame({
   const keepEditing = useRef<HTMLButtonElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const fields = useRef<HTMLFieldSetElement>(null);
   const pendingNavigation = useRef<(() => void) | null>(null);
   const {
@@ -118,8 +120,11 @@ export function ConfigurationFrame({
     let accepted = false;
     try {
       accepted = (await onSave()) !== false;
-    } catch {
-      setError("Changes could not be saved. Your draft is still available.");
+    } catch (caught) {
+      setError(
+        "Changes could not be saved. Your draft is still available.",
+        caught,
+      );
     } finally {
       setSaving(false);
       if (!accepted)
@@ -199,7 +204,12 @@ export function ConfigurationFrame({
       {(!embedded || onSave || footer || error) && (
         <footer className="bg-muted/15 flex shrink-0 flex-wrap items-center justify-end gap-2 px-5 py-4 sm:px-6">
           {error && (
-            <Alert role="alert" variant="destructive" className="w-full">
+            <Alert
+              role="alert"
+              variant="destructive"
+              className="w-full"
+              reference={errorFailure?.reference}
+            >
               {error}
             </Alert>
           )}

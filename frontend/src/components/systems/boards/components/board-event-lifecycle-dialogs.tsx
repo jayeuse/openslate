@@ -1,6 +1,7 @@
 "use client";
 
 import { Alert } from "@/components/ui/alert";
+import { ErrorReference } from "@/components/ui/error-reference";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -28,6 +29,7 @@ export function BoardEventLifecycleDialog({
   open,
   target,
   error,
+  reference,
   pending,
   canConfirm,
   onCancel,
@@ -36,6 +38,8 @@ export function BoardEventLifecycleDialog({
   open: boolean;
   target: BoardEventLifecycleAction | null;
   error: string | null;
+  /** The failed request's ID, shown under the error (D1.4). */
+  reference?: string;
   pending: boolean;
   canConfirm: boolean;
   onCancel: () => void;
@@ -59,7 +63,11 @@ export function BoardEventLifecycleDialog({
               : `Restore “${target?.title ?? "this event"}” to the calendar?`}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {error ? <Alert variant="destructive">{error}</Alert> : null}
+        {error ? (
+          <Alert variant="destructive" reference={reference}>
+            {error}
+          </Alert>
+        ) : null}
         <AlertDialogFooter>
           <Button
             type="button"
@@ -98,6 +106,7 @@ export function BoardEventPurgeDialog({
   enabled,
   preview,
   error,
+  reference,
   name,
   password,
   region,
@@ -112,6 +121,7 @@ export function BoardEventPurgeDialog({
   enabled: boolean;
   preview: LifecyclePurgePreview | null;
   error: string;
+  reference?: string;
   name: string;
   password: string;
   region: WorkspaceRegion | undefined;
@@ -138,9 +148,12 @@ export function BoardEventPurgeDialog({
         </DialogHeader>
         {pending && !preview ? <p role="status">Preparing review…</p> : null}
         {error ? (
-          <p role="alert" className="text-destructive text-sm">
-            {error}
-          </p>
+          <div>
+            <p role="alert" className="text-destructive text-sm">
+              {error}
+            </p>
+            <ErrorReference id={reference} />
+          </div>
         ) : null}
         {preview ? (
           <div className="mt-4 space-y-4">

@@ -170,7 +170,7 @@ def refresh(
             status=401,
             reason_code=f"refresh_{error.reason or 'unspecified'}",
         )
-        return _cleared_auth_error()
+        return _cleared_auth_error(request)
     except (SupabaseAuthUnavailable, SQLAlchemyError) as error:
         db.rollback()
         # The session is kept; the browser retries the refresh after this delay.

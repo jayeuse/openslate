@@ -4,6 +4,7 @@ import { useCommsClient } from "./client-context";
 import { wirePreferences } from "./settings-wire";
 import { messageFromCommsError } from "./runtime";
 import { reportCommsError } from "./comms-feedback";
+import { apiErrorReference } from "@/lib/api-errors";
 
 export function useCommsPreferences(preferences: CommsPreferences) {
   const { client } = useCommsClient();
@@ -58,6 +59,7 @@ export function useCommsPreferences(preferences: CommsPreferences) {
     } catch (error) {
       reportCommsError(
         messageFromCommsError(error, "Preferences could not be saved."),
+        apiErrorReference(error),
       );
     }
   };

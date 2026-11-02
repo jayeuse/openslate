@@ -30,6 +30,8 @@ import {
   DialogFooter,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { apiErrorMessage } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 
 type RecordCreateDialogProps = {
   open: boolean;
@@ -62,7 +64,8 @@ function CreateForm({
     initialFormValues(fields, null),
   );
   const [errors, setErrors] = useState<RecordFormErrors>({});
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [pending, setPending] = useState(false);
 
   const create = async () => {
@@ -89,10 +92,10 @@ function CreateForm({
       setErrors(serverErrors);
       if (Object.keys(serverErrors).length > 0) focusFirstInvalid();
       if (Object.keys(serverErrors).length === 0)
+        // The server's words never show (S1-C6); the shared path says it.
         setError(
-          caught instanceof Error && caught.message
-            ? caught.message
-            : "The record could not be created.",
+          apiErrorMessage(caught, "The record could not be created."),
+          caught,
         );
     } finally {
       setPending(false);
@@ -111,7 +114,12 @@ function CreateForm({
     >
       <div className="min-w-0">
         {error ? (
-          <Alert role="alert" variant="destructive" className="mb-4">
+          <Alert
+            role="alert"
+            variant="destructive"
+            className="mb-4"
+            reference={errorFailure?.reference}
+          >
             {error}
           </Alert>
         ) : null}

@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
+import {
+  ApiContractError,
+  ApiError,
+  apiFetch,
+  keepRequestId,
+  apiContractError,
+} from "@/lib/api";
 import {
   crossBoardOccurrenceWire,
   nextOccurrenceWire,
@@ -62,7 +68,10 @@ export type CrossBoardOccurrences = {
 
 function safe(error: unknown): unknown {
   return error instanceof ApiError
-    ? new ApiError(error.status, "Request could not be completed")
+    ? keepRequestId(
+        new ApiError(error.status, "Request could not be completed"),
+        error,
+      )
     : error;
 }
 
@@ -96,12 +105,13 @@ export async function listCrossBoardOccurrences(raw: {
     } catch (error) {
       throw safe(error);
     }
-    if (result.pagination.offset !== items.length) throw new ApiContractError();
+    if (result.pagination.offset !== items.length)
+      throw apiContractError(result);
     items.push(...result.items);
     if (!result.pagination.hasMore) {
       const covered = new Set(result.boards.map((state) => state.boardId));
       if (items.some((item) => !covered.has(item.board.id)))
-        throw new ApiContractError();
+        throw apiContractError(result);
       return { items, boards: result.boards };
     }
   }

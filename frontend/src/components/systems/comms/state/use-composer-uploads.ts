@@ -10,6 +10,7 @@ import {
   FILES_BUSY_MESSAGE,
   isFilesBusy,
 } from "../../shared/adapters/files-api";
+import { apiErrorReference } from "@/lib/api-errors";
 
 export function useComposerUploads(
   conversationId: string,
@@ -25,6 +26,8 @@ export function useComposerUploads(
       file: File;
       progress: number;
       error: string;
+      /** The failed upload request's ID, shown as its reference (D1.6). */
+      reference?: string;
       active: boolean;
       /** The upload waits for file capacity on the server. */
       waiting?: boolean;
@@ -56,7 +59,13 @@ export function useComposerUploads(
     if (!client || flights.current.has(item.id)) return;
     const controller = new AbortController();
     flights.current.set(item.id, controller);
-    update(item.id, { active: true, error: "", progress: 0, waiting: false });
+    update(item.id, {
+      active: true,
+      error: "",
+      reference: undefined,
+      progress: 0,
+      waiting: false,
+    });
     try {
       const result = await run(
         `upload:${conversationId}:${item.id}`,
@@ -124,6 +133,7 @@ export function useComposerUploads(
             : code === "file_quota_busy"
               ? "File storage is busy."
               : "The file could not be attached. Your draft is still available.",
+        reference: apiErrorReference(error),
       });
     } finally {
       flights.current.delete(item.id);

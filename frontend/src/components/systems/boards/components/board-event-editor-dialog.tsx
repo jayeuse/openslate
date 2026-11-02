@@ -35,6 +35,7 @@ export function BoardEventEditorDialog({
   busy,
   conflict,
   error,
+  errorReference,
   onChange,
   onClose,
   onSave,
@@ -58,6 +59,7 @@ export function BoardEventEditorDialog({
   busy: boolean;
   conflict: EventConflict | null;
   error: string | null;
+  errorReference?: string;
   onChange: (patch: Partial<BoardEventDraft>) => void;
   onClose: () => void;
   onSave: () => void;
@@ -119,6 +121,7 @@ export function BoardEventEditorDialog({
               busy={busy}
               saveBlocked={conflict !== null}
               error={error}
+              errorReference={errorReference}
               onChange={onChange}
               onCancel={requestClose}
               onSave={onSave}

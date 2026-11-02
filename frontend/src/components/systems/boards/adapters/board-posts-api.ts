@@ -1,9 +1,10 @@
 import { z } from "zod";
 import {
-  ApiContractError,
   ApiError,
   apiFetch,
   type ApiRequestInit,
+  keepRequestId,
+  apiContractError,
 } from "@/lib/api";
 
 import {
@@ -115,19 +116,29 @@ const safeCodes: Record<string, { status: number; message: string }> = {
   },
 };
 
-function throwSafePostError(status: number, detail: unknown): never {
+function throwSafePostError(
+  status: number,
+  detail: unknown,
+  source: unknown,
+): never {
   const parsed = z.object({ code: z.string() }).passthrough().safeParse(detail);
   if (parsed.success) {
     const safe = safeCodes[parsed.data.code];
     if (safe?.status === status)
-      throw new ApiError(
-        status,
-        safe.message,
-        { code: parsed.data.code, message: safe.message },
-        parsed.data.code,
+      throw keepRequestId(
+        new ApiError(
+          status,
+          safe.message,
+          { code: parsed.data.code, message: safe.message },
+          parsed.data.code,
+        ),
+        source,
       );
   }
-  throw new ApiError(status, "Request could not be completed");
+  throw keepRequestId(
+    new ApiError(status, "Request could not be completed"),
+    source,
+  );
 }
 
 async function postJson<Schema extends z.ZodType>(
@@ -139,7 +150,7 @@ async function postJson<Schema extends z.ZodType>(
     return await apiFetch(path, schema, { cache: "no-store", ...init });
   } catch (error) {
     if (error instanceof ApiError)
-      return throwSafePostError(error.status, error.details);
+      return throwSafePostError(error.status, error.details, error);
     throw error;
   }
 }
@@ -205,7 +216,7 @@ export async function listBoardPosts(
       (item) => item.boardId !== boardId || !matchesView(item, options.view),
     )
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return result;
 }
 
@@ -226,7 +237,7 @@ export async function readBoardPost(
     result.boardId !== boardId ||
     !matchesView(result, selected)
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return result;
 }
 
@@ -260,7 +271,7 @@ export async function updateBoardPost(
       ...contentBody(input),
     }),
   });
-  if (result.id !== postId) throw new ApiContractError();
+  if (result.id !== postId) throw apiContractError(result);
   return result;
 }
 
@@ -283,7 +294,7 @@ export async function scheduleBoardPost(
       }),
     },
   );
-  if (result.id !== postId) throw new ApiContractError();
+  if (result.id !== postId) throw apiContractError(result);
   return result;
 }
 
@@ -310,7 +321,7 @@ export async function publishBoardPost(
     result.postId !== postId ||
     result.publicationKey !== input.publicationKey
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return result;
 }
 
@@ -329,7 +340,7 @@ async function lifecyclePost(
     mutationWire,
     { method: "POST", body: JSON.stringify(body) },
   );
-  if (result.id !== postId) throw new ApiContractError();
+  if (result.id !== postId) throw apiContractError(result);
   return result;
 }
 
@@ -382,7 +393,7 @@ export async function deleteBoardPost(
     method: "DELETE",
     body: JSON.stringify(revisionBody(rawBoardRevision, rawPostRevision)),
   });
-  if (result.id !== postId) throw new ApiContractError();
+  if (result.id !== postId) throw apiContractError(result);
   return result;
 }
 
@@ -399,7 +410,7 @@ export async function listBoardPostRevisions(
     revisionListWire,
     { signal },
   );
-  if (result.postId !== postId) throw new ApiContractError();
+  if (result.postId !== postId) throw apiContractError(result);
   return result;
 }
 
@@ -418,6 +429,6 @@ export async function readBoardPostRevision(
     { signal },
   );
   if (result.id !== revisionId || result.postId !== postId)
-    throw new ApiContractError();
+    throw apiContractError(result);
   return result;
 }

@@ -2,8 +2,8 @@ import { z } from "zod";
 import {
   apiFetch,
   apiFetchWithMetadata,
-  ApiContractError,
   type ApiRequestInit,
+  apiContractError,
 } from "@/lib/api";
 import {
   departmentSchema,
@@ -94,8 +94,9 @@ function listValues<SortBy extends string>(
   };
 }
 
-function requiredEtag(etag: string | null): string {
-  if (etag === null || !etag.trim()) throw new ApiContractError();
+/** `source` is the response the ETag came from, if any (S1-C3). */
+function requiredEtag(etag: string | null, source?: unknown): string {
+  if (etag === null || !etag.trim()) throw apiContractError(source);
   return etag;
 }
 
@@ -111,7 +112,7 @@ async function fetchAccessVersioned<Schema extends z.ZodType>(
   init: ApiRequestInit,
 ): Promise<AccessVersioned<z.output<Schema>>> {
   const result = await apiFetchWithMetadata(path, schema, init);
-  return { data: result.data, etag: requiredEtag(result.etag) };
+  return { data: result.data, etag: requiredEtag(result.etag, result) };
 }
 
 function userPath(userId: string): string {
@@ -221,7 +222,7 @@ export async function reconcileAccessInvitation(
     userSchema,
     { method: "POST", body: JSON.stringify({}), signal: options.signal },
   );
-  if (user.id !== userId) throw new ApiContractError();
+  if (user.id !== userId) throw apiContractError(user);
   return user;
 }
 

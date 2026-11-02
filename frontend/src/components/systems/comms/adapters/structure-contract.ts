@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, type ApiFetchMetadata } from "@/lib/api";
+import { type ApiFetchMetadata, apiContractError } from "@/lib/api";
 import { pageSchema, preconditionSchema } from "../contract/schemas";
 import type * as C from "../contract/types";
 
@@ -50,14 +50,14 @@ export function responseData<Schema extends z.ZodType>(
   result: ApiFetchMetadata<Schema>,
   status = 200,
 ): z.output<Schema> {
-  if (result.response.status !== status) throw new ApiContractError();
+  if (result.response.status !== status) throw apiContractError(result);
   return result.data;
 }
 
 /** Private job/protected-resource replies must not enter a shared cache. */
-export function requirePrivateNoStore(headers: Headers): void {
+export function requirePrivateNoStore(response: Response): void {
   const directives =
-    headers
+    response.headers
       .get("Cache-Control")
       ?.toLowerCase()
       .split(",")
@@ -67,14 +67,14 @@ export function requirePrivateNoStore(headers: Headers): void {
     !directives.includes("no-store") ||
     directives.includes("public")
   )
-    throw new ApiContractError();
+    throw apiContractError(response);
 }
 
 export function privateResponse<Schema extends z.ZodType>(
   result: ApiFetchMetadata<Schema>,
   status = 200,
 ): z.output<Schema> {
-  requirePrivateNoStore(result.response.headers);
+  requirePrivateNoStore(result.response);
   return responseData(result, status);
 }
 
@@ -90,9 +90,9 @@ export function versioned<Schema extends z.ZodType<{ id: string }>>(
       result.response.headers.get("Location") !==
         `/api${collection}/${result.data.id}`)
   ) {
-    throw new ApiContractError();
+    throw apiContractError(result);
   }
   // Validation above requires a strong nonempty ETag, not a generated fallback.
-  if (result.etag === null) throw new ApiContractError();
+  if (result.etag === null) throw apiContractError(result);
   return { data: result.data, etag: result.etag };
 }

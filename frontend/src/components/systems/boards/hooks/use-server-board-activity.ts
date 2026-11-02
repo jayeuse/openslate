@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { apiErrorReference } from "@/lib/api-errors";
 import { listBoardActivity } from "../adapters/board-tools-api";
 import type {
   BoardActivity,
@@ -14,6 +15,8 @@ export type BoardActivityState = {
   data: BoardToolsPage<BoardActivity> | null;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
+  /** The failed read's request ID, shown under `error` (D1.6). */
+  reference?: string;
 };
 
 export type BoardActivityEvent =
@@ -29,6 +32,7 @@ export type BoardActivityEvent =
       key: string;
       sequence: number;
       error: string;
+      reference?: string;
       retain: boolean;
     };
 
@@ -72,13 +76,20 @@ export function transitionBoardActivity(
   if (state.key !== event.key || state.sequence !== event.sequence)
     return state;
   if (event.type === "resolve")
-    return { ...state, data: event.data, status: "ready", error: null };
+    return {
+      ...state,
+      data: event.data,
+      status: "ready",
+      error: null,
+      reference: undefined,
+    };
   const data = event.retain ? state.data : null;
   return {
     ...state,
     data,
     status: data ? "ready" : "error",
     error: event.error,
+    reference: event.reference,
   };
 }
 
@@ -142,6 +153,7 @@ export function useServerBoardActivity(
             key,
             sequence: request,
             error: failure.error,
+            reference: apiErrorReference(error),
             retain: failure.retain,
           }),
         );

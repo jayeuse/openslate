@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { apiErrorReference } from "@/lib/api-errors";
 import { queryOptions, useQueries, useQuery } from "@tanstack/react-query";
 import {
   dataSourceOptions,
@@ -145,7 +146,11 @@ export type CalendarWindowData = {
   /** True once the board's events for the window are complete. */
   eventsReady: boolean;
   eventsError: string | null;
+  /** The failed read's request ID, shown under `eventsError` (D1.6). */
+  eventsReference: string | undefined;
   statuses: Map<string, CalendarReadStatus>;
+  /** Each failed read's request ID, by calendar (D1.4). */
+  references: Map<string, string>;
   /** The due cards behind the "Cards · Due" items, for their summary. */
   dueCards: readonly DueCard[];
   retry: (calendarId: string) => void;
@@ -177,7 +182,8 @@ export function useBoardCalendarWindow({
     liveKey,
     search,
   );
-  const { state, isLoadingMore, loadMoreError, loadMore } = events;
+  const { state, isLoadingMore, loadMoreError, loadMoreReference, loadMore } =
+    events;
   // A busy window is read page by page to its end, so the grid is complete.
   useEffect(() => {
     if (
@@ -247,25 +253,37 @@ export function useBoardCalendarWindow({
         ? "ready"
         : "loading",
   );
+  const references = new Map<string, string>();
+  const keepReference = (calendarId: string, error: unknown) => {
+    const reference = apiErrorReference(error);
+    if (reference) references.set(calendarId, reference);
+  };
+  // The events read's reference is in the calendar's own alert, once (D1.4).
   visibleSources.forEach((source, index) => {
     const read = sourceReads[index];
     statuses.set(
       boardSourceCalendarId(source.id),
       read.isError ? "error" : read.isSuccess ? "ready" : "loading",
     );
+    if (read.isError)
+      keepReference(boardSourceCalendarId(source.id), read.error);
   });
-  if (dueCards && !hidden.has(dueCalendar))
+  if (dueCards && !hidden.has(dueCalendar)) {
     statuses.set(
       dueCalendar,
       dueRead.isError ? "error" : dueRead.isSuccess ? "ready" : "loading",
     );
+    if (dueRead.isError) keepReference(dueCalendar, dueRead.error);
+  }
 
   return {
     items,
     nextOccurrence: eventsPage?.nextOccurrence ?? null,
     eventsReady: statuses.get(eventCalendar) === "ready",
     eventsError: state.error ?? loadMoreError,
+    eventsReference: state.error ? state.reference : loadMoreReference,
     statuses,
+    references,
     dueCards: dueRead.data ?? [],
     retry: (calendarId) => {
       if (calendarId === eventCalendar) {

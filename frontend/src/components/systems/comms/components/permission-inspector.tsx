@@ -229,7 +229,11 @@ export function PermissionInspector({
           </Choice>
         )}
         {resource.error && (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={resource.reference}
+          >
             Access could not be checked.{" "}
             <Action onClick={resource.reload}>Try again</Action>
           </Alert>

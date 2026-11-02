@@ -26,6 +26,7 @@ import type {
 import { uuid } from "../adapters/board-kanban-schemas";
 import { readBoard } from "../adapters/board-management-api";
 import { movedChecklist } from "../domain/card-sheet";
+import { useErrorText } from "@/lib/use-error-text";
 
 /** The words a save announces ("Due saved."), by the field it changed. */
 export const CARD_FIELD_WORDS = {
@@ -94,7 +95,8 @@ export function useCardSheet({
             : { kind: "loading" };
 
   const [notice, setNotice] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problemFailure, setProblem] = useErrorText();
+  const problem = problemFailure?.message ?? null;
   // Another card's words never show on this one.
   const [shownFor, setShownFor] = useState(cardId);
   if (shownFor !== cardId) {
@@ -140,7 +142,7 @@ export function useCardSheet({
   };
   const fail = (error: unknown) => {
     setNotice("");
-    setProblem(kanbanErrorMessage(error));
+    setProblem(kanbanErrorMessage(error), error);
     if (isStaleKanbanWrite(error) || refused(error)) {
       void client.invalidateQueries({ queryKey: key });
       void client.invalidateQueries({ queryKey: kanbanKeys.cards(boardId) });
@@ -285,6 +287,7 @@ export function useCardSheet({
     state,
     notice,
     problem,
+    problemReference: problemFailure?.reference,
     saving,
     save,
     checklist,

@@ -750,3 +750,33 @@ test("Report purge carries a guarded exact-name challenge and refuses mismatched
     mock.restore();
   }
 });
+
+test("a Report answer for another Report keeps that response's request ID", async () => {
+  // S1-C3, D4.5: the identity check after the read keeps the response's ID,
+  // through the shared read wrapper.
+  const requestId = "019a4c2e-7b1d-7c3e-9f00-4f9c2e1a0b2c";
+  const mock = installFetch(
+    () =>
+      new Response(
+        JSON.stringify({
+          ...reportResponse(),
+          id: "00000000-0000-4000-8000-000000000999",
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-ID": requestId,
+          },
+        },
+      ),
+  );
+  try {
+    const refused = await getOpenViewReport(reportId).catch(
+      (error: unknown) => error,
+    );
+    expect(refused).toBeInstanceOf(ApiContractError);
+    expect((refused as ApiContractError).requestId).toBe(requestId);
+  } finally {
+    mock.restore();
+  }
+});

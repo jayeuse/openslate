@@ -1,4 +1,4 @@
-import { authMeBody, heldResponse, type Page } from "./test";
+import { authMeBody, heldResponse, type Page, answeredHeaders } from "./test";
 import { ids, mockAccessApi } from "./access-api";
 import { boardId, board, installBoardApi } from "./boards-api";
 import { installOpenViewEventSource } from "./openview-event-source";
@@ -382,7 +382,11 @@ export async function installPersonCardApi(
     if (hold) await hold.released;
     await route.fulfill({
       status,
-      headers: { "Cache-Control": "private, no-store" },
+      headers: {
+        "Cache-Control": "private, no-store",
+        // A server error here came from the server (D3.2).
+        ...(status >= 500 ? answeredHeaders : {}),
+      },
       json:
         status === 200
           ? body

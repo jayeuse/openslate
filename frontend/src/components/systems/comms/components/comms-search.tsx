@@ -22,6 +22,7 @@ import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 import { useVisiblePeople } from "../state/use-visible-people";
 import type { NavigationState } from "../state/use-comms-navigation";
 import { CommsSearchResults } from "./comms-search-results";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 type Filters = {
   who: string;
@@ -448,6 +449,7 @@ export default function CommsSearch({
               >
                 Retry search
               </Button>
+              <ErrorReference id={results.reference} className="mt-0" />
             </div>
           ) : (
             data && (

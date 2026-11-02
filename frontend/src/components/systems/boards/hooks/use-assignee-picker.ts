@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiErrorReference } from "@/lib/api-errors";
 import {
   extendsRead,
   readStamp,
@@ -38,7 +39,8 @@ export function useAssigneePicker(boardId: string) {
   const first = useQuery(boardPeopleOptions(boardId, applied));
   const [extension, setExtension] = useState<Extension | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [moreError, setMoreError] = useState(false);
+  // The failed "more" read, kept for its reference (D1.6).
+  const [moreError, setMoreError] = useState<{ cause: unknown } | null>(null);
   const more =
     extension &&
     extension.search === applied &&
@@ -63,7 +65,7 @@ export function useAssigneePicker(boardId: string) {
     const forSearch = applied;
     const loaded = more?.items ?? [];
     setLoadingMore(true);
-    setMoreError(false);
+    setMoreError(null);
     void listBoardPeople(boardId, {
       offset: first.data.items.length + loaded.length,
       search: forSearch,
@@ -76,7 +78,7 @@ export function useAssigneePicker(boardId: string) {
           hasMore: page.pagination.hasMore,
         }),
       )
-      .catch(() => setMoreError(true))
+      .catch((cause: unknown) => setMoreError({ cause }))
       .finally(() => setLoadingMore(false));
   };
 
@@ -86,8 +88,11 @@ export function useAssigneePicker(boardId: string) {
     setSearch: (value: string) => setSearch(value.slice(0, 100)),
     loading: first.isPending,
     error: first.isError || moreError ? UNAVAILABLE : undefined,
+    reference: apiErrorReference(
+      first.isError ? first.error : moreError?.cause,
+    ),
     retry: () => {
-      setMoreError(false);
+      setMoreError(null);
       void first.refetch();
     },
     hasMore,

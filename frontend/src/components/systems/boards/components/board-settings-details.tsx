@@ -134,7 +134,10 @@ export function ServerBoardManagementDisplay({
           </p>
         ) : (
           // Only a failed read is an error; a manager check is a fact.
-          <Alert variant={failed ? "destructive" : "default"}>
+          <Alert
+            variant={failed ? "destructive" : "default"}
+            reference={failed ? view.accessReference : undefined}
+          >
             {failed
               ? "Board settings could not be loaded. Try again."
               : "You cannot manage this board."}
@@ -174,7 +177,9 @@ export function ServerBoardManagementDisplay({
   );
   const errorBeside = (action: "lifecycle" | "purge") =>
     lifecycleError?.action === action ? (
-      <Alert variant="destructive">{lifecycleError.message}</Alert>
+      <Alert variant="destructive" reference={lifecycleError.reference}>
+        {lifecycleError.message}
+      </Alert>
     ) : null;
   const advancedParts = [
     files ? "Files" : null,
@@ -185,7 +190,11 @@ export function ServerBoardManagementDisplay({
 
   return (
     <section aria-label="Board details" className="flex min-w-0 flex-col gap-5">
-      {view.error ? <Alert variant="destructive">{view.error}</Alert> : null}
+      {view.error ? (
+        <Alert variant="destructive" reference={view.errorReference}>
+          {view.error}
+        </Alert>
+      ) : null}
       {/* Kept mounted, so only its words change and each is heard. */}
       <p role="status" className="text-sm empty:sr-only">
         {view.notice ?? ""}

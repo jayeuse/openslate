@@ -2,6 +2,7 @@
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 import { useState, type ComponentProps } from "react";
 import { cn } from "@/lib/utils";
+import { ServerConnectionAnnouncer } from "@/components/server-connection-banner";
 import { useWorkspaceInteractionSuspended } from "@/components/systems/shared/runtime/workspace-identity";
 export {
   DialogHeader as AlertDialogHeader,
@@ -43,6 +44,7 @@ export const AlertDialogTrigger = AlertDialogPrimitive.Trigger;
 export const AlertDialogCancel = AlertDialogPrimitive.Close;
 export function AlertDialogContent({
   className,
+  children,
   ...props
 }: Omit<ComponentProps<typeof AlertDialogPrimitive.Popup>, "className"> & {
   className?: string;
@@ -57,7 +59,11 @@ export function AlertDialogContent({
             className,
           )}
           {...props}
-        />
+        >
+          {children}
+          {/* An alert dialog is always modal (D4 item 11). */}
+          <ServerConnectionAnnouncer />
+        </AlertDialogPrimitive.Popup>
       </AlertDialogPrimitive.Viewport>
     </AlertDialogPrimitive.Portal>
   );

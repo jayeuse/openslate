@@ -131,7 +131,8 @@ def test_account_rows_are_visible_only_for_people_of_the_bound_organization(
     assert card.status_code == 200, card.text
     assert hidden_card.status_code == 404
     assert hidden_card.json() == {
-        "detail": {"code": "person_not_found", "message": "Person not found"}
+        "detail": {"code": "person_not_found", "message": "Person not found"},
+        "request_id": hidden_card.headers["X-Request-ID"],
     }
 
 

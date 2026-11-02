@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, keepRequestId, apiContractError } from "@/lib/api";
 
 const uuid = z.string().uuid();
 const authorSchema = z
@@ -82,7 +82,10 @@ export async function listBoardPostAuthors(
     );
   } catch (error) {
     if (error instanceof ApiError)
-      throw new ApiError(error.status, "Author choices are unavailable");
+      throw keepRequestId(
+        new ApiError(error.status, "Author choices are unavailable"),
+        error,
+      );
     throw error;
   }
   if (
@@ -92,6 +95,6 @@ export async function listBoardPostAuthors(
       (choices.items.some((choice) => !page.ids?.includes(choice.id)) ||
         choices.pagination.total > new Set(page.ids).size))
   )
-    throw new ApiContractError();
+    throw apiContractError(choices);
   return choices;
 }

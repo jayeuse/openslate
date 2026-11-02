@@ -55,6 +55,8 @@ import {
   AccessVerifyingProvider,
   useAccessDraftNavigation,
 } from "./state/draft-navigation";
+import { ErrorReference } from "@/components/ui/error-reference";
+import { apiErrorReference } from "@/lib/api-errors";
 
 const accessViews = {
   security: {
@@ -243,6 +245,9 @@ function AccessControlCenter() {
         >
           Retry
         </Button>
+        <ErrorReference
+          id={identityMismatch ? undefined : apiErrorReference(identity.error)}
+        />
       </div>
     ) : shownAccess === "none" ? (
       <Empty className="border">

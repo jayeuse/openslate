@@ -535,3 +535,28 @@ for (const row of [
   test(`file size ${row.bytes} reads as ${row.label}`, () => {
     expect(formatFileSize(row.bytes)).toBe(row.label);
   });
+
+test("a refused file download keeps that response's request ID", async () => {
+  // S1-C3, D4.5: a header check on the download keeps the response's ID.
+  const requestId = "019a4c2e-7b1d-7c3e-9f00-4f9c2e1a0b2c";
+  const mock = installFetch(
+    () =>
+      new Response("hello", {
+        headers: {
+          ...attachment,
+          "Content-Disposition": "inline",
+          "X-Request-ID": requestId,
+        },
+      }),
+  );
+  try {
+    const refused = await requestFileContent(
+      `/files/${ids.file}/content`,
+      5,
+    ).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ApiContractError);
+    expect((refused as ApiContractError).requestId).toBe(requestId);
+  } finally {
+    mock.restore();
+  }
+});

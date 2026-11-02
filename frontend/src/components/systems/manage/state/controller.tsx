@@ -33,6 +33,7 @@ import {
 } from "../adapters/backup-api";
 import { isStaleWorkspaceRevision } from "../adapters/workspace-api";
 import type { LastGoodBackup } from "../domain/backup-rules";
+import { useErrorText } from "@/lib/use-error-text";
 
 /** The newest completed backup of this installation, for the status panel. */
 const lastGoodRequest = {
@@ -70,7 +71,8 @@ export function useManageMaintenance({
     ManageBackupStatus["policy"] | null
   >(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [notice, setNotice] = useState("");
   const [staleRevision, setStaleRevision] = useState(false);
   const [policyDenied, setPolicyDenied] = useState(false);
@@ -82,7 +84,8 @@ export function useManageMaintenance({
   const command = useRef<AbortController | null>(null);
   const queueAttempt = useRef<{ name: string; key: string } | null>(null);
   const [exportDenied, setExportDenied] = useState(false);
-  const [exportError, setExportError] = useState("");
+  const [exportErrorFailure, setExportError] = useErrorText();
+  const exportError = exportErrorFailure?.message ?? "";
   const [downloadAdmission, setDownloadAdmission] = useState<{
     actorId: string;
     exportId: string;
@@ -370,6 +373,7 @@ export function useManageMaintenance({
             : caught instanceof ApiError && caught.status === 403
               ? "Only the installation owner can change the backup schedule."
               : "The backup schedule could not be saved. Your draft is still here.",
+          caught,
         );
       }
       return false;
@@ -403,6 +407,7 @@ export function useManageMaintenance({
         setPolicyDenied(true);
       setError(
         "The latest backup schedule could not be loaded. Your draft is still here.",
+        caught,
       );
     } finally {
       if (command.current === operation) {
@@ -462,6 +467,7 @@ export function useManageMaintenance({
           : caught instanceof ApiError && caught.status === 403
             ? "Only the installation owner can request a backup."
             : "The backup request could not be confirmed. Retry the same name to check the same request.",
+        caught,
       );
       return false;
     } finally {
@@ -522,6 +528,7 @@ export function useManageMaintenance({
           : caught instanceof ApiError && caught.status === 403
             ? "Only the installation owner can request an export."
             : "The export request could not be confirmed. Retry without changing the passphrase to check the same request.",
+        caught,
       );
       return false;
     } finally {
@@ -591,6 +598,7 @@ export function useManageMaintenance({
           : caught instanceof ApiError && caught.status === 429
             ? "Too many password checks. Wait before trying again."
             : "Password confirmation is unavailable. Try again.",
+        caught,
       );
       return false;
     } finally {
@@ -616,6 +624,7 @@ export function useManageMaintenance({
     acceptedExportSource,
     acceptedDownloadAdmission,
     exportError,
+    exportErrorReference: exportErrorFailure?.reference,
     acceptedStatus,
     acceptedLastGood,
     actionsReason,
@@ -637,6 +646,7 @@ export function useManageMaintenance({
     staleRevision,
     pending,
     error,
+    errorReference: errorFailure?.reference,
     notice,
     changeDraft: (next: BackupPolicyDraft) => {
       const base = draftPolicy ?? acceptedStatus?.policy;

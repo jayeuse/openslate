@@ -320,8 +320,14 @@ test("aborting while a response body is read preserves the abort error", async (
   const body = new Promise<unknown>((_, reject) => {
     rejectBody = reject;
   });
+  // A fetch answer always has headers; the shell banner reads them (S2-C7).
   globalThis.fetch = async () =>
-    ({ status: 200, ok: true, json: () => body }) as Response;
+    ({
+      status: 200,
+      ok: true,
+      headers: new Headers(),
+      json: () => body,
+    }) as Response;
   try {
     const result = apiFetch("/records/one", z.object({}), {
       signal: controller.signal,

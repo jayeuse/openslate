@@ -30,3 +30,35 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+/**
+ * The full request ID of a failed request, shown as its error reference (R5,
+ * docs/specs/system-health.md). Failures that never reached the server (a
+ * failed fetch, an abort, a browser check) have none.
+ */
+export function apiErrorReference(error: unknown): string | undefined {
+  if (error instanceof ApiError || error instanceof ApiContractError)
+    return error.requestId;
+  return undefined;
+}
+
+/** An API error's message and reference, kept together until they render. */
+export type ApiErrorText = { message: string; reference: string | undefined };
+
+export function apiErrorText(error: unknown, fallback: string): ApiErrorText {
+  return {
+    message: apiErrorMessage(error, fallback),
+    reference: apiErrorReference(error),
+  };
+}
+
+/**
+ * A screen's error state: the words it shows and, when `cause` is a failed
+ * request, that request's reference (D1.6). An empty message clears it.
+ */
+export function errorTextFor(
+  message: string,
+  cause?: unknown,
+): ApiErrorText | null {
+  return message ? { message, reference: apiErrorReference(cause) } : null;
+}

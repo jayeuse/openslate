@@ -17,6 +17,7 @@ import { departmentNavigationOptions } from "@/components/department-navigation"
 import { isRefusal } from "@/components/department-navigation-model";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
+import { ErrorReference } from "@/components/ui/error-reference";
 import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
@@ -63,6 +64,7 @@ import {
   useServerBoardsResource,
   type BoardSection,
 } from "../hooks/use-server-boards";
+import { apiErrorReference } from "@/lib/api-errors";
 
 // From 1280px the page is still: the region fills the height under the
 // header, and its content is the one panel that scrolls (BR8).
@@ -447,6 +449,9 @@ function ServerBackedBoardsContent() {
   const refreshError = board
     ? (resource.detail.error ?? resource.list.error)
     : null;
+  const refreshReference = resource.detail.error
+    ? resource.detail.reference
+    : resource.list.reference;
   // Both live regions stay mounted, so a screen reader hears each change.
   const refreshStatus = (
     <>
@@ -455,7 +460,7 @@ function ServerBackedBoardsContent() {
           ? "Refreshing…"
           : ""}
       </span>
-      <span role="alert" className="inline-flex items-center gap-2">
+      <span role="alert" className="inline-flex flex-wrap items-center gap-x-2">
         {refreshError ? (
           <>
             <span className="text-danger-text">{refreshError}</span>
@@ -467,6 +472,7 @@ function ServerBackedBoardsContent() {
             >
               Retry
             </Button>
+            <ErrorReference id={refreshReference} className="basis-full" />
           </>
         ) : null}
       </span>
@@ -492,6 +498,7 @@ function ServerBackedBoardsContent() {
           departmentIndexOf={departmentIndexOf}
           workspaceCalendar={workspaceCalendar.data}
           workspaceDateError={workspaceCalendar.isError}
+          workspaceDateReference={apiErrorReference(workspaceCalendar.error)}
           onRetryWorkspaceDate={() => void workspaceCalendar.refetch()}
           selectedEventId={searchParams.get("event")}
           view={searchParams.get("view")}
@@ -617,6 +624,15 @@ function ServerBackedBoardsContent() {
                 <RefreshCw data-icon="inline-start" /> Retry
               </Button>
             ) : null}
+            {!refused && (unavailable || resource.list.error) ? (
+              <ErrorReference
+                id={
+                  unavailable
+                    ? resource.detail.reference
+                    : resource.list.reference
+                }
+              />
+            ) : null}
             {/* An empty workspace has its first step in view. The server
                 still decides who may create. */}
             {!unavailable && !resource.list.error && noBoards && isAdmin && (
@@ -628,7 +644,10 @@ function ServerBackedBoardsContent() {
         ) : (
           <>
             {section !== "calendar" && workspaceCalendar.isError && (
-              <Alert variant="destructive">
+              <Alert
+                variant="destructive"
+                reference={apiErrorReference(workspaceCalendar.error)}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
                     {workspaceCalendar.data
@@ -674,6 +693,9 @@ function ServerBackedBoardsContent() {
                 primarySlot={primarySlot}
                 workspaceCalendar={workspaceCalendar.data}
                 workspaceDateError={workspaceCalendar.isError}
+                workspaceDateReference={apiErrorReference(
+                  workspaceCalendar.error,
+                )}
                 onRetryWorkspaceDate={() => void workspaceCalendar.refetch()}
                 boardId={board.id}
                 boardActive={board.status === "active"}

@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  ApiError,
+  apiFetch,
+  apiRequest,
+  keepRequestId,
+  apiContractError,
+} from "@/lib/api";
 
 const auditActionSchema = z.enum(["create", "update", "delete"]);
 
@@ -169,11 +175,14 @@ export async function downloadManageAuditCsv(
     const code = detail.success ? detail.data.detail.code : undefined;
     if (response.status === 409 && code === "audit_export_limit")
       throw new AuditExportLimitError();
-    throw new ApiError(
-      response.status,
-      "Request could not be completed",
-      undefined,
-      code,
+    throw keepRequestId(
+      new ApiError(
+        response.status,
+        "Request could not be completed",
+        undefined,
+        code,
+      ),
+      response,
     );
   }
   const count = exportCountSchema.safeParse(
@@ -187,14 +196,14 @@ export async function downloadManageAuditCsv(
     response.headers.get("Cache-Control") !== "no-store" ||
     !count.success
   )
-    throw new ApiContractError();
+    throw apiContractError(response);
   const bytes = await response.arrayBuffer();
   const header = count.data === 0 ? CSV_HEADER.slice(0, -2) : CSV_HEADER;
   if (
     new TextDecoder().decode(bytes.slice(0, header.length)) !== header ||
     (count.data === 0 && bytes.byteLength !== header.length)
   )
-    throw new ApiContractError();
+    throw apiContractError(response);
   return {
     blob: new Blob([bytes], { type: "text/csv;charset=utf-8" }),
     filename: "slateops-audit.csv",

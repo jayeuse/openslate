@@ -15,13 +15,21 @@ import {
 } from "../adapters/profile-api";
 import { profileSelfOptions } from "../adapters/profile-queries";
 import { personProfileOptions } from "../adapters/profile-view-queries";
+import { apiErrorReference } from "@/lib/api-errors";
 
 export type ProfileView =
   | { status: "loading"; own: boolean }
   | { status: "ready"; own: boolean; profile: PersonProfile }
   /** Not in this organization, unknown, or hidden from a guest: one answer (PD20). */
   | { status: "unavailable" }
-  | { status: "failed"; own: boolean; retrying: boolean; retry: () => void };
+  | {
+      status: "failed";
+      own: boolean;
+      retrying: boolean;
+      retry: () => void;
+      /** The failed read's request ID (D1.4). */
+      reference: string | undefined;
+    };
 
 const personId = z.uuid();
 
@@ -63,6 +71,7 @@ export function useProfileView(): ProfileView {
       status: "failed",
       own,
       retrying: query.isFetching,
+      reference: apiErrorReference(query.error),
       retry: () => void query.refetch(),
     };
   }

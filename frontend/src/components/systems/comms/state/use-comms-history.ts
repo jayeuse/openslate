@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { apiErrorReference } from "@/lib/api-errors";
 import type { HistoryPage, HistoryRequest } from "../contract/types";
 import { useCommsClient } from "./client-context";
 import { useCommsWorkspaceView } from "./use-comms-workspace";
@@ -253,6 +254,7 @@ export function useCommsHistory(
     followLatest: following,
     restoreId: position.id === id ? position.restoreId : undefined,
     error: resource.isError ? "History could not be loaded. Try again." : "",
+    reference: resource.isError ? apiErrorReference(resource.error) : undefined,
     loading: enabled && (resource.isPending || !peopleReady),
     retry: () => {
       // A refusal also cleared the conversation's detail; read both again.

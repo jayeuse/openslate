@@ -6,6 +6,9 @@ import {
   signedInAs,
   test,
   type Page,
+  answeredHeaders,
+  answeredReference,
+  expectAnsweredReference,
 } from "./helpers/test";
 import { readFile } from "node:fs/promises";
 import {
@@ -941,8 +944,9 @@ test("a failed delete shows its error inside the delete dialog", async ({
   await deletion
     .getByRole("button", { name: "Delete module", exact: true })
     .click();
+  // The words, then the answered request's reference (S1-C4).
   await expect(deletion.getByRole("alert")).toHaveText(
-    "This Sandbox change could not be saved. Try again.",
+    `This Sandbox change could not be saved. Try again.Reference${answeredReference}CopyGive this reference to your administrator.`,
   );
 });
 
@@ -1845,7 +1849,17 @@ test("a refused layout puts the dropped module back", async ({ page }) => {
   await expect(
     page.getByText("Your change was not saved. Reapply it to try again."),
   ).toBeVisible();
-  const before = await canvasPosition(equipment);
+  // Measured from another module: the refusal's reference makes the alert
+  // above the canvas taller, and a drag near the canvas edge pans the whole
+  // canvas a few pixels; the module must be back in its place on the canvas.
+  const offset = async () => {
+    const [node, other] = await Promise.all([
+      canvasPosition(equipment),
+      canvasPosition(requests),
+    ]);
+    return { x: node.x - other.x, y: node.y - other.y };
+  };
+  const before = await offset();
   await dragCanvasNode(page, equipment);
   await expect(
     page.getByText("A Sandbox change is already being saved.").first(),
@@ -1853,7 +1867,7 @@ test("a refused layout puts the dropped module back", async ({ page }) => {
   // Within 2 px: the selected outline is wider than the idle one.
   await expect
     .poll(async () => {
-      const now = await canvasPosition(equipment);
+      const now = await offset();
       return Math.abs(now.x - before.x) <= 2 && Math.abs(now.y - before.y) <= 2;
     })
     .toBe(true);
@@ -3047,6 +3061,7 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
     clearRequests += 1;
     await route.fulfill({
       status: 500,
+      headers: answeredHeaders,
       contentType: "application/json",
       body: JSON.stringify({
         detail: "Test results are temporarily unavailable.",
@@ -3062,11 +3077,18 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
   await expect(clear).toBeEnabled();
   await clear.click();
   await expect.poll(() => clearRequests).toBe(1);
-  await expect(
-    page
-      .getByRole("region", { name: "Sandbox test", exact: true })
-      .getByText("Test results are temporarily unavailable."),
-  ).toBeVisible();
+  const workspace = page.getByRole("region", {
+    name: "Sandbox test",
+    exact: true,
+  });
+  // The page's own words and the answered request's reference (S1-C4,
+  // S1-C6); the server's detail never shows.
+  await expect(workspace.getByRole("alert")).toHaveText(
+    `Test results could not be cleared. Try again.Reference${answeredReference}CopyGive this reference to your administrator.`,
+  );
+  await expect(workspace).not.toContainText(
+    "Test results are temporarily unavailable.",
+  );
   await expect(clear).toBeEnabled();
 });
 
@@ -4462,6 +4484,7 @@ test("History deletion failure retains its target and successful deletion select
     if (deleteAttempts === 1)
       return route.fulfill({
         status: 500,
+        headers: answeredHeaders,
         contentType: "application/json",
         body: JSON.stringify({ detail: "Try deletion again." }),
       });
@@ -4485,6 +4508,7 @@ test("History deletion failure retains its target and successful deletion select
   const failure = dialog.getByRole("alert");
   await expect(failure).toContainText("could not");
   await expect(failure).toHaveAttribute("data-variant", "destructive");
+  await expectAnsweredReference(failure);
   await expect(page.getByText("Try deletion again.")).toHaveCount(0);
   await expect(
     dialog.getByRole("button", { name: "Delete version", exact: true }),

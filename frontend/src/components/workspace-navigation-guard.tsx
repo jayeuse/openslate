@@ -22,6 +22,7 @@ import {
   organizationLinkExit,
   type WorkspaceNavigationExit,
 } from "@/components/workspace-navigation";
+import { apiErrorReference } from "@/lib/api-errors";
 import { reportError } from "@/lib/feedback";
 
 export type { WorkspaceNavigationExit };
@@ -229,9 +230,12 @@ export function GuardedWorkspaceLink({
                 await context.openOrganization(organizationId);
                 onAcceptedNavigate?.();
                 router.push(href);
-              } catch {
+              } catch (error) {
                 if (active.current)
-                  reportError("Could not open the notification. Try again.");
+                  reportError(
+                    "Could not open the notification. Try again.",
+                    apiErrorReference(error),
+                  );
               } finally {
                 opening.current = false;
               }

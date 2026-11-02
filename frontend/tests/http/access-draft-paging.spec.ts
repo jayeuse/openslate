@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/test";
+import { expect, test, serverBanner } from "./helpers/test";
 import {
   fixtureId,
   group,
@@ -88,6 +88,8 @@ test("an uncertain replacement resolves all current and draft member labels in b
     .getByRole("button", { name: "Save members", exact: true })
     .click();
   await expect(sheet.getByRole("alert")).toContainText("may have completed");
+  // No answer at all: the shell says the server cannot be reached.
+  await expect(serverBanner(page)).toBeVisible();
   await page.reload();
   await expect(
     sheet.getByRole("region", { name: "Saved group draft", exact: true }),

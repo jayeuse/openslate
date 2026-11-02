@@ -18,8 +18,9 @@ import {
   useAccessCatalog,
   catalogDepartments,
 } from "../../access/hooks/use-access-catalog";
-import { ApiContractError, ApiError } from "@/lib/api";
+import { ApiError, apiContractError } from "@/lib/api";
 import { reportDone, reportError } from "@/lib/feedback";
+import { apiErrorReference } from "@/lib/api-errors";
 import { formatWorkspaceDateTime } from "@/lib/date-time";
 import type { AccessLevel } from "@/lib/auth-api";
 import { Alert } from "@/components/ui/alert";
@@ -67,6 +68,7 @@ import {
   platformKeys,
   trackLibraryRead,
 } from "../adapters/platform-queries";
+import { useErrorText } from "@/lib/use-error-text";
 
 const ACCESS_ENTITIES = new Set([
   "departments",
@@ -266,6 +268,7 @@ export default function Files() {
         <RetryBand
           message="Your department access could not be checked. Retry before opening files."
           retryLabel="Retry access"
+          reference={apiErrorReference(identity.error)}
           disabled={identity.isFetching}
           onRetry={() => void identity.refetch()}
         />
@@ -273,6 +276,7 @@ export default function Files() {
         <RetryBand
           message="Departments could not be loaded. Retry to search again."
           retryLabel="Retry departments"
+          reference={catalog.reference}
           disabled={departments.isFetching}
           onRetry={() => void catalog.retry()}
         />
@@ -338,8 +342,10 @@ function LibraryContents({
     gcTime: Infinity,
   }).data;
   const [extension, setExtension] = useState<FileExtension | null>(null);
-  const [error, setError] = useState("");
-  const [pageError, setPageError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
+  const [pageFailure, setPageError] = useErrorText();
+  const pageError = pageFailure?.message ?? "";
   const [checkedState, setCheckedState] = useState<
     "unknown" | "awaiting_upload" | "uploading"
   >("unknown");
@@ -451,7 +457,7 @@ function LibraryContents({
         file.filename !== check.filename ||
         file.expectedSize !== check.expectedSize
       )
-        throw new ApiContractError();
+        throw apiContractError(file);
       if (
         file.isDeleted ||
         ["rejected", "purged", "deleting"].includes(file.state)
@@ -492,7 +498,7 @@ function LibraryContents({
         if (!live(owned) || getCheck()?.operationId !== check.operationId)
           return;
         setCheckedState("unknown");
-        setError(fileErrorMessage(caught, "check the upload"));
+        setError(fileErrorMessage(caught, "check the upload"), caught);
       }
     },
     [applyUploadStatus, client, department.id, getCheck, live],
@@ -600,9 +606,9 @@ function LibraryContents({
       // The server refused the bytes before reading them: the same file can retry.
       if (check && isFilesBusy(caught)) {
         setCheckedState("awaiting_upload");
-        setError(fileErrorMessage(caught, "upload the file"));
+        setError(fileErrorMessage(caught, "upload the file"), caught);
       } else if (check) await readUploadStatus(check, owned);
-      else setError(fileErrorMessage(caught, "upload the file"));
+      else setError(fileErrorMessage(caught, "upload the file"), caught);
     } finally {
       finish(owned);
     }
@@ -645,6 +651,7 @@ function LibraryContents({
             caught,
             reopen ? "reopen the file" : "archive the file",
           ),
+          apiErrorReference(caught),
         );
     } finally {
       finish(owned);
@@ -672,7 +679,10 @@ function LibraryContents({
       reportDone(`${file.filename} downloaded.`);
     } catch (caught) {
       if (live(owned))
-        reportError(fileErrorMessage(caught, "download the file"));
+        reportError(
+          fileErrorMessage(caught, "download the file"),
+          apiErrorReference(caught),
+        );
     } finally {
       finish(owned);
     }
@@ -716,7 +726,7 @@ function LibraryContents({
       });
     } catch (caught) {
       if (live(owned))
-        setPageError(fileErrorMessage(caught, "load more files"));
+        setPageError(fileErrorMessage(caught, "load more files"), caught);
     } finally {
       finish(owned);
     }
@@ -862,7 +872,11 @@ function LibraryContents({
             </p>
           ) : null}
           {error ? (
-            <Alert id={`${inputId}-error`} variant="destructive">
+            <Alert
+              id={`${inputId}-error`}
+              variant="destructive"
+              reference={errorFailure?.reference}
+            >
               {error}
             </Alert>
           ) : null}
@@ -890,6 +904,7 @@ function LibraryContents({
             <RetryBand
               message={fileErrorMessage(files.error, "load files")}
               retryLabel="Retry files"
+              reference={apiErrorReference(files.error)}
               disabled={files.isFetching}
               onRetry={() => void files.refetch()}
             />
@@ -898,6 +913,7 @@ function LibraryContents({
             <RetryBand
               message="File dates could not be formatted. File actions remain available."
               retryLabel="Retry date settings"
+              reference={apiErrorReference(workspace.error)}
               disabled={workspace.isFetching}
               onRetry={() => void workspace.refetch()}
             />
@@ -975,7 +991,9 @@ function LibraryContents({
               </ul>
             ) : null}
             {pageError ? (
-              <Alert variant="destructive">{pageError}</Alert>
+              <Alert variant="destructive" reference={pageFailure?.reference}>
+                {pageError}
+              </Alert>
             ) : null}
             {hasMore ? (
               <Button
@@ -998,11 +1016,14 @@ function LibraryContents({
 function RetryBand({
   message,
   retryLabel,
+  reference,
   disabled,
   onRetry,
 }: {
   message: string;
   retryLabel: string;
+  /** The failed request's ID, after the action (D1.4). */
+  reference?: string;
   disabled: boolean;
   onRetry: () => void;
 }) {
@@ -1010,6 +1031,7 @@ function RetryBand({
     <Alert
       variant="destructive"
       className="flex w-full flex-wrap items-center justify-between gap-3"
+      reference={reference}
     >
       <p className="min-w-0">{message}</p>
       <Button

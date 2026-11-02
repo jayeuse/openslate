@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiRequest } from "@/lib/api";
+import {
+  ApiError,
+  apiRequest,
+  keepRequestId,
+  apiContractError,
+} from "@/lib/api";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import { trackOpenViewRead } from "./openview-access";
 import type { OpenViewQueryDefinition } from "./views-api";
@@ -69,11 +74,14 @@ export function exportOpenViewRecords(
         queueMicrotask(() => {
           if (!signal.aborted) requestSessionRecheck();
         });
-      throw new ApiError(
-        response.status,
-        "Export could not be downloaded.",
-        undefined,
-        code,
+      throw keepRequestId(
+        new ApiError(
+          response.status,
+          "Export could not be downloaded.",
+          undefined,
+          code,
+        ),
+        response,
       );
     }
     const type = response.headers.get("Content-Type")?.trim().toLowerCase();
@@ -100,9 +108,9 @@ export function exportOpenViewRecords(
       response.headers.get("X-Content-Type-Options")?.trim().toLowerCase() !==
         "nosniff"
     )
-      throw new ApiContractError();
+      throw apiContractError(response);
     const blob = await response.blob();
-    if (blob.size > 8 * 1024 * 1024) throw new ApiContractError();
+    if (blob.size > 8 * 1024 * 1024) throw apiContractError(response);
     return { blob, filename };
   });
 }

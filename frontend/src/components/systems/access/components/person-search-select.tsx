@@ -68,6 +68,7 @@ export function SponsorSearchSelect({
         onSearchChange={people.onSearchChange}
         loading={people.loading || people.selectedLoading}
         error={people.error}
+        reference={people.reference}
         validationError={error}
         onRetry={people.retry}
         hasMore={people.hasMore}

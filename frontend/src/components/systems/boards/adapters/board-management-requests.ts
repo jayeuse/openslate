@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { ApiError, apiFetch, type ApiRequestInit } from "@/lib/api";
+import {
+  ApiError,
+  apiFetch,
+  type ApiRequestInit,
+  keepRequestId,
+} from "@/lib/api";
 
 const safeCodes: Record<string, { status: number; message: string }> = {
   board_archived: {
@@ -66,29 +71,39 @@ const safeCodes: Record<string, { status: number; message: string }> = {
   },
 };
 
-export function throwSafeBoardError(status: number, detail: unknown): never {
+export function throwSafeBoardError(
+  status: number,
+  detail: unknown,
+  source: unknown,
+): never {
   if (
     (status === 404 || status === 403) &&
     (detail === "Board not found" || detail === "Forbidden")
   ) {
-    throw new ApiError(status, detail);
+    throw keepRequestId(new ApiError(status, detail), source);
   }
   const parsed = z.object({ code: z.string() }).passthrough().safeParse(detail);
   if (parsed.success) {
     const safe = safeCodes[parsed.data.code];
     if (safe && safe.status === status) {
-      throw new ApiError(
-        status,
-        safe.message,
-        {
-          code: parsed.data.code,
-          message: safe.message,
-        },
-        parsed.data.code,
+      throw keepRequestId(
+        new ApiError(
+          status,
+          safe.message,
+          {
+            code: parsed.data.code,
+            message: safe.message,
+          },
+          parsed.data.code,
+        ),
+        source,
       );
     }
   }
-  throw new ApiError(status, "Request could not be completed");
+  throw keepRequestId(
+    new ApiError(status, "Request could not be completed"),
+    source,
+  );
 }
 
 export async function safeBoardJson<Schema extends z.ZodType>(
@@ -100,7 +115,7 @@ export async function safeBoardJson<Schema extends z.ZodType>(
     return await apiFetch(path, schema, { cache: "no-store", ...init });
   } catch (error) {
     if (error instanceof ApiError)
-      return throwSafeBoardError(error.status, error.details);
+      return throwSafeBoardError(error.status, error.details, error);
     throw error;
   }
 }

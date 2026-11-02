@@ -7,6 +7,8 @@ import {
   test,
   type Page,
   type Route,
+  answeredHeaders,
+  expectAnsweredReference,
 } from "./helpers/test";
 
 import {
@@ -293,6 +295,7 @@ test("Report notification refresh retains last good on transient failure and cle
     if (responseStatus !== 200) {
       await route.fulfill({
         status: responseStatus,
+        headers: answeredHeaders,
         contentType: "application/json",
         body: JSON.stringify({ detail: "Internal detail must not render" }),
       });
@@ -318,6 +321,7 @@ test("Report notification refresh retains last good on transient failure and cle
       "Couldn’t refresh notifications. Showing the last loaded page.",
     ),
   ).toBeVisible();
+  await expectAnsweredReference(connected);
   await expect(connected.getByText("Scheduled report run")).toBeVisible();
   responseStatus = 403;
   await connected.getByRole("button", { name: "Refresh" }).click();
@@ -378,6 +382,7 @@ test("a revoked notification 404 clears old references before a failed first-pag
       await followUp.released;
       await route.fulfill({
         status: 500,
+        headers: answeredHeaders,
         contentType: "application/json",
         body: JSON.stringify({ detail: "Internal detail must not render" }),
       });
@@ -410,6 +415,7 @@ test("a revoked notification 404 clears old references before a failed first-pag
   await expect(
     connected.getByText("Couldn’t load notifications."),
   ).toBeVisible();
+  await expectAnsweredReference(connected);
   await expect(connected.getByText("Scheduled report run")).toHaveCount(0);
   await expect(connected).not.toContainText(reportId);
   // The recovery after the revoked notice rereads only the first page.

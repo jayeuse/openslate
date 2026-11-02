@@ -47,6 +47,8 @@ import { invitationSettingsDraftJournal } from "../state/form-drafts";
 import { ActionError } from "./editor-conflicts";
 import { TextField } from "./people-fields";
 import { ReadError } from "./read-error";
+import { apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 
 function isStaleRevision(error: unknown): boolean {
   if (!(error instanceof ApiError) || error.status !== 409) return false;
@@ -154,7 +156,8 @@ export function InvitationSettings({
     () => invitationSettingsDraftJournal.read(signedInId) ?? {},
   );
   const [errors, setErrors] = useState<InvitationSettingsErrors>({});
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [stale, setStale] = useState(false);
   const [pending, setPending] = useState(false);
   const [discardIssue, setDiscardIssue] = useState("");
@@ -258,6 +261,7 @@ export function InvitationSettings({
         caught instanceof ApiError && caught.status === 403
           ? "Only administrators can change these settings. Reload the page to check your access."
           : "The settings could not be saved. Try again.",
+        caught,
       );
     } finally {
       setPending(false);
@@ -269,6 +273,7 @@ export function InvitationSettings({
     return (
       <ReadError
         message="The invitation settings could not be loaded."
+        reference={apiErrorReference(settings.error)}
         retry={() => void settings.refetch()}
       />
     );
@@ -338,7 +343,7 @@ export function InvitationSettings({
               </div>
             </Alert>
           ) : null}
-          <ActionError message={error} />
+          <ActionError message={error} reference={errorFailure?.reference} />
           <ActionError message={discardIssue} title={null} />
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             {onCancel ? (

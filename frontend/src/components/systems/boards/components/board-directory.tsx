@@ -37,6 +37,7 @@ import { tintRowClassName } from "@/components/systems/access/components/row-ope
 import { cn } from "@/lib/utils";
 import { BoardLevelChip } from "./board-page-header";
 import { BoardEmpty } from "./ui";
+import { apiErrorReference } from "@/lib/api-errors";
 
 const KIND_WORDS: Record<BoardScope, string> = {
   company: "Company",
@@ -188,6 +189,7 @@ export function BoardDirectory({
           <Alert
             variant="destructive"
             className="flex flex-wrap items-center justify-between gap-3"
+            reference={apiErrorReference(read.error)}
           >
             <span>Boards could not be loaded.</span>
             <Button

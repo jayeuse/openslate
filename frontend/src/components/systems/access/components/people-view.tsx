@@ -89,6 +89,7 @@ import {
   tintRowClassName,
 } from "./row-open-button";
 import { PersonAvatar } from "@/components/person-avatar";
+import { apiErrorReference } from "@/lib/api-errors";
 
 const sortOptions: readonly { value: DirectorySort; label: string }[] = [
   { value: "name", label: "Name" },
@@ -405,6 +406,9 @@ export function PeopleView() {
       <ReadError
         className="max-w-lg"
         message="People could not be loaded."
+        reference={apiErrorReference(
+          users.isError ? users.error : catalog.error,
+        )}
         retry={() => {
           if (users.isError) void users.refetch();
           if (catalogRequested && catalog.isError) void catalog.refetch();

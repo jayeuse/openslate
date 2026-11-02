@@ -21,6 +21,7 @@ import type {
   BoardUnlinkedFile,
   BoardUnlinkedFilePage,
 } from "../adapters/board-files-api";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 const control = "min-h-11 xl:min-h-8";
 
@@ -36,6 +37,7 @@ export function BoardUnattachedFiles({
   onStatusChange,
   loading,
   error,
+  errorReference,
   onRetry,
   page,
   stale,
@@ -53,6 +55,8 @@ export function BoardUnattachedFiles({
   onStatusChange: (status: BoardFileStatus) => void;
   loading: boolean;
   error: string | null;
+  /** The failed request's ID, shown under the error (D1.4). */
+  errorReference?: string;
   onRetry: () => void;
   page: BoardUnlinkedFilePage | null;
   /** The shown page is from an older read; its actions wait. */
@@ -127,6 +131,7 @@ export function BoardUnattachedFiles({
               >
                 Retry file list
               </Button>
+              <ErrorReference id={errorReference} className="basis-full" />
             </div>
           ) : null}
           {page ? (
@@ -227,6 +232,7 @@ export function BoardFilePurgeDialog({
   pending,
   loading,
   error,
+  errorReference,
   preview,
   region,
   confirmationName,
@@ -243,6 +249,8 @@ export function BoardFilePurgeDialog({
   pending: boolean;
   loading: boolean;
   error: string | null;
+  /** The failed request's ID, shown under the error (D1.4). */
+  errorReference?: string;
   preview: BoardPurgePreview | null;
   region: WorkspaceRegion | undefined;
   confirmationName: string;
@@ -273,9 +281,12 @@ export function BoardFilePurgeDialog({
         </DialogHeader>
         {loading ? <p role="status">Preparing review…</p> : null}
         {error ? (
-          <p role="alert" className="text-destructive text-sm">
-            {error}
-          </p>
+          <div>
+            <p role="alert" className="text-destructive text-sm">
+              {error}
+            </p>
+            <ErrorReference id={errorReference} />
+          </div>
         ) : null}
         {preview ? (
           <>

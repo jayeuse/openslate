@@ -407,9 +407,16 @@ def test_department_bound_categories_reach_only_people_who_can_see_into_them(str
         ]
 
     outsider, viewer = case.client(org.peer, org.id), case.client(home.peer, org.id)
-    missing = [(row.status_code, row.json()) for row in calls(outsider, uuid4())]
+    missing_rows, hidden_rows = calls(outsider, uuid4()), calls(outsider, ids["bound"])
+    # Each body differs only in its own request ID, which equals its X-Request-ID header.
+    assert all(
+        set(row.json()) == {"detail", "request_id"}
+        and row.json()["request_id"] == row.headers["X-Request-ID"]
+        for row in missing_rows + hidden_rows
+    )
+    missing = [(row.status_code, row.json()["detail"]) for row in missing_rows]
     assert {status for status, _ in missing} == {404}
-    assert [(row.status_code, row.json()) for row in calls(outsider, ids["bound"])] == missing
+    assert [(row.status_code, row.json()["detail"]) for row in hidden_rows] == missing
     assert [row.status_code for row in calls(viewer, ids["bound"])] == [200, 403, 403, 403]
 
     # A hidden category named in a write body answers like a missing one too: creating,
@@ -434,9 +441,16 @@ def test_department_bound_categories_reach_only_people_who_can_see_into_them(str
             outsider.patch(room, json={"category_id": str(identity)}, headers=tag),
         ]
 
-    missing = [(row.status_code, row.json()) for row in named(uuid4())]
+    missing_rows, hidden_rows = named(uuid4()), named(ids["bound"])
+    # Each body differs only in its own request ID, which equals its X-Request-ID header.
+    assert all(
+        set(row.json()) == {"detail", "request_id"}
+        and row.json()["request_id"] == row.headers["X-Request-ID"]
+        for row in missing_rows + hidden_rows
+    )
+    missing = [(row.status_code, row.json()["detail"]) for row in missing_rows]
     assert {status for status, _ in missing} == {404}
-    assert [(row.status_code, row.json()) for row in named(ids["bound"])] == missing
+    assert [(row.status_code, row.json()["detail"]) for row in hidden_rows] == missing
 
     def change(*rows, remove=()):
         with case.world.session(org) as db:

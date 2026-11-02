@@ -17,6 +17,7 @@ import {
   accountSessionsOptions,
   platformKeys,
 } from "@/components/systems/platform/adapters/platform-queries";
+import { useErrorText } from "@/lib/use-error-text";
 
 type AccountConfirmation =
   | { type: "session"; session: AccountSession }
@@ -89,7 +90,8 @@ export function useAccountSecurity() {
   const [confirmation, setConfirmation] = useState<AccountConfirmation>(null);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordFeedback, setPasswordFeedback] = useState("");
-  const [passwordFormError, setPasswordFormError] = useState("");
+  const [passwordFormFailure, setPasswordFormError] = useErrorText();
+  const passwordFormError = passwordFormFailure?.message ?? "";
   const [currentPasswordError, setCurrentPasswordError] = useState("");
   const [newPasswordError, setNewPasswordError] = useState("");
   const [passwordSessionNote, setPasswordSessionNote] = useState("");
@@ -97,7 +99,8 @@ export function useAccountSecurity() {
   const [newPassword, setNewPassword] = useState("");
   const [refreshingAfterPassword, setRefreshingAfterPassword] = useState(false);
   const [sessionActionFeedback, setSessionActionFeedback] = useState("");
-  const [sessionActionError, setSessionActionError] = useState("");
+  const [sessionActionFailure, setSessionActionError] = useErrorText();
+  const sessionActionError = sessionActionFailure?.message ?? "";
   const activeSessions = sessionsQuery.data ?? [];
   const otherSessions = activeSessions.filter((session) => !session.current);
   const sessionError = identity.isError ? identity.error : sessionsQuery.error;
@@ -158,7 +161,12 @@ export function useAccountSecurity() {
       const field = passwordErrorField(error);
       if (field === "current") setCurrentPasswordError(message);
       else if (field === "new") setNewPasswordError(message);
-      else setPasswordFormError(message);
+      // A field error never carries the reference; one form-level line with
+      // the 422 words does (D1.4, docs/specs/system-health.md).
+      setPasswordFormError(
+        field ? "Check the entered values and try again." : message,
+        error,
+      );
       // A wrong current password keeps the new one, so only it is typed again.
       keepNewPassword = field === "current";
       if (passwordOutcomeUncertain(error))
@@ -219,7 +227,7 @@ export function useAccountSecurity() {
       ]);
     } catch (error) {
       setConfirmation(null);
-      setSessionActionError(sessionActionErrorMessage(error));
+      setSessionActionError(sessionActionErrorMessage(error), error);
     }
   }
 
@@ -252,6 +260,7 @@ export function useAccountSecurity() {
       currentPasswordError,
       newPasswordError,
       formError: passwordFormError,
+      formReference: passwordFormFailure?.reference,
       feedback: passwordFeedback,
       sessionNote: passwordSessionNote,
       submit: (event: FormEvent<HTMLFormElement>) => void submitPassword(event),
@@ -266,6 +275,7 @@ export function useAccountSecurity() {
         else void sessionsQuery.refetch();
       },
       actionError: sessionActionError,
+      actionReference: sessionActionFailure?.reference,
       actionFeedback: sessionActionFeedback,
     },
     busy: securityMutationPending,

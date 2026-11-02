@@ -20,6 +20,7 @@ import {
   type StagedDates,
 } from "../domain/gantt";
 import { cardName } from "../domain/kanban";
+import { useErrorText } from "@/lib/use-error-text";
 
 export type GanttProblem = { cardId: string; text: string };
 
@@ -39,7 +40,8 @@ export function useGanttStaging(boardId: string, cards: readonly KanbanCard[]) {
   const [saving, setSaving] = useState(false);
   const [problems, setProblems] = useState<GanttProblem[]>([]);
   // A failed request, said next to Save changes; the cards stay staged.
-  const [failure, setFailure] = useState("");
+  const [saveFailure, setFailure] = useErrorText();
+  const failure = saveFailure?.message ?? "";
   // The 101st card waits for a save (a warning, not an error).
   const [full, setFull] = useState(false);
   const [notice, setNotice] = useState("");
@@ -126,7 +128,7 @@ export function useGanttStaging(boardId: string, cards: readonly KanbanCard[]) {
             : `Dates saved for ${count} cards.`,
       );
     } catch (error) {
-      setFailure(kanbanErrorMessage(error));
+      setFailure(kanbanErrorMessage(error), error);
     } finally {
       setSaving(false);
     }
@@ -139,6 +141,7 @@ export function useGanttStaging(boardId: string, cards: readonly KanbanCard[]) {
     saving,
     problems,
     failure,
+    failureReference: saveFailure?.reference,
     full,
     notice,
     stage,

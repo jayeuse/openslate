@@ -50,6 +50,7 @@ import {
 } from "../state/runtime";
 import { complete } from "../state/workspace-view";
 import { wireSettingKey, wireSettings } from "../state/settings-wire";
+import { useErrorText } from "@/lib/use-error-text";
 
 export function ManagementTools({
   embedded,
@@ -78,7 +79,8 @@ export function ManagementTools({
     channelId ? [channelId] : [],
   );
   const [edited, setEdited] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [status, setStatus] = useState("");
   const [filter, setFilter] = useState("");
   const [fieldSearch, setFieldSearch] = useState("");
@@ -141,6 +143,7 @@ export function ManagementTools({
     } catch (failure) {
       setError(
         messageFromCommsError(failure, "The template could not be loaded."),
+        failure,
       );
     }
   }
@@ -171,6 +174,7 @@ export function ManagementTools({
           failure,
           "The template could not be saved. Your draft is still here.",
         ),
+        failure,
       );
       return false;
     }
@@ -198,6 +202,7 @@ export function ManagementTools({
     } catch (failure) {
       setError(
         messageFromCommsError(failure, "The changes could not be previewed."),
+        failure,
       );
     }
   }
@@ -222,6 +227,7 @@ export function ManagementTools({
           "The settings could not be applied. Preview the current state again.",
           STALE_PREVIEW_MESSAGE,
         ),
+        failure,
       );
     }
   }
@@ -444,7 +450,11 @@ export function ManagementTools({
           </Alert>
         )}
         {(error || resource.error) && (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={error ? errorFailure?.reference : resource.reference}
+          >
             {error || "Templates could not be loaded."}
             {resource.error && (
               <Button variant="outline" onClick={resource.reload}>

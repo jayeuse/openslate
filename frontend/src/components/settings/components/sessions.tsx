@@ -27,6 +27,8 @@ import {
 } from "../hooks/use-account-security";
 import { endSessionTitle, sessionRowWords } from "../domain/sessions";
 import type { SettingsRegion } from "../hooks/use-settings-region";
+import { ErrorReference } from "@/components/ui/error-reference";
+import { apiErrorReference } from "@/lib/api-errors";
 
 /**
  * Device sessions (PD11): 40px one-line rows with the device, the address,
@@ -68,6 +70,10 @@ export function Sessions({
             >
               Retry sessions
             </Button>
+            <ErrorReference
+              id={apiErrorReference(sessions.error)}
+              className="basis-full"
+            />
           </div>
         ) : sessions.list.length === 0 ? (
           <span className="text-muted-foreground flex min-h-11 items-center text-sm xl:min-h-8">
@@ -109,12 +115,16 @@ export function Sessions({
           >
             Retry date settings
           </Button>
+          <ErrorReference id={region.reference} className="basis-full" />
         </div>
       ) : null}
       {sessions.actionError && (
-        <p role="alert" className="text-destructive text-sm">
-          {sessions.actionError}
-        </p>
+        <div>
+          <p role="alert" className="text-destructive text-sm">
+            {sessions.actionError}
+          </p>
+          <ErrorReference id={sessions.actionReference} />
+        </div>
       )}
       {sessions.actionFeedback && (
         <p role="status" className="text-sm">

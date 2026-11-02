@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiRequest } from "@/lib/api";
+import {
+  ApiContractError,
+  ApiError,
+  apiRequest,
+  keepRequestId,
+  apiContractError,
+} from "@/lib/api";
 
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
@@ -102,11 +108,11 @@ export async function uploadFileContent<T extends { id: string }>(
   const response = await retryFilesBusy(request, { signal, onWaiting });
   const body: unknown = await response.json().catch((error: unknown) => {
     if (signal?.aborted) throw error;
-    throw new ApiContractError();
+    throw apiContractError(response);
   });
   const result = schema.safeParse(body);
   if (!result.success || result.data.id !== fileId)
-    throw new ApiContractError();
+    throw apiContractError(response);
   return result.data;
 }
 
@@ -213,12 +219,15 @@ export async function throwFileRequestError(
   if (response.status === 503)
     code = errorCode(await response.json().catch(() => null));
   else await response.body?.cancel().catch(() => undefined);
-  throw new ApiError(
-    response.status,
-    message,
-    undefined,
-    code,
-    retryAfterSeconds(response),
+  throw keepRequestId(
+    new ApiError(
+      response.status,
+      message,
+      undefined,
+      code,
+      retryAfterSeconds(response),
+    ),
+    response,
   );
 }
 
@@ -260,16 +269,16 @@ async function readFileContent(
     !/^attachment\s*;/i.test(disposition) ||
     sniffing.toLowerCase() !== "nosniff"
   )
-    throw new ApiContractError();
+    throw apiContractError(response);
   const declared = response.headers.get("Content-Length");
   if (
     declared !== null &&
     (!/^\d+$/.test(declared) || Number(declared) !== expectedSize)
   ) {
     await response.body?.cancel().catch(() => undefined);
-    throw new ApiContractError();
+    throw apiContractError(response);
   }
-  if (!response.body) throw new ApiContractError();
+  if (!response.body) throw apiContractError(response);
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -280,14 +289,14 @@ async function readFileContent(
       size += value.byteLength;
       if (size > expectedSize || size > MAX_FILE_BYTES) {
         await reader.cancel().catch(() => undefined);
-        throw new ApiContractError();
+        throw apiContractError(response);
       }
       chunks.push(value);
     }
   } finally {
     reader.releaseLock();
   }
-  if (size !== expectedSize) throw new ApiContractError();
+  if (size !== expectedSize) throw apiContractError(response);
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) {

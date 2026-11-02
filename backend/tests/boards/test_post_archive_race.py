@@ -145,9 +145,12 @@ def _rows(world: _World) -> tuple[dict[str, Any], dict[str, Any]]:
     return dict(board._mapping), dict(item._mapping)
 
 
-def _stale(code: str) -> dict[str, object]:
+def _stale(response: httpx.Response, code: str) -> dict[str, object]:
     message = "Board changed; reload before saving"
-    return {"detail": {"code": code, "message": message, "current_revision": 2}}
+    return {
+        "detail": {"code": code, "message": message, "current_revision": 2},
+        "request_id": response.headers["X-Request-ID"],
+    }
 
 
 def test_a_board_archive_behind_a_post_edit_is_refused_as_stale(world: _World) -> None:
@@ -158,7 +161,7 @@ def test_a_board_archive_behind_a_post_edit_is_refused_as_stale(world: _World) -
     assert edited.status_code == 200, edited.text
     assert edited.json() == {"id": str(world.post_id), "post_revision": 2, "board_revision": 2}
     assert archived.status_code == 409, archived.text
-    assert archived.json() == _stale("stale_revision")
+    assert archived.json() == _stale(archived, "stale_revision")
     board, item = _rows(world)
     assert board == {"status": "active", "revision": 2}
     assert item == {"title": "Edited notice", "body": _BODY, "status": "draft", "revision": 2}
@@ -173,7 +176,7 @@ def test_a_post_edit_behind_a_board_archive_is_refused_and_changes_nothing(
     assert archived.json()["status"] == "archived"
     assert archived.json()["revision"] == 2
     assert edited.status_code == 409, edited.text
-    assert edited.json() == _stale("stale_board_revision")
+    assert edited.json() == _stale(edited, "stale_board_revision")
     board, item = _rows(world)
     assert board == {"status": "archived", "revision": 2}
     assert item == {"title": _TITLE, "body": _BODY, "status": "draft", "revision": 1}
@@ -184,7 +187,7 @@ def test_a_post_archive_behind_a_post_edit_is_refused_as_stale(world: _World) ->
 
     assert edited.status_code == 200, edited.text
     assert archived.status_code == 409, archived.text
-    assert archived.json() == _stale("stale_board_revision")
+    assert archived.json() == _stale(archived, "stale_board_revision")
     board, item = _rows(world)
     assert board == {"status": "active", "revision": 2}
     assert item == {"title": "Edited notice", "body": _BODY, "status": "draft", "revision": 2}

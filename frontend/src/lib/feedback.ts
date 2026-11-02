@@ -2,12 +2,16 @@ import { toast } from "@/components/ui/toast";
 
 const showing = new Set<string>();
 
-export function reportError(title: string) {
+/** An error notice; `reference` is the failed request's full ID, if any. A
+ * second notice with the same title is dropped, so the first keeps its
+ * reference. */
+export function reportError(title: string, reference?: string) {
   if (!title || showing.has(title)) return;
   showing.add(title);
   toast.add({
     title,
     type: "error",
+    reference,
     onClose: () => showing.delete(title),
   });
 }

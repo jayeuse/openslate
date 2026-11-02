@@ -21405,6 +21405,63 @@
         "title": "StandardListResponse[ViewResponse]",
         "type": "object"
       },
+      "SystemPart": {
+        "properties": {
+          "key": {
+            "enum": [
+              "data",
+              "signing_in",
+              "files",
+              "email"
+            ],
+            "title": "Key",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "working",
+              "not_working",
+              "not_set_up",
+              "set_up"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "status"
+        ],
+        "title": "SystemPart",
+        "type": "object"
+      },
+      "SystemStatusResponse": {
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/SystemPart"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parts",
+          "version",
+          "checked_at"
+        ],
+        "title": "SystemStatusResponse",
+        "type": "object"
+      },
       "TemplateApply": {
         "additionalProperties": false,
         "properties": {
@@ -60073,6 +60130,62 @@
         "summary": "Get Security Event",
         "tags": [
           "security-events"
+        ]
+      }
+    },
+    "/api/system/status": {
+      "get": {
+        "operationId": "get_system_status",
+        "parameters": [
+          {
+            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "in": "header",
+            "name": "X-Org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get System Status",
+        "tags": [
+          "system"
         ]
       }
     },

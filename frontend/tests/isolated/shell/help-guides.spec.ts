@@ -49,6 +49,8 @@ const guides: { href: string; title: string; tasks: RegExp[] }[] = [
     tasks: [
       /organization/i,
       /Save settings/,
+      // D4 answer 9, docs/specs/system-health.md.
+      /System health:.*Check again.*reference/,
       /quick filters.*Filters.*event details/,
       /Status.*History.*details/,
       /state filters.*Pending, Queued.*Retry/,

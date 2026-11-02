@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiContractError, ApiError } from "@/lib/api";
+import { ApiContractError, ApiError, apiContractError } from "@/lib/api";
 import type { WorkspaceRegion } from "@/lib/date-time";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import {
@@ -259,6 +259,10 @@ export function useServerBoardPostEditor({
       current.pending || current.attachmentPending || current.recordLinkPending,
     conflict: current.conflict,
     error: current.error,
+    errorReference:
+      current.errorText?.message === current.error
+        ? current.errorText.reference
+        : undefined,
     notice: canEdit ? current.notice : null,
   };
 
@@ -514,7 +518,7 @@ export function useServerBoardPostEditor({
         saved.publishAt === null ||
         Date.parse(saved.publishAt) !== Date.parse(converted.publishAt)
       )
-        throw new ApiContractError();
+        throw apiContractError(saved);
       if (operation !== mutationSequence.current) return false;
       adopt(saved, result.boardRevision, false, null);
       if (mountedRef.current && activeKeyRef.current === key)
@@ -577,7 +581,7 @@ export function useServerBoardPostEditor({
       );
       const saved = await readBoardPost(boardId, result.id, "draft");
       if (saved.status !== "draft" || saved.publishAt !== null)
-        throw new ApiContractError();
+        throw apiContractError(saved);
       if (operation !== mutationSequence.current) return;
       selectedRef.current = saved;
       publishKeyRef.current = null;

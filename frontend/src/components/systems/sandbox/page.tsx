@@ -12,7 +12,7 @@ import {
   workspaceLifecycleQueryOptions,
 } from "../manage/adapters/workspace-api";
 import { ApiContractError, ApiError } from "@/lib/api";
-import { apiErrorMessage } from "@/lib/api-errors";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
 import { reportDone, reportError, reportUndoable } from "@/lib/feedback";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -119,6 +119,7 @@ import {
   type SandboxLifecycleRequest,
 } from "./state/lifecycle-api";
 import type { LifecyclePurgeInput } from "@/lib/lifecycle";
+import { useErrorText } from "@/lib/use-error-text";
 
 const SANDBOX_SECTIONS = {
   build: "Build",
@@ -181,6 +182,7 @@ function commandFailure(error: unknown): SandboxCommandFailure {
       error,
       "This Sandbox change could not be saved. Try again.",
     ),
+    reference: apiErrorReference(error),
   };
 }
 
@@ -389,12 +391,17 @@ function SandboxWorkspace() {
   const [versionsRefreshKey, setVersionsRefreshKey] = useState(0);
   const [testRuns, setTestRuns] = useState<SandboxTestRun[]>([]);
   const [triggerRuns, setTriggerRuns] = useState<SandboxTriggerRun[]>([]);
-  const [triggerActivity, setTriggerActivity] = useState({
+  const [triggerActivity, setTriggerActivity] = useState<{
+    loading: boolean;
+    error: string;
+    reference?: string;
+  }>({
     loading: false,
     error: "",
   });
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
+  const [loadErrorFailure, setLoadError] = useErrorText();
+  const loadError = loadErrorFailure?.message ?? "";
   // Every Sandbox API refuses anyone but an administrator (403).
   const [loadDenied, setLoadDenied] = useState(false);
   const [pending, setPending] = useState(false);
@@ -409,7 +416,8 @@ function SandboxWorkspace() {
   });
   // A design save in flight, for the header's save-state chip.
   const [saving, setSaving] = useState(false);
-  const [feedbackError, setFeedbackError] = useState("");
+  const [feedbackErrorFailure, setFeedbackError] = useErrorText();
+  const feedbackError = feedbackErrorFailure?.message ?? "";
   // Bumped by each successful Publish; the look's title signature plays once.
   const [publishCount, setPublishCount] = useState(0);
   const [conflict, setConflict] = useState<Conflict | null>(null);
@@ -514,10 +522,11 @@ function SandboxWorkspace() {
     try {
       const runPage = await listSandboxTriggerRuns({ limit: 20 });
       setTriggerRuns(runPage.items);
-    } catch {
+    } catch (error) {
       setTriggerActivity((current) => ({
         ...current,
         error: "Recent activity could not be loaded.",
+        reference: apiErrorReference(error),
       }));
     } finally {
       setTriggerActivity((current) => ({ ...current, loading: false }));
@@ -571,7 +580,7 @@ function SandboxWorkspace() {
       setFeedbackError("");
     } catch (error) {
       setVersionRecovery(true);
-      setFeedbackError(commandFailure(error).error);
+      setFeedbackError(commandFailure(error).error, error);
     } finally {
       commandPending.current = false;
       setPending(false);
@@ -652,7 +661,7 @@ function SandboxWorkspace() {
       setVersionsRefreshKey((value) => value + 1);
       setTestRuns(testPage.items);
     } catch (error) {
-      setLoadError(commandFailure(error).error);
+      setLoadError(commandFailure(error).error, error);
       setLoadDenied(error instanceof ApiError && error.status === 403);
     } finally {
       setLoading(false);
@@ -840,11 +849,15 @@ function SandboxWorkspace() {
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) {
           setConflict({ proposedDocument: document, reason: "conflict" });
-          setFeedbackError("Reload the shared draft, then reapply your edits.");
+          setFeedbackError(
+            "Reload the shared draft, then reapply your edits.",
+            error,
+          );
         } else {
           setConflict({ proposedDocument: document, reason: "save-failed" });
           setFeedbackError(
             "Your change was not saved. Reapply it to try again.",
+            error,
           );
         }
         return commandFailure(error);
@@ -860,7 +873,9 @@ function SandboxWorkspace() {
     async (document: SandboxDocumentV4) => {
       if (!session) throw new Error("Sandbox is still loading.");
       const result = await persist({ ...session, document }, document);
-      if (!result.ok) throw new Error(result.error);
+      // Keeps the refused request's reference for the trigger save (D1.6).
+      if (!result.ok)
+        throw new SandboxCommandError(result.error, result.reference);
     },
     [persist, session],
   );
@@ -947,9 +962,10 @@ function SandboxWorkspace() {
       setFeedbackError("");
       setLifecycleRecovery(false);
       lifecycleLock.current = false;
-    } catch {
+    } catch (error) {
       setFeedbackError(
         "Live state could not be refreshed. Retry before changing this item.",
+        error,
       );
     } finally {
       commandPending.current = false;
@@ -1016,10 +1032,11 @@ function SandboxWorkspace() {
         setFeedbackError("");
         reportDone("Live change confirmed");
         lifecycleLock.current = false;
-      } catch {
+      } catch (error) {
         setLifecycleRecovery(true);
         setFeedbackError(
           "The live change was confirmed. Reload live state before making another change.",
+          error,
         );
       }
       setLifecycleRequest(null);
@@ -1269,7 +1286,7 @@ function SandboxWorkspace() {
       setFeedbackError("");
       reportDone("Shared draft reloaded");
     } catch (error) {
-      setFeedbackError(commandFailure(error).error);
+      setFeedbackError(commandFailure(error).error, error);
     } finally {
       setPending(false);
     }
@@ -1286,7 +1303,7 @@ function SandboxWorkspace() {
       const result = await persist(reapplied);
       if (result.ok) reportDone("Your draft was reapplied");
     } catch (error) {
-      setFeedbackError(commandFailure(error).error);
+      setFeedbackError(commandFailure(error).error, error);
     } finally {
       setPending(false);
     }
@@ -1296,7 +1313,11 @@ function SandboxWorkspace() {
   if (loadError && !session)
     return (
       <section data-sandbox-page className="slim-ui">
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={loadErrorFailure?.reference}
+        >
           <p>{loadError}</p>
           <Button className="mt-3" onClick={() => void refresh()}>
             Retry
@@ -1310,7 +1331,15 @@ function SandboxWorkspace() {
   const versionCapacity: VersionCapacityActions = {
     state:
       versionRecovery || historyAccess.denied || capacityRead.error
-        ? { status: "unavailable" }
+        ? {
+            status: "unavailable",
+            // A failed capacity read keeps its reference; a refusal or the
+            // recovery hold after a prune shows none (D1.4).
+            reference:
+              versionRecovery || historyAccess.denied
+                ? undefined
+                : apiErrorReference(capacityRead.error),
+          }
         : capacityRead.isPending || capacityRead.isFetching
           ? { status: "loading" }
           : capacityRead.isSuccess
@@ -1385,6 +1414,7 @@ function SandboxWorkspace() {
           role="alert"
           variant="destructive"
           className="slim-ui flex flex-wrap gap-2"
+          reference={feedbackErrorFailure?.reference}
         >
           <div className="space-y-1">
             <p>
@@ -1419,6 +1449,11 @@ function SandboxWorkspace() {
             bindingsQuery.error || lifecycleRecovery ? "destructive" : "warning"
           }
           className="slim-ui flex flex-wrap items-center gap-2"
+          reference={
+            lifecycleRecovery || bindingMismatch
+              ? undefined
+              : apiErrorReference(bindingsQuery.error)
+          }
         >
           <span>
             {lifecycleRecovery
@@ -1529,7 +1564,12 @@ function SandboxWorkspace() {
         className={sandboxRegionClass}
       >
         {feedbackError && !conflict ? (
-          <Alert variant="destructive">{feedbackError}</Alert>
+          <Alert
+            variant="destructive"
+            reference={feedbackErrorFailure?.reference}
+          >
+            {feedbackError}
+          </Alert>
         ) : null}
         {triggerDraft.kept ? (
           // Edits kept from before a reload wait here until the person

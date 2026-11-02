@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { apiErrorReference } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 import {
   getBoardAccessPreview,
   listBoardPreviewUsers,
@@ -18,12 +20,20 @@ export type AccessPreviewState = {
   data: BoardAccessPreview | null;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
+  /** The failed read's request ID, shown under `error` (D1.6). */
+  reference?: string;
 };
 
 export type AccessPreviewEvent =
   | { type: "begin"; key: string; sequence: number }
   | { type: "resolve"; key: string; sequence: number; data: BoardAccessPreview }
-  | { type: "reject"; key: string; sequence: number; error: string };
+  | {
+      type: "reject";
+      key: string;
+      sequence: number;
+      error: string;
+      reference?: string;
+    };
 
 const emptyPreview: AccessPreviewState = {
   key: null,
@@ -56,8 +66,20 @@ export function transitionAccessPreview(
   if (state.key !== event.key || state.sequence !== event.sequence)
     return state;
   if (event.type === "resolve")
-    return { ...state, data: event.data, status: "ready", error: null };
-  return { ...state, data: null, status: "error", error: event.error };
+    return {
+      ...state,
+      data: event.data,
+      status: "ready",
+      error: null,
+      reference: undefined,
+    };
+  return {
+    ...state,
+    data: null,
+    status: "error",
+    error: event.error,
+    reference: event.reference,
+  };
 }
 
 type Choices = {
@@ -81,7 +103,7 @@ export function useBoardCheckPerson(boardId: string, refreshKey: number) {
   const [previewRetry, setPreviewRetry] = useState(0);
   const [choices, setChoices] = useState<Choices | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
   const [denied, setDenied] = useState(false);
   const [selected, setSelected] = useState<{
     user: BoardPreviewUser;
@@ -140,7 +162,7 @@ export function useBoardCheckPerson(boardId: string, refreshKey: number) {
               setPreview(emptyPreview);
               return;
             }
-            setError("People could not be loaded.");
+            setError("People could not be loaded.", failure);
           });
       },
       trimmed ? 200 : 0,
@@ -149,7 +171,15 @@ export function useBoardCheckPerson(boardId: string, refreshKey: number) {
       active = false;
       clearTimeout(timer);
     };
-  }, [boardId, choicesKey, currentOffset, denied, refreshKey, search]);
+  }, [
+    boardId,
+    choicesKey,
+    currentOffset,
+    denied,
+    refreshKey,
+    search,
+    setError,
+  ]);
 
   const previewKey = selected
     ? JSON.stringify([boardId, selected.user.id, selected.sequence, refreshKey])
@@ -189,6 +219,7 @@ export function useBoardCheckPerson(boardId: string, refreshKey: number) {
             error: refused
               ? CHECK_PERSON_UNAVAILABLE
               : "This person's access could not be checked.",
+            reference: apiErrorReference(failure),
           }),
         );
       });
@@ -204,7 +235,8 @@ export function useBoardCheckPerson(boardId: string, refreshKey: number) {
     options: current?.items ?? [],
     loading: loading && currentOffset === 0,
     loadingMore: loading && currentOffset > 0,
-    error,
+    error: errorFailure?.message ?? null,
+    reference: errorFailure?.reference,
     hasMore: current?.hasMore ?? false,
     loadMore: () => {
       if (current?.hasMore && !loading)

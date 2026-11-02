@@ -301,3 +301,23 @@ test("structure conditional refusals and dependency failures are propagated with
     }
   }
 });
+
+test("a refused structure answer keeps that response's request ID", async () => {
+  // S1-C3, D4.5 (docs/specs/system-health.md): the shared Comms status check
+  // keeps the X-Request-ID of the response it rejected.
+  const requestId = "019a4c2e-7b1d-7c3e-9f00-4f9c2e1a0b2c";
+  const row = calls().find((value) => value.status === 200)!;
+  const mock = installFetch(() =>
+    Response.json(row.wire, {
+      status: 202,
+      headers: { ETag: etag, "X-Request-ID": requestId },
+    }),
+  );
+  try {
+    const refused = await row.invoke().catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ApiContractError);
+    expect((refused as ApiContractError).requestId).toBe(requestId);
+  } finally {
+    mock.restore();
+  }
+});

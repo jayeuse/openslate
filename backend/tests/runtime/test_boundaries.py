@@ -62,7 +62,10 @@ def test_declared_request_body_over_limit_is_rejected_with_a_diagnostic_id() -> 
     )
 
     assert response.status_code == 413
-    assert response.json() == {"detail": "Request body is too large"}
+    assert response.json() == {
+        "detail": "Request body is too large",
+        "request_id": response.headers["X-Request-ID"],
+    }
     assert len(response.headers["X-Request-ID"]) == 36
 
 
@@ -76,7 +79,10 @@ def test_database_availability_failure_is_mapped_to_safe_503_with_diagnostic_id(
     response = TestClient(app).get("/api/test-database-unavailable")
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Database unavailable"}
+    assert response.json() == {
+        "detail": "Database unavailable",
+        "request_id": response.headers["X-Request-ID"],
+    }
     assert len(response.headers["X-Request-ID"]) == 36
     assert "private database detail" not in response.text
 
@@ -118,7 +124,10 @@ def test_non_file_timeout_is_not_mislabeled_as_a_file_transfer_timeout() -> None
     response = TestClient(app).get("/api/test-downstream-timeout")
 
     assert response.status_code == 500
-    assert response.json() == {"detail": "Internal server error"}
+    assert response.json() == {
+        "detail": "Internal server error",
+        "request_id": response.headers["X-Request-ID"],
+    }
 
 
 def test_expired_file_transfer_deadline_uses_file_timeout_response(monkeypatch) -> None:
@@ -143,6 +152,7 @@ def test_expired_file_transfer_deadline_uses_file_timeout_response(monkeypatch) 
 
     assert response.status_code == 504
     assert response.json()["detail"]["code"] == "file_timeout"
+    assert response.json()["request_id"] == response.headers["X-Request-ID"]
 
 
 def test_actual_request_body_over_limit_is_rejected_despite_false_content_length() -> None:
@@ -156,7 +166,10 @@ def test_actual_request_body_over_limit_is_rejected_despite_false_content_length
     )
 
     assert response.status_code == 413
-    assert response.json() == {"detail": "Request body is too large"}
+    assert response.json() == {
+        "detail": "Request body is too large",
+        "request_id": response.headers["X-Request-ID"],
+    }
 
 
 def _json_body_of_size(size: int) -> bytes:
@@ -269,6 +282,7 @@ def test_file_capacity_is_acquired_before_buffering_and_released_on_denial(monke
         busy = client.put(url, content=b"x")
         assert busy.status_code == 503
         assert busy.json()["detail"]["code"] == "files_busy"
+        assert busy.json()["request_id"] == busy.headers["X-Request-ID"]
         assert busy.headers["Retry-After"] == "1"
         assert client.get("/api/health").status_code == 200
         # Metadata routes reach authentication while the file budget is full.

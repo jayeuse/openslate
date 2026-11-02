@@ -3,8 +3,10 @@ import {
   clearKeptTriggerDrafts,
   readKeptTriggerDraft,
   triggerDraftStorageKey,
+  triggerSaveFailure,
   writeKeptTriggerDraft,
 } from "../../../src/components/systems/sandbox/components/use-trigger-draft";
+import { SandboxCommandError } from "../../../src/components/systems/sandbox/state/commands";
 import { triggerStepErrors } from "../../../src/components/systems/sandbox/domain/trigger-rules";
 import { triggerEditsHoldMove } from "../../../src/components/systems/sandbox/helpers/work-in-progress";
 import {
@@ -109,4 +111,24 @@ test("a fixed value that does not fit its field is reported on its step", () => 
     [`condition:${condition.id}`, "Request number is required."],
   ]);
   expect([...triggerStepErrors(recordTrigger, document.design)]).toEqual([]);
+});
+
+test("a refused trigger save keeps the request's reference with the draft's words", () => {
+  // S1-C4, D1.6 (docs/specs/system-health.md): the page's save failure keeps
+  // the failed request's reference; a local failure has none (S1-C5).
+  const reference = "019a4c2e-7b1d-7c3e-9f00-4f9c2e1a0b2c";
+  const words =
+    "The trigger change could not be saved. Your draft is still available.";
+  expect(
+    triggerSaveFailure(
+      new SandboxCommandError(
+        "This Sandbox change could not be saved.",
+        reference,
+      ),
+    ),
+  ).toEqual({ message: words, reference });
+  expect(triggerSaveFailure(new Error("Sandbox is still loading."))).toEqual({
+    message: words,
+    reference: undefined,
+  });
 });

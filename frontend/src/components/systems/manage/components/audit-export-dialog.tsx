@@ -24,6 +24,7 @@ import {
   AuditExportLimitError,
   type ManageAuditLog,
 } from "../adapters/audit-api";
+import { apiErrorReference } from "@/lib/api-errors";
 
 // The preview mirrors the server CSV (`audit/export.py`): the table name and
 // the raw "Key: value" lines, so the preview matches the download.
@@ -134,7 +135,11 @@ export function AuditExportDialog({
           onClose={onClose}
         />
         {downloadError ? (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={apiErrorReference(downloadError)}
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p>
                 {downloadError instanceof AuditExportLimitError
@@ -153,7 +158,11 @@ export function AuditExportDialog({
           </Alert>
         ) : null}
         {preview.isError ? (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={apiErrorReference(preview.error)}
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p>
                 {preview.error instanceof AuditExportLimitError

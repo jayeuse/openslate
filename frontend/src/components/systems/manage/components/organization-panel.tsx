@@ -44,11 +44,14 @@ type OrganizationPanelProps = {
   checkingSaved: boolean;
   /** A save or load error for the footer; the page shows it otherwise. */
   saveError: string;
+  saveErrorReference?: string;
   regionalDate: string;
   regionalCurrency: string;
   workspace: ManageWorkspaceProfile | undefined;
   workspaceLoading: boolean;
   workspaceLoadFailed: boolean;
+  /** The failed settings read's request ID, shown as its error reference. */
+  workspaceLoadReference?: string;
   onRetryWorkspace: () => void;
   staleRevision: boolean;
   theme: OrganizationTheme;
@@ -78,11 +81,13 @@ export function OrganizationPanel({
   unsavedCount,
   checkingSaved,
   saveError,
+  saveErrorReference,
   regionalDate,
   regionalCurrency,
   workspace,
   workspaceLoading,
   workspaceLoadFailed,
+  workspaceLoadReference,
   onRetryWorkspace,
   staleRevision,
   theme,
@@ -106,7 +111,11 @@ export function OrganizationPanel({
   return (
     <div className="flex min-w-0 flex-col gap-4 xl:min-h-0 xl:flex-1">
       {workspaceLoadFailed ? (
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={workspaceLoadReference}
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p>The organization settings could not be loaded.</p>
@@ -190,6 +199,7 @@ export function OrganizationPanel({
                 }
                 saving={saving}
                 saveError={saveError}
+                saveErrorReference={saveErrorReference}
                 disabled={editDisabled}
                 onDiscard={() => clearDraft("organization")}
               />

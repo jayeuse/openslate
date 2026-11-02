@@ -8,6 +8,7 @@ import { ApiError } from "@/lib/api";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { Alert } from "@/components/ui/alert";
 import { reportDone, reportError } from "@/lib/feedback";
+import { apiErrorReference } from "@/lib/api-errors";
 import {
   formatWorkspaceDateTime,
   type WorkspaceRegion,
@@ -75,6 +76,7 @@ export function useNotificationCommands() {
         id
           ? "This notification could not be marked as read. Try again."
           : "Notifications could not be marked as read. Try again.",
+        apiErrorReference(error),
       );
     } finally {
       endNotificationCommand(client);
@@ -162,7 +164,11 @@ function NotificationItem({
                 You no longer have access to this item.
               </p>
             ) : source.isError ? (
-              <Alert role="alert" variant="destructive">
+              <Alert
+                role="alert"
+                variant="destructive"
+                reference={apiErrorReference(source.error)}
+              >
                 The title couldn’t be loaded.
               </Alert>
             ) : (

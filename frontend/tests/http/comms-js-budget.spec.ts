@@ -32,9 +32,14 @@ const gzip = {
 // the "Reconnecting…" session status (C2, about 350 bytes) and the busy-file
 // waiting state in the Comms composer, timeline and file adapters (C3). Measured
 // 547,836 locally and 548,839 in CI at 50ac61ba.
+// Raised to 556,000 on 2026-11-03 for the approved system-health slices S1 and S2
+// (docs/specs/system-health.md): the server-connection banner and its modal
+// announcer in the shell, and error references on every API error in Comms and
+// the shared alert, toast and picker. Measured 553,518 locally on d3efacd1 plus
+// that work. Revert if the owner prefers trimming.
 // Growth is reported against the last recorded measurement.
 const s04BaselineColdGzipBytes = 546_979;
-const coldTargetGzipBytes = 550_000;
+const coldTargetGzipBytes = 556_000;
 // docs/plans/ci-stability.md D3: a cold load within this many bytes of the
 // target warns, so the pull request that adds approved shell code records a new
 // target in the same commit instead of after a red run.

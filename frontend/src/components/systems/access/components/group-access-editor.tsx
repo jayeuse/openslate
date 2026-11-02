@@ -37,6 +37,7 @@ import type {
   AccessLevel,
   AccessModule,
 } from "../state/api";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 type DepartmentRow = {
   id: string;
@@ -303,6 +304,7 @@ export function GroupAccessEditor({
           >
             Retry departments
           </Button>
+          <ErrorReference id={departmentSearch.reference} />
         </div>
       ) : null}
       {!rows.length && !departmentSearch.loading && !departmentSearch.error ? (
@@ -461,6 +463,7 @@ function DepartmentModules({
           >
             Retry modules
           </Button>
+          <ErrorReference id={search.reference} />
         </div>
       ) : null}
       {!modules.length && !search.loading && !search.error ? (

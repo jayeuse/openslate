@@ -337,7 +337,8 @@ def test_server_error_journal_names_the_api_error_code_only_when_it_is_a_bounded
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
             return _login_response()
-        return httpx.Response(503, json={"detail": detail})
+        # Every API error body carries its request ID beside the detail (S1).
+        return httpx.Response(503, json={"detail": detail, "request_id": REQUEST_ID})
 
     with _client(tmp_path, httpx.MockTransport(handler)) as client:
         client.login(EMAIL, PASSWORD)

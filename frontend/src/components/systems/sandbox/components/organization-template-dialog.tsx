@@ -28,6 +28,7 @@ import {
   sandboxTemplateStats,
   type SandboxOrganizationTemplate,
 } from "../domain/templates";
+import type { ApiErrorText } from "@/lib/api-errors";
 
 type OrganizationTemplateDialogProps = {
   open: boolean;
@@ -47,7 +48,10 @@ export function OrganizationTemplateDialog({
   const [selectedTemplateId, setSelectedTemplateId] = useState(
     SANDBOX_ORGANIZATION_TEMPLATES[0]?.id ?? "",
   );
-  const [error, setError] = useState("");
+  const [errorFailure, setFailure] = useState<ApiErrorText | null>(null);
+  const error = errorFailure?.message ?? "";
+  const setError = (message: string, reference?: string) =>
+    setFailure(message ? { message, reference } : null);
   const [applying, setApplying] = useState(false);
   const idPrefix = useId();
   /** One choice, so the cards are a radio group: arrows move and choose. */
@@ -215,7 +219,11 @@ export function OrganizationTemplateDialog({
         </div>
         <DialogFrameFooter>
           {error ? (
-            <Alert role="alert" variant="destructive">
+            <Alert
+              role="alert"
+              variant="destructive"
+              reference={errorFailure?.reference}
+            >
               {error}
             </Alert>
           ) : null}
@@ -239,7 +247,7 @@ export function OrganizationTemplateDialog({
                 const result = await onApply(selectedTemplate);
                 setApplying(false);
                 if (!result.ok) {
-                  setError(result.error);
+                  setError(result.error, result.reference);
                   return;
                 }
                 onOpenChange(false);

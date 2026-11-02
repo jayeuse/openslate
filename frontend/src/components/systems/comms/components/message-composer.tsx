@@ -70,6 +70,8 @@ import {
 import { messageFromCommsError } from "../state/runtime";
 import { useComposerUploads } from "../state/use-composer-uploads";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 type FilePreview = LocalAttachment & { previewUrl?: string };
 const filesSchema = z.array(
@@ -174,7 +176,8 @@ export function MessageComposer({
     stringSchema,
     "",
   );
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [sending, setSending] = useState(false);
   const [recordPickerOpen, setRecordPickerOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useCommsDraftValue(
@@ -261,6 +264,9 @@ export function MessageComposer({
     (early && !capabilities
       ? "Wait until your access loads, then add the file again."
       : error);
+  // Only a failed send has a request behind it (D1.4).
+  const noticeReference =
+    notice && notice === error ? errorFailure?.reference : undefined;
   // The query may hold spaces ("@HO M") while a name still matches; the
   // list closes on Escape, on a choice, or when nothing matches.
   const token = mentionOpen
@@ -484,6 +490,7 @@ export function MessageComposer({
           if (!live) throw new Error("Live sending is not admitted");
           const sendKey = live.outbox.identity(id, fingerprint, sendIdentity);
           setSendIdentity({ fingerprint, key: sendKey });
+          let sendFailure: unknown;
           const error = await onSend({
             clientKey: sendKey,
             signal,
@@ -502,13 +509,14 @@ export function MessageComposer({
             scheduleAt: sendAt,
             alsoSendToChannel,
             onFailure: (error) => {
+              sendFailure = error;
               const refusal = sendRefusal(error);
               if (!signal.aborted && refusal?.code === "comms_slow_mode")
                 setBackoff(Date.now() + refusal.seconds * 1000);
             },
           });
           if (error) {
-            setError(error);
+            setError(error, sendFailure);
             return;
           }
           if (signal.aborted) return;
@@ -532,6 +540,7 @@ export function MessageComposer({
                 failure,
                 "The message could not be sent. Your draft is still available.",
               ),
+              failure,
             );
         } finally {
           setSending(false);
@@ -539,7 +548,11 @@ export function MessageComposer({
       }}
     >
       {notice && (
-        <Alert variant="destructive" className="mb-2 p-2 text-xs">
+        <Alert
+          variant="destructive"
+          className="mb-2 p-2 text-xs"
+          reference={noticeReference}
+        >
           {notice}
         </Alert>
       )}
@@ -657,6 +670,7 @@ export function MessageComposer({
               >
                 Try again
               </Button>
+              <ErrorReference id={item.reference} className="mt-0 basis-full" />
             </>
           )}
           <Button

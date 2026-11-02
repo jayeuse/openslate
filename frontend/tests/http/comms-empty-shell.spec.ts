@@ -5,6 +5,7 @@ import {
   defaultSignedInIdentity,
   expectNoHorizontalScroll,
   signedInAs,
+  answeredHeaders,
 } from "./helpers/test";
 import { installCommsLiveApi } from "./helpers/comms-live-api";
 import { createMemoryCommsRuntime } from "../support/comms-memory/memory-client";
@@ -117,7 +118,11 @@ for (const row of [
     // A guest's role check that fails never falls back to member actions.
     if (!row.startsDirect)
       await page.route("**/api/comms/capabilities/channel-creation*", (route) =>
-        route.fulfill({ status: 500, json: { detail: "unavailable" } }),
+        route.fulfill({
+          status: 500,
+          headers: answeredHeaders,
+          json: { detail: "unavailable" },
+        }),
       );
     try {
       await page.goto("/comms");

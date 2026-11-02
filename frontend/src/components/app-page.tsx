@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
+import { useServerUnreachable } from "@/components/server-connection-banner";
 import { SessionConnectionStatus } from "@/components/session-connection-status";
 import { AppQueryProvider } from "@/components/query-provider";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
@@ -43,6 +44,8 @@ import { toast } from "@/components/ui/toast";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { ApiErrorText } from "@/lib/api-errors";
+import { useErrorText } from "@/lib/use-error-text";
 import {
   WorkspaceNavigationGuardProvider,
   GuardedWorkspaceLink,
@@ -107,7 +110,8 @@ function SessionVerificationMessage({
   unavailable: boolean;
   onRetry: () => void;
   onSignOut?: () => void;
-  signOutError?: boolean;
+  /** A failed sign-out and its request's reference (D1.4). */
+  signOutError?: ApiErrorText | null;
 }) {
   return (
     <div className="mx-auto max-w-sm px-6">
@@ -141,7 +145,11 @@ function SessionVerificationMessage({
         </div>
       )}
       {signOutError && (
-        <Alert variant="destructive" className="mt-3">
+        <Alert
+          variant="destructive"
+          className="mt-3"
+          reference={signOutError.reference}
+        >
           Sign-out could not finish. Try again.
         </Alert>
       )}
@@ -199,10 +207,12 @@ export function AppPage({ children }: AppPageProps) {
   const [checking, setChecking] = useState(true);
   const [forceFallback, setForceFallback] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const serverUnreachable = useServerUnreachable();
   const [mfaRequired, setMfaRequired] = useState(false);
   const [networkDenied, setNetworkDenied] = useState(false);
   const [accountProfileAvailable, setAccountProfileAvailable] = useState(false);
-  const [signOutError, setSignOutError] = useState(false);
+  // The failed sign-out keeps its request's reference (D1.6).
+  const [signOutError, setSignOutError] = useErrorText();
   const [draftCleanupFailed, setDraftCleanupFailed] = useState(false);
   const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
   const verifiedUserIdRef = useRef<string | null>(null);
@@ -828,12 +838,12 @@ export function AppPage({ children }: AppPageProps) {
   }
 
   async function signOutFromGate() {
-    setSignOutError(false);
+    setSignOutError(null);
     try {
       await signOut();
       finishFactorRemoval();
-    } catch {
-      setSignOutError(true);
+    } catch (error) {
+      setSignOutError("Sign-out could not finish. Try again.", error);
     }
   }
 
@@ -881,7 +891,11 @@ export function AppPage({ children }: AppPageProps) {
         </Button>
       </div>
       {signOutError && (
-        <Alert variant="destructive" className="mt-3">
+        <Alert
+          variant="destructive"
+          className="mt-3"
+          reference={signOutError.reference}
+        >
           Sign-out could not finish. Try again.
         </Alert>
       )}
@@ -916,7 +930,11 @@ export function AppPage({ children }: AppPageProps) {
         </Button>
       </div>
       {signOutError && (
-        <Alert variant="destructive" className="mt-3">
+        <Alert
+          variant="destructive"
+          className="mt-3"
+          reference={signOutError.reference}
+        >
           Sign-out could not finish. Try again.
         </Alert>
       )}
@@ -955,6 +973,9 @@ export function AppPage({ children }: AppPageProps) {
     );
   }
 
+  // The shell's server banner names the larger problem; while it shows, the
+  // other connection messages stay hidden (D3.7). Account pages have no shell.
+  const serverBannerShown = serverUnreachable && !accountOnly;
   return (
     <MfaFlowContext.Provider value={mfa}>
       <div
@@ -1009,8 +1030,8 @@ export function AppPage({ children }: AppPageProps) {
               </AppShell>
             )}
           </AppQueryProvider>
-          <SessionConnectionStatus />
-          {unavailable && !checking && (
+          <SessionConnectionStatus serverBannerShown={serverBannerShown} />
+          {unavailable && !checking && !serverBannerShown && (
             <div
               className="bg-destructive text-destructive-foreground fixed right-4 bottom-4 z-[80] flex max-w-sm items-center gap-3 rounded-md px-4 py-3 text-sm shadow-lg"
               role="alert"

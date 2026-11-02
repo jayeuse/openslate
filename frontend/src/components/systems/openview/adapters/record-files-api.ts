@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { ApiContractError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  ApiContractError,
+  apiFetch,
+  apiRequest,
+  apiContractError,
+} from "@/lib/api";
 import {
   fileDetails,
   fileWireSchema,
@@ -38,7 +43,7 @@ function recordFileSchema(recordId: string) {
 export type RecordFile = z.output<ReturnType<typeof recordFileSchema>>;
 
 function checkedFile(file: RecordFile, fileId: string): RecordFile {
-  if (file.id !== fileId) throw new ApiContractError();
+  if (file.id !== fileId) throw apiContractError(file);
   return file;
 }
 
@@ -121,7 +126,7 @@ export async function reserveRecordFile(
     file.filename !== input.filename ||
     file.expectedSize !== input.expectedSize
   )
-    throw new ApiContractError();
+    throw apiContractError(file);
   return file;
 }
 
@@ -169,7 +174,7 @@ export async function archiveRecordFile(
     }),
     fileId,
   );
-  if (!file.isDeleted) throw new ApiContractError();
+  if (!file.isDeleted) throw apiContractError(file);
   return file;
 }
 

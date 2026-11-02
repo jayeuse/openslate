@@ -1,6 +1,12 @@
 import Papa from "papaparse";
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  ApiError,
+  apiFetch,
+  apiRequest,
+  keepRequestId,
+  apiContractError,
+} from "@/lib/api";
 import { serializeOpenViewQueryDefinition } from "../../openview/adapters/views-serialization";
 import type { OpenViewQueryDefinition } from "../../openview/adapters/views-api";
 
@@ -110,7 +116,7 @@ export async function sendImportBatch(
     (request.mode === "import" &&
       result.schema_digest !== request.schema_digest)
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
   return result;
 }
 
@@ -155,26 +161,29 @@ export async function prepareRecordCsv(
       detail.success && typeof detail.data.detail !== "string"
         ? detail.data.detail.code
         : undefined;
-    throw new ApiError(
-      response.status,
-      code === "export_limit_exceeded"
-        ? "Export exceeds 10,000 rows or 8 MB; choose a narrower saved view."
-        : "The export could not be prepared. Try again.",
-      undefined,
-      code,
+    throw keepRequestId(
+      new ApiError(
+        response.status,
+        code === "export_limit_exceeded"
+          ? "Export exceeds 10,000 rows or 8 MB; choose a narrower saved view."
+          : "The export could not be prepared. Try again.",
+        undefined,
+        code,
+      ),
+      response,
     );
   }
   if (!/^text\/csv(?:;|$)/i.test(response.headers.get("Content-Type") ?? ""))
-    throw new ApiContractError();
+    throw apiContractError(response);
   const blob = await response.blob();
-  if (blob.size > 8 * 1024 * 1024) throw new ApiContractError();
+  if (blob.size > 8 * 1024 * 1024) throw apiContractError(response);
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(
       await blob.arrayBuffer(),
     );
   } catch {
-    throw new ApiContractError();
+    throw apiContractError(response);
   }
   const parsed = Papa.parse<string[]>(text, {
     dynamicTyping: false,
@@ -198,6 +207,6 @@ export async function prepareRecordCsv(
         row.length !== headers.length || !z.uuid().safeParse(row[0]).success,
     )
   )
-    throw new ApiContractError();
+    throw apiContractError(response);
   return { blob, headers, rows: cells.slice(0, 10), count: cells.length };
 }

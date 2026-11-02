@@ -308,7 +308,11 @@ export function ConversationView({
               header={
                 <>
                   {history.error && (
-                    <Alert role="alert" variant="destructive">
+                    <Alert
+                      role="alert"
+                      variant="destructive"
+                      reference={history.reference}
+                    >
                       {history.error}
                       <Action onClick={history.retry}>Retry history</Action>
                     </Alert>

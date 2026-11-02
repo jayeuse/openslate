@@ -1,4 +1,4 @@
-import { ApiContractError, type ApiRequestInit } from "@/lib/api";
+import { type ApiRequestInit, apiContractError } from "@/lib/api";
 import {
   assertLifecyclePurgePreviewFor,
   assertLifecyclePurgeResultFor,
@@ -83,7 +83,7 @@ async function boardById(
   init: ApiRequestInit = {},
 ): Promise<BoardManagementBoard> {
   const board = await safeBoardJson(path, boardSchema, init);
-  if (board.id !== boardId) throw new ApiContractError();
+  if (board.id !== boardId) throw apiContractError(board);
   return board;
 }
 
@@ -177,7 +177,7 @@ export async function readBoardGroups(
     `/boards/${encodeURIComponent(boardId)}/groups`,
     boardGroupsSchema,
   );
-  if (groups.boardId !== boardId) throw new ApiContractError();
+  if (groups.boardId !== boardId) throw apiContractError(groups);
   return groups;
 }
 
@@ -202,6 +202,6 @@ export async function replaceBoardGroups(
       }),
     },
   );
-  if (groups.boardId !== boardId) throw new ApiContractError();
+  if (groups.boardId !== boardId) throw apiContractError(groups);
   return groups;
 }

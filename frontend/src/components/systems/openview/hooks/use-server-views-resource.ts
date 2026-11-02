@@ -8,7 +8,7 @@ import {
   type SetStateAction,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiErrorMessage } from "@/lib/api-errors";
+import { apiErrorMessage, apiErrorReference } from "@/lib/api-errors";
 import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
 import {
   extendsRead,
@@ -33,6 +33,7 @@ import {
 } from "../adapters/views-api";
 
 import { uuidSchema } from "../adapters/views-schemas";
+import { useErrorText } from "@/lib/use-error-text";
 
 export type { ModuleWorkspace };
 
@@ -66,7 +67,8 @@ export function useServerViewsResource(requestedModule: string | null) {
   const [catalogExtension, setCatalogExtension] =
     useState<CatalogExtension | null>(null);
   const [metadataLoadingMore, setMetadataLoadingMore] = useState(false);
-  const [metadataError, setMetadataError] = useState("");
+  const [metadataErrorFailure, setMetadataError] = useErrorText();
+  const metadataError = metadataErrorFailure?.message ?? "";
   const [metadataRetryTarget, setMetadataRetryTarget] = useState<
     "catalog" | "module" | null
   >(null);
@@ -169,6 +171,10 @@ export function useServerViewsResource(requestedModule: string | null) {
           "The OpenView catalog could not be loaded.",
         )
       : "";
+  // The failed reads' request IDs, shown as their error references.
+  const catalogReference = authorizationDenied
+    ? undefined
+    : apiErrorReference(catalogLoadError);
   // The chosen source's id stays through a refusal (it is not data) so the
   // editing draft keyed by it survives; its names and rows are hidden.
   const moduleId = loadedModuleId;
@@ -183,6 +189,9 @@ export function useServerViewsResource(requestedModule: string | null) {
     : moduleLoadError
       ? apiErrorMessage(moduleLoadError, "The data source could not be loaded.")
       : "";
+  const moduleReference = authorizationDenied
+    ? undefined
+    : apiErrorReference(moduleLoadError);
 
   // Saved-view commands update the cached workspace of the module they
   // belong to; each updater ignores a workspace for another module.
@@ -226,6 +235,7 @@ export function useServerViewsResource(requestedModule: string | null) {
       setMetadataRetryTarget("catalog");
       setMetadataError(
         apiErrorMessage(error, "More data sources could not be loaded."),
+        error,
       );
     } finally {
       setMetadataLoadingMore(false);
@@ -291,6 +301,7 @@ export function useServerViewsResource(requestedModule: string | null) {
       setMetadataRetryTarget("module");
       setMetadataError(
         apiErrorMessage(error, "More saved-view metadata could not be loaded."),
+        error,
       );
     } finally {
       setMetadataLoadingMore(false);
@@ -324,13 +335,16 @@ export function useServerViewsResource(requestedModule: string | null) {
     catalogHasMore,
     catalogLoading,
     catalogError,
+    catalogReference,
     moduleId,
     moduleWorkspace,
     setModuleWorkspace,
     moduleLoading,
     moduleError,
+    moduleReference,
     metadataLoadingMore,
     metadataError,
+    metadataReference: metadataErrorFailure?.reference,
     retryMetadata,
     loadMoreCatalog,
     loadMoreModuleMetadata,

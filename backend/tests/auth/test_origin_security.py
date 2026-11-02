@@ -8,6 +8,7 @@ from starlette.requests import Request
 
 import app.systems.access.auth.router as auth_router
 from app.core.config import Settings
+from app.core.middleware.request_context import RequestContext
 from app.systems.access.auth import cookies, request_security
 from tests.config_support import settings_values
 
@@ -167,9 +168,15 @@ def test_a_session_without_refresh_handle_deletes_the_stale_refresh_cookie() -> 
 
 @pytest.mark.usefixtures("production_cookies")
 def test_a_refused_refresh_returns_the_uniform_401_and_deletes_every_session_cookie() -> None:
-    response = cookies.cleared_auth_error()
+    context = RequestContext()
+    request = Request({"type": "http", "state": {"request_context": context}})
+    response = cookies.cleared_auth_error(request)
     assert response.status_code == 401
-    assert response.body == b'{"detail":"Invalid authentication credentials"}'
+    assert response.body == (
+        b'{"detail":"Invalid authentication credentials","request_id":"'
+        + str(context.request_id).encode()
+        + b'"}'
+    )
     cleared = _cookies(response)
     assert sorted(cleared) == ["slateops_access", "slateops_csrf", "slateops_refresh"]
     assert _deleted(cleared["slateops_access"]) == ("", "/", True, "0")

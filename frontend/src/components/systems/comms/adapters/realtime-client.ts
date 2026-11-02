@@ -1,6 +1,11 @@
 import { RealtimeClient } from "@supabase/realtime-js";
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetchWithMetadata } from "@/lib/api";
+import {
+  ApiContractError,
+  ApiError,
+  apiFetchWithMetadata,
+  apiContractError,
+} from "@/lib/api";
 import {
   commsContextSchema,
   realtimeEventSchemaFor,
@@ -100,7 +105,7 @@ export function createCommsRealtime(
         result.response.status !== 200 ||
         !result.response.headers.get("Cache-Control")?.includes("no-store")
       )
-        throw new ApiContractError();
+        throw apiContractError(result);
       const endpoint = new URL("/realtime/v1", globalThis.location.href);
       endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
       // SDK construction requires a nonempty key. This noncredential marker is

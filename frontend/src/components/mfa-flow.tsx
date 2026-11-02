@@ -27,6 +27,7 @@ import {
   formatWorkspaceDateTime,
   type WorkspaceRegion,
 } from "@/lib/date-time-display";
+import { useErrorText } from "@/lib/use-error-text";
 type OwnedFactor = { userId: string; factorId: string };
 type Mode = "hidden" | "workspace" | "gate";
 const cleanupMessage =
@@ -37,9 +38,11 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
   const [status, setStatus] = useState<MfaStatus | null>(null);
   const [credentials, setCredentials] = useState<MfaEnrollment | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   const [cleanup, setCleanup] = useState<OwnedFactor | null>(null);
-  const [cleanupError, setCleanupError] = useState("");
+  const [cleanupFailure, setCleanupError] = useErrorText();
+  const cleanupError = cleanupFailure?.message ?? "";
   const owner = useRef<string | null>(null);
   const owned = useRef<OwnedFactor | null>(null);
   const generation = useRef(0);
@@ -67,10 +70,10 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
         setCleanup(null);
         setCleanupError("");
       }
-    } catch {
+    } catch (failure) {
       if (mounted.current) {
         setCleanup(target);
-        setCleanupError(cleanupMessage);
+        setCleanupError(cleanupMessage, failure);
       } else
         toast.addPublic({
           type: "error",
@@ -134,10 +137,11 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
         return;
       }
       setStatus(current);
-    } catch {
+    } catch (failure) {
       if (mounted.current && started === generation.current)
         setError(
           "We could not load your two-step verification settings. Try again.",
+          failure,
         );
     } finally {
       if (mounted.current && started === generation.current) setPending(false);
@@ -172,9 +176,9 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
       }
       owned.current = target;
       setCredentials(result);
-    } catch {
+    } catch (failure) {
       if (mounted.current && started === generation.current)
-        setError("The authenticator could not be set up. Try again.");
+        setError("The authenticator could not be set up. Try again.", failure);
     } finally {
       enrolling.current = false;
       if (mounted.current && started === generation.current) setPending(false);
@@ -222,6 +226,7 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
               : caught instanceof ApiError && caught.status === 400
                 ? "Verification code was not accepted. Enter a new code and try again."
                 : "The code could not be verified. Try again.",
+            caught,
           );
       } finally {
         if (mounted.current && started === generation.current)
@@ -246,9 +251,9 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
         return;
       setCredentials(null);
       callbacks.current.onRemoved();
-    } catch {
+    } catch (failure) {
       if (mounted.current && started === generation.current)
-        setError("The authenticator could not be removed. Try again.");
+        setError("The authenticator could not be removed. Try again.", failure);
     } finally {
       if (mounted.current && started === generation.current) setPending(false);
     }
@@ -272,7 +277,9 @@ export function useMfaController(onRecheck: () => void, onRemoved: () => void) {
     credentials,
     pending,
     error,
+    errorReference: errorFailure?.reference,
     cleanupError,
+    cleanupReference: cleanupFailure?.reference,
     bind,
     hide,
     clear,
@@ -299,7 +306,12 @@ export function useMfaFlow() {
 
 export function MfaCleanupNotice({ flow }: { flow: MfaFlow }) {
   return flow.cleanupError ? (
-    <Alert role="alert" variant="destructive" className="mb-5">
+    <Alert
+      role="alert"
+      variant="destructive"
+      className="mb-5"
+      reference={flow.cleanupReference}
+    >
       <p>{flow.cleanupError}</p>
       {flow.cleanupRetryable && (
         <Button
@@ -414,7 +426,11 @@ export function MfaPresentation({
         </div>
       )}
       {flow.error && (
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={flow.errorReference}
+        >
           {flow.error}
           {flow.status === null && (
             <Button

@@ -19,6 +19,7 @@ export function OrganizationFooter({
   checkingSaved,
   saveLabel,
   saveError,
+  saveErrorReference,
   saving,
   disabled,
   onDiscard,
@@ -32,6 +33,8 @@ export function OrganizationFooter({
   checkingSaved: boolean;
   saveLabel: string;
   saveError: string;
+  /** The failed save request's ID, shown as its error reference. */
+  saveErrorReference?: string;
   /**
    * A save is running. Save stays focusable (`aria-disabled`, through its
    * reason) so focus does not drop to the page while it runs (Phase 8).
@@ -49,8 +52,13 @@ export function OrganizationFooter({
       className="bg-card border-border sticky bottom-0 z-10 flex flex-wrap items-center gap-2 rounded-b-[var(--radius)] border-t px-4 py-3 sm:px-6"
     >
       {saveError ? (
-        <Alert role="alert" variant="destructive" className="basis-full">
-          {saveError}
+        <Alert
+          role="alert"
+          variant="destructive"
+          className="basis-full"
+          reference={saveErrorReference}
+        >
+          <p>{saveError}</p>
         </Alert>
       ) : null}
       <span role="status" className="inline-flex items-center">

@@ -22,8 +22,15 @@ export type BoardManagementView = {
   conflict: boolean;
   latestReady?: boolean;
   error: string | null;
+  /** The failed request's ID for `error`, or for a failed access check (D1.4). */
+  errorReference?: string;
+  accessReference?: string;
   notice: string | null;
-  lifecycleError?: { action: "lifecycle" | "purge"; message: string } | null;
+  lifecycleError?: {
+    action: "lifecycle" | "purge";
+    message: string;
+    reference?: string;
+  } | null;
   lifecycleNotice?: string | null;
 };
 

@@ -2,9 +2,22 @@
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { X } from "lucide-react";
-import type { ComponentProps, HTMLAttributes } from "react";
+import {
+  createContext,
+  useContext,
+  type ComponentProps,
+  type HTMLAttributes,
+} from "react";
 import { cn } from "@/lib/utils";
+import { ServerConnectionAnnouncer } from "@/components/server-connection-banner";
 import { useWorkspaceInteractionSuspended } from "@/components/systems/shared/runtime/workspace-identity";
+
+// Whether the open dialog is modal. Only a modal surface carries the server
+// announcer; a non-modal one leaves the shell banner audible (D4 item 11).
+const ModalSurface = createContext(true);
+export function useModalSurface(): boolean {
+  return useContext(ModalSurface);
+}
 
 export interface DialogProps extends DialogPrimitive.Root.Props {
   dismissible?: boolean;
@@ -15,23 +28,26 @@ export function Dialog({
   ...props
 }: DialogProps) {
   const suspended = useWorkspaceInteractionSuspended();
+  const modal = suspended ? false : props.modal;
   return (
-    <DialogPrimitive.Root
-      {...props}
-      modal={suspended ? false : props.modal}
-      disablePointerDismissal={!dismissible || props.disablePointerDismissal}
-      onOpenChange={(open, details) => {
-        if (suspended) {
-          details.cancel();
-          return;
-        }
-        if (!open && !dismissible) {
-          details.cancel();
-          return;
-        }
-        onOpenChange?.(open, details);
-      }}
-    />
+    <ModalSurface.Provider value={modal === undefined || modal === true}>
+      <DialogPrimitive.Root
+        {...props}
+        modal={modal}
+        disablePointerDismissal={!dismissible || props.disablePointerDismissal}
+        onOpenChange={(open, details) => {
+          if (suspended) {
+            details.cancel();
+            return;
+          }
+          if (!open && !dismissible) {
+            details.cancel();
+            return;
+          }
+          onOpenChange?.(open, details);
+        }}
+      />
+    </ModalSurface.Provider>
   );
 }
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -52,7 +68,12 @@ export type DialogContentProps = Omit<
   ComponentProps<typeof DialogPrimitive.Popup>,
   "className"
 > & { className?: string };
-export function DialogContent({ className, ...props }: DialogContentProps) {
+export function DialogContent({
+  className,
+  children,
+  ...props
+}: DialogContentProps) {
+  const modal = useModalSurface();
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Backdrop
@@ -67,7 +88,10 @@ export function DialogContent({ className, ...props }: DialogContentProps) {
             className,
           )}
           {...props}
-        />
+        >
+          {children}
+          {modal ? <ServerConnectionAnnouncer /> : null}
+        </DialogPrimitive.Popup>
       </DialogPrimitive.Viewport>
     </DialogPrimitive.Portal>
   );

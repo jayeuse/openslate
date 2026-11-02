@@ -31,6 +31,8 @@ import {
   sandboxShortcutKeys,
 } from "@/lib/shortcuts";
 import { pageGuideForNavigation } from "./page-guides";
+import { ErrorReference } from "@/components/ui/error-reference";
+import { apiErrorReference } from "@/lib/api-errors";
 
 function AdministratorContacts({ userId }: { userId: string }) {
   const client = useQueryClient();
@@ -67,6 +69,7 @@ function AdministratorContacts({ userId }: { userId: string }) {
         >
           Retry
         </Button>
+        <ErrorReference id={apiErrorReference(query.error)} />
       </div>
     );
   if (contacts?.kind === "guest")

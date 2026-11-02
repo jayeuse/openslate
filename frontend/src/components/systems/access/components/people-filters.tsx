@@ -313,6 +313,7 @@ export function PeopleFilterRows({
           onSearchChange={groups.onSearchChange}
           loading={groups.loading}
           error={groups.error || undefined}
+          reference={groups.reference}
           onRetry={() => void groups.retry()}
           hasMore={groups.hasMore}
           onLoadMore={() => void groups.loadMore()}
@@ -341,6 +342,7 @@ export function PeopleFilterRows({
           onSearchChange={departments.onSearchChange}
           loading={departments.loading}
           error={departments.error || undefined}
+          reference={departments.reference}
           onRetry={() => void departments.retry()}
           hasMore={departments.hasMore}
           onLoadMore={() => void departments.loadMore()}

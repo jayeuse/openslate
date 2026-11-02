@@ -1,4 +1,5 @@
 import { ApiContractError, ApiError } from "@/lib/api";
+import { apiErrorReference, type ApiErrorText } from "@/lib/api-errors";
 import {
   formatWorkspaceDate,
   formatWorkspaceDateTime,
@@ -792,6 +793,36 @@ export function peopleErrorMessage(error: unknown, fallback: string): string {
       return error.details.endsWith(".") ? error.details : `${error.details}.`;
   }
   return fallback;
+}
+
+/**
+ * Where a failed person save shows. A refused role change (the last
+ * administrator, the owner) shows beside Role; a field error never carries
+ * the reference, so one form-level line with the 422 words does (D1.4,
+ * docs/specs/system-health.md). A username in use is the other conflict a
+ * save meets, and it stays a form-level error.
+ */
+export function personSaveFailure(
+  caught: unknown,
+  patch: object,
+  fallback: string,
+): { fields: { role?: string }; form: ApiErrorText } {
+  const message =
+    caught instanceof ApiError && caught.status === 412
+      ? "This person changed while you were saving. Check the details and save again."
+      : peopleErrorMessage(caught, fallback);
+  const reference = apiErrorReference(caught);
+  if (
+    caught instanceof ApiError &&
+    caught.status === 409 &&
+    "role" in patch &&
+    !("username" in patch)
+  )
+    return {
+      fields: { role: message },
+      form: { message: "Check the entered values and try again.", reference },
+    };
+  return { fields: {}, form: { message, reference } };
 }
 
 /** True when a request failed before the server answered it. */

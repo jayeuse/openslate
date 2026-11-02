@@ -1,7 +1,7 @@
 import type { Route } from "next";
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
-import { ApiContractError, apiFetch } from "@/lib/api";
+import { apiFetch, apiContractError } from "@/lib/api";
 
 export const SEARCH_KINDS = ["record", "person", "post", "event"] as const;
 export type SearchKind = (typeof SEARCH_KINDS)[number];
@@ -66,7 +66,7 @@ export async function readPlatformSearch(
     (page.pagination.total < offset + page.items.length &&
       page.items.length > 0)
   )
-    throw new ApiContractError();
+    throw apiContractError(page);
   return page;
 }
 export const platformSearchOptions = (

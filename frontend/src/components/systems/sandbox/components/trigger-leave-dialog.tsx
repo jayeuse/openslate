@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Alert } from "@/components/ui/alert";
+import type { ApiErrorText } from "@/lib/api-errors";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -36,7 +37,10 @@ export function TriggerLeaveDialog({
   onLeave: () => void;
 }) {
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setErrorFailure] = useState<ApiErrorText | null>(null);
+  const error = errorFailure?.message ?? "";
+  const setError = (message: string, reference?: string) =>
+    setErrorFailure(message ? { message, reference } : null);
   return (
     <Dialog
       open={open}
@@ -61,7 +65,11 @@ export function TriggerLeaveDialog({
           Discard removes {plural(draft.changes, "unsaved change")}.
         </DialogDescription>
         {error ? (
-          <Alert role="alert" variant="destructive">
+          <Alert
+            role="alert"
+            variant="destructive"
+            reference={errorFailure?.reference}
+          >
             {error}
           </Alert>
         ) : null}
@@ -98,7 +106,7 @@ export function TriggerLeaveDialog({
                 const result = await draft.save();
                 setSaving(false);
                 if (result.ok) onLeave();
-                else setError(result.error);
+                else setError(result.error, result.reference);
               }}
             >
               Save

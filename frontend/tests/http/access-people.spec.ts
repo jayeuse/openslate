@@ -4,6 +4,9 @@ import {
   heldResponse,
   test,
   type Page,
+  answeredHeaders,
+  serverBanner,
+  expectAnsweredReference,
 } from "./helpers/test";
 
 import {
@@ -536,6 +539,8 @@ test("a save that got no answer is held for review instead of being sent again",
   await expect(sheet.getByRole("alert")).toContainText(
     "This change to the person may have completed.",
   );
+  // No answer at all: the shell says the server cannot be reached.
+  await expect(serverBanner(page)).toBeVisible();
   // The request may still land, so this tab cannot clear it yet.
   await expect(
     sheet.getByRole("button", { name: "Reload Access to review" }),
@@ -561,7 +566,11 @@ test("the directory offers a retry after a failed load and explains a refusal", 
   let failing = true;
   api.on("GET", "/api/users", async (route) => {
     if (!failing) return "next";
-    await route.fulfill({ status: 500, json: { detail: "boom" } });
+    await route.fulfill({
+      status: 500,
+      headers: answeredHeaders,
+      json: { detail: "boom" },
+    });
   });
   await page.goto("/access?view=people");
   const failed = page.getByRole("alert").filter({
@@ -569,6 +578,7 @@ test("the directory offers a retry after a failed load and explains a refusal", 
   });
   await expect(failed).toBeVisible();
   await expect(failed).not.toContainText("boom");
+  await expectAnsweredReference(failed);
   failing = false;
   await failed.getByRole("button", { name: "Retry" }).click();
   await expect(

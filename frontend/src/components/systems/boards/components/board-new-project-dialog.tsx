@@ -31,6 +31,7 @@ import {
   type BoardManagementDraft,
 } from "../domain/board-details";
 import { ConfirmAction } from "./ui";
+import { useErrorText } from "@/lib/use-error-text";
 
 const control = "min-h-11 xl:min-h-8";
 
@@ -51,7 +52,8 @@ export function BoardNewProjectDialog({
   const id = useId();
   const [draft, setDraft] = useState<BoardManagementDraft>(blankDraft);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   const [discardOpen, setDiscardOpen] = useState(false);
   const pendingRef = useRef(false);
   const dirty = draft.name !== "" || draft.description !== "";
@@ -87,6 +89,7 @@ export function BoardNewProjectDialog({
         failure instanceof ApiError && [401, 403].includes(failure.status)
           ? "Only an administrator can create a board."
           : "The board could not be created. Try again.",
+        failure,
       );
     } finally {
       pendingRef.current = false;
@@ -153,7 +156,11 @@ export function BoardNewProjectDialog({
                 />
               </Field>
             </fieldset>
-            {error ? <Alert variant="destructive">{error}</Alert> : null}
+            {error ? (
+              <Alert variant="destructive" reference={errorFailure?.reference}>
+                {error}
+              </Alert>
+            ) : null}
           </form>
           <DialogFrameFooter>
             <DialogFooter className="mt-0">

@@ -29,6 +29,10 @@ const PAIRS = [
   ["warn-text", "background", 4.5],
   ["danger-text", "danger-tint", 4.5],
   ["danger-text", "card", 4.5],
+  // Ink on the tints (System health): error references in destructive alerts
+  // and error toasts, and the shell banner that says the server is unreachable.
+  ["foreground", "danger-tint", 4.5],
+  ["foreground", "warn-tint", 4.5],
   ["flow-text", "card", 4.5],
   ["action-text", "card", 4.5],
   ["sidebar-foreground", "sidebar", 4.5],

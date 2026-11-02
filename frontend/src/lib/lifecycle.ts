@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, ApiError } from "./api";
+import { ApiError, apiContractError } from "./api";
 import type {
   LifecycleBlockerCode,
   LifecycleErrorCode,
@@ -174,7 +174,7 @@ export function assertLifecyclePreviewFor(
     preview.impact.target_id !== targetId ||
     preview.impact.operation !== operation
   )
-    throw new ApiContractError();
+    throw apiContractError(preview);
 }
 
 export function assertLifecyclePurgeResultFor(
@@ -196,7 +196,7 @@ export function assertLifecycleResultFor(
     result.impact.target_id !== targetId ||
     result.impact.operation !== operation
   )
-    throw new ApiContractError();
+    throw apiContractError(result);
 }
 
 const safeLifecycleErrors: Partial<

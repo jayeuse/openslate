@@ -87,12 +87,14 @@ const workspaceNavigationDefinitions = [
   {
     id: "manage",
     label: "Manage",
-    description: "Organization settings and audit",
+    description: "Organization settings, system health, and audit",
     pathname: "/manage",
     queryKey: "view",
     defaultItem: "organization",
     items: [
       { id: "organization", label: "Organization" },
+      // Every role sees System health, so it holds the same place for all.
+      { id: "health", label: "System health" },
       { id: "backup", label: "Backup" },
       { id: "audit", label: "Audit" },
       { id: "jobs", label: "Jobs" },
@@ -185,7 +187,7 @@ export function auditDepartmentsFor(
 
 /**
  * Which Manage sections a person sees (MD3, docs/specs/manage-relayout.md):
- * Organization for everyone; Audit for an administrator (`require_admin`) and
+ * Organization and System health for everyone; Audit for an administrator (`require_admin`) and
  * a department manager (MD12, the page sends `department_id`); Jobs for a
  * verified administrator; Backup and Updates for the installation owner.
  */

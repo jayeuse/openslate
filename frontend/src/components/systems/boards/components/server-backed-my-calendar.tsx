@@ -15,8 +15,8 @@ import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidat
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { ApiError } from "@/lib/api";
 import { reportDone, reportError } from "@/lib/feedback";
+import { apiErrorReference } from "@/lib/api-errors";
 import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import type {
@@ -25,6 +25,7 @@ import type {
 } from "../adapters/board-events-api";
 import {
   addMyCalendarSource,
+  calendarSourceErrorMessage,
   removeMyCalendarSource,
   type CalendarSource,
 } from "../adapters/board-calendar-sources-api";
@@ -132,6 +133,7 @@ export function ServerBackedMyCalendar({
   departmentIndexOf,
   workspaceCalendar,
   workspaceDateError,
+  workspaceDateReference,
   onRetryWorkspaceDate,
   selectedEventId = null,
   view: requestedView = null,
@@ -146,6 +148,8 @@ export function ServerBackedMyCalendar({
   departmentIndexOf: (departmentId: string) => number | null;
   workspaceCalendar: WorkspaceCalendarSettings | undefined;
   workspaceDateError: boolean;
+  /** The failed date read's request ID (D1.4). */
+  workspaceDateReference?: string;
   onRetryWorkspaceDate: () => void;
   selectedEventId?: string | null;
   view?: string | null;
@@ -421,9 +425,11 @@ export function ServerBackedMyCalendar({
       reportDone("Record source removed");
     } catch (failure) {
       reportError(
-        failure instanceof ApiError && failure.message
-          ? failure.message
-          : "The record source was not removed. Try again.",
+        calendarSourceErrorMessage(
+          failure,
+          "The record source was not removed. Try again.",
+        ),
+        apiErrorReference(failure),
       );
     } finally {
       setSourceToRemove(null);
@@ -433,6 +439,7 @@ export function ServerBackedMyCalendar({
   const listActions: CalendarListActions = {
     hidden,
     statuses: data.statuses,
+    references: data.references,
     // A person adds and removes their own sources.
     canManage: true,
     onToggle: (id) =>
@@ -579,7 +586,7 @@ export function ServerBackedMyCalendar({
                 )
               : null}
             {workspaceDateError ? (
-              <Alert variant="destructive">
+              <Alert variant="destructive" reference={workspaceDateReference}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
                     {today
@@ -598,13 +605,17 @@ export function ServerBackedMyCalendar({
               </Alert>
             ) : null}
             {editor.editorError && !activeDraft ? (
-              <Alert variant="destructive">{editor.editorError}</Alert>
+              <Alert variant="destructive" reference={editor.editorReference}>
+                {editor.editorError}
+              </Alert>
             ) : null}
             {lifecycle.error && !lifecycle.target ? (
-              <Alert variant="destructive">{lifecycle.error}</Alert>
+              <Alert variant="destructive" reference={lifecycle.reference}>
+                {lifecycle.error}
+              </Alert>
             ) : null}
             {data.eventsError ? (
-              <Alert variant="destructive">
+              <Alert variant="destructive" reference={data.eventsReference}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
                     {data.occurrences.length
@@ -720,6 +731,7 @@ export function ServerBackedMyCalendar({
         }
         conflict={editor.conflict}
         error={editor.editorError}
+        errorReference={editor.editorReference}
         leading={
           activeDraft && activeDraft.eventId === null && editorBoard ? (
             <MyCalendarBoardField
@@ -795,6 +807,7 @@ export function ServerBackedMyCalendar({
         }
         target={lifecycle.target}
         error={lifecycle.error}
+        reference={lifecycle.reference}
         pending={lifecycle.pending}
         canConfirm={lifecycle.canConfirmLifecycle(lifecycle.target)}
         onCancel={lifecycle.cancelLifecycle}

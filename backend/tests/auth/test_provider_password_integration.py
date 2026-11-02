@@ -206,7 +206,10 @@ def test_an_account_disabled_after_the_provider_grant_keeps_its_password(
 
         assert raced == [True]
         assert changed.status_code == 403
-        assert changed.json() == {"detail": "Password cannot be changed"}
+        assert changed.json() == {
+            "detail": "Password cannot be changed",
+            "request_id": changed.headers["X-Request-ID"],
+        }
         # The provider still holds the old password.
         tokens = real.password_grant(email, old_password)
         real.sign_out(tokens.access_token, scope="local")

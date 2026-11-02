@@ -1,4 +1,4 @@
-import { ApiContractError, apiFetchWithMetadata } from "@/lib/api";
+import { apiFetchWithMetadata, apiContractError } from "@/lib/api";
 import * as S from "../contract/schemas";
 import type * as C from "../contract/types";
 import {
@@ -34,7 +34,7 @@ function settingsSchemaFor(context: C.CommsContext, scope: C.SettingsScope) {
 function directPolicy(
   result: C.Versioned<C.SettingsResponse>,
 ): C.Versioned<C.DirectPolicy> {
-  if (!("dm_rule" in result.data)) throw new ApiContractError();
+  if (!("dm_rule" in result.data)) throw apiContractError(result.data);
   return { data: { dm_rule: result.data.dm_rule }, etag: result.etag };
 }
 

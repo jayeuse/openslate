@@ -9,8 +9,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { ApiContractError, ApiError } from "@/lib/api";
+import { ApiError, apiContractError } from "@/lib/api";
 import { reportDone, reportError } from "@/lib/feedback";
+import { apiErrorReference } from "@/lib/api-errors";
 import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ import {
 } from "../adapters/openview-queries";
 import { useOpenViewAccessDenied } from "../adapters/openview-access";
 import type { OpenViewRecord } from "../adapters/views-api";
+import { useErrorText } from "@/lib/use-error-text";
 
 // A known reservation survives tab/record unmounts in this account's client.
 // It holds no bytes or history and sits outside SSE-invalidated read keys.
@@ -97,8 +99,10 @@ export function RecordFilesPanel({
     gcTime: Infinity,
   }).data;
   const [extension, setExtension] = useState<FileExtension | null>(null);
-  const [error, setError] = useState("");
-  const [pageError, setPageError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
+  const [pageErrorFailure, setPageError] = useErrorText();
+  const pageError = pageErrorFailure?.message ?? "";
   const [checkedState, setCheckedState] = useState<
     "unknown" | "awaiting_upload" | "uploading"
   >("unknown");
@@ -178,7 +182,7 @@ export function RecordFilesPanel({
         file.filename !== check.filename ||
         file.expectedSize !== check.expectedSize
       )
-        throw new ApiContractError();
+        throw apiContractError(file);
       if (
         file.isDeleted ||
         ["rejected", "purged", "deleting"].includes(file.state)
@@ -229,7 +233,7 @@ export function RecordFilesPanel({
           return;
         if (refused(caught)) setReadRefused(true);
         setCheckedState("unknown");
-        setError(fileErrorMessage(caught, "check the upload"));
+        setError(fileErrorMessage(caught, "check the upload"), caught);
       }
     },
     [applyUploadStatus, client, getCheck, live, record.id],
@@ -330,9 +334,9 @@ export function RecordFilesPanel({
       // The server refused the bytes before reading them: the same file can retry.
       if (check && isFilesBusy(caught)) {
         setCheckedState("awaiting_upload");
-        setError(fileErrorMessage(caught, "upload the file"));
+        setError(fileErrorMessage(caught, "upload the file"), caught);
       } else if (check) await readUploadStatus(check, owned);
-      else setError(fileErrorMessage(caught, "upload the file"));
+      else setError(fileErrorMessage(caught, "upload the file"), caught);
     } finally {
       finish(owned);
     }
@@ -357,7 +361,10 @@ export function RecordFilesPanel({
       if (live(owned)) reportDone(`${file.filename} archived.`);
     } catch (caught) {
       if (live(owned))
-        reportError(fileErrorMessage(caught, "archive the file"));
+        reportError(
+          fileErrorMessage(caught, "archive the file"),
+          apiErrorReference(caught),
+        );
     } finally {
       finish(owned);
     }
@@ -393,7 +400,10 @@ export function RecordFilesPanel({
         );
       if (live(owned)) {
         if (refused(caught)) setReadRefused(true);
-        reportError(fileErrorMessage(caught, "download the file"));
+        reportError(
+          fileErrorMessage(caught, "download the file"),
+          apiErrorReference(caught),
+        );
       }
     } finally {
       finish(owned);
@@ -438,7 +448,7 @@ export function RecordFilesPanel({
           caught,
         );
       if (live(owned))
-        setPageError(fileErrorMessage(caught, "load more files"));
+        setPageError(fileErrorMessage(caught, "load more files"), caught);
     } finally {
       finish(owned);
     }
@@ -528,7 +538,11 @@ export function RecordFilesPanel({
                     : "Loading more files…"}
         </p>
       ) : null}
-      {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {error ? (
+        <Alert variant="destructive" reference={errorFailure?.reference}>
+          {error}
+        </Alert>
+      ) : null}
       {pending ? (
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 text-sm wrap-anywhere">
@@ -553,6 +567,7 @@ export function RecordFilesPanel({
         <Alert
           variant="destructive"
           className="flex w-full flex-wrap items-center justify-between gap-3"
+          reference={apiErrorReference(files.error)}
         >
           <p className="min-w-0">
             {fileErrorMessage(files.error, "load files")}
@@ -632,7 +647,11 @@ export function RecordFilesPanel({
           </ul>
         ) : null}
         {pageError ? (
-          <Alert variant="destructive" className="mt-3">
+          <Alert
+            variant="destructive"
+            className="mt-3"
+            reference={pageErrorFailure?.reference}
+          >
             {pageError}
           </Alert>
         ) : null}

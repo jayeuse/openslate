@@ -28,6 +28,8 @@ import {
   shortDate,
   type RecordDateChoice,
 } from "../domain/kanban";
+import { useErrorText } from "@/lib/use-error-text";
+import { ErrorReference } from "@/components/ui/error-reference";
 
 /**
  * Add a card (BR62), the Trello way: a title adds an objective; Find a
@@ -54,7 +56,8 @@ export function KanbanComposer({
   const [mode, setMode] = useState<"title" | "find">("title");
   const [title, setTitle] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? null;
   const titleRef = useRef<HTMLTextAreaElement>(null);
 
   async function run(action: () => Promise<void>) {
@@ -64,7 +67,7 @@ export function KanbanComposer({
       await action();
       return true;
     } catch (failure) {
-      setError(kanbanErrorMessage(failure));
+      setError(kanbanErrorMessage(failure), failure);
       return false;
     } finally {
       setPending(false);
@@ -83,9 +86,12 @@ export function KanbanComposer({
   }
 
   const errorLine = error ? (
-    <p role="alert" className="text-danger-text text-xs">
-      {error}
-    </p>
+    <div>
+      <p role="alert" className="text-danger-text text-xs">
+        {error}
+      </p>
+      <ErrorReference id={errorFailure?.reference} />
+    </div>
   ) : null;
   if (mode === "find")
     return (

@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/toast";
+import { apiErrorReference } from "@/lib/api-errors";
 import { membershipRoleLabels } from "@/lib/auth-api";
 import { cn } from "@/lib/utils";
 
@@ -86,11 +87,12 @@ export function OrganizationMenu({
       setSwitching(true);
       void onSwitchOrganization(orgId)
         .then(() => router.push(WORKSPACE_HOME))
-        .catch(() =>
+        .catch((error: unknown) =>
           toast.add({
             title: "Could not switch organization",
             description: `You are still in ${name}. Try again.`,
             type: "error",
+            reference: apiErrorReference(error),
           }),
         )
         .finally(() => setSwitching(false));

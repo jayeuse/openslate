@@ -102,7 +102,10 @@ def test_two_saves_with_the_same_if_match_keep_only_the_winner(
 
         assert first.status_code == 200, first.text
         assert second.status_code == 412, second.text
-        assert second.json() == {"detail": "Record changed"}
+        assert second.json() == {
+            "detail": "Record changed",
+            "request_id": second.headers["X-Request-ID"],
+        }
         with fixture.owner_engine.connect() as connection:
             data = connection.scalar(
                 text("SELECT data FROM public.records WHERE id = :id"), {"id": record_id}
@@ -194,7 +197,10 @@ def test_two_link_creates_on_one_source_resolve_to_one_outcome(
         assert first.status_code == 201, first.text
         assert second.status_code == second_status, second.text
         if same_target:
-            assert second.json() == {"detail": "Relationship already exists"}
+            assert second.json() == {
+                "detail": "Relationship already exists",
+                "request_id": second.headers["X-Request-ID"],
+            }
         assert (
             _count(
                 fixture,

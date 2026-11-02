@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import { apiErrorReference } from "@/lib/api-errors";
 import { reportDone } from "@/lib/feedback";
+import { useErrorText } from "@/lib/use-error-text";
 import {
   lifecycleErrorMessage,
   type LifecyclePurgePreview,
@@ -86,6 +88,7 @@ export function useBoardEventLifecycle({
     status: "loading" | "ready" | "error";
     page: BoardEventPage | null;
     error: string | null;
+    reference?: string;
   } | null>(null);
   const archivedRequest = useRef(0);
   const lifecycleRequest = useRef(0);
@@ -93,7 +96,8 @@ export function useBoardEventLifecycle({
   const [lifecyclePending, setLifecyclePending] = useState(false);
   const [lifecycleTarget, setLifecycleTarget] =
     useState<BoardEventLifecycleAction | null>(null);
-  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+  const [lifecycleFailure, setLifecycleError] = useErrorText();
+  const lifecycleError = lifecycleFailure?.message ?? null;
   const invalidateRef = useRef(invalidate);
   const latest = useRef({ onAccessDenied });
   useEffect(() => {
@@ -117,7 +121,7 @@ export function useBoardEventLifecycle({
     lifecycleRequest.current += 1;
     lifecyclePendingRef.current = false;
     setLifecyclePending(false);
-  }, [boardId]);
+  }, [boardId, setLifecycleError]);
 
   useEffect(() => {
     setLifecycleTarget(null);
@@ -173,6 +177,7 @@ export function useBoardEventLifecycle({
           error: denied
             ? "Archived events are unavailable. Ask a board manager to check your access."
             : "Could not load archived events. Try again.",
+          reference: apiErrorReference(error),
         });
         if (denied) {
           setLifecycleTarget(null);
@@ -199,7 +204,8 @@ export function useBoardEventLifecycle({
     useState<LifecyclePurgePreview | null>(null);
   const [purgeName, setPurgeName] = useState("");
   const [purgePassword, setPurgePassword] = useState("");
-  const [purgeError, setPurgeError] = useState("");
+  const [purgeFailure, setPurgeError] = useErrorText();
+  const purgeError = purgeFailure?.message ?? "";
   const purgeRequest = useRef(0);
   useEffect(() => {
     if (isPurgeAdmin && show === "archived" && canBrowseArchived)
@@ -249,6 +255,7 @@ export function useBoardEventLifecycle({
             failure,
             "The event review could not be prepared. Request a new review.",
           ),
+          failure,
         );
     } finally {
       if (pendingOwner === lifecycleRequest.current) {
@@ -300,6 +307,7 @@ export function useBoardEventLifecycle({
           failure,
           "The event was not deleted. Request a new review.",
         ),
+        failure,
       );
       setPurgePreview(null);
       setPurgeName("");
@@ -419,14 +427,17 @@ export function useBoardEventLifecycle({
         onAccessDenied();
         setLifecycleError(
           "Your access changed. Event actions were closed and the calendar is refreshing.",
+          error,
         );
       } else if (error instanceof ApiError && error.status === 409) {
         setLifecycleError(
           "The board or event changed. Review refreshed events before trying again.",
+          error,
         );
       } else {
         setLifecycleError(
           "Could not confirm the event action. Review refreshed events before trying again.",
+          error,
         );
       }
     } finally {
@@ -487,6 +498,7 @@ export function useBoardEventLifecycle({
     pending: lifecyclePending,
     target: lifecycleTarget,
     error: lifecycleError,
+    reference: lifecycleFailure?.reference,
     beginLifecycle,
     confirmLifecycle,
     cancelLifecycle: () => setLifecycleTarget(null),
@@ -500,6 +512,7 @@ export function useBoardEventLifecycle({
       name: purgeName,
       password: purgePassword,
       error: purgeError,
+      reference: purgeFailure?.reference,
       setName: setPurgeName,
       setPassword: setPurgePassword,
       mayPurge,

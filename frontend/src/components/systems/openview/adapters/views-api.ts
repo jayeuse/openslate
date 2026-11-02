@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, apiContractError } from "@/lib/api";
 import { openViewReadFetch } from "./openview-access";
 import {
   archiveSchema,
@@ -125,7 +125,7 @@ export async function getOpenViewDataSourceField(
     { cache: "no-store", signal },
   );
   if (raw.id !== id || raw.module_id !== requestedModuleId || raw.is_deleted)
-    throw new ApiContractError();
+    throw apiContractError(raw);
   return fieldSchema.parse({
     id: raw.id,
     module_id: raw.module_id,
@@ -154,7 +154,7 @@ export async function getOpenViewDataSource(
     }),
     { cache: "no-store", signal },
   );
-  if (raw.id !== id || raw.is_deleted) throw new ApiContractError();
+  if (raw.id !== id || raw.is_deleted) throw apiContractError(raw);
   return {
     id,
     name: raw.module_name,

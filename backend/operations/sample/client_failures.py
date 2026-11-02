@@ -34,7 +34,12 @@ def _error_detail(response: httpx.Response) -> object:
         payload = response.json()
     except ValueError:
         return None
-    if isinstance(payload, dict) and set(payload) == {"detail"}:
+    # API error bodies hold ``detail`` and, since S1, the response's ``request_id``.
+    if (
+        isinstance(payload, dict)
+        and "detail" in payload
+        and set(payload) <= {"detail", "request_id"}
+    ):
         return payload["detail"]
     return None
 

@@ -73,6 +73,8 @@ import { SecurityPanel } from "./security-panel";
 import { SecurityPolicyForm } from "./security-policy-form";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
+import { useErrorText } from "@/lib/use-error-text";
+import { apiErrorReference } from "@/lib/api-errors";
 
 // Mapped from the refusal's code (mfa_enrollment_required); the alert's
 // button beside it opens the setup.
@@ -111,7 +113,8 @@ export function SecurityView({
   const [policyOpen, setPolicyOpen] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [draftAcknowledged, setDraftAcknowledged] = useState(false);
-  const [error, setError] = useState("");
+  const [errorFailure, setError] = useErrorText();
+  const error = errorFailure?.message ?? "";
   // A save refused until the viewer sets up their own two-step: the alert
   // offers that setup.
   const mfaRequiredError = error === MFA_REQUIRED_MESSAGE;
@@ -507,6 +510,7 @@ export function SecurityView({
       }
       setError(
         "Your current address could not be loaded. Your changes are still here; add an address manually or try again.",
+        caught,
       );
     } finally {
       finish(next);
@@ -525,9 +529,12 @@ export function SecurityView({
       if (!owns(next)) return;
       setAccessSecurityDenied(queryClient, "policy", false);
       setSecurityRefreshRequired(false);
-    } catch {
+    } catch (readFailure) {
       if (owns(next))
-        setError("Account policy could not be loaded. Retry before saving.");
+        setError(
+          "Account policy could not be loaded. Retry before saving.",
+          readFailure,
+        );
     } finally {
       finish(next);
     }
@@ -542,8 +549,9 @@ export function SecurityView({
         staleTime: 0,
       });
       if (owns(next)) setAccessSecurityDenied(queryClient, "sessions", false);
-    } catch {
-      if (owns(next)) setError("Sessions could not be loaded. Try again.");
+    } catch (readFailure) {
+      if (owns(next))
+        setError("Sessions could not be loaded. Try again.", readFailure);
     } finally {
       finish(next);
     }
@@ -647,10 +655,11 @@ export function SecurityView({
             staleTime: 0,
           });
           if (owns(next)) setSecurityRefreshRequired(false);
-        } catch {
+        } catch (readFailure) {
           if (owns(next))
             setError(
               "The latest policy could not be loaded. Retry before saving again.",
+              readFailure,
             );
         }
       } else {
@@ -676,6 +685,7 @@ export function SecurityView({
                 : caught instanceof ApiError && caught.status === 403
                   ? "Only administrators can change account policy. Reload the page to check your access."
                   : "The policy could not be saved. Try again.",
+          caught,
         );
         if (caught instanceof ApiError && caught.code === "ip_lockout") {
           // The error belongs to the allow list: show it there and move focus.
@@ -748,6 +758,7 @@ export function SecurityView({
           all
             ? "Remote sessions could not be ended. Try again."
             : "The session could not be ended. Try again.",
+          caught,
         );
       }
       return false;
@@ -831,7 +842,11 @@ export function SecurityView({
   if (!active || !admitted) return null;
   const summary = securityFields ? policySummaryParts(securityFields) : null;
   const errorAlert = (
-    <Alert role="alert" variant="destructive">
+    <Alert
+      role="alert"
+      variant="destructive"
+      reference={errorFailure?.reference}
+    >
       <p>{error}</p>
       {mfaRequiredError ? (
         <Button
@@ -862,7 +877,11 @@ export function SecurityView({
         </Alert>
       ) : null}
       {error && !policyOpen && !confirm ? (
-        <Alert role="alert" variant="destructive">
+        <Alert
+          role="alert"
+          variant="destructive"
+          reference={errorFailure?.reference}
+        >
           {error}
         </Alert>
       ) : null}
@@ -966,6 +985,7 @@ export function SecurityView({
                   ? {
                       status: "error",
                       message: "Sessions could not be loaded.",
+                      reference: apiErrorReference(sessionsQuery.error),
                       page: sessionsQuery.data,
                     }
                   : { status: "ready", page: sessionsQuery.data }
@@ -1040,7 +1060,13 @@ export function SecurityView({
             {securityDenied ||
             securityQuery.isError ||
             securityRefreshRequired ? (
-              <Alert role="alert" variant="destructive">
+              <Alert
+                role="alert"
+                variant="destructive"
+                reference={
+                  securityDenied ? null : apiErrorReference(securityQuery.error)
+                }
+              >
                 <p>
                   {securityDenied
                     ? "Only administrators can review account policy."
@@ -1094,6 +1120,7 @@ export function SecurityView({
           (endingAll && remoteCount.isFetching)
         }
         error={error}
+        errorReference={errorFailure?.reference}
         draftAcknowledged={draftAcknowledged}
         confirmOpener={confirmOpener}
         headingRef={headingRef}

@@ -42,6 +42,7 @@ import {
 import { BackupHistoryList, type BackupListBody } from "./backup-history-list";
 import { BackupScheduleDialog } from "./backup-schedule-dialog";
 import { BackupStatusPanel } from "./backup-status-panel";
+import { apiErrorReference } from "@/lib/api-errors";
 
 // Backup (MD8, docs/specs/manage-relayout.md): the status panel first, then
 // History as a list and one backup's detail, after Sandbox History. This
@@ -288,6 +289,7 @@ export function BackupPanel({
           body={body}
           loading={maintenance.history.isPending && !failure}
           failure={failure}
+          failureReference={apiErrorReference(maintenance.history.error)}
           onRetry={() => void maintenance.retryHistory()}
           selectedId={selected?.id}
           request={request}
@@ -376,6 +378,7 @@ export function BackupPanel({
         showConfirmation={showConfirmation}
         onShowConfirmation={setShowConfirmation}
         error={maintenance.exportError}
+        errorReference={maintenance.exportErrorReference}
         onSubmit={submitExport}
         onCancel={cancelExport}
         finalFocus={() => exportOpener.current}
@@ -393,6 +396,7 @@ export function BackupPanel({
           );
         }}
         error={maintenance.exportError}
+        errorReference={maintenance.exportErrorReference}
         onSubmit={submitPassword}
         onCancel={cancelPassword}
         finalFocus={() => passwordOpener.current ?? downloadLink.current}
@@ -448,7 +452,11 @@ export function BackupPanel({
               </Field>
             </fieldset>
             {maintenance.error ? (
-              <Alert role="alert" variant="destructive">
+              <Alert
+                role="alert"
+                variant="destructive"
+                reference={maintenance.errorReference}
+              >
                 {maintenance.error}
               </Alert>
             ) : null}

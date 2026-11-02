@@ -3,7 +3,9 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
-from fastapi.exception_handlers import http_exception_handler
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.utils import is_body_allowed_for_status_code
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse, Response
 
@@ -21,6 +23,7 @@ from app.core.config.settings import DOTENV_PATH
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import dispose_database_resources, get_engine
 from app.core.middleware.file_transfers import FileDispatchMiddleware
+from app.core.middleware.request_context import error_content
 from app.core.middleware.trusted_hosts import ExactTrustedHostMiddleware
 from app.core.observability import configure_observability_logging, log_event
 from app.core.readiness import (
@@ -63,6 +66,7 @@ from app.systems.comms.router import router as comms_router
 from app.systems.manage.audit.router import internal_security_events_router, security_events_router
 from app.systems.manage.audit.router import router as audit_router
 from app.systems.manage.backups.router import router as backups_router
+from app.systems.manage.health.router import router as system_status_router
 from app.systems.manage.jobs.router import router as jobs_router
 from app.systems.manage.workspace.router import router as workspace_router
 from app.systems.manage.workspace.security_router import router as workspace_security_router
@@ -248,6 +252,7 @@ def create_app() -> FastAPI:
     app.include_router(workspace_security_router, prefix="/api")
     app.include_router(backups_router, prefix="/api")
     app.include_router(jobs_router, prefix="/api")
+    app.include_router(system_status_router, prefix="/api")
     app.include_router(files_router, prefix="/api")
     app.include_router(events_router, prefix="/api")
     app.include_router(realtime_router, prefix="/api")
@@ -277,12 +282,12 @@ def create_app() -> FastAPI:
     @app.exception_handler(StarletteHTTPException)
     async def route_not_found(request: Request, error: StarletteHTTPException) -> Response:
         if error.status_code != 404:
-            return await http_exception_handler(request, error)
+            return _http_error_response(request, error)
         path = request.url.path
         if path == "/api" or path.startswith("/api/"):
             return JSONResponse(
                 status_code=404,
-                content={"detail": error.detail},
+                content=error_content(request, error.detail),
                 headers=error.headers,
             )
         if static_site is not None:
@@ -290,11 +295,32 @@ def create_app() -> FastAPI:
                 return static_site.response_for(path)
             if path in static_site.pages:
                 return Response(status_code=405, headers={"Allow": "GET, HEAD"})
-        return await http_exception_handler(request, error)
+        return _http_error_response(request, error)
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_failed(
+        request: Request, error: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content=error_content(request, jsonable_encoder(error.errors())),
+        )
 
     install_publication(app, settings)
     app.state.report_scheduling_worker = comms_scheduler(settings, app.state.comms_publisher.submit)
     return app
+
+
+def _http_error_response(request: Request, error: StarletteHTTPException) -> Response:
+    """FastAPI's default HTTPException response, with the request ID in the JSON body."""
+
+    if not is_body_allowed_for_status_code(error.status_code):
+        return Response(status_code=error.status_code, headers=error.headers)
+    return JSONResponse(
+        status_code=error.status_code,
+        content=error_content(request, error.detail),
+        headers=error.headers,
+    )
 
 
 def _trusted_hosts(public_origin: str, *, environment: str) -> list[str]:

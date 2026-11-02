@@ -1,10 +1,11 @@
 import { z } from "zod";
 import {
-  ApiContractError,
   ApiError,
   apiFetch,
   apiRequest,
   type ApiRequestInit,
+  keepRequestId,
+  apiContractError,
 } from "@/lib/api";
 import {
   assertLifecyclePurgePreviewFor,
@@ -438,21 +439,31 @@ function serializeReportRecipe(raw: unknown) {
   };
 }
 
-function throwSafeResponseError(status: number, body: unknown): never {
+function throwSafeResponseError(
+  status: number,
+  body: unknown,
+  source: unknown,
+): never {
   const envelope = z
     .object({ detail: z.unknown() })
     .passthrough()
     .safeParse(body);
   if (!envelope.success) {
-    throw new ApiError(status, "Request could not be completed");
+    throw keepRequestId(
+      new ApiError(status, "Request could not be completed"),
+      source,
+    );
   }
 
   const detail = envelope.data.detail;
   if (typeof detail === "string") {
     if (reportNotFoundMessages.has(detail)) {
-      throw new ApiError(status, detail, detail);
+      throw keepRequestId(new ApiError(status, detail, detail), source);
     }
-    throw new ApiError(status, "Request could not be completed");
+    throw keepRequestId(
+      new ApiError(status, "Request could not be completed"),
+      source,
+    );
   }
   const structured = z
     .object({
@@ -463,25 +474,34 @@ function throwSafeResponseError(status: number, body: unknown): never {
     .passthrough()
     .safeParse(detail);
   if (!structured.success) {
-    throw new ApiError(status, "Request could not be completed");
+    throw keepRequestId(
+      new ApiError(status, "Request could not be completed"),
+      source,
+    );
   }
 
   const { code, current_revision } = structured.data;
   if (code === undefined) {
-    throw new ApiError(status, "Request could not be completed");
+    throw keepRequestId(
+      new ApiError(status, "Request could not be completed"),
+      source,
+    );
   }
   const message = reportErrorMessages[code];
-  throw new ApiError(
-    status,
-    message,
-    {
-      code,
+  throw keepRequestId(
+    new ApiError(
+      status,
       message,
-      ...(code === "stale_revision" && current_revision !== undefined
-        ? { current_revision }
-        : {}),
-    },
-    code,
+      {
+        code,
+        message,
+        ...(code === "stale_revision" && current_revision !== undefined
+          ? { current_revision }
+          : {}),
+      },
+      code,
+    ),
+    source,
   );
 }
 
@@ -490,9 +510,12 @@ async function throwCsvResponseError(response: Response): Promise<never> {
   try {
     body = await response.json();
   } catch {
-    throw new ApiError(response.status, "Request could not be completed");
+    throw keepRequestId(
+      new ApiError(response.status, "Request could not be completed"),
+      response,
+    );
   }
-  return throwSafeResponseError(response.status, body);
+  return throwSafeResponseError(response.status, body, response);
 }
 
 async function safeReportJson<Schema extends z.ZodType>(
@@ -508,7 +531,11 @@ async function safeReportJson<Schema extends z.ZodType>(
     );
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
-    return throwSafeResponseError(error.status, { detail: error.details });
+    return throwSafeResponseError(
+      error.status,
+      { detail: error.details },
+      error,
+    );
   }
 }
 
@@ -545,7 +572,7 @@ export async function getOpenViewReport(
     wireReportSchema,
     { cache: "no-store" },
   );
-  if (report.id !== reportId) throw new ApiContractError();
+  if (report.id !== reportId) throw apiContractError(report);
   return report;
 }
 
@@ -582,7 +609,7 @@ export async function updateOpenViewReport(
     wireReportSchema,
     { method: "PATCH", body: JSON.stringify(body) },
   );
-  if (report.id !== input.id) throw new ApiContractError();
+  if (report.id !== input.id) throw apiContractError(report);
   return report;
 }
 
@@ -612,7 +639,7 @@ export async function restoreOpenViewReport(raw: {
       cache: "no-store",
     },
   );
-  if (report.id !== input.id) throw new ApiContractError();
+  if (report.id !== input.id) throw apiContractError(report);
   return report;
 }
 
@@ -628,7 +655,7 @@ export async function listOpenViewReportRuns(
     { cache: "no-store" },
   );
   if (page.items.some((run) => run.reportId !== reportId)) {
-    throw new ApiContractError();
+    throw apiContractError(page);
   }
   return page;
 }
@@ -647,7 +674,7 @@ export async function listOpenViewSharedReportRuns(
     page.pagination.offset !== options.offset ||
     page.items.length !== page.pagination.count
   ) {
-    throw new ApiContractError();
+    throw apiContractError(page);
   }
   return page;
 }
@@ -665,7 +692,7 @@ export async function createOpenViewReportRun(
       cache: "no-store",
     },
   );
-  if (run.reportId !== input.reportId) throw new ApiContractError();
+  if (run.reportId !== input.reportId) throw apiContractError(run);
   return run;
 }
 
@@ -683,7 +710,7 @@ export async function getOpenViewReportRun(
     { cache: "no-store" },
   );
   if (run.id !== input.runId || run.reportId !== input.reportId) {
-    throw new ApiContractError();
+    throw apiContractError(run);
   }
   return run;
 }
@@ -711,13 +738,13 @@ export async function downloadOpenViewReportRunCsv(
     ?.replaceAll(" ", "")
     .toLowerCase();
   if (contentType !== "text/csv;charset=utf-8" && contentType !== "text/csv") {
-    throw new ApiContractError();
+    throw apiContractError(response);
   }
   if (
     response.headers.get("Content-Disposition") !==
     `attachment; filename="report-${input.runId}.csv"`
   ) {
-    throw new ApiContractError();
+    throw apiContractError(response);
   }
 
   const bytes = await response.arrayBuffer();

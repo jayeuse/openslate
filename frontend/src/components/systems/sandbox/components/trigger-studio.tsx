@@ -48,7 +48,7 @@ export type TriggerStudioProps = {
   /** The unsaved edits; the page owns them (see `useTriggerDraft`). */
   triggerDraft: TriggerDraft;
   runs: readonly SandboxTriggerRun[];
-  activity: { loading: boolean; error: string };
+  activity: { loading: boolean; error: string; reference?: string };
   initialSelectedId?: string;
   /** The list's first quick filter, from a link ("Show" on Build's triggers that are off). */
   initialStatus?: TriggerStatusFilter;
@@ -321,7 +321,7 @@ export function TriggerStudio({
             </Button>
           </div>
           {activity.error ? (
-            <Alert variant="destructive">
+            <Alert variant="destructive" reference={activity.reference}>
               {activity.error}{" "}
               <Button
                 variant="outline"
@@ -514,7 +514,12 @@ export function TriggerStudio({
                   className="grid min-h-0 min-w-0 flex-1 content-start gap-6 p-5 @min-[900px]/studio:overflow-y-auto"
                 >
                   {error && (
-                    <Alert variant="destructive" role="alert" tabIndex={-1}>
+                    <Alert
+                      variant="destructive"
+                      role="alert"
+                      tabIndex={-1}
+                      reference={triggerDraft.errorReference}
+                    >
                       {error}
                     </Alert>
                   )}

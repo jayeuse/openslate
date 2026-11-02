@@ -9,6 +9,8 @@ import {
   type Locator,
   type Page,
   isEventStream,
+  answeredHeaders,
+  expectAnsweredReference,
 } from "./helpers/test";
 import {
   installOpenViewEventSource,
@@ -2425,13 +2427,22 @@ test("a failed regional settings read shows in the post dialog, and its Retry op
     if (route.request().method() !== "GET") return route.fallback();
     reads.push(failing ? 500 : 200);
     return failing
-      ? route.fulfill({ status: 500, json: { detail: "Unavailable" } })
+      ? route.fulfill({
+          status: 500,
+          headers: answeredHeaders,
+          json: { detail: "Unavailable" },
+        })
       : route.fallback();
   });
   await page.goto(`/boards?board=${boardId}&section=posts`);
   await expect(
     page.getByText("Could not load regional settings. Dates are unavailable."),
   ).toBeVisible();
+  await expectAnsweredReference(
+    page.getByRole("alert").filter({
+      hasText: "Could not load regional settings. Dates are unavailable.",
+    }),
+  );
   const newPost = page
     .getByRole("button", { name: "New post", exact: true })
     .first();

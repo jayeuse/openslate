@@ -25,6 +25,7 @@ import type {
   BoardEventPatchInput,
   BoardEventReminderTiming,
 } from "../adapters/board-events-api";
+import { ErrorReference } from "@/components/ui/error-reference";
 import type { BoardAttachmentVersions } from "../adapters/board-files-api";
 import { ServerBoardAttachments } from "./server-backed-board-attachments";
 import { ServerBoardRecordLinks } from "./server-backed-board-record-links";
@@ -453,6 +454,7 @@ export function ServerBoardEventEditorForm({
   busy,
   saveBlocked = false,
   error,
+  errorReference,
   onChange,
   onCancel,
   onSave,
@@ -467,6 +469,8 @@ export function ServerBoardEventEditorForm({
   /** A field before the title: My calendar's Board (BR35). */
   leading?: React.ReactNode;
   error: string | null;
+  /** The failed request's ID, shown under the error (D1.4). */
+  errorReference?: string;
   onChange: (patch: Partial<BoardEventDraft>) => void;
   onCancel: () => void;
   onSave: () => void;
@@ -887,9 +891,12 @@ export function ServerBoardEventEditorForm({
       </AdvancedSection>
       <DialogFrameFooter>
         {error ? (
-          <p role="alert" className="text-danger-text text-sm">
-            {error}
-          </p>
+          <div>
+            <p role="alert" className="text-danger-text text-sm">
+              {error}
+            </p>
+            <ErrorReference id={errorReference} />
+          </div>
         ) : null}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button

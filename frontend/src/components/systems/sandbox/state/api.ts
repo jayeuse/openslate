@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
+import {
+  ApiError,
+  apiFetch,
+  apiRequest,
+  keepRequestId,
+  apiContractError,
+} from "@/lib/api";
 import {
   trackSandboxHistoryList,
   trackSandboxHistoryVersion,
@@ -616,7 +622,7 @@ export async function listSandboxVersions(
       (page.hasMore && page.count === 0) ||
       new Set(page.items.map((item) => item.id)).size !== page.count
     )
-      throw new ApiContractError();
+      throw apiContractError(page);
     return page;
   });
 }
@@ -754,7 +760,10 @@ async function throwExportError(response: Response): Promise<never> {
         : "Request could not be completed";
   const code =
     typeof detailObject?.code === "string" ? detailObject.code : undefined;
-  throw new ApiError(response.status, message, detail, code);
+  throw keepRequestId(
+    new ApiError(response.status, message, detail, code),
+    response,
+  );
 }
 
 export async function exportSandboxBundle(
@@ -771,9 +780,9 @@ export async function exportSandboxBundle(
     text = await response.text();
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") throw error;
-    throw new ApiContractError();
+    throw apiContractError(response);
   }
   const parsed = parseSandboxExportDocument(text);
-  if (!parsed.ok) throw new ApiContractError();
+  if (!parsed.ok) throw apiContractError(response);
   return { document: parsed.document, filename: exportFilename(response) };
 }

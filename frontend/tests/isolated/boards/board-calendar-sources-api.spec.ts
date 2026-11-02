@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { ApiError } from "../../../src/lib/api";
+import { apiErrorReference } from "../../../src/lib/api-errors";
 import {
   addBoardCalendarSource,
   addMyCalendarSource,
+  calendarSourceErrorMessage,
   listBoardCalendarSources,
   removeBoardCalendarSource,
 } from "../../../src/components/systems/boards/adapters/board-calendar-sources-api";
@@ -113,6 +115,37 @@ test("the source limit reads as a plain sentence and names no module", async () 
       expect(failure).toBeInstanceOf(ApiError);
       expect((failure as ApiError).message).toBe(expected);
       expect((failure as ApiError).code).toBe("calendar_source_limit");
+    } finally {
+      mock.restore();
+    }
+  }
+});
+
+test("a failed source change shows its refusal sentence, else authored words", async () => {
+  // S1-C6: the generic "Request could not be completed" never shows; a
+  // refusal keeps its own sentence; anything else shows the status copy or
+  // the site's fallback, and the reference stays (S1-C3).
+  const requestId = "019a4c2e-7b1d-7c3e-9f00-4f9c2e1a0b2c";
+  const fallback = "Could not add it to My calendar. Try again.";
+  for (const [status, detail, expected] of [
+    [502, "Bad gateway at db:5432", fallback],
+    [403, "Forbidden", "You do not have permission to perform this action."],
+    [
+      409,
+      { code: "calendar_source_exists", message: "Hidden Payroll exists" },
+      "This date field is already a record source.",
+    ],
+  ] as const) {
+    const mock = installFetch(() =>
+      Response.json({ detail, request_id: requestId }, { status }),
+    );
+    try {
+      const failure = await addMyCalendarSource({
+        moduleId,
+        dateFieldId: fieldId,
+      }).catch((error: unknown) => error);
+      expect(calendarSourceErrorMessage(failure, fallback)).toBe(expected);
+      expect(apiErrorReference(failure)).toBe(requestId);
     } finally {
       mock.restore();
     }

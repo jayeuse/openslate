@@ -118,6 +118,7 @@ function CheckPerson({
               loading={check.loading}
               loadingMore={check.loadingMore}
               error={check.error ?? undefined}
+              reference={check.reference}
               onRetry={check.retryList}
               hasMore={check.hasMore}
               onLoadMore={check.loadMore}
@@ -137,6 +138,7 @@ function CheckPerson({
             <Alert
               variant="destructive"
               className="flex flex-wrap items-center justify-between gap-2"
+              reference={check.preview.reference}
             >
               <span>{check.preview.error}</span>
               <Button
