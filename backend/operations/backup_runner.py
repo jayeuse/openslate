@@ -71,7 +71,7 @@ def release_observation(*, opener: ReleaseSource | None = None) -> Json:
     try:
         client = opener if opener is not None else build_opener(NoRedirect())
         request = Request(
-            "https://api.github.com/repos/jayeuse/openslate/releases/latest",
+            "https://api.github.com/repos/jayeuse/slateops/releases/latest",
             headers={
                 "Accept": "application/vnd.github+json",
                 "User-Agent": "SlateOps-backup-runner",

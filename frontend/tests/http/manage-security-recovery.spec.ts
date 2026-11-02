@@ -59,7 +59,7 @@ test("Back up now queues real history and cancels without writes", async ({
     inspector.getByRole("link", { name: "Restore procedure" }),
   ).toHaveAttribute(
     "href",
-    "https://github.com/jayeuse/openslate/blob/main/infra/supabase/RESTORE.md",
+    "https://github.com/jayeuse/slateops/blob/main/infra/supabase/RESTORE.md",
   );
   await expect(
     page.getByRole("button", {

@@ -1609,3 +1609,5 @@ The D13 fresh root removes the former 20-revision upgrade lineage, not current s
 | frontend/tests/isolated/sandbox/api.spec.ts | 2 | frontend/tests/isolated/sandbox/api.spec.ts | D2 replace: the same assertions with the Slate Operations or slateops names (rebrand) |
 | frontend/tests/isolated/security/auth-api.spec.ts | 1 | frontend/tests/isolated/security/auth-api.spec.ts | D2 replace: the same assertions with the Slate Operations or slateops names (rebrand) |
 | packaging/backup/tests/test_supabase_installation.py | 1 | packaging/backup/tests/test_supabase_installation.py | D2 replace: the same assertions with the Slate Operations or slateops names (rebrand) |
+| frontend/tests/http/manage-refactor-journeys.spec.ts | 1 | frontend/tests/http/manage-refactor-journeys.spec.ts | D2 replace: the same assertions with the jayeuse/slateops repository URL (repository rename) |
+| frontend/tests/http/manage-security-recovery.spec.ts | 1 | frontend/tests/http/manage-security-recovery.spec.ts | D2 replace: the same assertions with the jayeuse/slateops repository URL (repository rename) |

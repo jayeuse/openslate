@@ -328,7 +328,7 @@ def test_version_review_preserves_non_numeric_running_version_and_last_observati
         latest_version="2.7.1",
         observed_at="2026-10-03T00:00:00Z",
         checked_at="2026-10-03T00:00:00Z",
-        release_url="https://github.com/jayeuse/openslate/releases/tag/v2.7.1",
+        release_url="https://github.com/jayeuse/slateops/releases/tag/v2.7.1",
     )
     try:
         result = execute_control_action(actions[-1], dataset, context)

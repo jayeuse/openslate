@@ -295,7 +295,7 @@ def test_version_failure_preserves_success_and_retention_protects_latest(
             project="owned-project",
             checked_at=NOW,
             version="9.0.0",
-            release_url="https://github.com/jayeuse/openslate/releases/tag/v9.0.0",
+            release_url="https://github.com/jayeuse/slateops/releases/tag/v9.0.0",
             failure_code=None,
         ),
     )

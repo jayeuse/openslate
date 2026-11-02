@@ -6,7 +6,7 @@ Slate Operations is pre-release software in development. It has no released vers
 Only the latest commit on the `main` branch gets security fixes.
 
 **Report a vulnerability privately:**
-<https://github.com/jayeuse/openslate/security/advisories/new>
+<https://github.com/jayeuse/slateops/security/advisories/new>
 
 Do not put vulnerability details in a public issue, pull request, commit, or comment.
 
@@ -28,7 +28,7 @@ When the first tagged GitHub release exists, this table will list it.
 
 ## How to report
 
-1. Open <https://github.com/jayeuse/openslate/security/advisories/new>.
+1. Open <https://github.com/jayeuse/slateops/security/advisories/new>.
 2. Give the commit SHA that you tested.
 3. Name the affected component, for example the API route or file path.
 4. Give the configuration: the `ENVIRONMENT` value, and development or production Compose stack.
@@ -127,7 +127,7 @@ If you are not sure, ask in a private report before you continue.
 ## For operators
 
 - Only the latest `main` gets fixes. Back up before you update. See `infra/supabase/RESTORE.md`.
-- Read the advisories at <https://github.com/jayeuse/openslate/security/advisories> before each update.
+- Read the advisories at <https://github.com/jayeuse/slateops/security/advisories> before each update.
 - Watch this repository with Custom → Security alerts to get advisory notices.
 - Set `ENVIRONMENT=production` exactly. Other values do not trust the Caddy proxy subnet.
 - Use at least 32 random bytes for each secret key in `.env`, for example `openssl rand -base64 48`.
@@ -155,9 +155,9 @@ status: pre-release
 supported: main (latest commit only)
 reports-accepted: true
 bug-bounty-available: false
-contact: https://github.com/jayeuse/openslate/security/advisories/new
+contact: https://github.com/jayeuse/slateops/security/advisories/new
 other-channels: none
-policy: https://github.com/jayeuse/openslate/blob/main/SECURITY.md
+policy: https://github.com/jayeuse/slateops/blob/main/SECURITY.md
 pgp-key: none
 maintainers: 1
 backup-maintainer: none

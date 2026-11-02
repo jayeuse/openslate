@@ -32,7 +32,7 @@ FailureCode = Literal[
     "retention_failed",
 ]
 VERSION_PATTERN = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-RELEASE_PREFIX = "https://github.com/jayeuse/openslate/releases/tag/"
+RELEASE_PREFIX = "https://github.com/jayeuse/slateops/releases/tag/"
 
 
 class StrictRequest(BaseModel):
