@@ -63,8 +63,8 @@ def test_settings_sample_uses_owned_context_restores_values_and_reconciles_readb
                 200,
                 json={"authenticated": True},
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
             )
         if request.url.path.endswith("preferences"):

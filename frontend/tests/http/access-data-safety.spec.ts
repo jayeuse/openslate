@@ -21,7 +21,7 @@ import {
 // reports a change that was discarded or made twice (see
 // docs/specs/access-ui-ux-pass.md, Phase 1).
 
-const draftPrefix = "openslate.access.draft.v1.";
+const draftPrefix = "slateops.access.draft.v1.";
 
 function sheet(page: Page, name: string) {
   return page.getByRole("dialog", { name, exact: true });

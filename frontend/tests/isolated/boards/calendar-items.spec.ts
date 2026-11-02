@@ -347,7 +347,7 @@ test("hidden calendars persist per viewer and board, and a blocked store hides n
     setItem: (key: string, value: string) => void values.set(key, value),
   };
   const key = hiddenCalendarsKey(authorId, boardId);
-  expect(key).toBe(`openslate.boards.calendar.hidden.${authorId}.${boardId}`);
+  expect(key).toBe(`slateops.boards.calendar.hidden.${authorId}.${boardId}`);
   writeHiddenCalendars(() => storage, key, ["source:q", "due:board"]);
   expect(readHiddenCalendars(() => storage, key)).toEqual([
     "source:q",

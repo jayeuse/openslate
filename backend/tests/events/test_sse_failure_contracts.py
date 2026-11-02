@@ -55,7 +55,7 @@ def test_empty_commits_do_not_open_a_postgresql_connection(monkeypatch: pytest.M
 def test_event_principal_rejects_ambiguous_credentials_and_returns_one_verified_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cookie_request = SimpleNamespace(cookies={"openslate_access": "cookie-token"})
+    cookie_request = SimpleNamespace(cookies={"slateops_access": "cookie-token"})
     bearer = SimpleNamespace(credentials="bearer-token")
 
     with pytest.raises(HTTPException, match="Invalid authentication credentials"):

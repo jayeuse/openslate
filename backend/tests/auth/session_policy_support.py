@@ -349,8 +349,8 @@ def policy_world(monkeypatch, shared_provider_account):
             world.login_slot = slot
             result = client.post("/api/auth/login", json={"email": email, "password": password})
             assert result.status_code == 200
-            handles.append(client.cookies.get("openslate_refresh"))
-            csrf.append(client.cookies.get("openslate_csrf"))
+            handles.append(client.cookies.get("slateops_refresh"))
+            csrf.append(client.cookies.get("slateops_csrf"))
             client.cookies.clear()
         world.login_slot = 0
         with Session(owner) as db:

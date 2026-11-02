@@ -36,7 +36,7 @@ for (const row of calls()) {
     const original = Object.getOwnPropertyDescriptor(globalThis, "document");
     Object.defineProperty(globalThis, "document", {
       configurable: true,
-      value: { cookie: "openslate_csrf=structure-test" },
+      value: { cookie: "slateops_csrf=structure-test" },
     });
     try {
       await expect(current.invoke()).resolves.toEqual(row.expected);

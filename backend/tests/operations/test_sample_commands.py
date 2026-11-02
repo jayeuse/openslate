@@ -72,7 +72,7 @@ def test_population_accepts_the_ready_core_components(
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/health":
-            return httpx.Response(200, headers={"X-OpenSlate-Instance": "owned"})
+            return httpx.Response(200, headers={"X-SlateOps-Instance": "owned"})
         return httpx.Response(
             200,
             json={

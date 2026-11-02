@@ -202,8 +202,8 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             return httpx.Response(
                 200,
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
                 json={"ok": True},
             )

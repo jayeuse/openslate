@@ -192,8 +192,8 @@ def test_old_provider_refresh_replay_revokes_auth_session_and_local_handle_canno
 
         login = browser.post("/api/auth/login", json={"email": email, "password": password})
         assert login.status_code == 200, "Real Supabase email login must succeed"
-        original_access = browser.cookies.get("openslate_access")
-        original_csrf = browser.cookies.get("openslate_csrf")
+        original_access = browser.cookies.get("slateops_access")
+        original_csrf = browser.cookies.get("slateops_csrf")
         assert original_access is not None, "Provider login must set its browser access cookie"
         assert original_csrf is not None, "Provider login must set the browser CSRF cookie"
 

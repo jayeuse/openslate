@@ -282,7 +282,7 @@ def test_cookie_event_principal_checks_browser_origin_before_stream(
         lambda: SimpleNamespace(public_origin="https://app.example"),
         raising=False,
     )
-    request = SimpleNamespace(cookies={"openslate_access": "cookie"}, headers=headers, client=None)
+    request = SimpleNamespace(cookies={"slateops_access": "cookie"}, headers=headers, client=None)
 
     if allowed:
         assert get_event_principal(request, None) == EventPrincipal("cookie")

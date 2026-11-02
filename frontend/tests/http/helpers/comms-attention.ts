@@ -55,7 +55,7 @@ export async function attentionBaselined(
   orgId: string,
   baseline: string[],
 ): Promise<void> {
-  const key = `openslate-comms-alerted:v1:${defaultSignedInIdentity.id}:${orgId}`;
+  const key = `slateops-comms-alerted:v1:${defaultSignedInIdentity.id}:${orgId}`;
   await expect
     .poll(async () => {
       const seen: unknown = await tabs[0].evaluate(

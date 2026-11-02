@@ -135,7 +135,7 @@ def test_invitation_and_recovery_use_provider_emails_and_backend_admission(
             admin.post("/api/auth/login", json={"email": email, "password": password}).status_code
             == 200
         )
-        admin.headers["X-CSRF-Token"] = admin.cookies.get("openslate_csrf")
+        admin.headers["X-CSRF-Token"] = admin.cookies.get("slateops_csrf")
         invited = admin.post(
             "/api/auth/invitations",
             json={"email": invite_email, "username": f"invited-{uuid4().hex[:16]}"},
@@ -160,7 +160,7 @@ def test_invitation_and_recovery_use_provider_emails_and_backend_admission(
             ).status_code
             == 200
         )
-        before_recovery = recipient.cookies.get("openslate_access")
+        before_recovery = recipient.cookies.get("slateops_access")
         assert (
             recipient.post("/api/auth/recovery/request", json={"email": invite_email}).status_code
             == 204

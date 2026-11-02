@@ -403,12 +403,12 @@ test("provider invitation and recovery emails complete through rendered forms", 
       const csrfCookie = document.cookie
         .split(";")
         .map((segment) => segment.trim())
-        .find((segment) => segment.startsWith("openslate_csrf="));
+        .find((segment) => segment.startsWith("slateops_csrf="));
       if (!csrfCookie) return { httpStatus: 0 };
       let csrfToken: string;
       try {
         csrfToken = decodeURIComponent(
-          csrfCookie.slice("openslate_csrf=".length),
+          csrfCookie.slice("slateops_csrf=".length),
         );
       } catch {
         return { httpStatus: 0 };

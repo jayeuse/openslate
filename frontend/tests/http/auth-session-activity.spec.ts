@@ -34,7 +34,7 @@ async function workspaceSession(page: Page, baseURL: string | undefined) {
   await page.clock.pauseAt(new Date(state.now + 1_000));
   await page.context().addCookies([
     {
-      name: "openslate_csrf",
+      name: "slateops_csrf",
       value: "owned-activity-csrf",
       url: baseURL,
     },
@@ -353,7 +353,7 @@ test("a queued activity renewal is cancelled when the account changes behind the
   const { state, search, advance } = await workspaceSession(page, baseURL);
   await page.evaluate(() => {
     const scope = window as unknown as { releaseRefresh?: () => void };
-    void navigator.locks.request("openslate-auth-refresh", async () => {
+    void navigator.locks.request("slateops-auth-refresh", async () => {
       await new Promise<void>((resolve) => {
         scope.releaseRefresh = resolve;
       });
@@ -375,7 +375,7 @@ test("a queued activity renewal is cancelled when the account changes behind the
   // refresh; the lock queue is in order, so a later request waits for it.
   await page.evaluate(async () => {
     (window as unknown as { releaseRefresh: () => void }).releaseRefresh();
-    await navigator.locks.request("openslate-auth-refresh", async () => {});
+    await navigator.locks.request("slateops-auth-refresh", async () => {});
   });
   expect(state.renewedUsers).toEqual([]);
   await advance(6);

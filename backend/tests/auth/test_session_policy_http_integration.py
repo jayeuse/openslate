@@ -232,7 +232,7 @@ def test_expired_effective_session_never_reaches_provider_rotation(policy_world,
             json={"code": "123456"},
         )
     else:
-        world.client.cookies.set("openslate_refresh", world.handles[0])
+        world.client.cookies.set("slateops_refresh", world.handles[0])
         result = world.client.post("/api/auth/refresh", headers={"X-CSRF-Token": world.csrf[0]})
         world.client.cookies.clear()
     assert result.status_code == 401

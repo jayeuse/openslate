@@ -21,11 +21,11 @@ function memoryStorage(initial: Record<string, string> = {}) {
 test("reduce motion is off unless this browser chose it", () => {
   expect(readAppearancePreferences(memoryStorage()).reduceMotion).toBe(false);
   expect(
-    readAppearancePreferences(memoryStorage({ "openslate-motion": "reduced" }))
+    readAppearancePreferences(memoryStorage({ "slateops-motion": "reduced" }))
       .reduceMotion,
   ).toBe(true);
   expect(
-    readAppearancePreferences(memoryStorage({ "openslate-motion": "full" }))
+    readAppearancePreferences(memoryStorage({ "slateops-motion": "full" }))
       .reduceMotion,
   ).toBe(false);
 });
@@ -33,10 +33,10 @@ test("reduce motion is off unless this browser chose it", () => {
 test("turning reduce motion off removes the stored choice", () => {
   const storage = memoryStorage();
   persistAppearancePreferences({ mode: "dark", reduceMotion: true }, storage);
-  expect(storage.values.get("openslate-motion")).toBe("reduced");
+  expect(storage.values.get("slateops-motion")).toBe("reduced");
   persistAppearancePreferences({ mode: "dark", reduceMotion: false }, storage);
-  expect(storage.values.has("openslate-motion")).toBe(false);
-  expect(storage.values.get("openslate-theme")).toBe("dark");
+  expect(storage.values.has("slateops-motion")).toBe(false);
+  expect(storage.values.get("slateops-theme")).toBe("dark");
 });
 
 // Device text size and density live in this browser only. The http journeys
@@ -51,24 +51,24 @@ const deviceReads: {
   {
     name: "stored 125% text and spacious density",
     storage: memoryStorage({
-      "openslate-text-size": "125",
-      "openslate-density": "spacious",
+      "slateops-text-size": "125",
+      "slateops-density": "spacious",
     }),
     result: { textSize: "125", density: "spacious" },
   },
   {
     name: "stored 112.5% text and compact density",
     storage: memoryStorage({
-      "openslate-text-size": "112.5",
-      "openslate-density": "compact",
+      "slateops-text-size": "112.5",
+      "slateops-density": "compact",
     }),
     result: { textSize: "112.5", density: "compact" },
   },
   {
     name: "unknown stored values",
     storage: memoryStorage({
-      "openslate-text-size": "150",
-      "openslate-density": "tight",
+      "slateops-text-size": "150",
+      "slateops-density": "tight",
     }),
     result: { textSize: "100", density: "default" },
   },
@@ -125,7 +125,7 @@ for (const blocked of [false, true])
       expect(Object.fromEntries(storage.values)).toEqual(
         blocked
           ? {}
-          : { "openslate-text-size": "125", "openslate-density": "spacious" },
+          : { "slateops-text-size": "125", "slateops-density": "spacious" },
       );
     } finally {
       delete globals.window;

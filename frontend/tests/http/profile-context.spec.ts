@@ -127,7 +127,7 @@ for (const blocked of ["ip_not_allowed", "mfa_required"] as const) {
     });
     await page.addInitScript(() =>
       sessionStorage.setItem(
-        "openslate-organization",
+        "slateops-organization",
         "00000000-0000-4000-8000-000000000901",
       ),
     );
@@ -163,7 +163,7 @@ for (const blocked of ["ip_not_allowed", "mfa_required"] as const) {
     );
     expect(
       await page.evaluate(() =>
-        sessionStorage.getItem("openslate-organization"),
+        sessionStorage.getItem("slateops-organization"),
       ),
     ).toBe("00000000-0000-4000-8000-000000000901");
     const profile = page.getByRole("link", {
@@ -187,7 +187,7 @@ for (const blocked of ["ip_not_allowed", "mfa_required"] as const) {
     ).toHaveCount(0);
     expect(
       await page.evaluate(() =>
-        sessionStorage.getItem("openslate-organization"),
+        sessionStorage.getItem("slateops-organization"),
       ),
     ).toBeNull();
     await page.screenshot({
@@ -209,7 +209,7 @@ test("Profile entry from a pinned-organization gate cannot bypass account-wide M
   });
   await page.addInitScript(() =>
     sessionStorage.setItem(
-      "openslate-organization",
+      "slateops-organization",
       "00000000-0000-4000-8000-000000000901",
     ),
   );
@@ -354,12 +354,12 @@ test("Inline avatar stays in tab A after tab B changes the session default", asy
     expect(imageRequests).toContain(`?size=64&org=${first.org_id}`);
     expect(
       await page.evaluate(() =>
-        sessionStorage.getItem("openslate-organization"),
+        sessionStorage.getItem("slateops-organization"),
       ),
     ).toBe(first.org_id);
     expect(
       await tabB.evaluate(() =>
-        sessionStorage.getItem("openslate-organization"),
+        sessionStorage.getItem("slateops-organization"),
       ),
     ).toBe(second.org_id);
   } finally {

@@ -150,7 +150,7 @@ def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
             admin.post("/api/auth/login", json={"email": email, "password": password}).status_code
             == 200
         )
-        admin.headers["X-CSRF-Token"] = admin.cookies.get("openslate_csrf")
+        admin.headers["X-CSRF-Token"] = admin.cookies.get("slateops_csrf")
         created = admin.post(
             "/api/auth/invitations",
             json={"email": invite_email, "username": f"revoked_{uuid4().hex[:16]}"},

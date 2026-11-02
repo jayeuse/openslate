@@ -75,8 +75,8 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         initial = browser.get("/api/auth/mfa")
         assert initial.status_code == 200
         assert initial.json()["required"] is False and initial.json()["factors"] == []
-        handle = browser.cookies.get("openslate_refresh")
-        csrf = browser.cookies.get("openslate_csrf")
+        handle = browser.cookies.get("slateops_refresh")
+        csrf = browser.cookies.get("slateops_csrf")
         browser.headers["X-CSRF-Token"] = csrf
         cancelled = browser.post("/api/auth/mfa/factors", json={"friendly_name": "Cancel me"})
         assert cancelled.status_code == 201
@@ -86,8 +86,8 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
             == 204
         )
         assert browser.get("/api/auth/me").status_code == 200
-        assert browser.cookies.get("openslate_refresh") == handle
-        assert browser.cookies.get("openslate_csrf") == csrf
+        assert browser.cookies.get("slateops_refresh") == handle
+        assert browser.cookies.get("slateops_csrf") == csrf
         enrollment = browser.post("/api/auth/mfa/factors", json={"friendly_name": "Authenticator"})
         assert enrollment.status_code == 201
         factor_id = enrollment.json()["id"]
@@ -127,7 +127,7 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         assert verified.status_code == 200
         assert verified.json() == {"verified": True, "access_token": None}
         assert all(
-            header.startswith("openslate_access=")
+            header.startswith("slateops_access=")
             for header in verified.headers.get_list("set-cookie")
         )
         after = _mfa_session_state(owner, local_id, handle)
@@ -203,8 +203,8 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         )
         assert pending.get("/api/auth/me").status_code == 403
         assert pending.get("/api/auth/session").json()["detail"]["code"] == "mfa_required"
-        pending.headers["X-CSRF-Token"] = pending.cookies.get("openslate_csrf")
-        pending_handle = pending.cookies.get("openslate_refresh")
+        pending.headers["X-CSRF-Token"] = pending.cookies.get("slateops_csrf")
+        pending_handle = pending.cookies.get("slateops_refresh")
         assert pending.post("/api/auth/refresh").status_code == 200
         assert pending.get("/api/auth/me").status_code == 403
         bearer = TestClient(app, base_url=settings.public_origin)
@@ -252,7 +252,7 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
             client.headers.update(
                 {
                     "Origin": settings.public_origin,
-                    "X-CSRF-Token": pending.cookies.get("openslate_csrf"),
+                    "X-CSRF-Token": pending.cookies.get("slateops_csrf"),
                 }
             )
         with monkeypatch.context() as race:

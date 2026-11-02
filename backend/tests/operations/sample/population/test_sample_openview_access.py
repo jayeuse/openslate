@@ -66,7 +66,7 @@ def test_reports_use_module_managers_and_dashboards_use_department_leads(tmp_pat
             body = json.loads(request.content) if request.content else {}
             if request.url.path == "/api/auth/login":
                 return httpx.Response(
-                    200, json={}, headers={"set-cookie": "openslate_csrf=c; Path=/"}
+                    200, json={}, headers={"set-cookie": "slateops_csrf=c; Path=/"}
                 )
             if request.method == "POST":
                 writes.append((person, request.url.path, body.get("module_id")))

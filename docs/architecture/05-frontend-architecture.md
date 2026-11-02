@@ -27,7 +27,7 @@ Administrator contacts are a fresh account-scoped projection from `/api/workspac
 `apiFetch()` calls the same-origin `/api` path. In daily development, Next's
 proxy forwards that path to FastAPI; production Caddy forwards the production
 origin to FastAPI. Supabase Auth supplies the access JWT; FastAPI stores it in
-the HttpOnly `openslate_access` cookie. The HttpOnly `openslate_refresh` cookie
+the HttpOnly `slateops_access` cookie. The HttpOnly `slateops_refresh` cookie
 contains an opaque application refresh handle, not the provider refresh token.
 Production sets the `Secure` attribute; relaxed local HTTP development omits it.
 FastAPI stores the handle's digest and the encrypted provider token pair in its

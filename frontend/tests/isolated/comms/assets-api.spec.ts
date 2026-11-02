@@ -43,7 +43,7 @@ test("attachment reservation and raw upload stay in the authenticated conversati
   const original = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", {
     configurable: true,
-    value: { cookie: "openslate_csrf=files-test" },
+    value: { cookie: "slateops_csrf=files-test" },
   });
   const mock = installFetch((input) =>
     String(input).endsWith("/content")

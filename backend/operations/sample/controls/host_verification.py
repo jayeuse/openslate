@@ -259,7 +259,7 @@ def _native_evidence(
         isinstance(ids, Mapping) and set(ids) == {"login", "identity", "admission", "content"}, step
     )
     ids = {key: _uuid(value, step) for key, value in ids.items()}
-    filename = f"openslate-backup-export-{exported.id}.tar"
+    filename = f"slateops-backup-export-{exported.id}.tar"
     require(
         len(set(ids.values())) == 4
         and headers

@@ -146,7 +146,7 @@ export function installCsrfCookie(token: string): () => void {
   const original = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", {
     configurable: true,
-    value: { cookie: `openslate_csrf=${token}` },
+    value: { cookie: `slateops_csrf=${token}` },
   });
   return () => {
     if (original) Object.defineProperty(globalThis, "document", original);

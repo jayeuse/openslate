@@ -66,8 +66,8 @@ def _login_response(request: httpx.Request) -> httpx.Response | None:
     return httpx.Response(
         200,
         headers=[
-            ("Set-Cookie", "openslate_csrf=fixture-csrf; Path=/; SameSite=Lax"),
-            ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly; SameSite=Lax"),
+            ("Set-Cookie", "slateops_csrf=fixture-csrf; Path=/; SameSite=Lax"),
+            ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly; SameSite=Lax"),
         ],
         json={"authenticated": True},
     )

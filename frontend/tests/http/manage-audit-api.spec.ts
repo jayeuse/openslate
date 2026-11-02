@@ -321,7 +321,7 @@ function createAuditRoute(logs: AuditLogFixture[]) {
           body: csv,
           headers: {
             "Content-Type": "text/csv;charset=utf-8",
-            "Content-Disposition": 'attachment; filename="openslate-audit.csv"',
+            "Content-Disposition": 'attachment; filename="slateops-audit.csv"',
             "Cache-Control": "no-store",
             "X-Audit-Export-Count": String(filtered.length),
           },
@@ -1143,7 +1143,7 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
     .getByRole("button", { name: "Download CSV", exact: true })
     .click();
   const download = await downloadStarted;
-  expect(download.suggestedFilename()).toBe("openslate-audit.csv");
+  expect(download.suggestedFilename()).toBe("slateops-audit.csv");
   const csvPath = testInfo.outputPath("audit-filtered.csv");
   await download.saveAs(csvPath);
   const csv = await readFile(csvPath, "utf8");
@@ -1381,7 +1381,7 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
     await preview
       .getByRole("button", { name: "Download CSV", exact: true })
       .click();
-    expect((await downloaded).suggestedFilename()).toBe("openslate-audit.csv");
+    expect((await downloaded).suggestedFilename()).toBe("slateops-audit.csv");
   });
 }
 
@@ -1422,7 +1422,7 @@ test("Audit CSV failure retains its pinned preview and Retry refuses malformed o
           headers: {
             "Content-Type":
               failure === "media" ? "text/html" : "text/csv;charset=utf-8",
-            "Content-Disposition": 'attachment; filename="openslate-audit.csv"',
+            "Content-Disposition": 'attachment; filename="slateops-audit.csv"',
             "Cache-Control": "no-store",
             "X-Audit-Export-Count": "10001",
           },
@@ -1470,7 +1470,7 @@ test("Audit CSV failure retains its pinned preview and Retry refuses malformed o
   const path = testInfo.outputPath("audit-retried.csv");
   await download.saveAs(path);
   expect(await readFile(path, "utf8")).toBe(api.exportBodies[0]);
-  expect(downloads).toEqual(["openslate-audit.csv"]);
+  expect(downloads).toEqual(["slateops-audit.csv"]);
   expect(requests).toHaveLength(4);
   expect(
     requests.every((url) => url.searchParams.get("created_before") === cutoff),
@@ -1552,7 +1552,7 @@ test("Audit Close, Escape, route leave and another tab's sign-in suppress pendin
       if (method === "reload") {
         const reloaded = page.waitForEvent("load");
         await otherTab.evaluate(() =>
-          new BroadcastChannel("openslate-session").postMessage({
+          new BroadcastChannel("slateops-session").postMessage({
             tabId: "another-tab",
           }),
         );

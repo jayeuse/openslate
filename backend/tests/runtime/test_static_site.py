@@ -17,7 +17,7 @@ def _write_export(root: Path) -> None:
     (root / "_next" / "static" / "app-123.js").write_text("export {};", encoding="utf-8")
     document = (
         "<!doctype html><html><head><style>.page{color:red}</style>"
-        "<script>window.openslateBoot=true;</script>"
+        "<script>window.slateopsBoot=true;</script>"
         '<script src="/_next/static/app-123.js"></script></head>'
         '<body><main class="page">Slate Operations</main></body></html>'
     )

@@ -520,8 +520,7 @@ test("downloads exports through apiRequest and validates the attached JSON docum
     () =>
       new Response(JSON.stringify(document), {
         headers: {
-          "Content-Disposition":
-            'attachment; filename="openslate-sandbox.json"',
+          "Content-Disposition": 'attachment; filename="slateops-sandbox.json"',
           "Content-Type": "application/json",
         },
       }),
@@ -531,7 +530,7 @@ test("downloads exports through apiRequest and validates the attached JSON docum
       exportSandboxBundle({ includeVersions: false }),
     ).resolves.toEqual({
       document,
-      filename: "openslate-sandbox.json",
+      filename: "slateops-sandbox.json",
     });
     expect(mock.requests[0]).toMatchObject({
       input: "/api/sandbox/export?includeVersions=false",
@@ -547,8 +546,7 @@ test("round-trips an export attachment that includes portable history", async ()
     () =>
       new Response(JSON.stringify(documentWithVersions), {
         headers: {
-          "Content-Disposition":
-            'attachment; filename="openslate-sandbox.json"',
+          "Content-Disposition": 'attachment; filename="slateops-sandbox.json"',
           "Content-Type": "application/json",
         },
       }),
@@ -558,7 +556,7 @@ test("round-trips an export attachment that includes portable history", async ()
       exportSandboxBundle({ includeVersions: true }),
     ).resolves.toEqual({
       document: documentWithVersions,
-      filename: "openslate-sandbox.json",
+      filename: "slateops-sandbox.json",
     });
     expect(mock.requests[0].input).toBe(
       "/api/sandbox/export?includeVersions=true",

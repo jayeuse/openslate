@@ -122,8 +122,8 @@ test("a cold preference load is disabled, fails visibly, and retries without cha
   let reads = 0;
   let recovered = false;
   await page.addInitScript(() => {
-    localStorage.setItem("openslate-motion", "reduced");
-    localStorage.setItem("openslate-org-theme", "stockroom");
+    localStorage.setItem("slateops-motion", "reduced");
+    localStorage.setItem("slateops-org-theme", "stockroom");
   });
   await page.route(`**${preferencePath(userA)}`, async (route) => {
     reads += 1;
@@ -183,9 +183,9 @@ test("a cold preference load is disabled, fails visibly, and retries without cha
       page.getByRole("switch", { name: "Reduce motion" }),
     ).toBeChecked();
     await page.evaluate(() => {
-      localStorage.removeItem("openslate-motion");
+      localStorage.removeItem("slateops-motion");
       window.dispatchEvent(
-        new StorageEvent("storage", { key: "openslate-motion" }),
+        new StorageEvent("storage", { key: "slateops-motion" }),
       );
     });
     await expect(
@@ -285,18 +285,18 @@ test("legacy Appearance and Your profile share only confirmed theme saves, prese
       { theme: "dark" },
     ]);
     await page.evaluate(() => {
-      localStorage.setItem("openslate-theme", "light");
-      localStorage.setItem("openslate-motion", "reduced");
+      localStorage.setItem("slateops-theme", "light");
+      localStorage.setItem("slateops-motion", "reduced");
       window.dispatchEvent(
-        new StorageEvent("storage", { key: "openslate-theme" }),
+        new StorageEvent("storage", { key: "slateops-theme" }),
       );
     });
     await expect(page.locator("html")).toHaveClass(/dark/);
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem("openslate-theme")))
+      .poll(() => page.evaluate(() => localStorage.getItem("slateops-theme")))
       .toBe("dark");
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem("openslate-motion")))
+      .poll(() => page.evaluate(() => localStorage.getItem("slateops-motion")))
       .toBeNull();
     await expect(page.locator("html")).not.toHaveAttribute("data-motion");
     // The account row opens the read-only Profile view (PD16); the account
@@ -607,7 +607,7 @@ test("confirmed theme saves preserve applied motion and organization look when b
     );
     // The applied look lives only in the page: the cache write failed.
     expect(
-      await page.evaluate(() => localStorage.getItem("openslate-org-theme")),
+      await page.evaluate(() => localStorage.getItem("slateops-org-theme")),
     ).toBeNull();
     const motion = page.getByRole("switch", { name: "Reduce motion" });
     await motion.click();
@@ -839,10 +839,10 @@ test("device text and density scale pages without changing account preferences",
 }) => {
   await installIdentity(page);
   await page.addInitScript(() => {
-    if (!localStorage.getItem("openslate-text-size"))
-      localStorage.setItem("openslate-text-size", "125");
-    if (!localStorage.getItem("openslate-density"))
-      localStorage.setItem("openslate-density", "spacious");
+    if (!localStorage.getItem("slateops-text-size"))
+      localStorage.setItem("slateops-text-size", "125");
+    if (!localStorage.getItem("slateops-density"))
+      localStorage.setItem("slateops-density", "spacious");
   });
   let writes = 0;
   await page.route(`**${preferencePath(userA)}`, (route) => {
@@ -906,12 +906,12 @@ test("public prepaint resolves System and device text before hydration including
   );
   await page.emulateMedia({ colorScheme: "dark" });
   await page.addInitScript(() => {
-    localStorage.setItem("openslate-theme", "system");
-    if (!localStorage.getItem("openslate-text-size"))
-      localStorage.setItem("openslate-text-size", "125");
-    if (!localStorage.getItem("openslate-density"))
-      localStorage.setItem("openslate-density", "spacious");
-    localStorage.setItem("openslate-org-theme", "whiteboard");
+    localStorage.setItem("slateops-theme", "system");
+    if (!localStorage.getItem("slateops-text-size"))
+      localStorage.setItem("slateops-text-size", "125");
+    if (!localStorage.getItem("slateops-density"))
+      localStorage.setItem("slateops-density", "spacious");
+    localStorage.setItem("slateops-org-theme", "whiteboard");
   });
   await page.route("**/_next/**/*.js*", (route) => route.abort());
   await page.goto("/login");
@@ -973,7 +973,7 @@ test("blocked device storage still applies text and spacing without claiming per
   ).toBeVisible();
   await page.evaluate(() =>
     window.dispatchEvent(
-      new StorageEvent("storage", { key: "openslate-theme" }),
+      new StorageEvent("storage", { key: "slateops-theme" }),
     ),
   );
   await expect(page.getByRole("combobox", { name: "Text size" })).toHaveValue(
@@ -1003,10 +1003,10 @@ test("Compact spacing respects 1279 and 1280 fine-pointer admission and device s
   await expect(density).toHaveValue("compact");
   const color = await page.locator("html").getAttribute("class");
   await page.evaluate(() => {
-    localStorage.setItem("openslate-text-size", "112.5");
-    localStorage.setItem("openslate-density", "spacious");
+    localStorage.setItem("slateops-text-size", "112.5");
+    localStorage.setItem("slateops-density", "spacious");
     window.dispatchEvent(
-      new StorageEvent("storage", { key: "openslate-text-size" }),
+      new StorageEvent("storage", { key: "slateops-text-size" }),
     );
   });
   await expect(page.getByRole("combobox", { name: "Text size" })).toHaveValue(
@@ -1188,8 +1188,8 @@ test("More contrast preserves the enabled unchecked Dark Slate switch cue", asyn
     }),
   );
   await page.addInitScript(() => {
-    localStorage.setItem("openslate-text-size", "125");
-    localStorage.setItem("openslate-density", "spacious");
+    localStorage.setItem("slateops-text-size", "125");
+    localStorage.setItem("slateops-density", "spacious");
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/settings/appearance");

@@ -18,9 +18,9 @@ export interface AppearancePreferences {
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 // The light/dark key predates organization themes, so it keeps its old name.
-const MODE_KEY = "openslate-theme";
+const MODE_KEY = "slateops-theme";
 // Stored only while reduce motion is on (public/theme-init.js reads it too).
-const MOTION_KEY = "openslate-motion";
+const MOTION_KEY = "slateops-motion";
 // Accent and corner style belong to the organization look.
 const RETIRED_KEYS = ["openslate-accent", "openslate-radius"] as const;
 
@@ -107,8 +107,8 @@ export function readDeviceAppearancePreferences(
   storage: Pick<Storage, "getItem"> | null | undefined,
 ): DeviceAppearancePreferences {
   try {
-    const textSize = storage?.getItem("openslate-text-size") ?? null;
-    const density = storage?.getItem("openslate-density") ?? null;
+    const textSize = storage?.getItem("slateops-text-size") ?? null;
+    const density = storage?.getItem("slateops-density") ?? null;
     return {
       textSize: isOneOf(textSize, ["100", "112.5", "125"]) ? textSize : "100",
       density: isOneOf(density, ["default", "compact", "spacious"])
@@ -140,8 +140,8 @@ export function persistDeviceAppearancePreferences(
   preferences: DeviceAppearancePreferences,
 ): boolean {
   try {
-    window.localStorage.setItem("openslate-text-size", preferences.textSize);
-    window.localStorage.setItem("openslate-density", preferences.density);
+    window.localStorage.setItem("slateops-text-size", preferences.textSize);
+    window.localStorage.setItem("slateops-density", preferences.density);
     return true;
   } catch {
     return false;
@@ -163,7 +163,7 @@ export const ORGANIZATION_THEMES = [
 
 export type OrganizationTheme = (typeof ORGANIZATION_THEMES)[number];
 
-export const ORGANIZATION_THEME_KEY = "openslate-org-theme";
+export const ORGANIZATION_THEME_KEY = "slateops-org-theme";
 
 export function readOrganizationTheme(
   storage: Pick<Storage, "getItem"> | null | undefined,

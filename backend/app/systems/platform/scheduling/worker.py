@@ -109,7 +109,7 @@ class ReportSchedulingWorker:
         self._stop.clear()
         thread = threading.Thread(
             target=self._run,
-            name="openslate-scheduled-work",
+            name="slateops-scheduled-work",
             daemon=True,
         )
         thread.start()

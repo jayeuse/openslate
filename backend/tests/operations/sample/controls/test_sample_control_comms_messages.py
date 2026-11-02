@@ -133,8 +133,8 @@ def test_message_executor_covers_message_routes_and_checks_observed_state_withou
                 200,
                 json={"authenticated": True},
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
             )
         seen.append(request)

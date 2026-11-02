@@ -151,9 +151,9 @@ export async function api(
         const cookie = document.cookie
           .split(";")
           .map((part) => part.trim())
-          .find((part) => part.startsWith("openslate_csrf="));
+          .find((part) => part.startsWith("slateops_csrf="));
         return cookie
-          ? decodeURIComponent(cookie.slice("openslate_csrf=".length))
+          ? decodeURIComponent(cookie.slice("slateops_csrf=".length))
           : undefined;
       };
       const call = () => {
@@ -200,7 +200,7 @@ export async function api(
           return refresh.ok;
         };
         refreshed = await navigator.locks.request(
-          "openslate-auth-refresh",
+          "slateops-auth-refresh",
           { mode: "exclusive" },
           renew,
         );

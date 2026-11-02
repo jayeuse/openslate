@@ -33,8 +33,8 @@ def _login() -> httpx.Response:
         200,
         json={"authenticated": True, "setup_required": False},
         headers=[
-            ("Set-Cookie", "openslate_access=private-access; Path=/; HttpOnly"),
-            ("Set-Cookie", "openslate_csrf=private-csrf; Path=/"),
+            ("Set-Cookie", "slateops_access=private-access; Path=/; HttpOnly"),
+            ("Set-Cookie", "slateops_csrf=private-csrf; Path=/"),
             ("X-Request-ID", REQUEST_ID),
         ],
     )
@@ -105,7 +105,7 @@ def test_event_probe_authenticates_reads_one_resync_and_closes_without_journalin
         assert request.headers["origin"] == ORIGIN
         assert request.headers["sec-fetch-site"] == "same-origin"
         assert request.headers["accept"] == "text/event-stream"
-        assert "openslate_access=private-access" in request.headers["cookie"]
+        assert "slateops_access=private-access" in request.headers["cookie"]
         assert "authorization" not in request.headers
         return httpx.Response(
             200,

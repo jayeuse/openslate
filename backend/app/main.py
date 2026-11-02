@@ -262,7 +262,7 @@ def create_app() -> FastAPI:
     def health(response: Response) -> dict[str, str]:
         identity = instance_identity_for_process()
         if identity is not None:
-            response.headers["X-OpenSlate-Instance"] = identity
+            response.headers["X-SlateOps-Instance"] = identity
         return {"status": "ok", "service": "openslate-api"}
 
     @app.get("/api/ready", tags=["system"])

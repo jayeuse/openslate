@@ -125,8 +125,8 @@ def test_activity_links_a_source_child_after_both_records_exist(tmp_path):
                     200,
                     json={"authenticated": True},
                     headers=[
-                        ("set-cookie", "openslate_access=opaque; Path=/"),
-                        ("set-cookie", "openslate_csrf=csrf; Path=/"),
+                        ("set-cookie", "slateops_access=opaque; Path=/"),
+                        ("set-cookie", "slateops_csrf=csrf; Path=/"),
                     ],
                 )
             body = json.loads(request.content)

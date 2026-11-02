@@ -854,7 +854,7 @@ test("current-session revocation clears owned drafts and attachment URLs through
   );
   const persistedComms = await page.evaluate(() =>
     Object.keys(sessionStorage).filter((key) =>
-      key.startsWith("openslate.sample.draft-text.v2."),
+      key.startsWith("slateops.sample.draft-text.v2."),
     ),
   );
   expect(persistedComms.length).toBeGreaterThan(0);

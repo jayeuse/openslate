@@ -332,10 +332,10 @@ const sidebarWidth = (page: Page) =>
     .locator("#primary-sidebar")
     .evaluate((el) => el.getBoundingClientRect().width);
 const storedWidth = (page: Page) =>
-  page.evaluate(() => localStorage.getItem("openslate-sidebar-width"));
+  page.evaluate(() => localStorage.getItem("slateops-sidebar-width"));
 async function seedStoredWidth(page: Page, width: string) {
   await page.addInitScript((value) => {
-    localStorage.setItem("openslate-sidebar-width", value);
+    localStorage.setItem("slateops-sidebar-width", value);
   }, width);
 }
 

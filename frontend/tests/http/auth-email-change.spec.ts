@@ -216,7 +216,7 @@ for (const credential of ["access", "refresh"] as const) {
         url: baseURL,
         httpOnly: true,
       },
-      { name: "openslate_csrf", value: "owned-csrf", url: baseURL },
+      { name: "slateops_csrf", value: "owned-csrf", url: baseURL },
     ]);
     await page.goto(
       `${emailChangeLanding}#token_hash=${currentEmailProof}&type=email_change`,

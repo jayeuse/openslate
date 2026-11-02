@@ -47,7 +47,7 @@ export function parseOpenViewUrl(
   raw: string,
 ): Required<Pick<OpenViewUrlState, "section" | "module">> &
   Omit<OpenViewUrlState, "section" | "module"> {
-  const url = new URL(raw, "https://openslate.local/openview");
+  const url = new URL(raw, "https://slateops.local/openview");
   const sectionValue = url.searchParams.get("section");
   const moduleValue = url.searchParams.get("module");
   const recordValue = url.searchParams.get("record");

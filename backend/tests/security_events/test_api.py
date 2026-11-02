@@ -100,7 +100,7 @@ def test_security_event_export_rejects_unbounded_limit_for_admin(api: FastAPI) -
 
 @pytest.mark.parametrize(
     "headers",
-    [{}, {"X-OpenSlate-Server-Key": WRONG_SERVER_KEY}],
+    [{}, {"X-SlateOps-Server-Key": WRONG_SERVER_KEY}],
     ids=["missing-key", "wrong-key"],
 )
 def test_internal_security_event_ingestion_rejects_missing_or_wrong_server_key(
@@ -127,7 +127,7 @@ def test_internal_security_event_ingestion_accepts_configured_key_and_valid_payl
 
     response = client.post(
         "/api/internal/security-events",
-        headers={"X-OpenSlate-Server-Key": SERVER_KEY},
+        headers={"X-SlateOps-Server-Key": SERVER_KEY},
         json=_payload_values(),
     )
 
@@ -144,7 +144,7 @@ def test_internal_security_event_ingestion_validates_before_persisting(api: Fast
 
     response = client.post(
         "/api/internal/security-events",
-        headers={"X-OpenSlate-Server-Key": SERVER_KEY},
+        headers={"X-SlateOps-Server-Key": SERVER_KEY},
         json=_payload_values(outcome="not-an-outcome", token=REJECTED_TOKEN),
     )
 

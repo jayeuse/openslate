@@ -97,7 +97,7 @@ def build_command(
 def write_public_config(path: Path, manager_config: object) -> None:
     """Write only the validated public manager configuration."""
 
-    from openslate_manager.config import ManagerConfig
+    from slateops_manager.config import ManagerConfig
 
     if not isinstance(manager_config, ManagerConfig):
         raise TypeError("manager_config must be a ManagerConfig")
@@ -180,7 +180,7 @@ def build_manager(
     """Build and validate one unsigned host-native artifact without launching it."""
 
     sys.path.insert(0, str(MANAGER_ROOT))
-    from openslate_manager.config import parse_public_config
+    from slateops_manager.config import parse_public_config
 
     canonical_output_directory = resolve_output_directory(output_directory)
     system, _machine = validate_host_platform()
@@ -190,7 +190,7 @@ def build_manager(
             f"Output directory must not already exist: {canonical_output_directory}"
         )
     canonical_output_directory.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="openslate-manager-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="slateops-manager-") as temporary:
         temporary_directory = Path(temporary)
         command = build_command(
             source_root=ROOT,

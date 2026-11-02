@@ -175,7 +175,7 @@ not a separate permission system or an execution result.
 | --- | --- | --- | --- |
 | Organization look | `OrganizationTheme`, `ORGANIZATION_THEMES`, `workspace_profiles.theme`, "theme" | The theme that the organization uses for everyone: Slate (default), Whiteboard, Triplicate, or Stockroom. A look changes color, type, and materials only; layout, behavior, and words stay the same. | Customer ("look") |
 | Appearance | `/settings/appearance`, `users.appearance` | The personal display settings of one person: color mode, text and display, and motion. | Customer |
-| Color mode | "Theme" (Platform → Account), `openslate-theme` storage key | The personal light or dark choice. Use "color mode"; "theme" means the organization look. | Customer |
+| Color mode | "Theme" (Platform → Account), `slateops-theme` storage key | The personal light or dark choice. Use "color mode"; "theme" means the organization look. | Customer |
 
 ## Infrastructure and identity
 

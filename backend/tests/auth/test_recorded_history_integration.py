@@ -59,8 +59,8 @@ def _act(world, kind):
             expired = world.access(exp=int(world.clock.timestamp()) - 60)
             row.provider_access_token_encrypted = cipher.encrypt(expired.encode()).decode()
             db.commit()
-    world.client.cookies.set("openslate_refresh", world.handles[0])
-    world.client.cookies.set("openslate_csrf", world.csrf[0])
+    world.client.cookies.set("slateops_refresh", world.handles[0])
+    world.client.cookies.set("slateops_csrf", world.csrf[0])
     return world.client.post("/api/auth/refresh", headers={"X-CSRF-Token": world.csrf[0]})
 
 
@@ -208,8 +208,8 @@ def test_failed_admission_or_refresh_preserves_recorded_history(policy_world, fa
             httpx.Response(400) if request.url.path == "/auth/v1/token" else None
         )
     if failure == "csrf":
-        world.client.cookies.set("openslate_refresh", world.handles[0])
-        world.client.cookies.set("openslate_csrf", world.csrf[0])
+        world.client.cookies.set("slateops_refresh", world.handles[0])
+        world.client.cookies.set("slateops_csrf", world.csrf[0])
         response = world.client.post("/api/auth/refresh", headers={"X-CSRF-Token": "wrong"})
         expected = 401
     else:
@@ -283,8 +283,8 @@ def test_concurrent_older_refresh_cannot_erase_newer_committed_activity(policy_w
             world.client.app, base_url=get_settings().public_origin, raise_server_exceptions=False
         ) as client:
             client.headers["Origin"] = get_settings().public_origin
-            client.cookies.set("openslate_refresh", world.handles[slot])
-            client.cookies.set("openslate_csrf", world.csrf[slot])
+            client.cookies.set("slateops_refresh", world.handles[slot])
+            client.cookies.set("slateops_csrf", world.csrf[slot])
             return client.post(
                 "/api/auth/refresh", headers={"X-CSRF-Token": world.csrf[slot]}
             ).status_code

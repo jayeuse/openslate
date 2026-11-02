@@ -34,7 +34,7 @@ const row =
   '"2026-09-12T12:30:00Z","Mara Santos","Record","Update","Pump","No previous values recorded.","Status: active"';
 const csvHeaders = {
   "Content-Type": "text/csv;charset=utf-8",
-  "Content-Disposition": 'attachment; filename="openslate-audit.csv"',
+  "Content-Disposition": 'attachment; filename="slateops-audit.csv"',
   "Cache-Control": "no-store",
 };
 
@@ -100,7 +100,7 @@ test("the CSV download sends the filters without a page", async () => {
   );
   try {
     const csv = await downloadManageAuditCsv(filters);
-    expect(csv.filename).toBe("openslate-audit.csv");
+    expect(csv.filename).toBe("slateops-audit.csv");
     expect(csv.count).toBe(1);
     expect(await csv.blob.text()).toBe(body);
     expect(String(mock.requests[0]?.input)).toBe(

@@ -14,8 +14,8 @@ and domain authorization.
 
 Production browsers use a same-origin Caddy gateway with one FastAPI upstream.
 The [cookie helpers](../../backend/app/systems/access/auth/cookies.py) set
-Secure, HttpOnly cookies in production. `openslate_access` contains the provider
-access JWT; `openslate_refresh` contains an opaque application handle. FastAPI
+Secure, HttpOnly cookies in production. `slateops_access` contains the provider
+access JWT; `slateops_refresh` contains an opaque application handle. FastAPI
 stores the handle digest and encrypted provider token pair in `identity_sessions`,
 along with local expiry and revocation state. A CSRF cookie/token protects
 state-changing browser requests. Session listing, self/admin revocation, and

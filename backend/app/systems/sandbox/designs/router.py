@@ -224,7 +224,7 @@ def get_export(
         media_type="application/json",
         headers={
             "Cache-Control": "no-store",
-            "Content-Disposition": 'attachment; filename="openslate-sandbox.json"',
+            "Content-Disposition": 'attachment; filename="slateops-sandbox.json"',
             "X-Content-Type-Options": "nosniff",
         },
     )

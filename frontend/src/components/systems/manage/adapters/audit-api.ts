@@ -183,7 +183,7 @@ export async function downloadManageAuditCsv(
     response.headers.get("Content-Type")?.replaceAll(" ", "").toLowerCase() !==
       "text/csv;charset=utf-8" ||
     response.headers.get("Content-Disposition") !==
-      'attachment; filename="openslate-audit.csv"' ||
+      'attachment; filename="slateops-audit.csv"' ||
     response.headers.get("Cache-Control") !== "no-store" ||
     !count.success
   )
@@ -197,7 +197,7 @@ export async function downloadManageAuditCsv(
     throw new ApiContractError();
   return {
     blob: new Blob([bytes], { type: "text/csv;charset=utf-8" }),
-    filename: "openslate-audit.csv",
+    filename: "slateops-audit.csv",
     count: count.data,
   };
 }

@@ -64,7 +64,7 @@ def test_authored_reviews_follow_server_ids_and_frontend_queries(tmp_path: Path,
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/api/auth/login":
-            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=c; Path=/"})
+            return httpx.Response(200, headers={"Set-Cookie": "slateops_csrf=c; Path=/"})
         assert request.method == "GET" and not request.content
         requests[path] = dict(request.url.params)
         body: object = {"items": []}
@@ -219,7 +219,7 @@ def test_board_review_stops_when_access_or_selected_revision_is_invalid(
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
         if request.url.path == "/api/auth/login":
-            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=c; Path=/"})
+            return httpx.Response(200, headers={"Set-Cookie": "slateops_csrf=c; Path=/"})
         if request.url.path.endswith("/my-access"):
             return httpx.Response(
                 200, json={"read": True, "manage": True, "write": True, "level": "manage"}

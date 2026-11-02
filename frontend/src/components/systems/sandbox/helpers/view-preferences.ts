@@ -7,7 +7,7 @@ export interface SandboxViewPreferences {
   workbenchCollapsed: boolean;
 }
 
-export const SANDBOX_VIEW_PREFERENCES_KEY = "openslate.sandbox.view.v2";
+export const SANDBOX_VIEW_PREFERENCES_KEY = "slateops.sandbox.view.v2";
 // One right workbench (Structure | Properties) keeps the canvas at ≥65% of a
 // wide Build area.
 export const SANDBOX_WORKBENCH_MIN_WIDTH = 320;

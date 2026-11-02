@@ -150,9 +150,9 @@ def ready_export(export_world, tmp_path, monkeypatch):
         )
         exports.record_export_outcome(db, world.instance, outcome)
         db.commit()
-    world.auth.client.cookies.set("openslate_access", world.auth.access())
-    world.auth.client.cookies.set("openslate_refresh", world.auth.handles[0])
-    world.auth.client.cookies.set("openslate_csrf", world.auth.csrf[0])
+    world.auth.client.cookies.set("slateops_access", world.auth.access())
+    world.auth.client.cookies.set("slateops_refresh", world.auth.handles[0])
+    world.auth.client.cookies.set("slateops_csrf", world.auth.csrf[0])
     world.csrf_headers = {"X-CSRF-Token": world.auth.csrf[0]}
     world.native_headers = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
 

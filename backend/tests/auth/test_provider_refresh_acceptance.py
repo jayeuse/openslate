@@ -140,21 +140,21 @@ def test_expired_provider_access_refreshes_concurrently_and_preserves_revocation
         login = login_client.post("/api/auth/login", json={"email": email, "password": password})
         assert login.status_code == 200, "Real Supabase email login must succeed"
         login_headers = login.headers.get_list("set-cookie")
-        assert _cookie_has_flag(login_headers, "openslate_access", "httponly"), (
+        assert _cookie_has_flag(login_headers, "slateops_access", "httponly"), (
             "Browser access cookie must remain HttpOnly"
         )
-        assert _cookie_has_flag(login_headers, "openslate_refresh", "httponly"), (
+        assert _cookie_has_flag(login_headers, "slateops_refresh", "httponly"), (
             "Browser refresh cookie must remain HttpOnly"
         )
-        assert _cookie_was_set(login_headers, "openslate_csrf"), (
+        assert _cookie_was_set(login_headers, "slateops_csrf"), (
             "Browser login must set the separate CSRF cookie"
         )
-        assert not _cookie_has_flag(login_headers, "openslate_csrf", "httponly"), (
+        assert not _cookie_has_flag(login_headers, "slateops_csrf", "httponly"), (
             "Browser JavaScript must be able to read the CSRF cookie"
         )
 
-        original_access = login_client.cookies.get("openslate_access")
-        original_csrf = login_client.cookies.get("openslate_csrf")
+        original_access = login_client.cookies.get("slateops_access")
+        original_csrf = login_client.cookies.get("slateops_csrf")
         assert original_access is not None, "Provider login must set an access cookie"
         assert original_csrf is not None, "Provider login must set a CSRF cookie"
         original_csrf_fingerprint = _token_fingerprint(original_csrf)
@@ -164,7 +164,7 @@ def test_expired_provider_access_refreshes_concurrently_and_preserves_revocation
 
         expired_me = login_client.get(
             "/api/auth/me",
-            headers={"Cookie": f"openslate_access={original_access}"},
+            headers={"Cookie": f"slateops_access={original_access}"},
         )
         assert expired_me.status_code == 401, (
             "The provider-issued access JWT must be rejected after its exp claim"
@@ -214,17 +214,17 @@ def test_expired_provider_access_refreshes_concurrently_and_preserves_revocation
         )
         for response in refreshed:
             response_headers = response.headers.get_list("set-cookie")
-            assert _cookie_has_flag(response_headers, "openslate_access", "httponly"), (
+            assert _cookie_has_flag(response_headers, "slateops_access", "httponly"), (
                 "Refreshed access cookie must remain HttpOnly"
             )
-            assert _cookie_has_flag(response_headers, "openslate_refresh", "httponly"), (
+            assert _cookie_has_flag(response_headers, "slateops_refresh", "httponly"), (
                 "Refreshed application session cookie must remain HttpOnly"
             )
-            assert _cookie_was_set(response_headers, "openslate_csrf"), (
+            assert _cookie_was_set(response_headers, "slateops_csrf"), (
                 "Refreshed browser session must retain its CSRF cookie"
             )
 
-        refreshed_accesses = [client.cookies.get("openslate_access") for client in refresh_clients]
+        refreshed_accesses = [client.cookies.get("slateops_access") for client in refresh_clients]
         assert all(token is not None for token in refreshed_accesses), (
             "Each successful refresh must set a provider access cookie"
         )
@@ -236,7 +236,7 @@ def test_expired_provider_access_refreshes_concurrently_and_preserves_revocation
             for fingerprint in refreshed_access_fingerprints
         ), "Expired access must be replaced with a newly issued provider JWT"
         for client in refresh_clients:
-            csrf_after = client.cookies.get("openslate_csrf")
+            csrf_after = client.cookies.get("slateops_csrf")
             assert csrf_after is not None, "Refreshed browser session lost its CSRF cookie"
             assert _token_fingerprint(csrf_after) == original_csrf_fingerprint, (
                 "Refresh must preserve the session-bound CSRF value"

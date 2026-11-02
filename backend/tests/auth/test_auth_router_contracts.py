@@ -65,8 +65,8 @@ def test_login_sets_browser_cookies_and_maps_rate_and_credential_failures(
 
     assert result == {"authenticated": True, "setup_required": False}
     assert db.commit.call_count == 1
-    assert _cookie_contains(response, "openslate_access=access-token")
-    assert _cookie_contains(response, "openslate_refresh=refresh-token")
+    assert _cookie_contains(response, "slateops_access=access-token")
+    assert _cookie_contains(response, "slateops_refresh=refresh-token")
 
     monkeypatch.setattr(
         auth_router, "login_with_provider", Mock(side_effect=InvalidCredentials("bad"))
@@ -102,7 +102,7 @@ def test_refresh_browser_session_enforces_cookie_csrf_and_clears_invalid_state(
         auth_router.refresh(no_cookie, Response(), db)
     assert missing.value.status_code == 401
 
-    request = contract_request(cookies="openslate_refresh=old-refresh")
+    request = contract_request(cookies="slateops_refresh=old-refresh")
     request.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
     monkeypatch.setattr(auth_router, "get_supabase_auth_client", lambda: Mock())
     monkeypatch.setattr(auth_router, "refresh_provider_session", Mock(return_value=_issued()))
@@ -112,7 +112,7 @@ def test_refresh_browser_session_enforces_cookie_csrf_and_clears_invalid_state(
         "setup_required": False,
     }
     db.commit.assert_not_called()
-    assert _cookie_contains(response, "openslate_access=access-token")
+    assert _cookie_contains(response, "slateops_access=access-token")
 
     # Live seven-pack run: refreshes were refused with no hint of which check failed.
     logged = Mock()
@@ -124,7 +124,7 @@ def test_refresh_browser_session_enforces_cookie_csrf_and_clears_invalid_state(
     )
     replay = auth_router.refresh(request, Response(), db)
     assert replay.status_code == 401
-    assert any('openslate_refresh=""' in item for item in replay.headers.getlist("set-cookie"))
+    assert any('slateops_refresh=""' in item for item in replay.headers.getlist("set-cookie"))
     assert logged.call_args.kwargs["reason_code"] == "refresh_session_revoked"
 
     monkeypatch.setattr(
@@ -259,7 +259,7 @@ def test_logout_rejects_bad_refresh_but_clears_a_valid_browser_session(
     db = Mock(spec=Session)
     user, _membership = contract_user()
     identity = CurrentIdentity(user, uuid7(), True, False)
-    request = contract_request(cookies="openslate_access=access; openslate_refresh=refresh")
+    request = contract_request(cookies="slateops_access=access; slateops_refresh=refresh")
     request.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
     lookup = Mock(return_value=identity)
     monkeypatch.setattr(auth_router, "get_mfa_identity", lookup)
@@ -275,7 +275,7 @@ def test_logout_rejects_bad_refresh_but_clears_a_valid_browser_session(
     assert response.status_code == 204
     revoke.assert_called_once_with(db, "refresh", csrf_token="csrf-token")
     lookup.assert_not_called()
-    assert any('openslate_access=""' in item for item in response.headers.getlist("set-cookie"))
+    assert any('slateops_access=""' in item for item in response.headers.getlist("set-cookie"))
     db.commit.assert_called_once()
     signout.assert_called_once_with(db, identity.session_id, client)
 
@@ -283,7 +283,7 @@ def test_logout_rejects_bad_refresh_but_clears_a_valid_browser_session(
     monkeypatch.setattr(
         auth_router, "revoke_provider_refresh_session", Mock(return_value=None), raising=False
     )
-    refresh_only = contract_request(cookies="openslate_refresh=" + "r" * 48)
+    refresh_only = contract_request(cookies="slateops_refresh=" + "r" * 48)
     refresh_only.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
     with pytest.raises(HTTPException) as invalid:
         auth_router.logout(refresh_only, db)
@@ -355,7 +355,7 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
     monkeypatch.setattr(sessions_router, "revoke_session", Mock(return_value=True))
     assert sessions_router.revoke_one_session(current.id, identity, response, db) is response
     assert response.status_code == 204
-    assert any('openslate_access=""' in item for item in response.headers.getlist("set-cookie"))
+    assert any('slateops_access=""' in item for item in response.headers.getlist("set-cookie"))
     monkeypatch.setattr(sessions_router, "revoke_user_sessions", Mock(return_value=1))
     assert sessions_router.revoke_other_sessions(identity, Response(), db).status_code == 204
 
@@ -419,7 +419,7 @@ def test_change_password_maps_safe_provider_errors_and_preserves_current_session
     change = Mock()
     monkeypatch.setattr(auth_router.provider_actions, "change_password", change)
     response = Response()
-    request = contract_request(cookies="openslate_access=current-access")
+    request = contract_request(cookies="slateops_access=current-access")
     assert auth_router.change_password(payload, identity, request, response, db) == {
         "authenticated": True,
         "setup_required": False,

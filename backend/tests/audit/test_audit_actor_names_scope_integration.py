@@ -313,7 +313,7 @@ def test_admin_csv_exports_complete_filtered_history_with_safe_cells(
             assert exported.headers["content-type"].startswith("text/csv")
             assert exported.headers["cache-control"] == "no-store"
             assert exported.headers["content-disposition"] == (
-                'attachment; filename="openslate-audit.csv"'
+                'attachment; filename="slateops-audit.csv"'
             )
             assert exported.headers["x-audit-export-count"] == "105"
             parsed = list(csv.reader(io.StringIO(exported.text, newline="")))

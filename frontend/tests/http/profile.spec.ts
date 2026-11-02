@@ -86,7 +86,7 @@ test("Profile email request needs the current password and keeps saved email rea
   const api = await installEmailChangeApi(page);
   await observeEmailSecretExposure(page);
   await context.addCookies([
-    { name: "openslate_csrf", value: "owned-profile-csrf", url: baseURL },
+    { name: "slateops_csrf", value: "owned-profile-csrf", url: baseURL },
   ]);
   await page.goto("/settings#security");
   await page.getByRole("button", { name: "Change email", exact: true }).click();

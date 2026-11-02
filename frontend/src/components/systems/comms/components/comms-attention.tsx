@@ -69,7 +69,7 @@ const storage = {
     }
   },
 };
-const alertedPrefix = (user: string) => `openslate-comms-alerted:v1:${user}:`;
+const alertedPrefix = (user: string) => `slateops-comms-alerted:v1:${user}:`;
 // Union with localStorage, so blocked storage cannot replay the newest alerts.
 const alertedInTab = new Map<string, string[]>();
 function alerted(key: string) {
@@ -265,7 +265,7 @@ export function CommsAttention() {
     org = context?.org_id;
   useEffect(() => {
     if (!user || !org) return;
-    const key = `openslate-comms-focus:v1:${user}:${org}`;
+    const key = `slateops-comms-focus:v1:${user}:${org}`;
     const tab = crypto.randomUUID();
     const ours = () => {
       const value = storage.read(key);
@@ -360,7 +360,7 @@ export function CommsAttention() {
         ?.conversations.find(
           (summary) => summary.conversation.id === item.conversationId,
         )?.conversation;
-      const focused = storage.read(`openslate-comms-focus:v1:${user}:${org}`);
+      const focused = storage.read(`slateops-comms-focus:v1:${user}:${org}`);
       if (
         typeof focused === "object" &&
         focused !== null &&

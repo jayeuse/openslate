@@ -38,9 +38,9 @@ def _session_response(access: str) -> httpx.Response:
         200,
         json={"authenticated": True, "setup_required": False},
         headers=[
-            ("set-cookie", f"openslate_access={access}; Path=/; HttpOnly"),
-            ("set-cookie", f"openslate_refresh={REFRESH}; Path=/api/auth; HttpOnly"),
-            ("set-cookie", f"openslate_csrf={CSRF}; Path=/"),
+            ("set-cookie", f"slateops_access={access}; Path=/; HttpOnly"),
+            ("set-cookie", f"slateops_refresh={REFRESH}; Path=/api/auth; HttpOnly"),
+            ("set-cookie", f"slateops_csrf={CSRF}; Path=/"),
         ],
     )
 

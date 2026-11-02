@@ -183,7 +183,7 @@ def locked_identity(db: Session, request: Request) -> tuple[CurrentIdentity, dat
     actor = require_fresh_exact_admin(db, identity.user.id)
     try:
         claims = get_supabase_auth_client().verify_access_token(
-            request.cookies.get("openslate_access", "")
+            request.cookies.get("slateops_access", "")
         )
     except InvalidProviderToken as cause:
         raise HTTPException(401, detail="Invalid authentication credentials") from cause
@@ -235,7 +235,7 @@ def ready_operation(db: Session, export_id: UUID) -> BackupExportOperation:
 def _admitted(db: Session, request: Request, export_id: UUID) -> BackupExportOperation:
     identity, expiry = locked_identity(db, request)
     row = ready_operation(db, export_id)
-    cookie = request.cookies.get("openslate_export_admission", "")
+    cookie = request.cookies.get("slateops_export_admission", "")
     digest = hashlib.sha256(cookie.encode()).hexdigest()
     now = cast(datetime, db.scalar(select(func.clock_timestamp())))
     if expiry <= now:
@@ -304,7 +304,7 @@ class ExportStreamResponse(Response):
             headers={
                 "Content-Length": str(size),
                 "Content-Disposition": (
-                    f'attachment; filename="openslate-backup-export-{export_id}.tar"'
+                    f'attachment; filename="slateops-backup-export-{export_id}.tar"'
                 ),
                 "Cache-Control": "no-store",
                 "X-Content-Type-Options": "nosniff",

@@ -36,8 +36,8 @@ def _login(request: httpx.Request) -> httpx.Response:
     return httpx.Response(
         200,
         headers=[
-            ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-            ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+            ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+            ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
         ],
         json={"ok": True},
     )

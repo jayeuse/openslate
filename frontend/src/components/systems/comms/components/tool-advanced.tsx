@@ -15,7 +15,7 @@ export function ToolAdvanced({
   const { client } = useCommsClient();
   return (
     <SettingsAdvanced
-      storageKey={`openslate:comms:advanced:${client?.context.org_id}:${client?.context.user_id}:tools:${tool}`}
+      storageKey={`slateops:comms:advanced:${client?.context.org_id}:${client?.context.user_id}:tools:${tool}`}
       count={count}
     >
       {children}

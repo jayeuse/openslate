@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MANAGER_ROOT = ROOT / "packaging/manager"
 sys.path.insert(0, str(MANAGER_ROOT))
 
-from openslate_manager import app, config, ui  # noqa: E402
+from slateops_manager import app, config, ui  # noqa: E402
 
 
 class ManagerConfigTests(unittest.TestCase):
@@ -76,7 +76,7 @@ class ManagerUiBoundaryTests(unittest.TestCase):
                 ("start", (), {}),
             ],
         )
-        self.assertNotIn("subprocess", (MANAGER_ROOT / "openslate_manager/ui.py").read_text())
+        self.assertNotIn("subprocess", (MANAGER_ROOT / "slateops_manager/ui.py").read_text())
 
     def test_cli_has_no_certificate_bypass_or_supervision_options(self):
         parser = app.build_parser()

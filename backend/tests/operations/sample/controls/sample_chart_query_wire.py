@@ -32,7 +32,7 @@ def boundary_reply_fault(wire, fault):
         elif fault in {"manager_name", "admin_name"} and (
             path.endswith("/usage") or response.status_code == 409
         ):
-            admin = "openslate_access=admin" in request.headers.get("cookie", "")
+            admin = "slateops_access=admin" in request.headers.get("cookie", "")
             usage = body["detail"]["usage"] if response.status_code == 409 else body
             if admin == (fault == "admin_name") and usage["items"]:
                 usage["items"][0]["name"] = "Hidden Board name sentinel"

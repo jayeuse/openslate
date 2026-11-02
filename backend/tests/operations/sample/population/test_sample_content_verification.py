@@ -146,7 +146,7 @@ def test_project_board_grants_require_exact_intended_groups_and_levels(
             return httpx.Response(
                 200,
                 json={"authenticated": True, "setup_required": False},
-                headers=[("set-cookie", "openslate_csrf=sample-csrf; Path=/")],
+                headers=[("set-cookie", "slateops_csrf=sample-csrf; Path=/")],
             )
         if request.url.path == "/api/boards":
             return httpx.Response(200, json=_page([{"id": BOARD_ID, "scope": "project"}]))

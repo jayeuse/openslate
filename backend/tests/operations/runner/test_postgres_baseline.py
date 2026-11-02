@@ -287,15 +287,15 @@ def test_concurrent_failed_logins_replace_a_stale_current_bucket_before_locking_
 def test_postgres_notifications_arrive_only_after_the_publishing_transaction_commits() -> None:
     database_url = os.environ["TEST_DATABASE_URL"].replace("postgresql+psycopg", "postgresql")
     with psycopg.connect(database_url, autocommit=True) as listener:
-        listener.execute("LISTEN openslate_invalidation")
+        listener.execute("LISTEN slateops_invalidation")
         with psycopg.connect(database_url) as sender:
-            sender.execute("SELECT pg_notify(%s, %s)", ("openslate_invalidation", "committed"))
+            sender.execute("SELECT pg_notify(%s, %s)", ("slateops_invalidation", "committed"))
             sender.commit()
         notification = next(listener.notifies(timeout=5))
         assert notification.payload == "committed"
 
         with psycopg.connect(database_url) as sender:
-            sender.execute("SELECT pg_notify(%s, %s)", ("openslate_invalidation", "rolled_back"))
+            sender.execute("SELECT pg_notify(%s, %s)", ("slateops_invalidation", "rolled_back"))
             sender.rollback()
         assert select.select([listener.pgconn.socket], [], [], 0.2) == ([], [], [])
 

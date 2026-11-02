@@ -75,7 +75,7 @@ type Props = {
 };
 
 function savedValuesKey(moduleId: string) {
-  return `openslate.sandbox.test-values:${moduleId}`;
+  return `slateops.sandbox.test-values:${moduleId}`;
 }
 
 /** Saved test values for a module, kept only for fields that still exist. */

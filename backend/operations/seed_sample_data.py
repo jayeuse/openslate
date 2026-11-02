@@ -122,7 +122,7 @@ def _assert_api_identity(api_url: str, expected_identity: str) -> Mapping[str, A
             health = client.get(f"{api_url}/api/health")
             if health.status_code != 200:
                 raise SampleOperationError("The local API health endpoint is unavailable")
-            if health.headers.get("X-OpenSlate-Instance") != expected_identity:
+            if health.headers.get("X-SlateOps-Instance") != expected_identity:
                 raise SampleOperationError("The API identity does not match the owned instance")
             ready = client.get(f"{api_url}/api/ready")
             try:

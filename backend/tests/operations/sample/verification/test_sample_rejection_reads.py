@@ -84,7 +84,7 @@ def test_refused_record_edit_still_sends_the_frontend_revision_header(tmp_path):
 
     def handler(request):
         if request.url.path == "/api/auth/login":
-            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=c; Path=/"})
+            return httpx.Response(200, headers={"Set-Cookie": "slateops_csrf=c; Path=/"})
         if request.method == "GET":
             return httpx.Response(200, json={"data": {}, "updated_at": revision})
         assert request.headers.get("If-Match") == f'"{revision}"'

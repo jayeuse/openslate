@@ -62,7 +62,7 @@ def test_real_executor_no_audit_evidence_satisfies_verifier_contract(
         if request.url.path == "/api/auth/login":
             return httpx.Response(
                 200,
-                headers={**headers, "Set-Cookie": "openslate_csrf=fixture; Path=/"},
+                headers={**headers, "Set-Cookie": "slateops_csrf=fixture; Path=/"},
                 json={"ok": True},
             )
         if request.url.path == "/api/audit-logs":
@@ -174,7 +174,7 @@ def test_real_executor_restore_and_session_evidence_uses_canonical_ids(
         if path == "/api/auth/login":
             return httpx.Response(
                 200,
-                headers={**headers, "Set-Cookie": "openslate_csrf=fixture; Path=/"},
+                headers={**headers, "Set-Cookie": "slateops_csrf=fixture; Path=/"},
                 json={"ok": True},
             )
         if path == "/api/audit-logs":

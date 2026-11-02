@@ -22,7 +22,7 @@ from app.systems.platform.events.models import (
     parse_invalidation_payload,
 )
 
-CHANNEL = "openslate_invalidation"
+CHANNEL = "slateops_invalidation"
 _CONNECT_RETRY_SECONDS = 0.25
 _MAX_CONNECT_RETRY_SECONDS = 5.0
 _SHUTDOWN_JOIN_SECONDS = 2.0
@@ -277,7 +277,7 @@ class PostgresInvalidationListener:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="openslate-events", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="slateops-events", daemon=True)
         self._thread.start()
 
     def stop(self) -> bool:

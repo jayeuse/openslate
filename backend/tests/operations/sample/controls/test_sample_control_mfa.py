@@ -87,7 +87,7 @@ class MfaServer:
             for part in request.headers.get("cookie", "").split("; ")
             if "=" in part
         )
-        access = cookies.get("openslate_access", "")
+        access = cookies.get("slateops_access", "")
         session, _, aal = access.partition("|")
         return session, self.sessions.get(session), aal
 
@@ -115,8 +115,8 @@ class MfaServer:
             return self.response(
                 {"authenticated": True, "setup_required": False},
                 headers=[
-                    ("Set-Cookie", f"openslate_access={sid}|aal1; Path=/; HttpOnly"),
-                    ("Set-Cookie", "openslate_csrf=private-fixture-csrf; Path=/"),
+                    ("Set-Cookie", f"slateops_access={sid}|aal1; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=private-fixture-csrf; Path=/"),
                 ],
             )
         sid, user_id, aal = self.identity(request)
@@ -179,7 +179,7 @@ class MfaServer:
                 factor["status"] = "verified"
                 return self.response(
                     {"verified": True, "access_token": None},
-                    headers=[("Set-Cookie", f"openslate_access={sid}|aal2; Path=/; HttpOnly")],
+                    headers=[("Set-Cookie", f"slateops_access={sid}|aal2; Path=/; HttpOnly")],
                 )
             assert method == "DELETE" and user_id != OWNER_ID
             if factor["status"] == "verified":

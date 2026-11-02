@@ -58,7 +58,7 @@ def _journey(tmp_path, pack_key, *, fault="none", neutral=False):
     def handler(request):
         if request.url.path == "/api/auth/login":
             return httpx.Response(
-                200, headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"}, json={"ok": True}
+                200, headers={"Set-Cookie": "slateops_csrf=fixture; Path=/"}, json={"ok": True}
             )
         requests.append(request)
         return snapshot_response(request, fault=fault)

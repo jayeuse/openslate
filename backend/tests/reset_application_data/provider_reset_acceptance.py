@@ -213,7 +213,7 @@ def _login_seeded_admin(admin_email: str, password: str, settings: Any) -> tuple
     if response.status_code != 200:
         client.close()
         raise RuntimeError("The seeded administrator could not log in through FastAPI")
-    access = client.cookies.get("openslate_access")
+    access = client.cookies.get("slateops_access")
     if not access:
         client.close()
         raise RuntimeError("FastAPI did not issue the expected browser session cookie")
@@ -410,7 +410,7 @@ def test_reset_cli_dry_run_confirmation_and_execute_against_fresh_provider() -> 
         create_app(),
         base_url=settings.public_origin,
         cookies={
-            "openslate_access": access_token,
+            "slateops_access": access_token,
         },
     )
     try:

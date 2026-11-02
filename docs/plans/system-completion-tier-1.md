@@ -121,7 +121,7 @@ In Phase C, workstreams with disjoint files can run in parallel.
 
 #### W2a. Organization look on the server
 
-**Today.** The look is stored in `localStorage` (`openslate-org-theme`). Each browser picks its own look.
+**Today.** The look is stored in `localStorage` (`slateops-org-theme`). Each browser picks its own look.
 
 **Backend:**
 

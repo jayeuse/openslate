@@ -492,7 +492,7 @@ test("Organization profile long text reflows on phone and labelled controls rema
   const api = await installProfile(page);
   api.workspace.postal_address = "Long profile address ".repeat(70);
   await page.addInitScript(() =>
-    localStorage.setItem("openslate-text-size", "125"),
+    localStorage.setItem("slateops-text-size", "125"),
   );
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/manage?view=organization");

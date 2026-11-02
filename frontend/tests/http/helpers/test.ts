@@ -569,6 +569,6 @@ export async function quietEventSource(page: Page): Promise<void> {
 /** Asks the auth gate to verify the current session again, as a focus or retry does. */
 export async function recheckSession(page: Page): Promise<void> {
   await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
+    window.dispatchEvent(new Event("slateops:session-recheck")),
   );
 }

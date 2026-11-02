@@ -13,7 +13,7 @@ test.use({ trace: "off", screenshot: "off", video: "off" });
 
 const userA = "00000000-0000-4000-8000-000000000001";
 const userB = "00000000-0000-4000-8000-000000000002";
-const cacheKey = "openslate-org-theme";
+const cacheKey = "slateops-org-theme";
 const themes = ["slate", "whiteboard", "triplicate", "stockroom"] as const;
 type Theme = (typeof themes)[number];
 const initialWorkspace = {
@@ -500,7 +500,7 @@ test("Organization preview survives personal storage events and Save when storag
   await choose(page, "Stockroom");
   await page.evaluate(() =>
     window.dispatchEvent(
-      new StorageEvent("storage", { key: "openslate-theme" }),
+      new StorageEvent("storage", { key: "slateops-theme" }),
     ),
   );
   await expect(page.locator("html")).toHaveAttribute("data-theme", "stockroom");

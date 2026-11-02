@@ -123,8 +123,8 @@ def test_ordinary_auth_is_read_only_and_refresh_does_not_first_insert_a_user_fk(
     with Session(world.owner) as db:
         db.delete(db.get(IdentityMfaObservation, world.actor_id))
         db.commit()
-    world.client.cookies.set("openslate_refresh", world.handles[0])
-    world.client.cookies.set("openslate_csrf", world.csrf[0])
+    world.client.cookies.set("slateops_refresh", world.handles[0])
+    world.client.cookies.set("slateops_csrf", world.csrf[0])
     response = world.client.post("/api/auth/refresh", headers={"X-CSRF-Token": world.csrf[0]})
     assert response.status_code == 200
     assert observed(world) is None
@@ -348,8 +348,8 @@ def test_existing_refresh_observes_complete_user_without_changing_signin_ip(obse
         session = db.get(IdentitySession, world.session_ids[0])
         session.ip_address = "2001:db8::44"
         db.commit()
-    world.client.cookies.set("openslate_refresh", world.handles[0])
-    world.client.cookies.set("openslate_csrf", world.csrf[0])
+    world.client.cookies.set("slateops_refresh", world.handles[0])
+    world.client.cookies.set("slateops_csrf", world.csrf[0])
     response = world.client.post("/api/auth/refresh", headers={"X-CSRF-Token": world.csrf[0]})
     assert response.status_code == 200
     assert observed(world)[1] is True

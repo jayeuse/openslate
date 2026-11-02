@@ -231,14 +231,14 @@ def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
     with pytest.raises(HTTPException) as mixed:
         dependencies.get_account_identity(
             contract_request(
-                cookies="openslate_access=cookie", authorization="Bearer access-token"
+                cookies="slateops_access=cookie", authorization="Bearer access-token"
             ),
             SimpleNamespace(credentials="access-token"),
             db,
         )
     assert mixed.value.status_code == 401
 
-    cookie_request = contract_request(cookies="openslate_access=cookie")
+    cookie_request = contract_request(cookies="slateops_access=cookie")
     cookie_request.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
     db.get.return_value = SimpleNamespace(csrf_token_digest="digest")
     monkeypatch.setattr(dependencies, "validate_csrf", lambda *_args: False)

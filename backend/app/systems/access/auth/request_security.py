@@ -19,7 +19,7 @@ def source(request: Request) -> str | None:
 
 def reject_mixed_credentials(request: Request) -> None:
     if request.headers.get("authorization") and (
-        request.cookies.get("openslate_access") or request.cookies.get("openslate_refresh")
+        request.cookies.get("slateops_access") or request.cookies.get("slateops_refresh")
     ):
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 

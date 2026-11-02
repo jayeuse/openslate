@@ -167,7 +167,7 @@ def test_workspace_security_resolves_caddy_peer_and_refuses_forged_lockout(
                         "/api/auth/login", json={"email": email, "password": password}
                     )
                     assert login.status_code == 200
-                    csrf = client.cookies.get("openslate_csrf")
+                    csrf = client.cookies.get("slateops_csrf")
                     assert csrf
                     client.headers["X-CSRF-Token"] = csrf
                     response = client.get(

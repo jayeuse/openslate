@@ -106,7 +106,7 @@ def get_event_principal(
     bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     org: UUID | None = None,
 ) -> EventPrincipal:
-    cookie_token = request.cookies.get("openslate_access")
+    cookie_token = request.cookies.get("slateops_access")
     bearer_token = bearer.credentials if bearer is not None else None
     if bool(cookie_token) == bool(bearer_token):
         raise _unauthorized()

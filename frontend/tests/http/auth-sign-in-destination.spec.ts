@@ -178,7 +178,7 @@ test("a sign-in tells the browser's other tabs that the account changed", async 
   await listener.evaluate(() => {
     const seen: unknown[] = [];
     Object.assign(window, { identityMessages: seen });
-    new BroadcastChannel("openslate-session").addEventListener(
+    new BroadcastChannel("slateops-session").addEventListener(
       "message",
       (event) => seen.push(event.data),
     );

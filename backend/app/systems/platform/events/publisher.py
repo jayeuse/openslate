@@ -133,7 +133,7 @@ class InvalidationPublisher:
                 self._stopping = False
                 self._thread = threading.Thread(
                     target=self._run,
-                    name="openslate-invalidations",
+                    name="slateops-invalidations",
                     daemon=True,
                 )
                 self._thread.start()

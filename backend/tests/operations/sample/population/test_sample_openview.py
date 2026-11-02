@@ -85,9 +85,9 @@ def test_openview_population_uses_ui_routes_and_captures_disabled_schedule_runs(
                 200,
                 json={"authenticated": True, "setup_required": False},
                 headers=[
-                    ("set-cookie", "openslate_access=sample-access; Path=/; HttpOnly"),
-                    ("set-cookie", "openslate_refresh=sample-refresh; Path=/api/auth; HttpOnly"),
-                    ("set-cookie", "openslate_csrf=sample-csrf; Path=/"),
+                    ("set-cookie", "slateops_access=sample-access; Path=/; HttpOnly"),
+                    ("set-cookie", "slateops_refresh=sample-refresh; Path=/api/auth; HttpOnly"),
+                    ("set-cookie", "slateops_csrf=sample-csrf; Path=/"),
                 ],
             )
         assert request.headers["origin"] == ORIGIN

@@ -97,8 +97,8 @@ import {
 } from "@/lib/auth-api";
 import { ApiError } from "@/lib/api";
 
-const SIDEBAR_COLLAPSED_KEY = "openslate-sidebar-collapsed";
-const SIDEBAR_WIDTH_KEY = "openslate-sidebar-width";
+const SIDEBAR_COLLAPSED_KEY = "slateops-sidebar-collapsed";
+const SIDEBAR_WIDTH_KEY = "slateops-sidebar-width";
 const SIDEBAR_DEFAULT_WIDTH = 240;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 360;

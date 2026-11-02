@@ -126,7 +126,7 @@ def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_accou
 
         login = client.post("/api/auth/login", json={"email": email, "password": password})
         assert login.status_code == 200
-        csrf_token = client.cookies.get("openslate_csrf")
+        csrf_token = client.cookies.get("slateops_csrf")
         assert csrf_token
         client.headers["X-CSRF-Token"] = csrf_token
 

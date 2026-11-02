@@ -173,7 +173,7 @@ def test_self_effect_clears_cookies_and_completes_only_admitted_action(world, ac
     cookies = response.headers.get_list("set-cookie")
     assert all(
         any(name in cookie and "Max-Age=0" in cookie for cookie in cookies)
-        for name in ["openslate_access", "openslate_refresh", "openslate_csrf"]
+        for name in ["slateops_access", "slateops_refresh", "slateops_csrf"]
     )
     with Session(world.owner) as db:
         assert db.get(IdentitySession, world.session_id).revoked_at is not None
@@ -196,7 +196,7 @@ def test_mail_failure_after_revoke_keeps_committed_effect_and_clears_self_cookie
     assert response.json()["detail"]["email_request"] == "unconfirmed"
     if self_target:
         assert any(
-            "openslate_access" in cookie and "Max-Age=0" in cookie
+            "slateops_access" in cookie and "Max-Age=0" in cookie
             for cookie in response.headers.get_list("set-cookie")
         )
     else:
@@ -361,7 +361,7 @@ def test_initial_ineligible_target_cannot_receive_remote_effects(world, state, a
 @pytest.mark.parametrize("action", ["mfa/reset", "recovery"])
 def test_new_cookie_mutations_keep_existing_csrf_boundary(world, action):
     world.client.cookies.set(
-        "openslate_access", world.headers("aal2")["Authorization"].partition(" ")[2]
+        "slateops_access", world.headers("aal2")["Authorization"].partition(" ")[2]
     )
     response = world.client.post(f"/api/users/{world.target_id}/{action}", json={})
     assert response.status_code == 401

@@ -54,11 +54,11 @@ class _Wire:
             self.logins.append(email)
             if email == OPERATOR[0] and not self.operator_login:
                 return httpx.Response(401, json={"authenticated": False})
-            cookies = [f"openslate_access={email}; Path=/", "openslate_csrf=csrf; Path=/"]
+            cookies = [f"slateops_access={email}; Path=/", "slateops_csrf=csrf; Path=/"]
             return httpx.Response(200, headers=[("set-cookie", value) for value in cookies])
         if path == "/api/auth/logout":
             return httpx.Response(204)
-        user = request.headers["cookie"].split("openslate_access=")[1].split(";")[0]
+        user = request.headers["cookie"].split("slateops_access=")[1].split(";")[0]
         member_of = self.memberships[user]
         if path == "/api/auth/me":
             rows = [{"org_id": org_id, "slug": SLUGS[org_id]} for org_id in sorted(member_of)]

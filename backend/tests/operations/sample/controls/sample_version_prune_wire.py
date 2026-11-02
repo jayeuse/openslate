@@ -197,7 +197,7 @@ class VersionPruneWire:
                 200,
                 json={"authenticated": True},
                 headers={
-                    "Set-Cookie": "openslate_csrf=fixture; Path=/; SameSite=Lax",
+                    "Set-Cookie": "slateops_csrf=fixture; Path=/; SameSite=Lax",
                 },
             )
         if path == "/api/auth/me":

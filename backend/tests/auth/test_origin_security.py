@@ -145,14 +145,14 @@ def test_browser_session_cookies_carry_the_documented_scope_and_flags() -> None:
     response = Response()
     cookies.set_browser_session(response, "access", "refresh", "csrf")
     issued = _cookies(response)
-    assert sorted(issued) == ["openslate_access", "openslate_csrf", "openslate_refresh"]
-    assert _live(issued["openslate_access"]) == ("access", "/", True, True, "lax")
-    assert _live(issued["openslate_refresh"]) == ("refresh", "/api/auth", True, True, "strict")
-    assert _live(issued["openslate_csrf"]) == ("csrf", "/", False, True, "lax")
+    assert sorted(issued) == ["slateops_access", "slateops_csrf", "slateops_refresh"]
+    assert _live(issued["slateops_access"]) == ("access", "/", True, True, "lax")
+    assert _live(issued["slateops_refresh"]) == ("refresh", "/api/auth", True, True, "strict")
+    assert _live(issued["slateops_csrf"]) == ("csrf", "/", False, True, "lax")
 
     access_only = Response()
     cookies.set_browser_access(access_only, "renewed")
-    assert _live(_cookies(access_only)["openslate_access"]) == ("renewed", "/", True, True, "lax")
+    assert _live(_cookies(access_only)["slateops_access"]) == ("renewed", "/", True, True, "lax")
 
 
 @pytest.mark.usefixtures("production_cookies")
@@ -160,9 +160,9 @@ def test_a_session_without_refresh_handle_deletes_the_stale_refresh_cookie() -> 
     response = Response()
     cookies.set_browser_session(response, "access", None, "csrf")
     issued = _cookies(response)
-    assert sorted(issued) == ["openslate_access", "openslate_csrf", "openslate_refresh"]
-    assert _deleted(issued["openslate_refresh"]) == ("", "/api/auth", True, "0")
-    assert _live(issued["openslate_access"]) == ("access", "/", True, True, "lax")
+    assert sorted(issued) == ["slateops_access", "slateops_csrf", "slateops_refresh"]
+    assert _deleted(issued["slateops_refresh"]) == ("", "/api/auth", True, "0")
+    assert _live(issued["slateops_access"]) == ("access", "/", True, True, "lax")
 
 
 @pytest.mark.usefixtures("production_cookies")
@@ -171,7 +171,7 @@ def test_a_refused_refresh_returns_the_uniform_401_and_deletes_every_session_coo
     assert response.status_code == 401
     assert response.body == b'{"detail":"Invalid authentication credentials"}'
     cleared = _cookies(response)
-    assert sorted(cleared) == ["openslate_access", "openslate_csrf", "openslate_refresh"]
-    assert _deleted(cleared["openslate_access"]) == ("", "/", True, "0")
-    assert _deleted(cleared["openslate_refresh"]) == ("", "/api/auth", True, "0")
-    assert _deleted(cleared["openslate_csrf"]) == ("", "/", True, "0")
+    assert sorted(cleared) == ["slateops_access", "slateops_csrf", "slateops_refresh"]
+    assert _deleted(cleared["slateops_access"]) == ("", "/", True, "0")
+    assert _deleted(cleared["slateops_refresh"]) == ("", "/api/auth", True, "0")
+    assert _deleted(cleared["slateops_csrf"]) == ("", "/", True, "0")

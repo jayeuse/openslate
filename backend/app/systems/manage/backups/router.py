@@ -372,7 +372,7 @@ def admit_backup_export_download(
         db.rollback()
         raise downloads.error("export_unavailable", 503) from cause
     response.set_cookie(
-        "openslate_export_admission",
+        "slateops_export_admission",
         handle,
         httponly=True,
         secure=_browser_cookie_secure(),

@@ -20,7 +20,7 @@ async function workspaceWithAuthOutage(page: Page, baseURL?: string) {
   await page
     .context()
     .addCookies([
-      { name: "openslate_csrf", value: "reconnect-csrf", url: baseURL },
+      { name: "slateops_csrf", value: "reconnect-csrf", url: baseURL },
     ]);
   await quietEventSource(page);
   await page.route("**/api/auth/session", (route) =>

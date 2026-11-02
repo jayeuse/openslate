@@ -56,14 +56,14 @@ def test_publisher_sends_only_the_opaque_payload_with_pg_notify(monkeypatch) -> 
         (
             "SELECT pg_notify(%s, %s)",
             (
-                "openslate_invalidation",
+                "slateops_invalidation",
                 f'{{"entity":"records","module_id":"{READABLE_MODULE}"}}',
             ),
         ),
         (
             "SELECT pg_notify(%s, %s)",
             (
-                "openslate_invalidation",
+                "slateops_invalidation",
                 f'{{"entity":"in_app_notifications","recipient_id":"{recipient_id}"}}',
             ),
         ),
@@ -126,7 +126,7 @@ def test_large_commit_collapses_to_one_resync_notification(monkeypatch) -> None:
         )
     )
     assert commands == [
-        ("SELECT pg_notify(%s, %s)", ("openslate_invalidation", '{"entity":"resync"}'))
+        ("SELECT pg_notify(%s, %s)", ("slateops_invalidation", '{"entity":"resync"}'))
     ]
 
 
@@ -170,7 +170,7 @@ def test_private_notification_overflow_never_emits_a_global_resync(monkeypatch) 
         (
             "SELECT pg_notify(%s, %s)",
             (
-                "openslate_invalidation",
+                "slateops_invalidation",
                 f'{{"entity":"records","module_id":"{READABLE_MODULE}"}}',
             ),
         )
@@ -248,7 +248,7 @@ def test_listener_reconnects_and_fans_out_notification(monkeypatch) -> None:
                 ("postgresql://user:secret@db/openslate",),
                 {"autocommit": True, "connect_timeout": 3, "options": "-c statement_timeout=15000"},
             )
-            assert statements == ["LISTEN openslate_invalidation"]
+            assert statements == ["LISTEN slateops_invalidation"]
         finally:
             stop_wait.set()
             listener.stop()

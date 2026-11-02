@@ -53347,7 +53347,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-OpenSlate-Server-Key",
+            "name": "X-SlateOps-Server-Key",
             "required": false,
             "schema": {
               "anyOf": [
@@ -53358,7 +53358,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Openslate-Server-Key"
+              "title": "X-SlateOps-Server-Key"
             }
           }
         ],

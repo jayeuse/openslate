@@ -1,6 +1,6 @@
 # Rebrand: OpenSlate to Slate Operations
 
-Status: slice 1 done, not committed (2026-11-02). Slices 2 to 4 are pending.
+Status: slices 1 and 2 committed (2026-11-02). Slices 3 and 4 are pending.
 
 ## Decisions
 
@@ -26,7 +26,7 @@ Examples of the stem: schema `slateops`, roles `slateops_owner` and `slateops_ru
 One pull request for each slice. Run the pre-push gate once for each push.
 
 1. **Visible brand.** Frontend copy and titles, the workspace name fallback, backend messages and the API name, email templates, README, docs, specs, and the native manager window name. `DESIGN.md`, `PRODUCT.md`, and `.impeccable/design.json` change through `impeccable` only. No runtime risk.
-2. **Wire identifiers.** Headers `X-OpenSlate-*`, the `User-Agent` values, cookies `openslate_access`, `openslate_refresh`, and `openslate_csrf`, the localStorage keys, the `openslate_manager` package, and CI workflow names. Frontend, backend, and tests change in one pull request.
+2. **Wire identifiers.** Headers `X-SlateOps-*`, the `User-Agent` values, cookies `slateops_access`, `slateops_refresh`, and `slateops_csrf`, the localStorage keys, the `slateops_manager` package, and CI workflow names. Frontend, backend, and tests change in one pull request.
 3. **Env vars, Compose names, and instance identity.** `OPENSLATE_*` to `SLATEOPS_*`, the Compose project prefix, `packaging/`, `infra/caddy/`, and `RESTORE.md`. Copy the development volumes before the prefix changes:
    1. Stop the development stack with `python3 scripts/dev.py stop`.
    2. Create each new volume.
@@ -37,6 +37,18 @@ One pull request for each slice. Run the pre-push gate once for each push.
    - Caution: `ALTER ROLE ... RENAME` clears MD5 passwords. Make sure that the roles use SCRAM before the rename.
    - Caution: `DATABASE_URL` and `MIGRATION_DATABASE_URL` contain the role names. Update them in the same step, or the API cannot connect.
    - Keep the old buckets until a download check passes, then remove them.
+
+### Names that slice 2 keeps, and why
+
+| Name | Reason | Owner |
+|---|---|---|
+| `openslate-accent`, `openslate-radius`, `openslate.sample.draft-text.v1.`, `openslate.sample.v1.` | Legacy browser keys. The code reads or removes them because old browsers still hold them. | Keep |
+| `openslate_user_id`, `openslate_invitation_operation_id` | Keys in Supabase Auth `app_metadata`. Each existing user stores them. | Slice 4 (data update) |
+| `openslate-sandbox` (design file `kind`) | Stored in design rows and in exported design files. | Slice 4 (data update, import decision) |
+| `openslate.backup.export.request.v1` | Encryption context of backup export requests. | Slice 4 |
+| `openslate-sample-people-v1` | File format of sample-run records on disk. | Slice 4 |
+| `openslate_session_liveness` | Policy on `auth.sessions`. | Slice 4 |
+| `github.com/jayeuse/openslate` URLs | They change when the repository is renamed. | Owner step 1 |
 
 ## Owner steps (not in the repository)
 

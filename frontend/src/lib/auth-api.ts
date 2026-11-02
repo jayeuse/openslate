@@ -82,7 +82,7 @@ const authMeResponse = z.object({
 });
 
 export type SessionStatus = z.output<typeof sessionResponse>;
-export const sessionRecheckEvent = "openslate:session-recheck";
+export const sessionRecheckEvent = "slateops:session-recheck";
 export function requestSessionRecheck() {
   window.dispatchEvent(new Event(sessionRecheckEvent));
 }

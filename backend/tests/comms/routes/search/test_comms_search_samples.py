@@ -36,8 +36,8 @@ def test_search_sample_observes_real_hits_then_excludes_its_tombstone(
                 200,
                 json={"authenticated": True},
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
             )
         response = api.request(

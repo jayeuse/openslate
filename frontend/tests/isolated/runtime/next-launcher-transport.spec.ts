@@ -324,7 +324,7 @@ test("actual development ingress replaces spoofed headers and preserves HMR and 
         apikey: "caller-key-canary",
         "x-api-key": "caller-provider-key",
         authorization: "Bearer caller-token",
-        cookie: "openslate_access=caller-cookie",
+        cookie: "slateops_access=caller-cookie",
         "x-forwarded-for": "203.0.113.20",
       },
     );

@@ -408,7 +408,7 @@ def native_proof(topology_runtime):
         "headers": {"cache_control": "no-store", "content_type": "application/octet-stream",
             "content_length": str(exported.size_bytes), "x_content_type_options": "nosniff",
             "accept_ranges": "none", "content_disposition":
-            f'attachment; filename="openslate-backup-export-{export_id}.tar"'},
+            f'attachment; filename="slateops-backup-export-{export_id}.tar"'},
         "attempt_event": {"id": str(uuid4()), "event_type": "backup.export.download",
             "outcome": "attempt", "operation_id": export_id, "subject_id": export_id,
             "actor_id": credential.user_id, "source": "backup", "request_id": ids["content"],

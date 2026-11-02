@@ -54,7 +54,7 @@ def _execute(tmp_path: Path, *, operation="audit_review", pack_key="harbor", fau
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
-            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"})
+            return httpx.Response(200, headers={"Set-Cookie": "slateops_csrf=fixture; Path=/"})
         assert request.method == "GET"
         seen.append(request)
         if request.url.path == "/api/audit-logs":
@@ -113,7 +113,7 @@ def _execute(tmp_path: Path, *, operation="audit_review", pack_key="harbor", fau
                 body = body.rstrip() + '\r\n"unterminated'
             headers = {
                 "Content-Type": "application/json" if fault == "mime" else "text/csv;charset=utf-8",
-                "Content-Disposition": 'attachment; filename="openslate-audit.csv"',
+                "Content-Disposition": 'attachment; filename="slateops-audit.csv"',
                 "Cache-Control": "no-store",
                 "X-Audit-Export-Count": "11" if fault == "count" else str(len(rows)),
             }

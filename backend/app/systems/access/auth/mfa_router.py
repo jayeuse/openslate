@@ -114,7 +114,7 @@ def _error(error: Exception, *, verification: bool = False) -> HTTPException:
 def _access(request: Request, identity: CurrentIdentity) -> str:
     bearer = bearer_credentials(request)
     token = (
-        request.cookies.get("openslate_access")
+        request.cookies.get("slateops_access")
         if identity.cookie_authenticated
         else bearer.credentials
         if bearer

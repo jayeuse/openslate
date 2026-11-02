@@ -258,7 +258,7 @@ def test_auth_actions_are_not_gated_by_an_organization_allow_list(
         app, base_url=get_settings().public_origin, client=("203.0.113.8", 50000),
     ) as browser:
         if path == "/refresh":
-            browser.cookies.set("openslate_refresh", "r" * 48)
+            browser.cookies.set("slateops_refresh", "r" * 48)
         response = browser.post(
             "/api/auth" + path,
             json=payload,

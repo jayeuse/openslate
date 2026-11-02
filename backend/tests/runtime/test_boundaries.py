@@ -376,7 +376,7 @@ def test_health_exposes_the_non_secret_instance_handshake(monkeypatch) -> None:
     response = TestClient(create_app()).get("/api/health")
 
     assert response.status_code == 200
-    assert response.headers["X-OpenSlate-Instance"] == "a" * 64
+    assert response.headers["X-SlateOps-Instance"] == "a" * 64
 
 
 @pytest.mark.parametrize(

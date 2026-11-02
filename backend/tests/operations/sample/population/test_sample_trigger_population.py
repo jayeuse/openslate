@@ -58,7 +58,7 @@ def test_trigger_record_edit_uses_the_read_revision_like_the_frontend(
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
-            return httpx.Response(200, headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"})
+            return httpx.Response(200, headers={"Set-Cookie": "slateops_csrf=fixture; Path=/"})
         if request.method == "GET":
             return httpx.Response(200, json=current)
         assert request.method == "PATCH"

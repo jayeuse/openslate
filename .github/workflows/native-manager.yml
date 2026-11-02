@@ -16,9 +16,9 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            artifact: openslate-manager-macos-development
+            artifact: slateops-manager-macos-development
           - os: windows-2025
-            artifact: openslate-manager-windows-development
+            artifact: slateops-manager-windows-development
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     defaults:
@@ -51,7 +51,7 @@ jobs:
         working-directory: packaging/manager
         run: >-
           uv run --project ../../backend --group manager mypy
-          --explicit-package-bases openslate_manager main.py
+          --explicit-package-bases slateops_manager main.py
       - name: Type-check the manager builder
         env:
           MYPYPATH: ../packaging/manager

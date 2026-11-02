@@ -32,7 +32,7 @@ def test_presence_sample_exercises_all_three_real_http_calls(presence_case, tmp_
             return httpx.Response(
                 200,
                 json={"authenticated": True},
-                headers={"Set-Cookie": "openslate_csrf=fixture; Path=/"},
+                headers={"Set-Cookie": "slateops_csrf=fixture; Path=/"},
             )
         response = api.request(
             request.method,

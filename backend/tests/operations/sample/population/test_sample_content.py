@@ -45,9 +45,9 @@ def _login(request: httpx.Request) -> httpx.Response:
         200,
         json={"authenticated": True, "setup_required": False},
         headers=[
-            ("set-cookie", "openslate_access=sample-access; Path=/; HttpOnly"),
-            ("set-cookie", "openslate_refresh=sample-refresh; Path=/api/auth; HttpOnly"),
-            ("set-cookie", f"openslate_csrf={CSRF}; Path=/"),
+            ("set-cookie", "slateops_access=sample-access; Path=/; HttpOnly"),
+            ("set-cookie", "slateops_refresh=sample-refresh; Path=/api/auth; HttpOnly"),
+            ("set-cookie", f"slateops_csrf={CSRF}; Path=/"),
         ],
     )
 

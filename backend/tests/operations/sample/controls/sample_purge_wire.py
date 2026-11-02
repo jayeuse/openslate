@@ -197,8 +197,8 @@ class SamplePurgeWire:
             return httpx.Response(
                 200,
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", f"openslate_access={actor}; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", f"slateops_access={actor}; Path=/; HttpOnly"),
                 ],
                 json={"ok": True},
             )

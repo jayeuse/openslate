@@ -118,7 +118,7 @@ def _factor_evidence(
     db.rollback()
     client = get_supabase_auth_client()
     token = (
-        request.cookies.get("openslate_access")
+        request.cookies.get("slateops_access")
         or request.headers.get("Authorization", "").partition(" ")[2]
     )
     claims = client.verify_access_token(token)

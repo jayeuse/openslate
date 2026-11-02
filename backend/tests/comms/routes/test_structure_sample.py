@@ -44,8 +44,8 @@ def test_structure_executor_produces_owned_message_mapping_and_observed_route_ev
                 200,
                 json={"authenticated": True},
                 headers=[
-                    ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                    ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                    ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
                 ],
             )
         response = api.request(

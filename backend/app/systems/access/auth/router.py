@@ -153,7 +153,7 @@ def refresh(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, bool] | Response:
     _reject_mixed_credentials(request)
-    raw_refresh = request.cookies.get("openslate_refresh")
+    raw_refresh = request.cookies.get("slateops_refresh")
     if raw_refresh is None:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
     csrf_token = _require_refresh_csrf(request)
@@ -245,10 +245,10 @@ def logout(
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     _reject_mixed_credentials(request)
     require_allowed_source(request, db)
-    if request.cookies.get("openslate_access") or request.cookies.get("openslate_refresh"):
+    if request.cookies.get("slateops_access") or request.cookies.get("slateops_refresh"):
         _require_browser_origin(request)
     session_id: UUID | None = None
-    raw_refresh = request.cookies.get("openslate_refresh")
+    raw_refresh = request.cookies.get("slateops_refresh")
     if raw_refresh is not None:
         csrf_token = _require_refresh_csrf(request)
         session_id = revoke_provider_refresh_session(db, raw_refresh, csrf_token=csrf_token)
@@ -322,7 +322,7 @@ def change_password(
     identity = _require_completed_identity(identity)
     bearer = _bearer_credentials(request)
     access_token = (
-        request.cookies.get("openslate_access")
+        request.cookies.get("slateops_access")
         if identity.cookie_authenticated
         else bearer.credentials
         if bearer is not None

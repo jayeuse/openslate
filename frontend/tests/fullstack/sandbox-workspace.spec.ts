@@ -149,10 +149,10 @@ async function seedPublishedSupplier(
     const csrfCookie = document.cookie
       .split(";")
       .map((segment) => segment.trim())
-      .find((segment) => segment.startsWith("openslate_csrf="));
+      .find((segment) => segment.startsWith("slateops_csrf="));
     if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
     const csrfToken = decodeURIComponent(
-      csrfCookie.slice("openslate_csrf=".length),
+      csrfCookie.slice("slateops_csrf=".length),
     );
     const response = await fetch("/api/records", {
       method: "POST",
@@ -206,10 +206,10 @@ async function retireSeededSupplier(page: Page, recordId: string) {
     const csrfCookie = document.cookie
       .split(";")
       .map((segment) => segment.trim())
-      .find((segment) => segment.startsWith("openslate_csrf="));
+      .find((segment) => segment.startsWith("slateops_csrf="));
     if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
     const csrfToken = decodeURIComponent(
-      csrfCookie.slice("openslate_csrf=".length),
+      csrfCookie.slice("slateops_csrf=".length),
     );
     const response = await fetch(`/api/records/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -442,10 +442,10 @@ async function permanentlyDeleteReport(
       const csrfCookie = document.cookie
         .split(";")
         .map((segment) => segment.trim())
-        .find((segment) => segment.startsWith("openslate_csrf="));
+        .find((segment) => segment.startsWith("slateops_csrf="));
       if (!csrfCookie) throw new Error("CSRF cookie is unavailable");
       const csrfToken = decodeURIComponent(
-        csrfCookie.slice("openslate_csrf=".length),
+        csrfCookie.slice("slateops_csrf=".length),
       );
       const path = `/api/reports/${encodeURIComponent(id)}`;
       const current = await fetch(path, { credentials: "same-origin" });

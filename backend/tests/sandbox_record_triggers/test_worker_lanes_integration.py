@@ -406,10 +406,10 @@ def test_stop_joins_every_lane_and_returns_claims_it_did_not_run(
         monkeypatch.setattr(worker, "_run_claim", hold)
         worker.start()
         busy.wait()
-        assert sum(t.name.startswith("openslate-triggers-") for t in threading.enumerate()) == 4
+        assert sum(t.name.startswith("slateops-triggers-") for t in threading.enumerate()) == 4
         assert worker.stop()
         assert worker.running is False
-        assert not any(t.name.startswith("openslate-triggers-") for t in threading.enumerate())
+        assert not any(t.name.startswith("slateops-triggers-") for t in threading.enumerate())
 
     with owner.connect() as connection:
         rows = connection.execute(

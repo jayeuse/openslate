@@ -68,10 +68,10 @@ export function ThemeProvider() {
       if (
         event.key === null ||
         [
-          "openslate-theme",
-          "openslate-motion",
-          "openslate-text-size",
-          "openslate-density",
+          "slateops-theme",
+          "slateops-motion",
+          "slateops-text-size",
+          "slateops-density",
         ].includes(event.key)
       )
         apply();
@@ -249,7 +249,7 @@ export function UserPreferencesProvider({ children }: { children: ReactNode }) {
       if (!ownsAppearance()) return;
       if (
         event.key === null ||
-        ["openslate-text-size", "openslate-density"].includes(event.key)
+        ["slateops-text-size", "slateops-density"].includes(event.key)
       ) {
         const next = readBrowserDeviceAppearancePreferences();
         setDeviceState(next);
@@ -257,7 +257,7 @@ export function UserPreferencesProvider({ children }: { children: ReactNode }) {
       }
       if (
         (event.key === null ||
-          ["openslate-theme", "openslate-motion"].includes(event.key)) &&
+          ["slateops-theme", "slateops-motion"].includes(event.key)) &&
         !interactionSuspended.current &&
         !writePending.current
       )

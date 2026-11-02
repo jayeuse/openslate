@@ -59,7 +59,7 @@ def native_room(request):
     )
     health = client.get("/api/health")
     assert health.status_code == 200
-    assert health.headers["X-OpenSlate-Instance"] == instance_identity_for_process(dict(os.environ))
+    assert health.headers["X-SlateOps-Instance"] == instance_identity_for_process(dict(os.environ))
     provider = httpx.Client(
         base_url=settings.supabase_url + "/auth/v1/",
         timeout=15,

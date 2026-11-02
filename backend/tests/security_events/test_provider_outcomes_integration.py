@@ -292,7 +292,7 @@ def test_missing_transport_is_explicitly_unknown_across_admitted_action_and_poli
             ).status_code
             == 200
         )
-        client.headers["X-CSRF-Token"] = client.cookies.get("openslate_csrf")
+        client.headers["X-CSRF-Token"] = client.cookies.get("slateops_csrf")
         assert (
             client.post("/api/auth/recovery/request", json={"email": world.email}).status_code
             == 204

@@ -77,8 +77,8 @@ def _client(api: TestClient, journal: Path) -> SampleClient:
     def forward(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
             return httpx.Response(200, json={"ok": True}, headers=[
-                ("Set-Cookie", "openslate_csrf=fixture; Path=/"),
-                ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly"),
+                ("Set-Cookie", "slateops_csrf=fixture; Path=/"),
+                ("Set-Cookie", "slateops_access=fixture; Path=/; HttpOnly"),
             ])  # fmt: skip
         headers = {key: value for key, value in request.headers.items() if key != "host"}
         response = api.request(request.method, str(request.url), content=request.content,

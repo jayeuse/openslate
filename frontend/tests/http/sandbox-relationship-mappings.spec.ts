@@ -66,10 +66,7 @@ test.beforeEach(async ({ page }) => {
       "test-results",
       "version",
     ])
-      window.localStorage.setItem(
-        `openslate:advanced:sandbox.${panel}`,
-        "open",
-      );
+      window.localStorage.setItem(`slateops:advanced:sandbox.${panel}`, "open");
   });
 });
 
@@ -4775,10 +4772,10 @@ test("personal text scaling leaves the canvas key, editor, and geometry unchange
   const priorUnits = Number(await resize.getAttribute("aria-valuenow"));
   await page.evaluate(() => {
     document.documentElement.style.fontSize = "";
-    localStorage.setItem("openslate-text-size", "125");
-    localStorage.setItem("openslate-density", "spacious");
+    localStorage.setItem("slateops-text-size", "125");
+    localStorage.setItem("slateops-density", "spacious");
     window.dispatchEvent(
-      new StorageEvent("storage", { key: "openslate-text-size" }),
+      new StorageEvent("storage", { key: "slateops-text-size" }),
     );
   });
   await expect
@@ -5057,8 +5054,8 @@ test("Trigger Studio switch preserves geometry and its 44 pixel hit target with 
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(() => {
-    localStorage.setItem("openslate-text-size", "125");
-    localStorage.setItem("openslate-density", "spacious");
+    localStorage.setItem("slateops-text-size", "125");
+    localStorage.setItem("slateops-density", "spacious");
   });
   const sandbox = await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
@@ -5072,10 +5069,10 @@ test("Trigger Studio switch preserves geometry and its 44 pixel hit target with 
   expect(thumb.height).toBeLessThanOrEqual(track.height);
   const saved = sandbox.document().triggers;
   await page.evaluate(() => {
-    localStorage.setItem("openslate-text-size", "100");
-    localStorage.setItem("openslate-density", "compact");
+    localStorage.setItem("slateops-text-size", "100");
+    localStorage.setItem("slateops-density", "compact");
     window.dispatchEvent(
-      new StorageEvent("storage", { key: "openslate-text-size" }),
+      new StorageEvent("storage", { key: "slateops-text-size" }),
     );
   });
   await expect

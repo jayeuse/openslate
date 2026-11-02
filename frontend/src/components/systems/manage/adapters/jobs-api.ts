@@ -19,8 +19,8 @@ const subjectLink = z
       return false;
     try {
       return (
-        new URL(value, "https://openslate.invalid").origin ===
-        "https://openslate.invalid"
+        new URL(value, "https://slateops.invalid").origin ===
+        "https://slateops.invalid"
       );
     } catch {
       return false;

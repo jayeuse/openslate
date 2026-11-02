@@ -74,11 +74,11 @@ def test_a_missing_or_empty_bearer_token_yields_none(header: str | None) -> None
 @PROPERTY
 @given(
     authorization=HEADER_TEXT.filter(bool),
-    cookie=st.sampled_from(("openslate_access", "openslate_refresh")),
+    cookie=st.sampled_from(("slateops_access", "slateops_refresh")),
     value=COOKIE_VALUE,
 )
-@example(authorization="Bearer token", cookie="openslate_refresh", value="refresh")
-@example(authorization="Basic credentials", cookie="openslate_access", value="access")
+@example(authorization="Bearer token", cookie="slateops_refresh", value="refresh")
+@example(authorization="Basic credentials", cookie="slateops_access", value="access")
 def test_an_authorization_header_with_a_session_cookie_is_refused(
     authorization: str, cookie: str, value: str
 ) -> None:
@@ -91,7 +91,7 @@ def test_an_authorization_header_with_a_session_cookie_is_refused(
 @PROPERTY
 @given(
     cookies=st.dictionaries(
-        st.sampled_from(("openslate_access", "openslate_refresh", "openslate_csrf")),
+        st.sampled_from(("slateops_access", "slateops_refresh", "slateops_csrf")),
         COOKIE_VALUE,
     ),
     authorization=st.sampled_from((None, "")),
@@ -107,7 +107,7 @@ def test_session_cookies_alone_are_not_mixed_credentials(
 def test_an_authorization_header_with_only_the_csrf_cookie_is_not_mixed(
     authorization: str, value: str
 ) -> None:
-    request = _request(authorization=authorization, cookies={"openslate_csrf": value})
+    request = _request(authorization=authorization, cookies={"slateops_csrf": value})
     assert reject_mixed_credentials(request) is None
 
 

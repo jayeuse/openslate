@@ -97,8 +97,8 @@ class ProfileWire:
                 request,
                 body={"authenticated": True, "setup_required": False},
                 headers=[
-                    ("Set-Cookie", f"openslate_access={session}; Path=/; HttpOnly"),
-                    ("Set-Cookie", "openslate_csrf=profile-csrf; Path=/"),
+                    ("Set-Cookie", f"slateops_access={session}; Path=/; HttpOnly"),
+                    ("Set-Cookie", "slateops_csrf=profile-csrf; Path=/"),
                 ],
             )
         cookie = request.headers.get("cookie", "")
@@ -106,7 +106,7 @@ class ProfileWire:
             (
                 part.split("=", 1)[1]
                 for part in cookie.split("; ")
-                if part.startswith("openslate_access=")
+                if part.startswith("slateops_access=")
             ),
             None,
         )

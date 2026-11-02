@@ -226,7 +226,7 @@ def test_sample_email_completion_is_cookie_free_and_does_not_log_the_hash(tmp_pa
         seen.append(request)
         if request.url.path == "/api/auth/login":
             return httpx.Response(
-                200, json={}, headers={"Set-Cookie": "openslate_access=private; Path=/"}
+                200, json={}, headers={"Set-Cookie": "slateops_access=private; Path=/"}
             )
         assert request.url.path == "/api/auth/email/complete"
         assert "cookie" not in request.headers and "x-csrf-token" not in request.headers

@@ -74,7 +74,7 @@ def release_observation(*, opener: ReleaseSource | None = None) -> Json:
             "https://api.github.com/repos/jayeuse/openslate/releases/latest",
             headers={
                 "Accept": "application/vnd.github+json",
-                "User-Agent": "OpenSlate-backup-runner",
+                "User-Agent": "SlateOps-backup-runner",
             },
         )
         with client.open(request, timeout=10) as response:

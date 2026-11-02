@@ -257,7 +257,7 @@ export type ApiFetchMetadata<Schema extends z.ZodType> = {
   etag: string | null;
 };
 
-const CSRF_COOKIE = "openslate_csrf";
+const CSRF_COOKIE = "slateops_csrf";
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 type RefreshResult = "current" | "refreshed" | "rejected" | "unavailable";
 type BrowserLocks = {
@@ -504,7 +504,7 @@ export async function refreshBrowserSession(
   }
   const locks = browserLocks();
   const refresh = locks
-    ? locks.request("openslate-auth-refresh", { mode: "exclusive" }, () =>
+    ? locks.request("slateops-auth-refresh", { mode: "exclusive" }, () =>
         refreshUntilSettled(activity),
       )
     : refreshUntilSettled(activity);
