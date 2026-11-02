@@ -54,9 +54,9 @@ Claude owns hands-on testing: using the real app as each role would, on the live
 Run two kinds of passes:
 
 - **Feature pass**, right after each feature or slice that changes user-visible behavior is implemented (including a cutover from mocks to real APIs, and after a defect fix lands). Purpose: find errors, bugs and UX issues early, so they are fixed inside the implementation phase, not after it.
-- **Release smoke pass**, once implementation is essentially done and before the pre-push gate. Purpose: smoke out underlying and cross-feature issues before anything is pushed. Cover every role end to end on both a fresh organization (create a new one; never reset development data for this) and an existing sample-pack organization (Harbor, and School when its pack is loaded), plus the flows that span features.
+- **Release smoke pass**, once implementation is essentially done and before the push. Purpose: smoke out underlying and cross-feature issues before anything is pushed. Cover every role end to end on both a fresh organization (create a new one; never reset development data for this) and an existing sample-pack organization (Harbor, and School when its pack is loaded), plus the flows that span features.
 
-Fresh organizations expose first-run and empty-state defects; sample-pack organizations expose defects that need real volume, many people, groups, records and history. A feature pass uses the sample-pack organization by default, and adds a fresh organization when the feature touches first-run or empty states. Order: smoke pass, then its fixes, then free the machine and run the gate (rule zero forbids running them together).
+Fresh organizations expose first-run and empty-state defects; sample-pack organizations expose defects that need real volume, many people, groups, records and history. A feature pass uses the sample-pack organization by default, and adds a fresh organization when the feature touches first-run or empty states. Order: smoke pass, then its fixes, then the push; CI runs the full suites. Never run the smoke pass beside a local heavy suite (rule zero).
 
 1. Check preconditions: owned dev stack up (`python3 scripts/dev.py db`), database at head (provision role, `uv run alembic upgrade head`), API `/api/ready` ready. Start nothing beside a heavy test lane or a measurement run (rule zero in `AGENTS.md`).
 2. Use one Next dev server per checkout. If another agent needs the port, stop yours; stop it after the pass either way.
@@ -88,7 +88,7 @@ The operator account (`openslate.business@outlook.com`) belongs to the owner. Us
 - The guarded reset removes these accounts with their organizations; recreate them afterwards.
 
 Correct: `Admin in the pane, invited member in playwright MCP: delivery 250 ms, reply live; B7 first send after load dropped with no POST and no "Not sent" (high); sent to the implementer as a failing-first test; retest after the fix.`
-Correct: `Release smoke pass on a fresh organization and on Harbor before the gate: admin, member and guest end to end in both; one cross-feature defect (scheduled message ignores a later block) fixed with a failing-first test; then the gate ran on the freed machine.`
+Correct: `Release smoke pass on a fresh organization and on Harbor before the gate: admin, member and guest end to end in both; one cross-feature defect (scheduled message ignores a later block) fixed with a failing-first test; then pushed, and CI passed.`
 Wrong: `HTTP suite is green, so the cutover works.`
 Wrong: `Ran the release smoke pass while prepush.py was running.`
 Wrong: `Logged in as a sample person using the password from the sample-run file.`
