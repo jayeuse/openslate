@@ -61,7 +61,7 @@ const queuedExport = {
 };
 // Release links must point at a tagged Slate Operations release.
 const version = {
-  release_url: "https://github.com/jayeuse/openslate/releases/tag/v1.2.3",
+  release_url: "https://github.com/jayeuse/slateops/releases/tag/v1.2.3",
 };
 // Currency is an ISO 4217 code.
 const workspace = { currency: "PHP" };

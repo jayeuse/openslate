@@ -82,7 +82,7 @@ const versionSchema = z.object({
   release_url: z
     .string()
     .regex(
-      /^https:\/\/github\.com\/jayeuse\/openslate\/releases\/tag\/v?(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/,
+      /^https:\/\/github\.com\/jayeuse\/slateops\/releases\/tag\/v?(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/,
     )
     .nullable(),
 });
@@ -385,6 +385,6 @@ export function failureLabel(code: string): string {
   return failureLabels[code] ?? code.replaceAll("_", " ");
 }
 export const restoreProcedureUrl =
-  "https://github.com/jayeuse/openslate/blob/main/infra/supabase/RESTORE.md";
+  "https://github.com/jayeuse/slateops/blob/main/infra/supabase/RESTORE.md";
 export const updateProcedureUrl =
-  "https://github.com/jayeuse/openslate/blob/main/infra/supabase/README.md#operator-updates";
+  "https://github.com/jayeuse/slateops/blob/main/infra/supabase/README.md#operator-updates";

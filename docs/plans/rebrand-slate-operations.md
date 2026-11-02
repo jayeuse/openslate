@@ -55,10 +55,10 @@ One pull request for each slice. Run the pre-push gate once for each push.
 | Hash domain strings (`slateops:identity-rate-limit:v1:`, `slateops:security-representative:v1:`) | Stored digests depend on them. | Keep |
 | `openslate-quarantine` | Name of a retired bucket that the cleanup command removes. | Keep |
 | `~/.config/openslate-handson/` | Owner-only file outside the repository. | Owner choice |
-| `github.com/jayeuse/openslate` URLs | They change when the repository is renamed. | Owner step 1 |
+| `github.com/jayeuse/openslate` URLs | Renamed to `github.com/jayeuse/slateops` with the repository on 2026-11-02. | Done |
 
 ## Owner steps (not in the repository)
 
-1. Rename the GitHub repository `jayeuse/openslate` to the new name. After that, update the remote URL in each checkout.
+1. Done 2026-11-02: the repository is `jayeuse/slateops`. Update the remote URL in each other checkout with `git remote set-url origin https://github.com/jayeuse/slateops.git`.
 2. Approve the removal of the old `openslate-supabase-local-d131ecd3` containers and volumes after a few days of use.
 3. Rename the local checkout folder last. The Claude memory folder and worktree records use the folder path.

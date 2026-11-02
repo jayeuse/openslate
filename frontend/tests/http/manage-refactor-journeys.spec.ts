@@ -686,7 +686,7 @@ test("Updates and licensing share a real read-only destination and never simulat
     }),
   ).toHaveAttribute(
     "href",
-    "https://github.com/jayeuse/openslate/blob/main/infra/supabase/README.md#operator-updates",
+    "https://github.com/jayeuse/slateops/blob/main/infra/supabase/README.md#operator-updates",
   );
   state.version = {
     current_version: "0.1.0",
@@ -695,7 +695,7 @@ test("Updates and licensing share a real read-only destination and never simulat
     observed_at: "2026-10-08T04:00:00Z",
     checked_at: "2026-10-08T04:00:00Z",
     failure_code: null,
-    release_url: "https://github.com/jayeuse/openslate/releases/tag/v0.2.0",
+    release_url: "https://github.com/jayeuse/slateops/releases/tag/v0.2.0",
   };
   await software
     .getByRole("button", { name: "Refresh release status", exact: true })

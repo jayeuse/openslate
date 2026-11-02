@@ -16,8 +16,8 @@ from tests.operations.backups.test_backup_runner import (
     runner_config,
 )
 
-SOURCE = "https://api.github.com/repos/jayeuse/openslate/releases/latest"
-URL = "https://github.com/jayeuse/openslate/releases/tag/v0.2.0"
+SOURCE = "https://api.github.com/repos/jayeuse/slateops/releases/latest"
+URL = "https://github.com/jayeuse/slateops/releases/tag/v0.2.0"
 
 
 class ReleaseHTTP:
