@@ -70,6 +70,48 @@ def test_load_instance_target_rejects_wrong_static_identity(
         load_instance_target(environment)
 
 
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        ("SLATEOPS_INSTANCE_ID", "Not An Identity", "identity is invalid"),
+        ("SLATEOPS_INSTANCE_ID", "", "Missing Slate Operations instance configuration"),
+        ("POSTGRES_PORT", "not-a-port", "target is invalid"),
+    ],
+)
+def test_load_instance_target_rejects_malformed_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str, message: str
+) -> None:
+    monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
+    write_attestation(tmp_path, "slateops-boards-a1b2c3d4")
+    environment = _environment()
+    environment[name] = value
+
+    with pytest.raises(InstanceTargetError, match=message):
+        load_instance_target(environment)
+
+
+@pytest.mark.parametrize("damage", ["not-an-object", "postgres", "ownership"])
+def test_load_instance_target_rejects_a_malformed_attestation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
+    attestation = write_attestation(tmp_path, "slateops-boards-a1b2c3d4")
+    payload = json.loads(attestation.read_text(encoding="utf-8"))
+    if damage == "not-an-object":
+        payload = [payload]
+    else:
+        payload[damage] = "not-an-object"
+    attestation.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(InstanceTargetError, match="attestation is invalid"):
+        load_instance_target(_environment())
+
+
+def test_process_identity_rejects_a_malformed_instance_id() -> None:
+    with pytest.raises(InstanceTargetError, match="identity is invalid"):
+        instance.instance_identity_for_process({"SLATEOPS_INSTANCE_ID": "Not An Identity"})
+
+
 def test_load_instance_target_rejects_unknown_or_shared_ownership(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
