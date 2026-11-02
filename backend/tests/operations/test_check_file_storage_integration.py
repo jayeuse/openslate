@@ -22,9 +22,8 @@ BUCKET = "openslate-ready"
 
 
 @pytest.fixture
-def storage() -> Iterator[httpx.Client]:
-    if not os.getenv("TEST_DATABASE_URL"):
-        pytest.skip("Runner-owned Supabase Storage is required for this integration test")
+def storage(integration_db: Session) -> Iterator[httpx.Client]:
+    # Depends on integration_db, which skips without the runner-owned stack.
     # The command's own client, admitted against the runner-owned provider.
     with check._storage_client(dict(os.environ)) as client:
         yield client
