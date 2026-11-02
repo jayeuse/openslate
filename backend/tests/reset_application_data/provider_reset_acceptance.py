@@ -39,14 +39,14 @@ pytestmark = pytest.mark.integration
 def _owned_environment() -> tuple[dict[str, str], str, str]:
     values = dict(os.environ)
     if (
-        values.get("OPENSLATE_TEST_RESET_ACCEPTANCE") != "1"
-        or values.get("OPENSLATE_ENV_SOURCE") != "process"
+        values.get("SLATEOPS_TEST_RESET_ACCEPTANCE") != "1"
+        or values.get("SLATEOPS_ENV_SOURCE") != "process"
         or values.get("ENVIRONMENT") != "test"
     ):
         raise RuntimeError("Provider reset acceptance requires its dedicated test environment")
     owner_url = values.get("MIGRATION_DATABASE_URL", "")
     runtime_url = values.get("TEST_DATABASE_URL", "")
-    run_id = values.get("OPENSLATE_FULLSTACK_RUN_ID", "")
+    run_id = values.get("SLATEOPS_FULLSTACK_RUN_ID", "")
     if not owner_url or not runtime_url or not run_id:
         raise RuntimeError("Provider reset acceptance inputs are incomplete")
     _guard_integration_database(runtime_url)
@@ -373,8 +373,8 @@ def test_reset_cli_dry_run_confirmation_and_execute_against_fresh_provider() -> 
 
         command_env = dict(values)
         command_env.update(
-            OPENSLATE_ENV_SOURCE="process",
-            OPENSLATE_TEST_RESET_ACCEPTANCE="1",
+            SLATEOPS_ENV_SOURCE="process",
+            SLATEOPS_TEST_RESET_ACCEPTANCE="1",
             ADMIN_EMAIL=admin_email,
         )
         digest = dry_run_digest(command_env)

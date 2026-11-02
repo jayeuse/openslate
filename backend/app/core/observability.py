@@ -92,7 +92,7 @@ def log_event(
         "timestamp": datetime.now(UTC).isoformat(),
         "severity": logging.getLevelName(level),
         "event": event,
-        "service": "openslate-api",
+        "service": "slateops-api",
     }
     _set_string(record, "request_id", resolved_request_id)
     _set_string(record, "method", method)

@@ -40,7 +40,7 @@ def _plan() -> SimpleNamespace:
         organization_snapshot=('{"id":"org-a","invitation_expiry_days":7}',),
         storage_object_keys=("objects/aa/object",),
         alembic_head="head",
-        backup_snapshot=BackupSnapshot("openslate-fixture", ()),
+        backup_snapshot=BackupSnapshot("slateops-fixture", ()),
     )
 
 
@@ -398,7 +398,7 @@ def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
 ) -> None:
     url = "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres"
     target = InstanceTarget(
-        instance_id="openslate-supabase-a1b2c3d4",
+        instance_id="slateops-supabase-a1b2c3d4",
         host="127.0.0.1",
         port=55432,
         database="postgres",
@@ -461,7 +461,7 @@ def test_reset_execute_without_a_tty_refuses_before_any_provider_effect(
         "BACKEND_PORT": "8000",
     }
     target = InstanceTarget(
-        instance_id="openslate-supabase-a1b2c3d4",
+        instance_id="slateops-supabase-a1b2c3d4",
         host="127.0.0.1",
         port=55432,
         database="postgres",

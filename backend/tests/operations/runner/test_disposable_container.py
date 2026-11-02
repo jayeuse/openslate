@@ -19,7 +19,7 @@ def test_container_image_path_does_not_replace_host_manifest_identity(
     disposable_target, monkeypatch, alter
 ):
     host_url, _facts = disposable_target
-    path = Path(os.environ["OPENSLATE_TEST_DATABASE_MANIFEST"])
+    path = Path(os.environ["SLATEOPS_TEST_DATABASE_MANIFEST"])
     manifest = json.loads(path.read_text())
     runtime_url = container_runtime_database_url(host_url)
     manifest["container_runtime"] = {
@@ -32,9 +32,9 @@ def test_container_image_path_does_not_replace_host_manifest_identity(
         name: os.environ[name]
         for name in (
             "ENVIRONMENT",
-            "OPENSLATE_TEST_DATABASE_MANIFEST",
+            "SLATEOPS_TEST_DATABASE_MANIFEST",
             "E2E_ALLOW_MUTATIONS",
-            "OPENSLATE_FULLSTACK_RUN_ID",
+            "SLATEOPS_FULLSTACK_RUN_ID",
             "SUPABASE_URL",
             "SUPABASE_AUTH_ISSUER",
             "SUPABASE_STORAGE_URL",

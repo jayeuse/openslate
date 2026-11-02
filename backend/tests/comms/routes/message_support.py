@@ -70,7 +70,7 @@ def _record_performance(name, timings, counts=(), startup_ms=()):
     directory = (
         REPOSITORY_ROOT
         / "backend/test-results/comms-messages"
-        / os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+        / os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     )
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f"{name}.json").write_text(

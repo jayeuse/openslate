@@ -93,7 +93,7 @@ def test_reset_derives_the_single_current_alembic_head() -> None:
 
 def test_reset_rejects_urls_that_do_not_match_the_attested_instance() -> None:
     target = InstanceTarget(
-        instance_id="openslate-supabase-a1b2c3d4",
+        instance_id="slateops-supabase-a1b2c3d4",
         host="127.0.0.1",
         port=55432,
         database="postgres",
@@ -136,11 +136,11 @@ def test_reset_digest_freezes_backup_identity_results_policy_and_version(column)
 
     plan = _plan()
     plan.backup_snapshot = SimpleNamespace(
-        installation_id="openslate-fixture", rows=(("backup_runs", ((column, "original"),)),)
+        installation_id="slateops-fixture", rows=(("backup_runs", ((column, "original"),)),)
     )
     changed = SimpleNamespace(**vars(plan))
     changed.backup_snapshot = SimpleNamespace(
-        installation_id="openslate-fixture", rows=(("backup_runs", ((column, "changed"),)),)
+        installation_id="slateops-fixture", rows=(("backup_runs", ((column, "changed"),)),)
     )
     assert reset_planning._impact_digest(changed) != reset_planning._impact_digest(plan)
 
@@ -155,7 +155,7 @@ def test_unresolved_backup_checkpoint_precedes_auth_or_application_deletion(
     from tests.reset_application_data.test_execution import _auth, _plan
 
     plan, database, storage = _plan(), Mock(), Mock()
-    plan.backup_snapshot = type("Snapshot", (), {"installation_id": "openslate-fixture"})()
+    plan.backup_snapshot = type("Snapshot", (), {"installation_id": "slateops-fixture"})()
     storage.list_object_keys.return_value = plan.storage_object_keys
     auth = _auth(plan)
     calls = []
@@ -191,7 +191,7 @@ def test_unresolved_backup_checkpoint_precedes_auth_or_application_deletion(
     assert not any(call.startswith("DELETE FROM public.") for call in calls)
 
 
-def _backup_database(rows, *, instance="openslate-fixture"):
+def _backup_database(rows, *, instance="slateops-fixture"):
     from unittest.mock import MagicMock
 
     database = MagicMock()
@@ -245,7 +245,7 @@ def _backup_rows():
                 dict(
                     base,
                     id=str(queued),
-                    installation_id="openslate-fixture",
+                    installation_id="slateops-fixture",
                     state="queued",
                     started_at=None,
                     claim_id=None,
@@ -254,7 +254,7 @@ def _backup_rows():
                 dict(
                     base,
                     id=str(completed),
-                    installation_id="openslate-fixture",
+                    installation_id="slateops-fixture",
                     state="succeeded",
                     started_at="2026-10-02T00:00:00+00:00",
                     reconciled_at="2026-10-02T00:05:00+00:00",
@@ -329,7 +329,7 @@ def test_current_unresolved_backup_refuses_preview_regardless_of_state(state) ->
     from operations.reset.backups import read_backup_snapshot
 
     _admin, _deleted, rows = _backup_rows()
-    rows["backup_runs"][2].update(installation_id="openslate-fixture", state=state)
+    rows["backup_runs"][2].update(installation_id="slateops-fixture", state=state)
     with pytest.raises(reset.ResetError, match="reconciliation"):
         read_backup_snapshot(_backup_database(rows))
 

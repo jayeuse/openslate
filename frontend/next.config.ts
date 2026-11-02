@@ -28,10 +28,10 @@ function developmentBackendOrigin(): string {
 }
 
 function developmentOriginHost(): string {
-  const hostname = process.env.OPENSLATE_DEV_ORIGIN_HOST;
+  const hostname = process.env.SLATEOPS_DEV_ORIGIN_HOST;
   if (!hostname || /[\s*/?#]/.test(hostname))
     throw new Error(
-      "OPENSLATE_DEV_ORIGIN_HOST must be one exact hostname for Next development",
+      "SLATEOPS_DEV_ORIGIN_HOST must be one exact hostname for Next development",
     );
   return hostname;
 }

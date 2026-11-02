@@ -37,7 +37,7 @@ def test_primary_partner_templates_history_and_proofs(native_room):
         for index, role in ((0, "admin"), (1, "member")):
             create_member(db, org, role, user=db.get(User, room.people[index].id))
         db.commit()
-    directory = Path("test-results/s24/native") / os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+    directory = Path("test-results/s24/native") / os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     directory.mkdir(parents=True, exist_ok=True)
     journal = directory / "requests.jsonl"
     with ExitStack() as stack:

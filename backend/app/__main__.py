@@ -21,9 +21,9 @@ def main(argv: list[str] | None = None) -> None:
     if is_relaxed_development(settings):
         trusted_proxies = ["127.0.0.1", "::1"]
     elif (
-        settings.environment == "production" and settings.open_slate_app_private_subnet is not None
+        settings.environment == "production" and settings.slateops_app_private_subnet is not None
     ):
-        trusted_proxies = [str(settings.open_slate_app_private_subnet)]
+        trusted_proxies = [str(settings.slateops_app_private_subnet)]
     uvicorn.run(
         "app.main:app",
         host=settings.backend_bind_host,

@@ -14,7 +14,7 @@ services:
     ports: !reset []
 
   api:
-    image: ${OPENSLATE_SERVER_IMAGE:?Set a versioned Slate Operations server image name}
+    image: ${SLATEOPS_SERVER_IMAGE:?Set a versioned Slate Operations server image name}
     build:
       context: ../..
       dockerfile: infra/docker/backend.Dockerfile
@@ -26,7 +26,7 @@ services:
       api-gw:
         condition: service_healthy
     env_file:
-      - path: ${OPENSLATE_APP_ENV_FILE:?Set an owner-only application env file}
+      - path: ${SLATEOPS_APP_ENV_FILE:?Set an owner-only application env file}
         required: true
     environment:
       ENVIRONMENT: production
@@ -41,23 +41,23 @@ services:
       # Raise it only with a new measurement and keep API_WORKERS x (pool + overflow + 3)
       # below PostgreSQL max_connections.
       API_WORKERS: ${API_WORKERS:-1}
-      OPENSLATE_APP_PRIVATE_SUBNET: &app-private-subnet ${OPENSLATE_APP_PRIVATE_SUBNET:-172.31.248.0/28}
+      SLATEOPS_APP_PRIVATE_SUBNET: &app-private-subnet ${SLATEOPS_APP_PRIVATE_SUBNET:-172.31.248.0/28}
       SUPABASE_URL: http://api-gw:8000
       SUPABASE_AUTH_ISSUER: ${API_EXTERNAL_URL:?Set the installation Auth issuer}
       SMTP_HOST: ${SMTP_HOST:?Set an SMTP host}
       SMTP_PORT: ${SMTP_PORT:?Set an SMTP port}
       SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:?Set the invitation sender email}
-      LOG_DIR: /var/log/openslate/api
-      BACKUP_EXPORT_ROOT: /var/lib/openslate/backup-exports
+      LOG_DIR: /var/log/slateops/api
+      BACKUP_EXPORT_ROOT: /var/lib/slateops/backup-exports
     volumes:
       - type: bind
-        source: ${OPENSLATE_LOG_ROOT:?Set a private writable log directory}
-        target: /var/log/openslate
+        source: ${SLATEOPS_LOG_ROOT:?Set a private writable log directory}
+        target: /var/log/slateops
         bind:
           create_host_path: false
       - type: bind
-        source: ${OPENSLATE_BACKUP_EXPORT_ROOT:?Set the owned finished backup-export directory}
-        target: /var/lib/openslate/backup-exports
+        source: ${SLATEOPS_BACKUP_EXPORT_ROOT:?Set the owned finished backup-export directory}
+        target: /var/lib/slateops/backup-exports
         read_only: true
         bind:
           create_host_path: false
@@ -73,7 +73,7 @@ services:
       - app-private
 
   caddy:
-    image: ${OPENSLATE_CADDY_IMAGE:?Set a versioned Slate Operations Caddy image name}
+    image: ${SLATEOPS_CADDY_IMAGE:?Set a versioned Slate Operations Caddy image name}
     build:
       context: ../..
       dockerfile: infra/docker/caddy.Dockerfile
@@ -85,7 +85,7 @@ services:
     ports:
       - "${CADDY_PUBLIC_BIND_HOST:-0.0.0.0}:${CADDY_HTTPS_PORT:-443}:${CADDY_HTTPS_PORT:-443}"
     environment:
-      OPENSLATE_REALTIME_UPSTREAM: api-gw:8000
+      SLATEOPS_REALTIME_UPSTREAM: api-gw:8000
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Generate the publishable gateway key}
     volumes:
       - type: bind

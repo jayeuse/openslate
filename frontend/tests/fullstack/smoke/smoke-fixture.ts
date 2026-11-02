@@ -31,8 +31,8 @@ function isIdentity(value: unknown): value is Identity {
 
 /** The private fixture the smoke runner writes after seeding Harbor Small. */
 export function smokeFixture(): SmokeFixture {
-  const location = process.env.OPENSLATE_FULLSTACK_FIXTURE;
-  const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
+  const location = process.env.SLATEOPS_FULLSTACK_FIXTURE;
+  const runId = process.env.SLATEOPS_FULLSTACK_RUN_ID;
   if (!location || !runId) throw new Error("smoke fixture is unavailable");
   const parsed: unknown = JSON.parse(readFileSync(location, "utf8"));
   if (typeof parsed !== "object" || parsed === null)
@@ -40,7 +40,7 @@ export function smokeFixture(): SmokeFixture {
   const value = parsed as Record<string, unknown>;
   // The runner keeps passwords out of the file; they arrive in this process's environment.
   const passwords: unknown = JSON.parse(
-    process.env.OPENSLATE_SMOKE_PASSWORDS ?? "{}",
+    process.env.SLATEOPS_SMOKE_PASSWORDS ?? "{}",
   );
   const stored = value.roles as Record<string, unknown> | undefined;
   const roles =
@@ -71,8 +71,8 @@ export function smokeFixture(): SmokeFixture {
 
 /** The signed-in browser state saved once per role by sign-in.setup.ts. */
 export function stateFile(role: SmokeRole): string {
-  const directory = process.env.OPENSLATE_SMOKE_STATE_DIR;
-  if (!directory) throw new Error("OPENSLATE_SMOKE_STATE_DIR is required");
+  const directory = process.env.SLATEOPS_SMOKE_STATE_DIR;
+  if (!directory) throw new Error("SLATEOPS_SMOKE_STATE_DIR is required");
   return join(directory, `${role}.json`);
 }
 

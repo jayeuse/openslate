@@ -275,8 +275,8 @@ def test_partial_supabase_startup_cleans_only_its_labeled_volume_and_network(
                         {
                             "Name": runtime.volume,
                             "Labels": {
-                                "openslate.test.run": runtime.run_id,
-                                "openslate.test.worktree": runtime.worktree,
+                                "slateops.test.run": runtime.run_id,
+                                "slateops.test.worktree": runtime.worktree,
                                 "com.docker.compose.project": runtime.project,
                                 "com.docker.compose.volume": "supabase-db-data",
                             },
@@ -295,8 +295,8 @@ def test_partial_supabase_startup_cleans_only_its_labeled_volume_and_network(
                         {
                             "Name": runtime.network,
                             "Labels": {
-                                "openslate.test.run": runtime.run_id,
-                                "openslate.test.worktree": runtime.worktree,
+                                "slateops.test.run": runtime.run_id,
+                                "slateops.test.worktree": runtime.worktree,
                                 "com.docker.compose.project": runtime.project,
                                 "com.docker.compose.network": "provider",
                             },

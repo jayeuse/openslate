@@ -410,7 +410,7 @@ def test_plan_summary_reports_exact_profile_counts_and_fixed_supporting_catalogu
 def test_mailpit_preflight_rejects_an_unowned_project_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    network_name = "openslate_mail-egress"
+    network_name = "slateops_mail-egress"
     expected_workdir = str(Path(seed_operator.__file__).resolve().parents[2] / "infra" / "supabase")
     auth = {
         "Config": {

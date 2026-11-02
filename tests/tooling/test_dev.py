@@ -13,7 +13,7 @@ from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[2]
 DEV_PATH = ROOT / "scripts" / "dev.py"
-spec = importlib.util.spec_from_file_location("openslate_dev", DEV_PATH)
+spec = importlib.util.spec_from_file_location("slateops_dev", DEV_PATH)
 assert spec is not None and spec.loader is not None
 dev = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = dev

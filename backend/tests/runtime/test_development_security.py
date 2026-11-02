@@ -225,8 +225,8 @@ def test_entrypoint_explicitly_bounds_forwarded_peer_trust(
             environment=environment,
             backend_bind_host=bind_host,
             public_origin="https://app.example.test",
-            web_assets_root="/tmp/openslate-static",
-            open_slate_app_private_subnet=subnet,
+            web_assets_root="/tmp/slateops-static",
+            slateops_app_private_subnet=subnet,
         ),
         _env_file=None,
     )
@@ -246,14 +246,14 @@ def test_entrypoint_explicitly_bounds_forwarded_peer_trust(
 )
 def test_proxy_subnet_rejects_wildcard_public_and_non_network_values(subnet: str) -> None:
     with pytest.raises(ValidationError):
-        Settings(**settings_values(open_slate_app_private_subnet=subnet), _env_file=None)
+        Settings(**settings_values(slateops_app_private_subnet=subnet), _env_file=None)
 
 
 @pytest.mark.parametrize("subnet", ["172.31.248.0/28", "fd00:1234::/64"])
 def test_proxy_subnet_is_a_typed_private_network(subnet: str) -> None:
-    settings = Settings(**settings_values(open_slate_app_private_subnet=subnet), _env_file=None)
+    settings = Settings(**settings_values(slateops_app_private_subnet=subnet), _env_file=None)
 
-    assert settings.open_slate_app_private_subnet == ip_network(subnet)
+    assert settings.slateops_app_private_subnet == ip_network(subnet)
 
 
 @pytest.mark.parametrize(

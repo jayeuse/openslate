@@ -22,8 +22,8 @@ type ActionType = "invite" | "recovery";
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
 function fixture(): Fixture {
-  const location = process.env.OPENSLATE_FULLSTACK_FIXTURE;
-  const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
+  const location = process.env.SLATEOPS_FULLSTACK_FIXTURE;
+  const runId = process.env.SLATEOPS_FULLSTACK_RUN_ID;
   if (!location || !runId) throw new Error("full-stack fixture is unavailable");
   const parsed: unknown = JSON.parse(readFileSync(location, "utf8"));
   if (

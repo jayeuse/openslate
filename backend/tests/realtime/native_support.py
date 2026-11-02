@@ -50,12 +50,12 @@ def authenticate(client: httpx.Client, person: NativePerson) -> dict[str, str]:
 
 @pytest.fixture
 def native_room(request):
-    if os.environ.get("OPENSLATE_COMMS_NATIVE_API") != "http://127.0.0.1:8008":
+    if os.environ.get("SLATEOPS_COMMS_NATIVE_API") != "http://127.0.0.1:8008":
         raise RuntimeError("Use the guarded --comms-realtime-only runner")
     settings = get_settings()
     owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     client = httpx.Client(
-        base_url=os.environ["OPENSLATE_COMMS_NATIVE_API"], timeout=15, trust_env=False
+        base_url=os.environ["SLATEOPS_COMMS_NATIVE_API"], timeout=15, trust_env=False
     )
     health = client.get("/api/health")
     assert health.status_code == 200

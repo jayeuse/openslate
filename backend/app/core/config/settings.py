@@ -121,7 +121,7 @@ class Settings(EnvironmentSettings):
     public_origin: str = Field(validation_alias="PUBLIC_ORIGIN")
     web_assets_root: Path | None = Field(default=None, validation_alias="WEB_ASSETS_ROOT")
     backup_export_root: Path = Field(
-        default=Path("/var/lib/openslate/backup-exports"), validation_alias="BACKUP_EXPORT_ROOT"
+        default=Path("/var/lib/slateops/backup-exports"), validation_alias="BACKUP_EXPORT_ROOT"
     )
     request_body_max_bytes: int = Field(gt=0, validation_alias="REQUEST_BODY_MAX_BYTES")
     database_pool_size: int = Field(gt=0, validation_alias="DATABASE_POOL_SIZE")
@@ -149,8 +149,8 @@ class Settings(EnvironmentSettings):
     )
     backend_bind_host: str = Field(validation_alias="BACKEND_BIND_HOST")
     backend_port: int = Field(ge=1, le=65535, validation_alias="BACKEND_PORT")
-    open_slate_app_private_subnet: IPv4Network | IPv6Network | None = Field(
-        default=None, validation_alias="OPENSLATE_APP_PRIVATE_SUBNET"
+    slateops_app_private_subnet: IPv4Network | IPv6Network | None = Field(
+        default=None, validation_alias="SLATEOPS_APP_PRIVATE_SUBNET"
     )
     server_max_concurrency: int = Field(ge=3, validation_alias="SERVER_MAX_CONCURRENCY")
     server_keep_alive_seconds: int = Field(gt=0, validation_alias="SERVER_KEEP_ALIVE_SECONDS")
@@ -168,7 +168,7 @@ class Settings(EnvironmentSettings):
     # Automation (record trigger) threads; each holds one pooled connection while it works.
     trigger_workers: int = Field(default=4, ge=1, le=16, validation_alias="TRIGGER_WORKERS")
 
-    @field_validator("open_slate_app_private_subnet", mode="before")
+    @field_validator("slateops_app_private_subnet", mode="before")
     @classmethod
     def validate_private_proxy_subnet(cls, value: object) -> IPv4Network | IPv6Network | None:
         if value is None:
@@ -339,7 +339,7 @@ class MigrationSettings(EnvironmentSettings):
 
 class InstanceSettings(EnvironmentSettings):
     environment: str = Field(validation_alias="ENVIRONMENT")
-    open_slate_instance_id: str = Field(validation_alias="OPENSLATE_INSTANCE_ID")
+    slateops_instance_id: str = Field(validation_alias="SLATEOPS_INSTANCE_ID")
     postgres_host: str = Field(validation_alias="POSTGRES_HOST")
     postgres_port: int = Field(ge=1, le=65535, validation_alias="POSTGRES_PORT")
     postgres_database: str = Field(validation_alias="POSTGRES_DATABASE")

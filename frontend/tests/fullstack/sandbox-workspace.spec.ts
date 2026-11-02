@@ -10,8 +10,8 @@ type Fixture = Readonly<{
 }>;
 
 function fixture(expectedBaseURL: string | undefined): Fixture {
-  const location = process.env.OPENSLATE_FULLSTACK_FIXTURE;
-  const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
+  const location = process.env.SLATEOPS_FULLSTACK_FIXTURE;
+  const runId = process.env.SLATEOPS_FULLSTACK_RUN_ID;
   if (!location || !runId) throw new Error("full-stack fixture is unavailable");
   const value = JSON.parse(readFileSync(location, "utf8")) as Fixture;
   if (value.runId !== runId || value.baseURL !== expectedBaseURL)

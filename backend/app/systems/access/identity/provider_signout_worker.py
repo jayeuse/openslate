@@ -67,7 +67,7 @@ class ProviderSignoutWorker:
         if self._thread is not None:
             return
         self._stop.clear()
-        thread = threading.Thread(target=self._run, name="openslate-provider-signout", daemon=True)
+        thread = threading.Thread(target=self._run, name="slateops-provider-signout", daemon=True)
         thread.start()
         self._thread = thread
 

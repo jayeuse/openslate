@@ -421,7 +421,7 @@ def test_downgrade_reupgrade_forces_validated_process_environment(
     runtime_url = "postgresql+psycopg://openslate_runtime:runtime@127.0.0.1:55322/openslate"
     owner_url = "postgresql+psycopg://openslate_owner:owner@127.0.0.1:55322/openslate"
     guarded: list[str] = []
-    monkeypatch.delenv("OPENSLATE_ENV_SOURCE", raising=False)
+    monkeypatch.delenv("SLATEOPS_ENV_SOURCE", raising=False)
     monkeypatch.setenv("TEST_DATABASE_URL", runtime_url)
     monkeypatch.setenv("MIGRATION_DATABASE_URL", owner_url)
     monkeypatch.setattr(migration_support, "_guard_integration_database", guarded.append)
@@ -429,6 +429,6 @@ def test_downgrade_reupgrade_forces_validated_process_environment(
     environment = guarded_migration_environment()
 
     assert guarded == [runtime_url, owner_url]
-    assert environment["OPENSLATE_ENV_SOURCE"] == "process"
+    assert environment["SLATEOPS_ENV_SOURCE"] == "process"
     assert environment["TEST_DATABASE_URL"] == runtime_url
     assert environment["MIGRATION_DATABASE_URL"] == owner_url

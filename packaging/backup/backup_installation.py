@@ -564,7 +564,7 @@ def run_backup(
         if "@sha256:" not in images[service]:
             raise BackupError("provider image is not digest-pinned")
     run_dir = Path(
-        tempfile.mkdtemp(prefix="openslate-supabase-backup-", dir=config.staging_directory)
+        tempfile.mkdtemp(prefix="slateops-supabase-backup-", dir=config.staging_directory)
     )
     run_dir.chmod(0o700)
     try:

@@ -2,7 +2,7 @@
 
 ``tests/smoke_runner.py`` runs this as a subprocess so the gateway's local certificate
 authority (``SSL_CERT_FILE``) applies to every seeder client. Parameters come from a
-private JSON file and the administrator password from ``OPENSLATE_SMOKE_ADMIN_PASSWORD``;
+private JSON file and the administrator password from ``SLATEOPS_SMOKE_ADMIN_PASSWORD``;
 only the run status and the run directory are printed.
 """
 
@@ -18,9 +18,9 @@ from operations.sample.population.run import populate_sample_data
 
 def _admin_password() -> str:
     # The runner passes the password in the environment; the parameters file holds none.
-    password = os.environ.get("OPENSLATE_SMOKE_ADMIN_PASSWORD")
+    password = os.environ.get("SLATEOPS_SMOKE_ADMIN_PASSWORD")
     if not password:
-        raise SystemExit("OPENSLATE_SMOKE_ADMIN_PASSWORD is required")
+        raise SystemExit("SLATEOPS_SMOKE_ADMIN_PASSWORD is required")
     return password
 
 

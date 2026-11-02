@@ -344,7 +344,7 @@ def test_production_backup_captures_private_provider_and_gateway_inputs(
     commands = BackupCommands(config)
     _mock_volume_exports(monkeypatch)
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "runtime-service-secret")
-    monkeypatch.setenv("OPENSLATE_DATABASE_PASSWORD", "runtime-database-secret")
+    monkeypatch.setenv("SLATEOPS_DATABASE_PASSWORD", "runtime-database-secret")
     monkeypatch.setenv("SMTP_PASS", "runtime-smtp-secret")
 
     run_backup(config, command_runner=commands)
@@ -362,7 +362,7 @@ def test_production_backup_captures_private_provider_and_gateway_inputs(
     assert all(
         not any(
             key in env
-            for key in ("SUPABASE_SERVICE_ROLE_KEY", "OPENSLATE_DATABASE_PASSWORD", "SMTP_PASS")
+            for key in ("SUPABASE_SERVICE_ROLE_KEY", "SLATEOPS_DATABASE_PASSWORD", "SMTP_PASS")
         )
         for _, env in commands.calls
     )
@@ -502,7 +502,7 @@ def test_backup_cleanup_failure_does_not_publish_a_completion_marker(
     original_rmtree = shutil.rmtree
 
     def fail_operation_cleanup(path: str | Path, *args: Any, **kwargs: Any) -> None:
-        if Path(path).name.startswith("openslate-supabase-backup-"):
+        if Path(path).name.startswith("slateops-supabase-backup-"):
             raise OSError("backup staging cleanup failed")
         original_rmtree(path, *args, **kwargs)
 

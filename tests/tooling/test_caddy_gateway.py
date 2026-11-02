@@ -144,13 +144,13 @@ class CaddyGatewayTests(unittest.TestCase):
         internal = self.render()
         custom = self.render(
             tls_mode="custom",
-            cert_file=Path("/srv/openslate/tls/certificate.pem"),
-            key_file=Path("/srv/openslate/tls/private-key.pem"),
+            cert_file=Path("/srv/slateops/tls/certificate.pem"),
+            key_file=Path("/srv/slateops/tls/private-key.pem"),
         )
 
         self.assertIn("tls internal", internal)
         self.assertIn(
-            'tls "/srv/openslate/tls/certificate.pem" "/srv/openslate/tls/private-key.pem"',
+            'tls "/srv/slateops/tls/certificate.pem" "/srv/slateops/tls/private-key.pem"',
             custom,
         )
         self.assertIn("http://127.0.0.1:3449 {\n    bind 127.0.0.1", custom)
@@ -161,20 +161,20 @@ class CaddyGatewayTests(unittest.TestCase):
     def test_custom_tls_paths_are_quoted_as_single_caddy_tokens(self) -> None:
         rendered = self.render(
             tls_mode="custom",
-            cert_file=Path('/srv/Slate Operations/cert#1"issuer.pem'),
-            key_file=Path("/srv/Slate Operations/private\\key.pem"),
+            cert_file=Path('/srv/SlateOps/cert#1"issuer.pem'),
+            key_file=Path("/srv/SlateOps/private\\key.pem"),
         )
 
         self.assertIn(
-            'tls "/srv/Slate Operations/cert#1\\"issuer.pem" "/srv/Slate Operations/private\\\\key.pem"',
+            'tls "/srv/SlateOps/cert#1\\"issuer.pem" "/srv/SlateOps/private\\\\key.pem"',
             rendered,
         )
 
     def test_unicode_absolute_certificate_paths_support_native_and_windows_styles(self) -> None:
         native_path = (
-            Path(r"C:\Slate Operations\证书\certificate.pem")
+            Path(r"C:\SlateOps\证书\certificate.pem")
             if os.name == "nt"
-            else Path("/srv/Slate Operations/证书/certificate.pem")
+            else Path("/srv/SlateOps/证书/certificate.pem")
         )
         native = self.render(
             tls_mode="custom",
@@ -183,12 +183,12 @@ class CaddyGatewayTests(unittest.TestCase):
         )
         windows = self.render(
             tls_mode="custom",
-            cert_file=Path(r"C:\Slate Operations\证书\certificate.pem"),
-            key_file=Path(r"C:\Slate Operations\证书\private key.pem"),
+            cert_file=Path(r"C:\SlateOps\证书\certificate.pem"),
+            key_file=Path(r"C:\SlateOps\证书\private key.pem"),
         )
 
         self.assertIn("证书", native)
-        self.assertIn('tls "C:\\\\Slate Operations\\\\证书\\\\certificate.pem"', windows)
+        self.assertIn('tls "C:\\\\SlateOps\\\\证书\\\\certificate.pem"', windows)
 
     def test_ipv6_host_and_listener_are_rendered_without_template_injection(self) -> None:
         rendered = self.render(public_host="::1", listen_address="::")
@@ -216,17 +216,17 @@ class CaddyGatewayTests(unittest.TestCase):
             self.render(
                 tls_mode="custom",
                 cert_file=Path("relative.pem"),
-                key_file=Path("/srv/openslate/tls/private-key.pem"),
+                key_file=Path("/srv/slateops/tls/private-key.pem"),
             )
         with self.assertRaises(generate_config.ConfigurationError):
-            generate_config._caddy_string_token("/srv/openslate/tls/{$CERTIFICATE_FILE}.pem")
+            generate_config._caddy_string_token("/srv/slateops/tls/{$CERTIFICATE_FILE}.pem")
         with self.assertRaises(generate_config.ConfigurationError):
             self.render(health_port=443)
         with self.assertRaises(argparse.ArgumentTypeError):
             self.render(
                 tls_mode="custom",
-                cert_file=Path("/srv/openslate/tls/{$CERTIFICATE_FILE}.pem"),
-                key_file=Path("/srv/openslate/tls/private-key.pem"),
+                cert_file=Path("/srv/slateops/tls/{$CERTIFICATE_FILE}.pem"),
+                key_file=Path("/srv/slateops/tls/private-key.pem"),
             )
 
     def test_generator_rejects_each_production_host_listener_collision(self) -> None:
@@ -288,7 +288,9 @@ class CaddyGatewayTests(unittest.TestCase):
             "HTTP_X_FORWARDED_PROTO",
         ):
             self.assertIn(f'<add name="{variable}" />', iis)
-        self.assertLess(iis.index('name="Slate Operations SSE"'), iis.index('name="Slate Operations API"'))
+        self.assertLess(
+            iis.index('name="Slate Operations SSE"'), iis.index('name="Slate Operations API"')
+        )
         self.assertIn("127.0.0.1:&lt;BACKEND_PORT&gt;", iis)
         self.assertNotIn("FRONTEND_PORT", nginx + iis)
 
@@ -361,8 +363,8 @@ class CaddyGatewayTests(unittest.TestCase):
         self.assertIn("BACKEND_PORT", completed.stderr)
 
     @unittest.skipUnless(
-        os.getenv("OPENSLATE_RUN_CADDY_ACCEPTANCE") == "true",
-        "set OPENSLATE_RUN_CADDY_ACCEPTANCE=true to run disposable Docker acceptance",
+        os.getenv("SLATEOPS_RUN_CADDY_ACCEPTANCE") == "true",
+        "set SLATEOPS_RUN_CADDY_ACCEPTANCE=true to run disposable Docker acceptance",
     )
     def test_private_health_probe_routes_nonlocalhost_gateway_on_an_internal_network(self) -> None:
         if shutil.which("docker") is None:
@@ -377,9 +379,9 @@ class CaddyGatewayTests(unittest.TestCase):
             self.skipTest("the pinned Caddy image is unavailable")
 
         run_id = secrets.token_hex(16)
-        network = f"openslate-caddy-health-network-{run_id}"
-        gateway = f"openslate-caddy-health-gateway-{run_id}"
-        upstream = f"openslate-caddy-health-upstream-{run_id}"
+        network = f"slateops-caddy-health-network-{run_id}"
+        gateway = f"slateops-caddy-health-gateway-{run_id}"
+        upstream = f"slateops-caddy-health-upstream-{run_id}"
         try:
             with tempfile.TemporaryDirectory() as directory:
                 gateway_config = Path(directory) / "gateway.Caddyfile"
@@ -443,7 +445,7 @@ class CaddyGatewayTests(unittest.TestCase):
                         "create",
                         "--internal",
                         "--label",
-                        f"openslate.test.run={run_id}",
+                        f"slateops.test.run={run_id}",
                         network,
                     ],
                     check=False,
@@ -459,7 +461,7 @@ class CaddyGatewayTests(unittest.TestCase):
                         "--name",
                         upstream,
                         "--label",
-                        f"openslate.test.run={run_id}",
+                        f"slateops.test.run={run_id}",
                         "--network",
                         network,
                         "--network-alias",
@@ -487,7 +489,7 @@ class CaddyGatewayTests(unittest.TestCase):
                         "--name",
                         gateway,
                         "--label",
-                        f"openslate.test.run={run_id}",
+                        f"slateops.test.run={run_id}",
                         "--network",
                         network,
                         "--mount",
@@ -534,7 +536,7 @@ class CaddyGatewayTests(unittest.TestCase):
                         "docker",
                         "inspect",
                         "--format",
-                        '{{index .Config.Labels "openslate.test.run"}}',
+                        '{{index .Config.Labels "slateops.test.run"}}',
                         container,
                     ],
                     check=False,
@@ -555,7 +557,7 @@ class CaddyGatewayTests(unittest.TestCase):
                     "network",
                     "inspect",
                     "--format",
-                    '{{index .Labels "openslate.test.run"}}',
+                    '{{index .Labels "slateops.test.run"}}',
                     network,
                 ],
                 check=False,

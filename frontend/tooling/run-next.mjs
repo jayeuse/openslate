@@ -65,7 +65,7 @@ function loadDevelopmentEnvironment() {
 
   return {
     ...developmentEnvironment,
-    OPENSLATE_DEV_ORIGIN_HOST: developmentOriginHost(publicOrigin),
+    SLATEOPS_DEV_ORIGIN_HOST: developmentOriginHost(publicOrigin),
   };
 }
 
@@ -421,7 +421,7 @@ function proxyRealtime(
 async function startDevelopmentServer(argumentsToInspect) {
   const options = developmentOptions(argumentsToInspect);
   const realtime = developmentRealtime();
-  const originHost = process.env.OPENSLATE_DEV_ORIGIN_HOST;
+  const originHost = process.env.SLATEOPS_DEV_ORIGIN_HOST;
   const realtimeOrigin = originHost
     ? new URL(`http://${originHost}:${options.port}`).origin
     : null;

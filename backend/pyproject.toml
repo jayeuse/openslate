@@ -1,5 +1,5 @@
 [project]
-name = "openslate-backend"
+name = "slateops-backend"
 version = "0.1.0"
 description = "Slate Operations FastAPI backend"
 requires-python = ">=3.12,<3.15"

@@ -32,7 +32,7 @@ def guarded_migration_environment() -> dict[str, str]:
     owner_url = os.getenv("MIGRATION_DATABASE_URL", "")
     _guard_integration_database(runtime_url)
     _guard_integration_database(owner_url)
-    return {**os.environ, "OPENSLATE_ENV_SOURCE": "process"}
+    return {**os.environ, "SLATEOPS_ENV_SOURCE": "process"}
 
 
 @contextmanager

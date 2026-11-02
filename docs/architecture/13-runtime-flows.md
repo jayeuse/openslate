@@ -4,7 +4,7 @@
 
 ## Development startup
 
-1. The developer keeps a private root `.env` with a unique `OPENSLATE_INSTANCE_ID`, instance root, loopback ports, provider values, and application connection URLs. `scripts/environment.py` validates it before a Compose mutation.
+1. The developer keeps a private root `.env` with a unique `SLATEOPS_INSTANCE_ID`, instance root, loopback ports, provider values, and application connection URLs. `scripts/environment.py` validates it before a Compose mutation.
 2. `./scripts/dev.py db` starts the pinned Supabase development stack. Project labels, expected image, database volume, provider network, role, and live database target are checked by the instance guard before mutations are admitted.
 3. From `backend/`, `uv run python operations/provision_database_role.py` provisions `openslate_owner` and `openslate_runtime` using `DATABASE_BOOTSTRAP_URL`. Alembic then applies application schema with `uv run alembic upgrade head`; `uv run alembic check` verifies model/schema alignment.
 4. `uv run python operations/provision_storage.py` creates and verifies the private `openslate-ready` and `openslate-avatars` buckets. It requires the admitted runtime database and server-only Supabase credentials.

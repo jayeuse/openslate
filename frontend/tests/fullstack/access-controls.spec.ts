@@ -48,8 +48,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function fixture(expectedBaseURL: string | undefined): Fixture {
-  const location = process.env.OPENSLATE_FULLSTACK_FIXTURE;
-  const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
+  const location = process.env.SLATEOPS_FULLSTACK_FIXTURE;
+  const runId = process.env.SLATEOPS_FULLSTACK_RUN_ID;
   if (!location || !runId) throw new Error("full-stack fixture is unavailable");
 
   const parsed: unknown = JSON.parse(readFileSync(location, "utf8"));

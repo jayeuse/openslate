@@ -68,7 +68,7 @@ def _redact(data: str | bytes | None, environment: dict[str, str]) -> bytes:
 
 
 def _private_artifact_path(environment: dict[str, str]) -> Path:
-    raw_manifest = environment.get("OPENSLATE_TEST_DATABASE_MANIFEST", "")
+    raw_manifest = environment.get("SLATEOPS_TEST_DATABASE_MANIFEST", "")
     if not raw_manifest:
         raise RuntimeError("The private runner manifest is unavailable for CLI diagnostics")
     manifest = Path(raw_manifest)

@@ -50,7 +50,7 @@ class Metrics:
         if self.target is None:
             raise RuntimeError("A guarded disposable target is required")
         self.url = _psycopg_url(_postgres_url(env["DATABASE_BOOTSTRAP_URL"], name="bootstrap"))
-        manifest = json.loads(Path(env["OPENSLATE_TEST_DATABASE_MANIFEST"]).read_text())
+        manifest = json.loads(Path(env["SLATEOPS_TEST_DATABASE_MANIFEST"]).read_text())
         self.realtime = manifest["ownership"]["service_ids"]["realtime"]
         self.network = manifest["ownership"]["project"] + "_provider"
 

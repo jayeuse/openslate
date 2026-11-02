@@ -34,7 +34,7 @@ def test_primary_partner_moderation_storage_and_password_purge_samples(native_ro
         for index, role in ((0, "admin"), (1, "member")):
             create_member(db, org, role, user=db.get(User, room.people[index].id))
         db.commit()
-    directory = Path("test-results/s22/native") / os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+    directory = Path("test-results/s22/native") / os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     directory.mkdir(parents=True, exist_ok=True)
     journal = directory / "requests.jsonl"
     with ExitStack() as stack:

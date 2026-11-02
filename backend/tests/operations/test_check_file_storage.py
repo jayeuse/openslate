@@ -119,7 +119,7 @@ def test_the_listing_reads_every_page_and_folder() -> None:
     ) as client:
         assert list_bucket(client, "openslate-ready") == keys
         with pytest.raises(StorageListingError):
-            list_bucket(client, "openslate-unknown")
+            list_bucket(client, "slateops-unknown")
 
 
 @pytest.mark.parametrize(

@@ -26,7 +26,7 @@ from operations.backups.host import (
 )
 
 EXPORT_GID = 10001
-API_ROOT = "/var/lib/openslate/backup-exports"
+API_ROOT = "/var/lib/slateops/backup-exports"
 IDENTITY_FIELDS = (
     "st_dev",
     "st_ino",
@@ -48,7 +48,7 @@ def admit_export(host: Host, values: dict[str, str]) -> None:
     configured = [
         line.partition("=")[2]
         for line in host.config.provider_env_file.read_text().splitlines()
-        if line.startswith("OPENSLATE_BACKUP_EXPORT_ROOT=")
+        if line.startswith("SLATEOPS_BACKUP_EXPORT_ROOT=")
     ]
     if (
         configured != [str(root)]
@@ -83,7 +83,7 @@ def admit_export(host: Host, values: dict[str, str]) -> None:
     log_sources = [
         line.partition("=")[2]
         for line in host.config.provider_env_file.read_text().splitlines()
-        if line.startswith("OPENSLATE_LOG_ROOT=")
+        if line.startswith("SLATEOPS_LOG_ROOT=")
     ]
     if len(log_sources) != 1 or not Path(log_sources[0]).is_absolute():
         raise RunnerError("admission_failed")
@@ -101,7 +101,7 @@ def admit_export(host: Host, values: dict[str, str]) -> None:
     environment = api.get("Config", {}).get("Env", [])
     mounts = [item for item in api.get("Mounts", []) if item.get("Type") in {"bind", "volume"}]
     exports = [item for item in mounts if item.get("Destination") == API_ROOT]
-    logs = [item for item in mounts if item.get("Destination") == "/var/log/openslate"]
+    logs = [item for item in mounts if item.get("Destination") == "/var/log/slateops"]
     if (
         [
             item

@@ -11,7 +11,7 @@ URL = "postgresql://openslate_runtime:synthetic@127.0.0.1:55432/postgres"
 
 
 def _key(manifest: Path) -> tuple[object, ...]:
-    values = {"OPENSLATE_TEST_DATABASE_MANIFEST": str(manifest)}
+    values = {"SLATEOPS_TEST_DATABASE_MANIFEST": str(manifest)}
     return postgres_runtime._ownership_key(URL, "openslate_runtime", values)
 
 

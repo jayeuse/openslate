@@ -72,7 +72,7 @@ def test_non_loopback_development_and_production_reject_http_public_origins(
             **settings_values(
                 environment=environment,
                 public_origin=origin,
-                web_assets_root="/tmp/openslate-test-web",
+                web_assets_root="/tmp/slateops-test-web",
             ),
             _env_file=None,
         )

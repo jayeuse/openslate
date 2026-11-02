@@ -24,7 +24,7 @@ Auth explicitly uses refresh-token algorithm version `2`, rotation enabled, a 10
 
 ## Per-installation inputs
 
-Use an owner-only, ignored environment file generated for **each** installation. Never use upstream `.env.example` secrets, place this file in version control, or print `docker compose config` without `--quiet`: Compose interpolation includes the raw provider credentials. Supply a distinct `--project-name` on every Compose command and an `OPENSLATE_INSTANCE_ID` for the database cluster marker. Keep the same project name and file set on restart so Compose reuses its own named volumes.
+Use an owner-only, ignored environment file generated for **each** installation. Never use upstream `.env.example` secrets, place this file in version control, or print `docker compose config` without `--quiet`: Compose interpolation includes the raw provider credentials. Supply a distinct `--project-name` on every Compose command and an `SLATEOPS_INSTANCE_ID` for the database cluster marker. Keep the same project name and file set on restart so Compose reuses its own named volumes.
 
 | Input | Meaning |
 | --- | --- |
@@ -33,7 +33,7 @@ Use an owner-only, ignored environment file generated for **each** installation.
 | `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` | Opaque gateway keys used by backend and provider services. The secret key never enters browser builds. |
 | `DASHBOARD_USERNAME`, `DASHBOARD_PASSWORD`, `PG_META_CRYPTO_KEY` | Studio operator authentication and metadata connection encryption. |
 | `REALTIME_SECRET_KEY_BASE`, `REALTIME_DB_ENC_KEY` | Realtime's own session base and the 16-character key that encrypts its tenant secrets. |
-| `OPENSLATE_INSTANCE_ID` | Unique installation marker used by database target admission. |
+| `SLATEOPS_INSTANCE_ID` | Unique installation marker used by database target admission. |
 | `API_EXTERNAL_URL`, `SITE_URL`, `SUPABASE_PUBLIC_URL` | Respectively the Auth JWT issuer/email API URL, Slate Operations browser origin, and operator gateway URL. `API_EXTERNAL_URL` must exactly match backend `SUPABASE_AUTH_ISSUER`. |
 | `AUTH_TEMPLATE_BASE_URL` | Internal URL of the Slate Operations template handler at `/api/auth/email-templates`; Auth fetches `invite.html` and `recovery.html` from it. For host-run development use `http://host.docker.internal:<backend-port>/api/auth/email-templates`; for a unified API container use its internal address. |
 | `SMTP_ADMIN_EMAIL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SENDER_NAME` | Provider invitation and recovery mailer. Production requires a real SMTP service. Development overlay uses `SMTP_HOST=mailpit`, `SMTP_PORT=1025`, and empty credentials. |
@@ -57,7 +57,7 @@ The commands above start development providers only. For production, prepare the
 docker compose --project-name <instance> --env-file <private-env-path> -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml up -d db auth storage imgproxy realtime meta studio api-gw
 ```
 
-Wait for provider health, including Realtime: provisioning needs the `realtime.messages` table that Realtime creates at its first start. Then build the release-tagged server image. Provision through one short-lived container on this installation's private provider network; the production database does not need a published host port. Prepare a separate owner-only provisioning env file in Docker's literal `KEY=value` format, without shell quotes or Compose interpolation. It contains `ENVIRONMENT=production`, `OPENSLATE_INSTANCE_ID`, `POSTGRES_HOST=db`, `POSTGRES_PORT=5432`, `POSTGRES_DATABASE=postgres`, bootstrap/owner/runtime database URLs at `db:5432/postgres`, `SUPABASE_URL=http://api-gw:8000`, the matching `SUPABASE_AUTH_ISSUER`, and `SUPABASE_SECRET_KEY`.
+Wait for provider health, including Realtime: provisioning needs the `realtime.messages` table that Realtime creates at its first start. Then build the release-tagged server image. Provision through one short-lived container on this installation's private provider network; the production database does not need a published host port. Prepare a separate owner-only provisioning env file in Docker's literal `KEY=value` format, without shell quotes or Compose interpolation. It contains `ENVIRONMENT=production`, `SLATEOPS_INSTANCE_ID`, `POSTGRES_HOST=db`, `POSTGRES_PORT=5432`, `POSTGRES_DATABASE=postgres`, bootstrap/owner/runtime database URLs at `db:5432/postgres`, `SUPABASE_URL=http://api-gw:8000`, the matching `SUPABASE_AUTH_ISSUER`, and `SUPABASE_SECRET_KEY`.
 
 ```sh
 docker run --rm --pull=never --network <instance>_provider \
@@ -106,7 +106,7 @@ Installations from commits before `3343730f` ("retire the ClamAV and scanner-wor
    ```
 
 3. Remove each listed container with `docker rm -f <container-id>`. These services had no named volumes, so this keeps all installation data. Then remove the unused network with `docker network rm <instance>_scanner-private` if `docker network ls` lists it. Backup admission refuses any container of a service that the current Compose files do not define, so do not skip this step.
-4. Remove the retired names from the installation env file: `FILES_CLAMAV_HOST`, `FILES_CLAMAV_PORT`, `FILES_CLAMAV_MANIFEST_PATH`, `OPENSLATE_CLAMAV_IMAGE`, `SCANNER_MANIFEST_PATH` and `SCANNER_DEFINITIONS_DIR`. Keep every other line.
+4. Remove the retired names from the installation env file: `FILES_CLAMAV_HOST`, `FILES_CLAMAV_PORT`, `FILES_CLAMAV_MANIFEST_PATH`, `SLATEOPS_CLAMAV_IMAGE`, `SCANNER_MANIFEST_PATH` and `SCANNER_DEFINITIONS_DIR`. Keep every other line.
 5. Run the provisioning job above. Its `alembic upgrade head` retires rows of uploads that never became ready.
 6. In the same kind of short-lived provisioning container, run `python operations/retire_legacy_upload_bucket.py`. This dry run reports the old bucket and its object count.
 7. Caution: the next command permanently deletes the old bucket and its bytes. Those uploads never became available, so no user can open them. Run `python operations/retire_legacy_upload_bucket.py --execute --confirm`. It succeeds only after the provider confirms that no object and no bucket remain.
@@ -116,17 +116,17 @@ The [bounded backup runner](RESTORE.md#run-the-installation-backup-policy) execu
 
 ## Production application overlay
 
-`compose.production.yaml` adds one unified FastAPI/static-frontend image as `api` and the repository's Caddy image. Build both images from the repository root context and give them release-specific `OPENSLATE_SERVER_IMAGE` and `OPENSLATE_CADDY_IMAGE` tags. Windows Docker Desktop must run Linux containers; this artifact does not certify native Windows containers.
+`compose.production.yaml` adds one unified FastAPI/static-frontend image as `api` and the repository's Caddy image. Build both images from the repository root context and give them release-specific `SLATEOPS_SERVER_IMAGE` and `SLATEOPS_CADDY_IMAGE` tags. Windows Docker Desktop must run Linux containers; this artifact does not certify native Windows containers.
 
 Supply these private paths and configuration values before rendering or starting the overlay:
 
 | Input | Production contract |
 | --- | --- |
-| `OPENSLATE_APP_ENV_FILE` | Owner-only application process environment for the API. Keep it separate from the provider installation file: it needs the constrained `openslate_runtime` `DATABASE_URL` at `db:5432/postgres`, application secrets, HTTPS `PUBLIC_ORIGIN`, instance ID, and current backend `Settings` fields. Do not pass provider bootstrap password, `JWT_KEYS`, or `JWT_JWKS` to application containers. |
-| `OPENSLATE_LOG_ROOT` | Existing private host directory writable by UID 10001. The API writes to a subdirectory under it; no container creates the host path. |
-| `OPENSLATE_BACKUP_EXPORT_ROOT` | Literal absolute `backup-exports` sibling of the configured Restic repository, set in the protected provider installation file. Precreate it with the runner operator's EUID, GID 10001, and mode 0750; finished archives use that owner/group and mode 0640. Compose mounts only this output root read-only at the API's fixed `/var/lib/openslate/backup-exports` path and refuses to create the host directory. Source repositories, password files, and private backup configuration are not API mounts. |
-| `OPENSLATE_APP_PRIVATE_SUBNET` | Private CIDR for the existing Caddy/API-only `app-private` network, default `172.31.248.0/28`. The overlay shares this exact value with the API's trusted proxy setting. Override it in the provider installation environment if it collides with a host or Docker network; startup does not silently choose another subnet. |
-| `API_WORKERS` | API worker processes, default `1` (measured best for the plan target; see `docs/plans/product-concurrency-fixes.md`, Phase 4). The overlay passes this Compose project variable to the API and it overrides any value in `OPENSLATE_APP_ENV_FILE`, so set it in the provider installation environment. Each process adds `DATABASE_POOL_SIZE` + `DATABASE_MAX_OVERFLOW` + 3 database connections; keep the total below PostgreSQL `max_connections` (100). |
+| `SLATEOPS_APP_ENV_FILE` | Owner-only application process environment for the API. Keep it separate from the provider installation file: it needs the constrained `openslate_runtime` `DATABASE_URL` at `db:5432/postgres`, application secrets, HTTPS `PUBLIC_ORIGIN`, instance ID, and current backend `Settings` fields. Do not pass provider bootstrap password, `JWT_KEYS`, or `JWT_JWKS` to application containers. |
+| `SLATEOPS_LOG_ROOT` | Existing private host directory writable by UID 10001. The API writes to a subdirectory under it; no container creates the host path. |
+| `SLATEOPS_BACKUP_EXPORT_ROOT` | Literal absolute `backup-exports` sibling of the configured Restic repository, set in the protected provider installation file. Precreate it with the runner operator's EUID, GID 10001, and mode 0750; finished archives use that owner/group and mode 0640. Compose mounts only this output root read-only at the API's fixed `/var/lib/slateops/backup-exports` path and refuses to create the host directory. Source repositories, password files, and private backup configuration are not API mounts. |
+| `SLATEOPS_APP_PRIVATE_SUBNET` | Private CIDR for the existing Caddy/API-only `app-private` network, default `172.31.248.0/28`. The overlay shares this exact value with the API's trusted proxy setting. Override it in the provider installation environment if it collides with a host or Docker network; startup does not silently choose another subnet. |
+| `API_WORKERS` | API worker processes, default `1` (measured best for the plan target; see `docs/plans/product-concurrency-fixes.md`, Phase 4). The overlay passes this Compose project variable to the API and it overrides any value in `SLATEOPS_APP_ENV_FILE`, so set it in the provider installation environment. Each process adds `DATABASE_POOL_SIZE` + `DATABASE_MAX_OVERFLOW` + 3 database connections; keep the total below PostgreSQL `max_connections` (100). |
 | `CADDY_CONFIG_PATH` | Existing generated Caddyfile. Render with `--upstream-host api --backend-port 8000 --health-port 3449` and the same `CADDY_HTTPS_PORT` used by Compose. |
 | `CADDY_TLS_DIR` | Optional existing read-only directory mounted at `/run/caddy-tls` for custom certificate and key files. With internal TLS the default mount points to the repository's non-secret Caddy reference directory; Caddy's CA material persists in its named data volume. |
 | `CADDY_PUBLIC_BIND_HOST`, `CADDY_HTTPS_PORT` | The only public listener, default `0.0.0.0:443`. Choose the intended LAN interface and match its host/port and TLS mode to `PUBLIC_ORIGIN` and the rendered Caddyfile. |

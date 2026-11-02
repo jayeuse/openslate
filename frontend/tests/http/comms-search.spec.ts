@@ -455,7 +455,7 @@ test("search keeps shortcut focus, phone Details and readable light/dark results
           dark,
         );
         await expectNoHorizontalScroll(page);
-        if (process.env.OPENSLATE_S30_VISUAL === "1")
+        if (process.env.SLATEOPS_S30_VISUAL === "1")
           await dialog.screenshot({
             path: info.outputPath(
               `search-${width}-${dark ? "dark" : "light"}.png`,

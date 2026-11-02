@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: openslate-stress
+  group: slateops-stress
   cancel-in-progress: false
 
 permissions:

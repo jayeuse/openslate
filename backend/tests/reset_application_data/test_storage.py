@@ -62,7 +62,7 @@ def development_reset_cli(monkeypatch, tmp_path):
     storage = Mock(list_object_keys=Mock(return_value=plan.storage_object_keys))
     target = Mock(
         side_effect=lambda url, _: InstanceTarget(
-            "openslate-fixture",
+            "slateops-fixture",
             make_url(url).host,
             make_url(url).port,
             "postgres",

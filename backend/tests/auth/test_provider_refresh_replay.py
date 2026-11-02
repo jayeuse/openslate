@@ -46,7 +46,7 @@ def _fingerprint(value: str | bytes) -> str:
 def _auth_replay_settings() -> tuple[int, bool, int, bool]:
     """Read only the relevant non-secret settings from this runner-owned Auth container."""
     try:
-        manifest_path = Path(os.environ["OPENSLATE_TEST_DATABASE_MANIFEST"])
+        manifest_path = Path(os.environ["SLATEOPS_TEST_DATABASE_MANIFEST"])
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         auth_id = manifest["ownership"]["service_ids"]["auth"]
     except (OSError, KeyError, TypeError, ValueError):

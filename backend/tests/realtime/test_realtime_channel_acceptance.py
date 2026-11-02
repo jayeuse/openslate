@@ -140,7 +140,7 @@ def _channel_token(client: TestClient, bearer: dict[str, str], org_id: UUID) -> 
 
 
 def _socket(settings: Settings) -> ClientConnection:
-    gateway = os.environ.get("OPENSLATE_TEST_REALTIME_GATEWAY")
+    gateway = os.environ.get("SLATEOPS_TEST_REALTIME_GATEWAY")
     if gateway:
         assert gateway == settings.public_origin == "https://localhost:3448"
         # Run-owned Caddy's ephemeral internal CA, matching other local gateway proofs.

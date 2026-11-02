@@ -1,6 +1,6 @@
 # Rebrand: OpenSlate to Slate Operations
 
-Status: slices 1 and 2 committed (2026-11-02). Slices 3 and 4 are pending.
+Status: slices 1 to 3 committed (2026-11-02). Slice 4 is pending.
 
 ## Decisions
 
@@ -12,7 +12,7 @@ Status: slices 1 and 2 committed (2026-11-02). Slices 3 and 4 are pending.
 | Scope | Everything: brand copy, wire identifiers, env vars, Compose names, database schema, roles, and Storage buckets. |
 | Accepted effects | All users sign out once (cookie rename). Browser preferences reset once (localStorage rename). |
 
-Examples of the stem: schema `slateops`, roles `slateops_owner` and `slateops_runtime`, buckets `slateops-ready` and `slateops-avatars`, cookie `slateops_csrf`, env var `SLATEOPS_INSTANCE_ID`, Compose project `slateops-supabase-local-*`, header `X-SlateOps-Instance`.
+Examples of the stem: roles `slateops_owner` and `slateops_runtime`, buckets `slateops-ready` and `slateops-avatars`, cookie `slateops_csrf`, env var `SLATEOPS_INSTANCE_ID`, Compose project `slateops-supabase-local-*`, header `X-SlateOps-Instance`.
 
 ## Fixed limits
 
@@ -27,18 +27,23 @@ One pull request for each slice. Run the pre-push gate once for each push.
 
 1. **Visible brand.** Frontend copy and titles, the workspace name fallback, backend messages and the API name, email templates, README, docs, specs, and the native manager window name. `DESIGN.md`, `PRODUCT.md`, and `.impeccable/design.json` change through `impeccable` only. No runtime risk.
 2. **Wire identifiers.** Headers `X-SlateOps-*`, the `User-Agent` values, cookies `slateops_access`, `slateops_refresh`, and `slateops_csrf`, the localStorage keys, the `slateops_manager` package, and CI workflow names. Frontend, backend, and tests change in one pull request.
-3. **Env vars, Compose names, and instance identity.** `OPENSLATE_*` to `SLATEOPS_*`, the Compose project prefix, `packaging/`, `infra/caddy/`, and `RESTORE.md`. Copy the development volumes before the prefix changes:
-   1. Stop the development stack with `python3 scripts/dev.py stop`.
-   2. Create each new volume.
-   3. Copy each old volume into its new volume with `cp -a`.
-   4. Start the stack and check that the sample packs are present.
-   5. Keep the old volumes until the owner approves their removal.
-4. **Schema, roles, and buckets.** Write a one-time operator command in `backend/operations/`. It renames the schema and the roles, fixes grants and policies, and copies the Storage buckets. It is not an Alembic migration: `alembic_version` lives in the `openslate` schema, so Alembic cannot find its history after the code points at the new name. Run the command on each installation before the renamed code starts.
+3. **Env vars, Compose names, and instance identity.** Done. `OPENSLATE_*` became `SLATEOPS_*`, and the Compose, Docker label, image, test-stack, and host-path names use `slateops`. The development stack moved as follows:
+   1. Stop the old containers. Rename the `.env` keys and the instance ID value in place, with no output.
+   2. Run `python3 scripts/dev.py db` once. Compose creates the new labelled volumes and the attestation.
+   3. Stop the stack. Copy each old volume into its new volume with `cp -a`.
+   4. Compare entries, file checksums, owners, and modes. All four volumes matched.
+   5. Start the stack. Alembic is at head, all 7 sample packs are present, and a sample account signs in.
+   - The old `openslate-supabase-local-d131ecd3` containers and volumes are stopped and kept. Remove them only when the owner approves.
+4. **Database names, roles, and buckets.** There is no `openslate` schema: the application tables are in `public`, and `alembic_version` is in `public` too. So this slice needs no schema rename. It covers:
+   - The roles `openslate_owner`, `openslate_runtime`, `openslate_app`, `openslate_provider`, and `openslate_inspector`, and the `DATABASE_URL` and `MIGRATION_DATABASE_URL` values that contain them.
+   - The session setting `openslate.org_id` and the other `openslate.*` settings that row-level security policies and functions read. A new Alembic migration must replace those policies.
+   - The policies `openslate_session_liveness`, `openslate_realtime_member_read`, and `openslate_realtime_member_write`.
+   - The Storage buckets `openslate-ready` and `openslate-avatars`. Copy them, check a download, then remove the old buckets.
+   - The stored values in the table below.
    - Caution: `ALTER ROLE ... RENAME` clears MD5 passwords. Make sure that the roles use SCRAM before the rename.
-   - Caution: `DATABASE_URL` and `MIGRATION_DATABASE_URL` contain the role names. Update them in the same step, or the API cannot connect.
-   - Keep the old buckets until a download check passes, then remove them.
+   - Caution: update the database URLs in the same step as the role rename, or the API cannot connect.
 
-### Names that slice 2 keeps, and why
+### Names that slices 2 and 3 keep, and why
 
 | Name | Reason | Owner |
 |---|---|---|
@@ -48,9 +53,14 @@ One pull request for each slice. Run the pre-push gate once for each push.
 | `openslate.backup.export.request.v1` | Encryption context of backup export requests. | Slice 4 |
 | `openslate-sample-people-v1` | File format of sample-run records on disk. | Slice 4 |
 | `openslate_session_liveness` | Policy on `auth.sessions`. | Slice 4 |
+| Sample-pack `uuid_namespace` values (`openslate:harbor-operations:v4` and others) | They decide the IDs of the permanent sample data. A change creates duplicates on the next run. | Keep |
+| Hash domain strings (`openslate:identity-rate-limit:v1:`, `openslate:security-representative:v1:`) | Stored digests depend on them. | Keep |
+| `openslate-quarantine` | Name of a retired bucket that the cleanup command removes. | Keep |
+| `~/.config/openslate-handson/` | Owner-only file outside the repository. | Owner choice |
 | `github.com/jayeuse/openslate` URLs | They change when the repository is renamed. | Owner step 1 |
 
 ## Owner steps (not in the repository)
 
 1. Rename the GitHub repository `jayeuse/openslate` to the new name. After that, update the remote URL in each checkout.
-2. Rename the local checkout folder last. The Claude memory folder and worktree records use the folder path.
+2. Approve the removal of the old `openslate-supabase-local-d131ecd3` containers and volumes after a few days of use.
+3. Rename the local checkout folder last. The Claude memory folder and worktree records use the folder path.

@@ -423,7 +423,7 @@ def test_smoke_seed_populates_the_pack_organization_it_is_given(
         return SimpleNamespace(status="complete", run_directory=tmp_path, issues=())
 
     monkeypatch.setattr(smoke_seed, "populate_sample_data", populate)
-    monkeypatch.setenv("OPENSLATE_SMOKE_ADMIN_PASSWORD", "test")
+    monkeypatch.setenv("SLATEOPS_SMOKE_ADMIN_PASSWORD", "test")
     parameters = tmp_path / "parameters.json"
     parameters.write_text(
         json.dumps(
@@ -470,7 +470,7 @@ def test_smoke_seed_prints_each_verification_issue_as_the_cli_does(
             status="incomplete", run_directory=tmp_path, issues=("boards: count differs",)
         ),
     )
-    monkeypatch.setenv("OPENSLATE_SMOKE_ADMIN_PASSWORD", "test")
+    monkeypatch.setenv("SLATEOPS_SMOKE_ADMIN_PASSWORD", "test")
     parameters = tmp_path / "parameters.json"
     parameters.write_text(
         json.dumps(

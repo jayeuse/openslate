@@ -9,12 +9,12 @@ from app.core.config import instance
 from app.core.config.instance import InstanceTargetError, load_instance_target
 from tests.operations.runner.instance_attestation import write_attestation
 
-IDENTITY = "openslate-supabase-test"
+IDENTITY = "slateops-supabase-test"
 
 
 def _values() -> dict[str, str]:
     return {
-        "OPENSLATE_INSTANCE_ID": IDENTITY,
+        "SLATEOPS_INSTANCE_ID": IDENTITY,
         "POSTGRES_HOST": "127.0.0.1",
         "POSTGRES_PORT": "55432",
         "POSTGRES_DATABASE": "postgres",
@@ -88,7 +88,7 @@ def test_production_target_checks_cluster_identity() -> None:
         "openslate_runtime",
         {
             "ENVIRONMENT": "production",
-            "OPENSLATE_INSTANCE_ID": IDENTITY,
+            "SLATEOPS_INSTANCE_ID": IDENTITY,
             "POSTGRES_HOST": "db",
             "POSTGRES_PORT": "5432",
             "POSTGRES_DATABASE": "postgres",
@@ -113,7 +113,7 @@ def test_production_rejects_a_different_database_name() -> None:
             "openslate_runtime",
             {
                 "ENVIRONMENT": "production",
-                "OPENSLATE_INSTANCE_ID": IDENTITY,
+                "SLATEOPS_INSTANCE_ID": IDENTITY,
                 "POSTGRES_HOST": "db",
                 "POSTGRES_PORT": "5432",
                 "POSTGRES_DATABASE": "customer",

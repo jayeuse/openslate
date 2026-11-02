@@ -38,7 +38,7 @@ def test_a_huge_parametrized_id_is_shortened_and_keeps_its_outcome() -> None:
     [
         "postgresql://openslate_runtime:synthetic-password@127.0.0.1:5432/postgres",
         "E   AssertionError: assert 'synthetic-secret' == 'other'",
-        " Container openslate-e2e-abc-db-1  Started",
+        " Container slateops-e2e-abc-db-1  Started",
         "tests/auth/test_login.py ....F.....                                  [ 12%]",
     ],
 )
@@ -64,9 +64,9 @@ def test_a_streamed_command_is_quiet_unless_progress_is_requested(
 ) -> None:
     # Drawing thousands of result lines slowed the machine, so runs are quiet by default.
     if progress is None:
-        monkeypatch.delenv("OPENSLATE_TEST_PROGRESS", raising=False)
+        monkeypatch.delenv("SLATEOPS_TEST_PROGRESS", raising=False)
     else:
-        monkeypatch.setenv("OPENSLATE_TEST_PROGRESS", progress)
+        monkeypatch.setenv("SLATEOPS_TEST_PROGRESS", progress)
     script = "print('secret=synthetic'); print('tests/a.py::test_b PASSED [100%]')"
     with (tmp_path / "process.log").open("w") as log:
         run_streamed([sys.executable, "-c", script], tmp_path, dict(os.environ), log)
@@ -89,9 +89,9 @@ def test_e2e_browsers_are_headless_unless_requested_and_always_headless_in_ci(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("OPENSLATE_E2E_HEADED", raising=False)
+    monkeypatch.delenv("SLATEOPS_E2E_HEADED", raising=False)
     assert e2e_browser_flags() == ["--reporter=list"]
-    monkeypatch.setenv("OPENSLATE_E2E_HEADED", "1")
+    monkeypatch.setenv("SLATEOPS_E2E_HEADED", "1")
     assert e2e_browser_flags() == ["--reporter=list", "--headed"]
     monkeypatch.setenv("CI", "true")
     assert e2e_browser_flags() == ["--reporter=list"]

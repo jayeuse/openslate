@@ -263,7 +263,7 @@ def create_app() -> FastAPI:
         identity = instance_identity_for_process()
         if identity is not None:
             response.headers["X-SlateOps-Instance"] = identity
-        return {"status": "ok", "service": "openslate-api"}
+        return {"status": "ok", "service": "slateops-api"}
 
     @app.get("/api/ready", tags=["system"])
     def ready() -> JSONResponse:

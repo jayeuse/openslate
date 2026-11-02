@@ -202,7 +202,7 @@ class Host:
             values[key] = value
         if (
             values.get("ENVIRONMENT") != "production"
-            or values.get("OPENSLATE_INSTANCE_ID") != self.config.installation_id
+            or values.get("SLATEOPS_INSTANCE_ID") != self.config.installation_id
         ):
             raise RunnerError("admission_failed")
         try:
@@ -346,7 +346,7 @@ class Host:
             "project": self.config.project_name,
             **command,
         }
-        name = "openslate-backup-" + uuid4().hex
+        name = "slateops-backup-" + uuid4().hex
         args = [
             "docker",
             "run",
@@ -370,7 +370,7 @@ class Host:
             "--no-healthcheck",
             "--interactive",
             "--env",
-            "OPENSLATE_ENV_SOURCE=process",
+            "SLATEOPS_ENV_SOURCE=process",
             "--entrypoint",
             "python",
             self.image,

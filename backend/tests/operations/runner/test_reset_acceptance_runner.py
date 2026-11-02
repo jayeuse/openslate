@@ -28,9 +28,9 @@ def test_reset_phase_selects_only_its_fixed_target_without_starting_application(
         "layer": "integration",
         "interactive": False,
     }
-    assert observed["environment"]["OPENSLATE_TEST_RESET_ACCEPTANCE"] == "1"
-    assert observed["environment"]["OPENSLATE_ENV_SOURCE"] == "process"
-    assert "OPENSLATE_TEST_DATABASE_MANIFEST" in observed["environment"]
+    assert observed["environment"]["SLATEOPS_TEST_RESET_ACCEPTANCE"] == "1"
+    assert observed["environment"]["SLATEOPS_ENV_SOURCE"] == "process"
+    assert "SLATEOPS_TEST_DATABASE_MANIFEST" in observed["environment"]
     assert not any(command[:2] == ["npm", "run"] for command in commands)
 
 

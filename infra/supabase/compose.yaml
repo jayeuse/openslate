@@ -18,7 +18,7 @@ services:
       - -c
       - config_file=/etc/postgresql/postgresql.conf
       - -c
-      - cluster_name=${OPENSLATE_INSTANCE_ID:?Set the owned Slate Operations instance ID}
+      - cluster_name=${SLATEOPS_INSTANCE_ID:?Set the owned Slate Operations instance ID}
       - -c
       - log_min_messages=fatal
     volumes:

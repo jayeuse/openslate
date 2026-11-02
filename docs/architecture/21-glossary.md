@@ -224,8 +224,8 @@ These terms describe how the team fills an installation with realistic organizat
 | --- | --- | --- |
 | Pre-push gate | `scripts/prepush.py --base <ref>` | The full check set that runs once, right before a push. It selects checks from the changed paths. |
 | Focused test | — | A small test run for the changed files and their direct callers, used while work continues. |
-| Disposable stack | Compose project `openslate-e2e-*` | A temporary Supabase stack that the test runner creates and removes. It is not the development stack. |
-| Development stack | Compose project `openslate-supabase-local-*` | The one owned Supabase stack for daily development in a checkout. Keep it and its volumes. |
+| Disposable stack | Compose project `slateops-e2e-*` | A temporary Supabase stack that the test runner creates and removes. It is not the development stack. |
+| Development stack | Compose project `slateops-supabase-local-*` | The one owned Supabase stack for daily development in a checkout. Keep it and its volumes. |
 | Reset acceptance | `--reset-acceptance-only` | The check that the local application-data reset works on a disposable stack. |
 | `isolated` / `http` / `fullstack` | Playwright projects | Playwright test layers. `isolated` runs without a dev server. `http` runs in a browser against the Next.js dev server. `fullstack` runs against real FastAPI and Supabase through `backend/tests/fullstack_runner.py`. |
 

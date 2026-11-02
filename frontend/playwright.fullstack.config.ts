@@ -17,16 +17,16 @@ try {
   throw new Error("BASE_URL must be an HTTPS localhost origin with a port");
 }
 
-if (!process.env.OPENSLATE_FULLSTACK_FIXTURE)
-  throw new Error("OPENSLATE_FULLSTACK_FIXTURE is required");
-if (!process.env.OPENSLATE_FULLSTACK_RUN_ID)
-  throw new Error("OPENSLATE_FULLSTACK_RUN_ID is required");
+if (!process.env.SLATEOPS_FULLSTACK_FIXTURE)
+  throw new Error("SLATEOPS_FULLSTACK_FIXTURE is required");
+if (!process.env.SLATEOPS_FULLSTACK_RUN_ID)
+  throw new Error("SLATEOPS_FULLSTACK_RUN_ID is required");
 
 // The release smoke suite (backend/tests/smoke_runner.py) reads seeded Harbor data and
 // signs in once per role; the acceptance suite keeps its own fixture and never runs it.
-const smoke = process.env.OPENSLATE_FULLSTACK_SUITE === "smoke";
-if (smoke && !process.env.OPENSLATE_SMOKE_STATE_DIR)
-  throw new Error("OPENSLATE_SMOKE_STATE_DIR is required for the smoke suite");
+const smoke = process.env.SLATEOPS_FULLSTACK_SUITE === "smoke";
+if (smoke && !process.env.SLATEOPS_SMOKE_STATE_DIR)
+  throw new Error("SLATEOPS_SMOKE_STATE_DIR is required for the smoke suite");
 
 export default defineConfig({
   testDir: smoke ? "./tests/fullstack/smoke" : "./tests/fullstack",

@@ -14,7 +14,7 @@ from tests.repository import REPOSITORY_ROOT
 
 
 def _installation(tmp_path: Path) -> tuple[dict[str, str], InstanceTarget, list[dict]]:
-    project = "openslate-provider-test"
+    project = "slateops-provider-test"
     network = project + "_provider"
     path = tmp_path / "attestation.json"
     path.write_text(json.dumps({"ownership": {"network_id": "network-id"}}))

@@ -49,7 +49,7 @@ class ResetDatabase:
 
 
 def guarded_reset_database(monkeypatch: pytest.MonkeyPatch) -> ResetDatabase:
-    monkeypatch.setenv("OPENSLATE_ENV_SOURCE", "process")
+    monkeypatch.setenv("SLATEOPS_ENV_SOURCE", "process")
     runtime_url = os.environ.get("TEST_DATABASE_URL")
     owner_url = os.environ.get("MIGRATION_DATABASE_URL")
     if runtime_url is None or owner_url is None:

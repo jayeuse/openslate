@@ -365,7 +365,7 @@ def test_health_returns_service_status() -> None:
     response = TestClient(create_app()).get("/api/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "openslate-api"}
+    assert response.json() == {"status": "ok", "service": "slateops-api"}
 
 
 def test_health_exposes_the_non_secret_instance_handshake(monkeypatch) -> None:

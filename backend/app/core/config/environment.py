@@ -115,11 +115,11 @@ def environment_inputs(path: Path, *, process: Mapping[str, str] | None = None) 
     """Load the root dotenv file or explicitly injected process configuration."""
 
     selected_process = process if process is not None else os.environ
-    source = selected_process.get("OPENSLATE_ENV_SOURCE", "").strip()
+    source = selected_process.get("SLATEOPS_ENV_SOURCE", "").strip()
     if source == "process":
         return dict(selected_process)
     if source:
-        raise ConfigurationError("OPENSLATE_ENV_SOURCE must be process when set")
+        raise ConfigurationError("SLATEOPS_ENV_SOURCE must be process when set")
     return read_environment(path)
 
 

@@ -70,8 +70,8 @@ class DisposableCaddy:
             else env
         )
         self.log = log
-        self.container = f"openslate-caddy-e2e-{run_id}"
-        self.image = f"openslate-caddy-e2e-{run_id}:local"
+        self.container = f"slateops-caddy-e2e-{run_id}"
+        self.image = f"slateops-caddy-e2e-{run_id}:local"
         self.config = private / "Caddyfile"
         self.dockerfile = private / "caddy-image.Dockerfile"
         self.process: subprocess.Popen[str] | None = None
@@ -181,7 +181,7 @@ class DisposableCaddy:
                 "build",
                 "--pull=false",
                 "--label",
-                f"openslate.test.run={self.run_id}",
+                f"slateops.test.run={self.run_id}",
                 "--tag",
                 self.image,
                 "--file",
@@ -197,7 +197,7 @@ class DisposableCaddy:
                 "--name",
                 self.container,
                 "--label",
-                f"openslate.test.run={self.run_id}",
+                f"slateops.test.run={self.run_id}",
                 "--read-only",
                 "--cap-drop",
                 "ALL",
@@ -208,7 +208,7 @@ class DisposableCaddy:
                 "--env",
                 "SUPABASE_PUBLISHABLE_KEY",
                 "--env",
-                "OPENSLATE_REALTIME_UPSTREAM",
+                "SLATEOPS_REALTIME_UPSTREAM",
                 "--memory",
                 "128m",
                 "--cpus",
@@ -259,7 +259,7 @@ class DisposableCaddy:
                 [
                     "inspect",
                     "--format",
-                    '{{index .Config.Labels "openslate.test.run"}}',
+                    '{{index .Config.Labels "slateops.test.run"}}',
                     self.container,
                 ],
                 capture=True,
@@ -276,7 +276,7 @@ class DisposableCaddy:
                     "image",
                     "inspect",
                     "--format",
-                    '{{index .Config.Labels "openslate.test.run"}}',
+                    '{{index .Config.Labels "slateops.test.run"}}',
                     self.image,
                 ],
                 capture=True,

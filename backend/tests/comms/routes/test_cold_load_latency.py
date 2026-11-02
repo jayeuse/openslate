@@ -3,7 +3,7 @@
 The guard is the plan of the access relation behind presence and bootstrap (the longest
 statement of each request): how often it rescans accounts. Wall-clock times are recorded
 properties only. Provider-auth latency is not measured (the fixture supplies the
-principal). Set ``OPENSLATE_COMMS_LATENCY_CONCURRENCY=1`` to also record 40 concurrent
+principal). Set ``SLATEOPS_COMMS_LATENCY_CONCURRENCY=1`` to also record 40 concurrent
 requests (20 per account) and 10 concurrent presence checks; the default run fires no
 bursts beside sibling shards.
 """
@@ -34,7 +34,7 @@ from tests.repository import REPOSITORY_ROOT
 pytestmark = pytest.mark.integration
 
 SAMPLES = 10
-CONCURRENCY = os.environ.get("OPENSLATE_COMMS_LATENCY_CONCURRENCY") == "1"
+CONCURRENCY = os.environ.get("SLATEOPS_COMMS_LATENCY_CONCURRENCY") == "1"
 GUARDED = ("presence", "bootstrap")
 # Before the per-person department clause (run 07b12f6a): 17 / 13 users-table scan nodes
 # (one inside every department-level reader subquery) in both phases, and after ANALYZE
@@ -287,7 +287,7 @@ def _database_concurrency(case, org, world):
 def _write(evidence):
     path = (
         REPOSITORY_ROOT / "backend/test-results/backend-latency"
-        / os.environ["OPENSLATE_FULLSTACK_RUN_ID"] / "cold-load.json"
+        / os.environ["SLATEOPS_FULLSTACK_RUN_ID"] / "cold-load.json"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(evidence, indent=2, default=str) + "\n")

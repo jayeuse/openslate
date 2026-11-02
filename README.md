@@ -71,7 +71,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Choose a fresh `OPENSLATE_INSTANCE_ID` and private `OPENSLATE_INSTANCE_ROOT`
+Choose a fresh `SLATEOPS_INSTANCE_ID` and private `SLATEOPS_INSTANCE_ROOT`
 for a new Supabase development installation. The migration starts with fresh
 application data and does not import old accounts, records, or files. Keep
 existing PostgreSQL volumes and configuration until you have separately
@@ -105,7 +105,7 @@ uv run --directory backend python ../scripts/environment.py check
 
 Run the following from the repository root unless a directory is shown. Start
 the owned Supabase development stack with its default Compose project derived
-from `OPENSLATE_INSTANCE_ID`:
+from `SLATEOPS_INSTANCE_ID`:
 
 ```bash
 ./scripts/dev.py db

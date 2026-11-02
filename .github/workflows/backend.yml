@@ -157,8 +157,8 @@ jobs:
           set -euo pipefail
           caddy_image="$(timeout 10 uv run --no-sync python -c 'from tests.caddy_runtime import CADDY_IMAGE; print(CADDY_IMAGE)')"
           [[ "$caddy_image" =~ ^caddy@sha256:[0-9a-f]{64}$ ]]
-          caddy_dir="$(mktemp -d "${RUNNER_TEMP:?}/openslate-caddy.XXXXXX")"
-          caddy_container="openslate-ci-${caddy_dir##*/}"
+          caddy_dir="$(mktemp -d "${RUNNER_TEMP:?}/slateops-caddy.XXXXXX")"
+          caddy_container="slateops-ci-${caddy_dir##*/}"
           cleanup() {
             result=$?
             trap - EXIT
@@ -292,9 +292,9 @@ jobs:
           context: .
           file: infra/docker/backend.Dockerfile
           push: false
-          tags: openslate-server:ci
-          cache-from: type=gha,scope=openslate-server
-          cache-to: type=gha,mode=max,scope=openslate-server
+          tags: slateops-server:ci
+          cache-from: type=gha,scope=slateops-server
+          cache-to: type=gha,mode=max,scope=slateops-server
 
   verify:
     name: backend-verify

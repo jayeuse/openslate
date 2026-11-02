@@ -136,7 +136,7 @@ def load_disposable_target(
     inspect: Callable[[list[str]], Any],
 ) -> DisposableTarget:
     """Require a private per-run manifest and a live installation for host connections."""
-    run_id = process.get("OPENSLATE_FULLSTACK_RUN_ID", "")
+    run_id = process.get("SLATEOPS_FULLSTACK_RUN_ID", "")
     if (
         process.get("ENVIRONMENT") != "test"
         or process.get("E2E_ALLOW_MUTATIONS") != "true"
@@ -145,13 +145,13 @@ def load_disposable_target(
     ):
         raise DisposableTargetError("Disposable test identity is unavailable")
     try:
-        path = Path(process["OPENSLATE_TEST_DATABASE_MANIFEST"])
+        path = Path(process["SLATEOPS_TEST_DATABASE_MANIFEST"])
         metadata = path.lstat()
         if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
             raise ValueError
         manifest = json.loads(path.read_text(encoding="utf-8"))
         ownership = manifest["ownership"]
-        project = f"openslate-e2e-{run_id}"
+        project = f"slateops-e2e-{run_id}"
         worktree = str(repository_root.resolve())
         if (
             manifest.get("version") != 2
@@ -324,7 +324,7 @@ def assert_live_disposable_ownership(
         containers = {container["Id"]: container for container in inspected}
         if set(containers) != set(service_ids.values()):
             raise ValueError
-        labels = {"openslate.test.run": run_id, "openslate.test.worktree": worktree}
+        labels = {"slateops.test.run": run_id, "slateops.test.worktree": worktree}
         for service, identifier in service_ids.items():
             container = containers[identifier]
             actual_labels = container["Config"]["Labels"]

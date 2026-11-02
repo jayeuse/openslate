@@ -68,7 +68,7 @@ class TopologyHost:
         self.network = "retained-provider-network"
         # fmt: off
         self.config = SimpleNamespace(installation_id="owned-sample",
-            project_name="openslate-supabase-local-owned-sample", compose_root=root / "compose",
+            project_name="slateops-supabase-local-owned-sample", compose_root=root / "compose",
             compose_files=(root / "compose/compose.yaml", root / "compose/compose.production.yaml"),
             provider_env_file=root / "production-provider.env",
             app_env_file=root / "production-app.env",

@@ -27,7 +27,7 @@ def readiness_settings(**overrides: object) -> Settings:
         readiness_caller_timeout_seconds=0.5,
         smtp_host="mailpit",
         smtp_port=1025,
-        smtp_admin_email="admin@openslate.test",
+        smtp_admin_email="admin@slateops.test",
     )
     values.update(overrides)
     return Settings(**values, _env_file=None)

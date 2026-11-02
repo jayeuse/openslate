@@ -45,7 +45,7 @@ class _SignalingServer(uvicorn.Server):
 
 @pytest.fixture
 def provider_mail():
-    manifest = json.loads(Path(os.environ["OPENSLATE_TEST_DATABASE_MANIFEST"]).read_text())
+    manifest = json.loads(Path(os.environ["SLATEOPS_TEST_DATABASE_MANIFEST"]).read_text())
     auth_id = manifest["ownership"]["service_ids"]["auth"]
     raw = subprocess.check_output(
         ["docker", "inspect", auth_id, "--format", "{{json .Config.Env}}"], text=True

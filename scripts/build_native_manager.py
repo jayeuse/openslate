@@ -224,7 +224,9 @@ def build_manager(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--origin", required=True, help="Canonical HTTPS Slate Operations origin")
-    parser.add_argument("--version", required=True, help="Public Slate Operations Manager release version")
+    parser.add_argument(
+        "--version", required=True, help="Public Slate Operations Manager release version"
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,

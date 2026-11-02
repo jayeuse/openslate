@@ -48,7 +48,7 @@ def installation_id(db: Session) -> str:
     expected = (
         cluster
         if get_settings().environment == "test"
-        else get_instance_settings().open_slate_instance_id
+        else get_instance_settings().slateops_instance_id
     )
     if not isinstance(cluster, str) or not cluster or cluster != expected:
         raise BackupStateError("backup_identity_conflict")

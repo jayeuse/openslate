@@ -54,14 +54,14 @@ def load_instance_target(process: Mapping[str, str] | None = None) -> InstanceTa
         values: Mapping[str, str] = {
             **environment_inputs(DOTENV_PATH),
             "ENVIRONMENT": settings.environment,
-            "OPENSLATE_INSTANCE_ID": settings.open_slate_instance_id,
+            "SLATEOPS_INSTANCE_ID": settings.slateops_instance_id,
             "POSTGRES_HOST": settings.postgres_host,
             "POSTGRES_PORT": str(settings.postgres_port),
             "POSTGRES_DATABASE": settings.postgres_database,
         }
     else:
         values = process
-    instance_id = _required(values, "OPENSLATE_INSTANCE_ID")
+    instance_id = _required(values, "SLATEOPS_INSTANCE_ID")
     if _IDENTITY.fullmatch(instance_id) is None:
         raise InstanceTargetError("Slate Operations instance identity is invalid")
     path = REPOSITORY_ROOT / ".agent-runtime" / "instances" / f"{instance_id}.json"
@@ -191,7 +191,7 @@ def instance_target_for_process(
 
 def _configured_production_target(values: Mapping[str, str]) -> InstanceTarget:
     """Keep production config explicit without requiring local Docker access."""
-    instance_id = _required(values, "OPENSLATE_INSTANCE_ID")
+    instance_id = _required(values, "SLATEOPS_INSTANCE_ID")
     if _IDENTITY.fullmatch(instance_id) is None:
         raise InstanceTargetError("Slate Operations instance identity is invalid")
     host = _required(values, "POSTGRES_HOST")
@@ -303,9 +303,9 @@ def instance_identity_for_process(process: Mapping[str, str] | None = None) -> s
     else:
         values = process
     if values.get("ENVIRONMENT", "").casefold() == "test":
-        identity = values.get("OPENSLATE_FULLSTACK_RUN_ID", "")
+        identity = values.get("SLATEOPS_FULLSTACK_RUN_ID", "")
     else:
-        identity = values.get("OPENSLATE_INSTANCE_ID", "")
+        identity = values.get("SLATEOPS_INSTANCE_ID", "")
     if not identity:
         return None
     if _IDENTITY.fullmatch(identity) is None and re.fullmatch(r"[a-f0-9]{32}", identity) is None:

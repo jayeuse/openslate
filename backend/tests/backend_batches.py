@@ -75,7 +75,7 @@ def run_backend_batches(run, backend, private, environment, run_id, batch):
         assert_runner_database_url(environment[name], environment, allowed_roles=frozenset({role}))
     env = {
         **environment,
-        "OPENSLATE_REQUIRE_DATABASE_TESTS": "true",
+        "SLATEOPS_REQUIRE_DATABASE_TESTS": "true",
     }
     fingerprint = setup_fingerprint(backend)
     targets = batch["targets"]

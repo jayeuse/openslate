@@ -169,9 +169,9 @@ def test_two_api_processes_deliver_opaque_invalidation_and_recheck_revoked_sessi
     tmp_path: Path,
 ) -> None:
     runtime_url = os.environ["DATABASE_URL"]
-    run_id = os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+    run_id = os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     manifest = write_worker_database_manifest(
-        Path(os.environ["OPENSLATE_TEST_DATABASE_MANIFEST"]),
+        Path(os.environ["SLATEOPS_TEST_DATABASE_MANIFEST"]),
         tmp_path / "api-runtime-database.json",
         run_id=run_id,
         runtime_database_url=runtime_url,
@@ -348,12 +348,12 @@ def _api_child_environment(port: int, label: str, manifest: Path, log_dir: Path)
     environment.update(
         {
             "PATH": os.environ["PATH"],
-            "OPENSLATE_ENV_SOURCE": "process",
-            "OPENSLATE_FULLSTACK_RUN_ID": os.environ["OPENSLATE_FULLSTACK_RUN_ID"],
-            "OPENSLATE_TEST_DATABASE_MANIFEST": str(manifest),
+            "SLATEOPS_ENV_SOURCE": "process",
+            "SLATEOPS_FULLSTACK_RUN_ID": os.environ["SLATEOPS_FULLSTACK_RUN_ID"],
+            "SLATEOPS_TEST_DATABASE_MANIFEST": str(manifest),
             "E2E_ALLOW_MUTATIONS": "true",
             "SUPABASE_STORAGE_URL": os.environ["SUPABASE_STORAGE_URL"],
-            "PGAPPNAME": f"openslate-sse-{label}",
+            "PGAPPNAME": f"slateops-sse-{label}",
             "SMTP_HOST": os.environ["SMTP_HOST"],
             "SMTP_PORT": os.environ["SMTP_PORT"],
             "SMTP_ADMIN_EMAIL": os.environ["SMTP_ADMIN_EMAIL"],

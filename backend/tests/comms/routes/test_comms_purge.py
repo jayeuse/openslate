@@ -210,7 +210,7 @@ def test_ten_thousand_message_purge_completes_within_statement_timeout(purge_cas
     record_property("statement_count", len(durations))
     record_property("total_statement_seconds", sum(durations))
     record_property("statement_timeout_ms", get_settings().database_statement_timeout_ms)
-    artifact = Path("test-results/s22") / os.environ["OPENSLATE_FULLSTACK_RUN_ID"]
+    artifact = Path("test-results/s22") / os.environ["SLATEOPS_FULLSTACK_RUN_ID"]
     artifact.mkdir(parents=True, exist_ok=True)
     (artifact / "purge-10000.json").write_text(json.dumps({
         "message_count": 10_000, "elapsed_seconds": elapsed,

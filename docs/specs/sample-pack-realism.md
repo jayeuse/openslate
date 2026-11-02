@@ -185,7 +185,7 @@ Wrong: the operator runs Harbor's Manage controls and ends the operator's own se
 
 Different packs can share one installation, because each pack has its own slug and email domains. Two runs of the same pack cannot. The live pack run needs a seed-only mode of `tests/smoke_runner.py` that takes a list of packs and skips the browser paths. It reuses the runner's disposable stack.
 
-Correct: API smoke runs Harbor Small in a disposable `openslate-e2e-*` stack, and the development stack keeps the permanent Large data.
+Correct: API smoke runs Harbor Small in a disposable `slateops-e2e-*` stack, and the development stack keeps the permanent Large data.
 Wrong: API smoke runs a pack again on the development stack, so the permanent Large data must be reset first.
 
 ## Phases

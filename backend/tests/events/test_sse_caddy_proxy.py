@@ -73,15 +73,15 @@ def test_same_origin_event_stream_without_origin_opens_through_caddy(
         db.commit()
     base_env = {
         name: os.environ[name]
-        for name in ("PATH", "HOME", "TMPDIR", "OPENSLATE_ENV_SOURCE")
+        for name in ("PATH", "HOME", "TMPDIR", "SLATEOPS_ENV_SOURCE")
         if name in os.environ
     }
     environment = api_environment(
         base_env,
         {"DATABASE_URL": settings.database_url},
         {name: os.environ[name] for name in _PROVIDER_KEYS},
-        run_id=os.environ["OPENSLATE_FULLSTACK_RUN_ID"],
-        database_manifest=Path(os.environ["OPENSLATE_TEST_DATABASE_MANIFEST"]),
+        run_id=os.environ["SLATEOPS_FULLSTACK_RUN_ID"],
+        database_manifest=Path(os.environ["SLATEOPS_TEST_DATABASE_MANIFEST"]),
         private=private,
         public_origin=_ORIGIN,
     )
@@ -114,7 +114,7 @@ def test_same_origin_event_stream_without_origin_opens_through_caddy(
                 start_new_session=True,
             )
             gateway = DisposableCaddy(
-                private, os.environ["OPENSLATE_FULLSTACK_RUN_ID"], base_env, log, native_ipv6=True
+                private, os.environ["SLATEOPS_FULLSTACK_RUN_ID"], base_env, log, native_ipv6=True
             )
             gateway.start()
             wait_for(f"{_ORIGIN}/api/ready", api, verify=False)
